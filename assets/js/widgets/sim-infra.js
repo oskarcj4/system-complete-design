@@ -1,5 +1,5 @@
 /* Widgets de las secciones "Impleméntalo tú mismo" de los casos de estudio:
-   <div data-calc="bom" data-preset="m21|m23|m24|m25|m27|m28|m29|m30">  factura mensual estimada de un clon en AWS, en tres escalas
+   <div data-calc="bom" data-preset="m21|m23|m24|m25|m27|m28|m29|m30|m31">  factura mensual estimada de un clon en AWS, en tres escalas
    <div data-calc="gateways">                     cuántos gateways de conexión necesita un clon de WhatsApp
    Precios: lista on-demand aproximada de us-east-1 (septiembre de 2026). Son editables porque cambian. */
 (function () {
@@ -225,6 +225,35 @@
         { c: 'Logs y métricas', s: 'CloudWatch Logs, GB ingerido', u: 'GB', p: 0.5, q: [20, 1000, 8000] }
       ],
       foot: 'No incluye fotos ni videos: con 10 millones de usuarios, la CDN mueve más de un petabyte al mes y es la línea más cara; se dimensiona como en el M09. Tampoco el ranking de Para ti ni sus GPUs. Con tráfico estable, la capacidad provisionada de DynamoDB cuesta bastante menos que on-demand.'
+    },
+    m31: {
+      title: 'Factura mensual de tu clon de Google Docs',
+      scales: ['MVP', 'Producción', 'Gran escala'],
+      scaleNote: [
+        '10 000 usuarios activos al día: dos servidores de sesión para tener dónde mover los documentos si uno cae.',
+        '1 millón de usuarios activos al día: 55 556 conexiones y 22 222 cambios por segundo en el pico, 3 servidores de sesión y 6 gateways (31.18).',
+        '10 millones de usuarios activos al día: el log partido por doc_id en 8 clústeres de Aurora y todo lo demás por diez.'
+      ],
+      rows: [
+        { c: 'Gateways de WebSocket', s: 'Fargate ARM, tarea de 2 vCPU y 4 GB', u: 'h', p: 0.079, q: [2, 6, 56] },
+        { c: 'Servidores de sesión', s: 'EC2 r7g.xlarge (4 vCPU, 32 GB): estado en memoria', u: 'h', p: 0.2142, q: [2, 3, 24] },
+        { c: 'Directorio de sesiones: escrituras', s: 'DynamoDB on-demand, por millón de WRU', u: 'M', p: 0.625, q: [1, 120, 1200] },
+        { c: 'Directorio de sesiones: lecturas', s: 'DynamoDB on-demand, por millón de RRU', u: 'M', p: 0.125, q: [2, 240, 2400] },
+        { c: 'Log caliente de revisiones', s: 'Aurora PostgreSQL I/O-Optimized, r7g.large en el MVP y r7g.2xlarge después; writer y réplica', u: 'h', p: [0.359, 1.435, 1.435], q: [1, 2, 16] },
+        { c: 'Almacenamiento del log caliente', s: 'Aurora I/O-Optimized, GB al mes (7 días de revisiones)', u: 'GB', p: 0.225, q: [20, 2016, 20160] },
+        { c: 'Snapshots y log frío', s: 'S3 Standard, GB al mes (el log frío crece unos 3 TB por mes en producción)', u: 'GB', p: 0.023, q: [100, 30000, 300000] },
+        { c: 'Escrituras en S3', s: 'PUT, por millón (un snapshot cada 500 revisiones)', u: 'M', p: 5, q: [0.5, 58, 580] },
+        { c: 'Permisos', s: 'SpiceDB en Fargate ARM, tarea de 2 vCPU y 4 GB', u: 'h', p: 0.079, q: [2, 3, 12] },
+        { c: 'Base de los permisos', s: 'Aurora PostgreSQL r7g.large, writer y réplica', u: 'h', p: 0.276, q: [1, 2, 4] },
+        { c: 'Cola de eventos', s: 'SQS, por millón de requests (un resumen por documento cada pocos segundos)', u: 'M', p: 0.4, q: [1, 50, 500] },
+        { c: 'Búsqueda', s: 'OpenSearch r7g.large.search en el MVP, r7g.xlarge.search después', u: 'h', p: [0.178, 0.356, 0.356], q: [1, 3, 15] },
+        { c: 'Workers: historial, índice, avisos y exportación', s: 'Fargate ARM, tarea de 1 vCPU y 2 GB', u: 'h', p: 0.0395, q: [2, 10, 80] },
+        { c: 'Entrada HTTPS y WebSocket', s: 'Application Load Balancer', u: 'h', p: 0.0225, q: [1, 1, 3] },
+        { c: 'Capacidad del ALB', s: 'LCU-hora (promedio; las conexiones abiertas cuentan)', u: 'h', p: 0.008, q: [1, 25, 250] },
+        { c: 'Documentos, cambios y presencia', s: 'Salida a internet, promedio por tramos', u: 'GB', p: [0.09, 0.083, 0.056], q: [250, 25000, 250000] },
+        { c: 'Logs y métricas', s: 'CloudWatch Logs, GB ingerido', u: 'GB', p: 0.5, q: [10, 500, 4000] }
+      ],
+      foot: 'No incluye imágenes dentro de los documentos (S3 y CloudFront, como en el M09), la exportación a PDF ni el correo de los avisos (SES cobra 0.10 USD por cada mil). El log frío crece para siempre: es el historial completo. Con tráfico estable, una instancia reservada de Aurora y de EC2 baja esas líneas cerca de un tercio.'
     }
   };
 
