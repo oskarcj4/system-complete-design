@@ -480,16 +480,18 @@
 
   function initCollab(host) {
     var f = {
-      docs: field('Documentos abiertos a la vez', 2000000, 100000, 'En el pico, con al menos una persona conectada.'),
-      people: field('Personas conectadas por documento', 1.5, 0.1, 'Promedio. Docs admite hasta 100 a la vez.'),
-      editors: field('Personas escribiendo por documento', 1.2, 0.1),
-      ops: field('Cambios por segundo de cada persona que escribe', 0.5, 0.1, 'Ya agrupados: un cambio sin ack a la vez.'),
+      docs: field('Documentos abiertos a la vez', 37000, 1000, 'En el pico, con al menos una persona conectada.'),
+      people: field('Personas conectadas por documento', 1.5, 0.1, 'Promedio. Docs deja editar un archivo desde hasta 100 pestañas o dispositivos a la vez.'),
+      editors: field('Personas escribiendo por documento', 0.3, 0.1, 'En un instante cualquiera: casi siempre se lee, se piensa o se mueve el cursor.'),
+      ops: field('Cambios por segundo de cada persona que escribe', 2, 0.5, 'Ya agrupados: un cambio sin ack a la vez.'),
       presence: field('Actualizaciones de cursor por segundo por persona', 1, 0.5),
       opBytes: field('Bytes por cambio guardado en el log', 300, 50, 'La op, el autor, la revisión y el timestamp.'),
       snapEvery: field('Revisiones entre snapshots', 500, 50),
       snapKB: field('Tamaño de un snapshot (KB)', 40, 5),
       perDocs: field('Documentos que atiende un servidor de sesión', 20000, 1000, 'Lo limita la memoria: el estado y el final del log de cada uno.'),
-      perOps: field('Cambios por segundo que procesa un servidor', 20000, 1000)
+      perOps: field('Cambios por segundo que procesa un servidor', 20000, 1000),
+      perConns: field('Conexiones que sostiene un gateway', 10000, 1000),
+      peak: field('Pico sobre el promedio del día', 2, 0.5, 'Para pasar del pico a lo que se guarda en un día.')
     };
     var o = {
       opsS: out('Cambios por segundo en la flota', 'documentos × personas escribiendo × cambios por persona'),
@@ -497,8 +499,10 @@
       presS: out('Mensajes de presencia por segundo', 'documentos × personas × cursores × (personas − 1)'),
       conns: out('Conexiones abiertas', 'documentos × personas conectadas'),
       servers: out('Servidores de sesión', 'máx(documentos ÷ por servidor, cambios ÷ por servidor) × 1.3 de margen'),
-      logDay: out('Log de operaciones por día', 'cambios × bytes × 86 400'),
-      snapDay: out('Snapshots por día', 'cambios ÷ revisiones por snapshot × tamaño × 86 400')
+      gateways: out('Gateways de WebSocket', 'conexiones ÷ conexiones por gateway'),
+      revDay: out('Revisiones guardadas por día', 'cambios ÷ pico × 86 400'),
+      logDay: out('Log de revisiones por día', 'revisiones × bytes por cambio'),
+      snapDay: out('Snapshots por día', 'revisiones ÷ revisiones por snapshot × tamaño')
     };
     function v(k) { var x = parseFloat(f[k].input.value); return isFinite(x) && x >= 0 ? x : 0; }
     function run() {
@@ -510,8 +514,11 @@
       o.conns.v.textContent = words(v('docs') * people);
       var srv = Math.max(v('perDocs') > 0 ? v('docs') / v('perDocs') : 0, v('perOps') > 0 ? ops / v('perOps') : 0);
       o.servers.v.textContent = F.num(Math.ceil(srv * 1.3), 0);
-      o.logDay.v.textContent = F.bytes(ops * v('opBytes') * 86400);
-      o.snapDay.v.textContent = v('snapEvery') > 0 ? F.bytes(ops / v('snapEvery') * v('snapKB') * 1024 * 86400) : '—';
+      o.gateways.v.textContent = v('perConns') > 0 ? F.num(Math.ceil(v('docs') * people / v('perConns')), 0) : '—';
+      var revs = v('peak') > 0 ? ops / v('peak') * 86400 : 0;
+      o.revDay.v.textContent = words(revs);
+      o.logDay.v.textContent = F.bytes(revs * v('opBytes'));
+      o.snapDay.v.textContent = v('snapEvery') > 0 ? F.bytes(revs / v('snapEvery') * v('snapKB') * 1024) : '—';
     }
     var inCol = h('div', { class: 'calc-inputs' }), outCol = h('div', { class: 'calc-outputs', 'aria-live': 'polite' });
     Object.keys(f).forEach(function (k) { inCol.appendChild(f[k].el); f[k].input.addEventListener('input', run); });
@@ -519,7 +526,7 @@
     host.classList.add('calc');
     host.appendChild(h('div', { class: 'calc-head' }, [h('p', { class: 'calc-title', text: 'La flota de un editor colaborativo' })]));
     host.appendChild(h('div', { class: 'calc-body' }, [inCol, outCol]));
-    host.appendChild(h('p', { class: 'calc-foot', text: 'Diseño de referencia: Google no publica estas cifras. Los valores iniciales son ilustrativos; cambia uno por vez y mira qué recurso se agota primero.' }));
+    host.appendChild(h('p', { class: 'calc-foot', text: 'Diseño de referencia: Google no publica estas cifras. Los valores iniciales son los del clon de 31.18: un millón de usuarios por día, 40 minutos con un documento abierto y un pico del doble. Cambia uno por vez y mira qué recurso se agota primero.' }));
     run();
   }
 
