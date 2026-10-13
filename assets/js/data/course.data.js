@@ -91,8 +91,8 @@ window.SD.course = {
           summary: 'Anycast, Unimog, DDoS, Workers frente a Kubernetes, Durable Objects, configuración global y tu propia red de borde en AWS.' },
         { id: 'm29', num: 'M29', title: 'WhatsApp', short: 'WhatsApp', mins: 150, href: 'modules/m29-whatsapp.html', status: 'ready',
           summary: 'Conexiones persistentes y gateways, registro de sesiones, buzones, grupos, cifrado de extremo a extremo y tu clon en AWS.' },
-        { id: 'cpc', num: 'CP-C', kind: 'checkpoint', title: 'Checkpoint C: diseño final', short: 'Checkpoint C', mins: 90, href: 'modules/checkpoint-c.html', status: 'soon',
-          summary: 'Diseña la plataforma de pagos por uso para el producto de IA de la Parte II.' }
+        { id: 'cpc', num: 'CP-C', kind: 'checkpoint', title: 'Checkpoint C: cobrar el uso de una API de IA', short: 'Checkpoint C', mins: 120, href: 'modules/checkpoint-c.html', status: 'ready',
+          summary: 'Examen de las Partes I a III y diseño del cobro por uso de la API de IA: ledger, saldo en caliente, recargas, facturas, fraude, dos regiones y conciliación.' }
       ]
     },
     {
@@ -123,7 +123,7 @@ window.SD.course = {
       items: [
         { id: 'm30', num: 'M30', title: 'Twitter/X', short: 'Twitter/X', mins: 120, href: 'modules/m30-twitter.html', status: 'ready',
           summary: 'Fan-out on write vs on read, timelines híbridos, IDs Snowflake, contadores y trending.' },
-        { id: 'm31', num: 'M31', title: 'Google Docs', short: 'Google Docs', mins: 90, href: 'modules/m31-google-docs.html', status: 'soon',
+        { id: 'm31', num: 'M31', title: 'Google Docs', short: 'Google Docs', mins: 180, href: 'modules/m31-google-docs.html', status: 'ready',
           summary: 'OT vs CRDT, sesión por documento, cursores y presencia, historial y permisos.' },
         { id: 'cpd', num: 'CP-D', kind: 'checkpoint', title: 'Checkpoint D: diseña un Slack', short: 'Checkpoint D', mins: 90, href: 'modules/checkpoint-d.html', status: 'soon',
           summary: 'Examen y diseño completo de una plataforma de chat para equipos.' }

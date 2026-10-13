@@ -75,7 +75,7 @@ SD.defineQuiz('m03', {
         'Cuando unas pocas claves concentran el tráfico, porque el hash reparte cada una entre varios nodos.'
       ],
       answer: 1,
-      explain: 'Es lo que se usa para cachés distribuidas y servidores con estado por documento (Google Docs, M31). El costo: las claves populares desbalancean la carga, y no esquiva servidores lentos.'
+      explain: 'Es lo que se usa para cachés distribuidas y servidores con estado por documento (Google Docs, <a href="m31-google-docs.html#sesion">M31</a>). El costo: las claves populares desbalancean la carga, y no esquiva servidores lentos.'
     },
     {
       id: 'mesh', type: 'single',

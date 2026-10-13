@@ -1135,7 +1135,7 @@ SD.defineGlossary([
     deep: 'm18#invariante', aliases: ['I-confluence', 'invariant confluence', 'invariante confluente'],
     short: 'Propiedad de un invariante que se mantiene aunque cada réplica decida sola y después se combinen los estados. "El saldo no puede quedar negativo" no la tiene: dos réplicas pueden gastar el mismo saldo. Esos invariantes exigen coordinar.',
     related: ['escrow', 'crdt'] },
-  { id: 'crdt', term: 'CRDT', en: 'Conflict-free Replicated Data Type', cat: 'distribuidos', mods: ['m06', 'm061', 'm18', 'm30'],
+  { id: 'crdt', term: 'CRDT', en: 'Conflict-free Replicated Data Type', cat: 'distribuidos', mods: ['m06', 'm061', 'm18', 'm30', 'm31'],
     deep: 'm061#crdt', aliases: ['CRDTs'],
     short: 'Estructura de datos replicada cuyas copias convergen al mismo valor sin coordinar, en cualquier orden de combinación, como un contador en el que cada réplica incrementa solo su propia entrada. Converge, pero no impide violar un límite global.',
     related: ['eventual', 'i-confluencia'] },
@@ -2308,4 +2308,68 @@ SD.defineGlossary([
     short: 'Una cuenta que parece jugosa (un falso admin con SPN) pero que nadie usa. Cualquier intento de abusarla es, por definición, malicioso, y dispara una alerta sin falsos positivos.',
     related: ['incident-response'] }
 
+]);
+
+/* ---------- M31: Google Docs ---------- */
+SD.defineGlossary([
+  { id: 'operational-transformation', term: 'Transformación operacional', en: 'Operational transformation (OT)', cat: 'distribuidos', mods: ['m31'],
+    deep: 'm31#ot', aliases: ['OT', 'transformación operacional', 'operational transformation'],
+    short: 'Técnica para editar a la vez: cada cambio viaja como una operación y, si llega escrito sobre otra versión, se ajusta contra los cambios que no conocía para que conserve su intención. Con un servidor que fija el orden, todas las copias convergen. La usan Google Docs y Wave.',
+    related: ['crdt', 'tp1-tp2', 'servidor-sesion'] },
+  { id: 'tp1-tp2', term: 'TP1 y TP2', en: 'Transformation properties 1 and 2', cat: 'distribuidos', mods: ['m31'],
+    deep: 'm31#ot', aliases: ['TP1', 'TP2'],
+    short: 'Las condiciones de una función de transformación. TP1: aplicar a y después b transformada deja lo mismo que b y después a transformada. TP2, mucho más difícil de cumplir, solo hace falta si no hay un servidor que fije un único orden.',
+    related: ['operational-transformation'] },
+  { id: 'tombstone', term: 'Lápida', en: 'Tombstone', cat: 'distribuidos', mods: ['m31'],
+    deep: 'm31#crdt', aliases: ['lápidas', 'tombstone', 'tombstones'],
+    short: 'La marca que queda en lugar de un dato borrado, para que el resto del sistema sepa que existió y que se borró. En un CRDT de texto, el carácter borrado sigue en la estructura, invisible, para que los cambios que lo nombran encuentren su lugar.',
+    related: ['crdt'] },
+  { id: 'presencia', term: 'Presencia', en: 'Presence', cat: 'mensajeria', mods: ['m31'],
+    deep: 'm31#presencia', noauto: true,
+    short: 'Quién está en un documento o en un chat en este momento: avatares, cursores y selecciones. No se guarda y un mensaje perdido lo corrige el siguiente, pero con n personas cada ronda son n × (n − 1) mensajes.',
+    related: ['websocket'] },
+  { id: 'servidor-sesion', term: 'Servidor de sesión', en: 'Session server', cat: 'distribuidos', mods: ['m31'],
+    deep: 'm31#sesion', aliases: ['servidores de sesión'],
+    short: 'El único proceso que acepta los cambios de un documento abierto: los transforma, les asigna el número de revisión, los guarda y los reparte. Un directorio dice dónde está cada uno, y la escritura condicional en el log impide que dos se pisen.',
+    related: ['operational-transformation', 'fencing', 'durable-objects'] },
+  { id: 'log-revisiones', term: 'Log de revisiones', en: 'Revision log', cat: 'datos', mods: ['m31'],
+    deep: 'm31#persistencia', aliases: ['log de revisiones'],
+    short: 'Todos los cambios de un documento guardados en orden, cada uno con su número, autor y hora. El documento es lo que queda al aplicarlos; el historial, la búsqueda y los snapshots se derivan de él.',
+    related: ['wal', 'servidor-sesion'] },
+  { id: 'local-first', term: 'Local-first', en: 'Local-first software', cat: 'distribuidos', mods: ['m31'],
+    deep: 'm31#crdt', aliases: ['software local-first'],
+    short: 'Software en el que la copia principal de los datos vive en tu dispositivo y funciona sin red; la sincronización con otros dispositivos y personas es un agregado, normalmente con CRDT.',
+    related: ['crdt'] },
+  { id: 'zanzibar', term: 'Zanzibar', en: 'Zanzibar', cat: 'seguridad', mods: ['m31'],
+    deep: 'm31#permisos',
+    short: 'El sistema de autorización global de Google (USENIX ATC 2019): guarda los permisos como tuplas de relación y responde checks en milisegundos para Drive, YouTube, Calendar y otros productos. SpiceDB y OpenFGA son implementaciones abiertas inspiradas en él.',
+    related: ['rebac', 'zookie', 'new-enemy'] },
+  { id: 'rebac', term: 'ReBAC', en: 'Relationship-based access control', cat: 'seguridad', mods: ['m31'],
+    deep: 'm31#permisos-tuplas', aliases: ['control de acceso basado en relaciones'],
+    short: 'Control de acceso en el que un permiso sale de las relaciones entre objetos: dueño de, miembro de, dentro de la carpeta. Expresa la herencia de carpetas y los grupos anidados que con roles fijos no se pueden escribir.',
+    related: ['rbac', 'abac', 'zanzibar'] },
+  { id: 'new-enemy', term: 'New enemy', en: 'New enemy problem', cat: 'seguridad', mods: ['m31'],
+    deep: 'm31#permisos-new-enemy', aliases: ['new enemy problem', 'problema del new enemy'],
+    short: 'El error de aplicar permisos viejos a contenido nuevo: alguien revocado lee lo que se escribió después de la revocación porque su check lo respondió una réplica atrasada.',
+    related: ['zookie', 'zanzibar'] },
+  { id: 'zookie', term: 'Zookie', en: 'Zookie', cat: 'seguridad', mods: ['m31'],
+    deep: 'm31#permisos-new-enemy', aliases: ['zookies', 'ZedToken'],
+    short: 'Un token opaco de Zanzibar con un timestamp global. Se guarda junto con el contenido y obliga a que los checks posteriores usen permisos al menos así de nuevos. En SpiceDB se llama ZedToken.',
+    related: ['new-enemy', 'zanzibar'] }
+]);
+
+/* ---------- IA02: un analista de datos ---------- */
+SD.defineGlossary([
+  { id: 'text-to-sql', term: 'Text-to-SQL', en: 'Text-to-SQL', cat: 'ia', mods: ['m25'],
+    deep: 'm25#herramientas', basic: true, aliases: ['text to SQL', 'texto a SQL'],
+    short: 'Pedirle a un modelo que traduzca una pregunta en lenguaje natural a una consulta SQL. La sintaxis suele salir bien; lo difícil es la pregunta, que muchas veces admite dos lecturas con los mismos datos («vendió más»: en unidades o en pesos).',
+    related: ['tool-calling', 'alucinacion', 'minimo-privilegio'] },
+  { id: 'alucinacion', term: 'Alucinación', en: 'Hallucination', cat: 'ia', mods: ['m22'],
+    deep: 'm22#evals', basic: true, aliases: ['alucinaciones', 'hallucination'],
+    short: 'Cuando un modelo de lenguaje genera algo que suena correcto pero no es verdad, como un número inventado, sin avisar que lo inventó. No se evita pidiéndolo en el prompt: se detecta comparando contra la fuente, con código o con evals.',
+    related: ['llm-juez', 'eval-offline'] },
+  { id: 'contenedor', term: 'Contenedor', en: 'Container', cat: 'nube', mods: ['m25'],
+    deep: 'm25#sandbox', basic: true, noauto: true, aliases: ['contenedores', 'container'],
+    short: 'Un proceso al que el kernel le muestra su propia vista del sistema (archivos, red, procesos) y le pone topes de memoria, CPU y procesos. Comparte el kernel de la máquina, así que aísla menos que una máquina virtual o una microVM.',
+    related: ['sandbox-codigo', 'microvm'] }
 ]);

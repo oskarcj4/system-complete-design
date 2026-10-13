@@ -1,0 +1,1487 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CP-C. Checkpoint C: cobrar el uso de una API de IA</title>
+<meta name="description" content="Cierre de la Parte III: un examen que cruza M00 a M29 y el diseño completo de la plataforma de cobro por uso de una API de IA, con ledger, saldo en caliente, recargas, facturas, fraude, dos regiones y conciliación.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="cpc">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Checkpoint C: cobrar el uso de una API de IA</h1>
+        <p class="lead">La Parte III termina con el dinero. La API de la Parte II ya mide cada token (M21); ahora tiene que cobrarlo: créditos con tarjeta que se gastan en segundos, facturas a fin de mes para empresas, dos regiones, tarjetas robadas y un ledger que explica cada centavo contra Stripe y contra el banco. El examen cruza los treinta módulos anteriores, y el diseño junta lo que viste en el M18, el M21, el M27 y el M28.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>CP-C</dd></div>
+          <div><dt>Parte</dt><dd>III. Casos de estudio</dd></div>
+          <div><dt>Duración</dt><dd>120 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M00 a M29</dd></div>
+          <div><dt>Estado</dt><dd data-status="cpc">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+        <h2 class="plain" id="obj">Qué vas a demostrar</h2>
+        <ul>
+          <li>Diseñar el camino del dinero de punta a punta (compra, saldo, uso, factura, cobro, payout y conciliación) con un ledger que explica cada centavo.</li>
+          <li>Hacer que cada paso sea idempotente y que cada falla (un webhook que no llega, una región aislada, Valkey caído, una tarjeta robada) tenga un costo acotado y calculado.</li>
+          <li>Elegir entre prepago y pospago, entre tarifar en casa o en Stripe y entre autorizar en caliente o contra la base, y justificar lo que descartas con números.</li>
+        </ul>
+      </section>
+
+      <h2 id="examen"><span class="sec-num">C.1</span>El examen</h2>
+
+      <p>Veinte preguntas que cruzan los módulos M00 a M29, todas en el escenario de este checkpoint; se aprueba con el 70&#8239;%. Cada explicación dice qué módulo repasar si fallaste, y puedes repetirlo las veces que quieras. Aprobarlo habilita el botón para marcar el checkpoint como completado, al final de la página.</p>
+
+      <div data-quiz="cpc"></div>
+
+      <h2 id="diseno"><span class="sec-num">C.2</span>Diseño: cobrar el uso de la API de IA</h2>
+
+      <p>La API de la Parte II tiene la flota del M19 y el metering del M21. Hasta ahora solo facturaba a fin de mes a 3&#8239;000 empresas. Hace tres meses se abrió el autoservicio: cualquiera crea una cuenta, compra créditos con tarjeta y llama a la API en minutos. El autoservicio se armó rápido, con una columna <code>balance</code> en la tabla de organizaciones que se resta en cada request y un endpoint que cobra la tarjeta y suma. El mes pasado salió mal:</p>
+      <ul>
+        <li>Hubo 180 contracargos sobre unas 31&#8239;000 compras (0.58&#8239;%): compras de unos 300 USD con tarjetas robadas, gastadas en menos de un día.</li>
+        <li>Una noche, un script probó 30&#8239;000 tarjetas en dos horas contra el formulario de compra.</li>
+        <li>Dos clientes recibieron dos cobros por la misma recarga automática.</li>
+        <li>Entre lo que dice Stripe y la suma de las columnas <code>balance</code> hay 3&#8239;400 USD de diferencia, y nadie sabe explicarla.</li>
+        <li>Un cliente con 2 USD de saldo lanzó 40 streams con prompts largos a la vez y terminó con −11 USD.</li>
+      </ul>
+      <p>Te piden rediseñar el cobro completo, para las dos clases de clientes y en dos regiones.</p>
+
+      <div class="table-wrap">
+        <table class="t">
+          <thead><tr><th>Requisitos funcionales</th><th>Requisitos no funcionales</th></tr></thead>
+          <tbody>
+            <tr><td>Compra de créditos con tarjeta desde la consola, con un mínimo de 10 USD, y recarga automática opcional cuando el saldo baja de un umbral</td><td>17.3 millones de requests por día, 400 por segundo en el pico y 22.5 millones de eventos de uso por día (M21). Costo medio de una request: 0.008 USD</td></tr>
+            <tr><td>Un saldo prepago que se descuenta en segundos. Sin saldo no se atiende, salvo un sobregiro acotado</td><td>El 70&#8239;% de los ingresos viene de 3&#8239;000 empresas en pospago. El 30&#8239;% viene de 120&#8239;000 organizaciones prepago, de las que 15&#8239;000 usan la API cada día, con una compra media de 40 USD</td></tr>
+            <tr><td>Pospago para empresas: factura mensual con compromiso y descuento, cobro por tarjeta o débito bancario, y dunning</td><td>La autorización del saldo agrega menos de 5 ms al p99 del gateway. El gateway nunca espera a Stripe</td></tr>
+            <tr><td>Topes de gasto por organización y proyecto, con alertas al 50, 80 y 100&#8239;%</td><td>Ningún cobro duplicado y ningún uso cobrado dos veces ni regalado. Cada centavo se explica contra Stripe y contra el banco</td></tr>
+            <tr><td>Reembolso de créditos sin usar, promociones con vencimiento y créditos por SLA</td><td>Dos regiones activas, us-east-1 y eu-west-1. Una región caída no deja a nadie sin servicio ni sin cobro</td></tr>
+            <tr><td>Webhooks salientes para el cliente: saldo bajo, recarga fallida, factura emitida</td><td>Contracargos por debajo del 0.3&#8239;% de las compras, lejos del umbral de los programas de las redes (M27). PCI con el menor alcance posible</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Escribe tu diseño como un design doc corto (M00) antes de mirar la solución. Tiene que incluir:</p>
+      <ol>
+        <li>Estimaciones: compras por segundo, comisiones, asientos del ledger por segundo y operaciones del saldo en caliente.</li>
+        <li>El plan de cuentas del ledger y los asientos de una compra, el uso, una promoción, un reembolso, una disputa, una factura y un payout.</li>
+        <li>Cómo se autoriza una request prepaga sin llamar a la base ni a Stripe, y qué le pasa al cliente de los 40 streams.</li>
+        <li>La compra y la recarga automática con sus idempotency keys, incluido el caso en que el banco pide autenticar al cliente.</li>
+        <li>El pospago: el cierre del mes, la factura, el cobro y el dunning.</li>
+        <li>Fraude, card testing y disputas, con la pérdida máxima por tarjeta robada calculada.</li>
+        <li>La conciliación, y qué pasa cuando falla cada pieza: Stripe, un webhook, Valkey, Kafka, una región.</li>
+      </ol>
+      <p>Como en los checkpoints anteriores, lo que más importa no es acertar con la solución de referencia, sino que cada decisión tenga su alternativa descartada y su motivo, y que cada número salga de una cuenta.</p>
+
+      <h2 id="solucion"><span class="sec-num">C.3</span>Solución de referencia</h2>
+
+      <p>Hay más de un buen diseño. Este es uno completo, con las cuentas, el esquema, el código de las piezas críticas y las decisiones; compáralo con el tuyo decisión por decisión. Usa los números del curso: la flota del M19, el metering del M21 y los precios publicados de Stripe. Lo que dice cómo funciona Stripe está marcado como <span class="badge badge--doc">Documentado</span>; el resto es un <span class="badge badge--ref">Diseño de referencia</span>.</p>
+
+      <details class="solution" data-toc="skip">
+        <summary>Ver la solución de referencia</summary>
+        <div class="solution-body">
+
+        <h3>Estimaciones</h3>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Magnitud</th><th>Cálculo</th><th class="r">Resultado</th></tr></thead>
+            <tbody>
+              <tr><td>Ingresos por día</td><td>17.3 millones de requests × 0.008 USD</td><td class="r">138&#8239;400 USD</td></tr>
+              <tr><td>Ingresos por mes</td><td>× 30 días</td><td class="r">4.15 millones de USD</td></tr>
+              <tr><td>Prepago y pospago</td><td>30&#8239;% y 70&#8239;%</td><td class="r">1.25 y 2.91 millones</td></tr>
+              <tr><td>Compras de créditos</td><td>1&#8239;245&#8239;600 USD ÷ 40 USD</td><td class="r">31&#8239;140 por mes, ~1&#8239;040 por día</td></tr>
+              <tr><td>Ritmo de compras</td><td>86&#8239;400 s ÷ 1&#8239;040</td><td class="r">una cada 83 s</td></tr>
+              <tr><td>Comisión de una compra de 40 USD</td><td>2.9&#8239;% × 40 + 0.30</td><td class="r">1.46 USD (3.65&#8239;%)</td></tr>
+              <tr><td>Comisión de una compra de 10 USD</td><td>2.9&#8239;% × 10 + 0.30</td><td class="r">0.59 USD (5.9&#8239;%)</td></tr>
+              <tr><td>Comisiones de tarjeta del prepago</td><td>31&#8239;140 × 1.46</td><td class="r">45&#8239;464 USD por mes</td></tr>
+              <tr><td>Asientos de uso, uno por organización y hora</td><td>(15&#8239;000 + 3&#8239;000) × 24</td><td class="r">432&#8239;000 por día, 5 por segundo</td></tr>
+              <tr><td>Asientos de uso, uno por evento</td><td>22.5 millones por día</td><td class="r">260 por segundo, 520 en el pico</td></tr>
+              <tr><td>Requests que paga un tramo de 0.05 USD</td><td>0.05 ÷ 0.008</td><td class="r">6.25</td></tr>
+              <tr><td>Operaciones en el saldo caliente</td><td>400 req/s × (reserva + cierre) + extensiones</td><td class="r">~880 por segundo</td></tr>
+              <tr><td>GPU sobre ingresos</td><td>1.46 millones (M19) ÷ 4.15 millones</td><td class="r">35&#8239;%</td></tr>
+              <tr><td>Costo de los contracargos del piloto</td><td>180 × (15 + 9.00) de caja + 180 × 300 × 0.35 de GPU</td><td class="r">4&#8239;320 + 18&#8239;988 ≈ 23&#8239;300 USD</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Las comisiones son las públicas de Stripe para una tarjeta nacional en Estados Unidos: 2.9&#8239;% más 0.30 USD por cobro, y 15 USD por disputa recibida. <span class="badge badge--doc">Documentado</span> La cuota fija castiga los montos chicos: una compra de 1 USD pagaría 0.33 de comisión, un 33&#8239;%. Por eso hay un mínimo de 10 USD y la recarga automática sugiere 50 USD, que pagan un 3.5&#8239;%.</p>
+        <p><b>El volumen no es el problema.</b> Una compra cada 83 segundos y 5 asientos por segundo caben en cualquier base. Lo difícil es otra cosa: descontar el saldo dentro del camino de 400 requests por segundo sin agregar latencia, que ningún reintento cobre dos veces y que cada centavo se pueda explicar. Un contracargo de una compra de 300 USD gastada entera cuesta 129.49 USD: los 15 de la tarifa, los 9.00 de la comisión que no vuelve y 105.49 de GPU que nadie pagó. Los 300 no se pierden, porque se habían cobrado: se devuelven.</p>
+
+        <h3>Arquitectura</h3>
+        <figure class="figure">
+          <div class="figure-frame">
+<svg viewBox="0 0 770 540" role="img" aria-labelledby="fcp1t fcp1d">
+<title id="fcp1t">Arquitectura de la plataforma de cobro por uso</title>
+<desc id="fcp1d">Arriba, el camino de una request: el cliente pasa por la red de borde y el API gateway, que reserva tramos de dinero en el saldo caliente antes de pedir la generación a la flota y publica el evento de uso en Kafka al cerrar el stream. En el medio, el metering y el rating convierten los eventos en asientos por hora en el ledger, que acredita las compras en el saldo caliente. El servicio de pagos y facturas recibe las compras desde la consola y los cruces de umbral del saldo, y crea PaymentIntents y facturas en Stripe. Stripe avisa por webhooks firmados al receptor, que escribe un asiento por evento, y paga al banco con payouts. Abajo, la conciliación compara el ledger con los informes de Stripe, Stripe con el extracto del banco y el metering con el ledger.</desc>
+<defs><marker id="fcp1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker>
+<marker id="fcp1q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker>
+</defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="16" y="44" width="150" height="54" rx="10"/>
+<text class="dg-label" x="91.0" y="67.0" text-anchor="middle">Cliente</text>
+<text class="dg-tiny" x="91.0" y="85.0" text-anchor="middle">consola web y API</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="206" y="44" width="150" height="54" rx="10"/>
+<text class="dg-label" x="281.0" y="67.0" text-anchor="middle">Red de borde</text>
+<text class="dg-tiny" x="281.0" y="85.0" text-anchor="middle">WAF, bots, límites</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="396" y="44" width="150" height="54" rx="10"/>
+<text class="dg-label" x="471.0" y="67.0" text-anchor="middle">API gateway</text>
+<text class="dg-tiny" x="471.0" y="85.0" text-anchor="middle">auth, cuotas, saldo</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="586" y="44" width="150" height="54" rx="10"/>
+<text class="dg-label" x="661.0" y="67.0" text-anchor="middle">Flota de inferencia</text>
+<text class="dg-tiny" x="661.0" y="85.0" text-anchor="middle">la del M19</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="206" y="150" width="150" height="54" rx="10"/>
+<text class="dg-label" x="281.0" y="173.0" text-anchor="middle">API de facturación</text>
+<text class="dg-tiny" x="281.0" y="191.0" text-anchor="middle">compras, saldo, topes</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="396" y="150" width="150" height="54" rx="10"/>
+<text class="dg-label" x="471.0" y="173.0" text-anchor="middle">Saldo caliente</text>
+<text class="dg-tiny" x="471.0" y="191.0" text-anchor="middle">Valkey: tramos y topes</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="586" y="150" width="150" height="54" rx="10"/>
+<text class="dg-label" x="661.0" y="173.0" text-anchor="middle">Kafka</text>
+<text class="dg-tiny" x="661.0" y="191.0" text-anchor="middle">tópico usage</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="16" y="260" width="150" height="54" rx="10"/>
+<text class="dg-label" x="91.0" y="283.0" text-anchor="middle">Stripe</text>
+<text class="dg-tiny" x="91.0" y="301.0" text-anchor="middle">pagos, facturas</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="206" y="260" width="150" height="54" rx="10"/>
+<text class="dg-label" x="281.0" y="283.0" text-anchor="middle">Pagos y facturas</text>
+<text class="dg-tiny" x="281.0" y="301.0" text-anchor="middle">recargas y cierre</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="396" y="260" width="150" height="54" rx="10"/>
+<text class="dg-label" x="471.0" y="283.0" text-anchor="middle">Ledger</text>
+<text class="dg-tiny" x="471.0" y="301.0" text-anchor="middle">Aurora PostgreSQL</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="586" y="260" width="150" height="54" rx="10"/>
+<text class="dg-label" x="661.0" y="283.0" text-anchor="middle">Metering y rating</text>
+<text class="dg-tiny" x="661.0" y="301.0" text-anchor="middle">el del M21</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="16" y="370" width="150" height="54" rx="10"/>
+<text class="dg-label" x="91.0" y="393.0" text-anchor="middle">Banco</text>
+<text class="dg-tiny" x="91.0" y="411.0" text-anchor="middle">cuenta de la empresa</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="206" y="370" width="150" height="54" rx="10"/>
+<text class="dg-label" x="281.0" y="393.0" text-anchor="middle">Receptor de webhooks</text>
+<text class="dg-tiny" x="281.0" y="411.0" text-anchor="middle">verifica y deduplica</text>
+<rect class="dg-box" x="16" y="466" width="720" height="58" rx="10"/>
+<text class="dg-label" x="32" y="490" text-anchor="start">Conciliación</text>
+<text class="dg-small" x="32" y="510" text-anchor="start">ledger contra informes de Stripe · Stripe contra banco · metering contra ledger</text>
+<path class="dg-edge" d="M168 71.0 H203" marker-end="url(#fcp1a)"/>
+<path class="dg-edge" d="M358 71.0 H393" marker-end="url(#fcp1a)"/>
+<path class="dg-edge" d="M548 71.0 H583" marker-start="url(#fcp1a)" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="186" y="24" text-anchor="middle">requests</text>
+<path class="dg-feedback" d="M186 29 V67.0"/>
+<text class="dg-tiny" x="376" y="24" text-anchor="middle">API</text>
+<path class="dg-feedback" d="M376 29 V67.0"/>
+<text class="dg-tiny" x="566" y="24" text-anchor="middle">genera</text>
+<path class="dg-feedback" d="M566 29 V67.0"/>
+<path class="dg-edge" d="M281.0 100 V147" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="289.0" y="130" text-anchor="start">consola</text>
+<path class="dg-edge" d="M471.0 100 V147" marker-start="url(#fcp1a)" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="463.0" y="130" text-anchor="end">reserva tramos</text>
+<path class="dg-edge" style="stroke: var(--l-queue); stroke-dasharray: 6 4" d="M530 100 V124 H640 V147" marker-end="url(#fcp1q)"/>
+<text class="dg-tiny" x="585" y="117" text-anchor="middle">evento de uso</text>
+<path class="dg-edge" d="M281.0 206 V257" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="273.0" y="238" text-anchor="end">compra</text>
+<path class="dg-edge" d="M420 206 V232 H330 V257" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="375" y="226" text-anchor="middle">umbral</text>
+<path class="dg-edge" d="M471.0 258 V207" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="479.0" y="246" text-anchor="start">acredita</text>
+<path class="dg-edge" style="stroke: var(--l-queue); stroke-dasharray: 6 4" d="M661.0 206 V257" marker-end="url(#fcp1q)"/>
+<text class="dg-tiny" x="669.0" y="238" text-anchor="start">eventos</text>
+<path class="dg-edge" d="M584 287 H549" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="574" y="340" text-anchor="start">asientos por hora</text>
+<path class="dg-feedback" d="M566 292 V336 H570"/>
+<path class="dg-edge" d="M204 280 H169" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="186" y="250" text-anchor="middle">PaymentIntent</text>
+<path class="dg-feedback" d="M186 254 V276"/>
+<path class="dg-edge" d="M91.0 316 V367" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="83.0" y="348" text-anchor="end">payouts</text>
+<path class="dg-edge" d="M168 300 H186 V397 H203" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="194" y="352" text-anchor="start">webhooks firmados</text>
+<path class="dg-edge" d="M358 397 H376 V307 H393" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="384" y="352" text-anchor="start">asiento por evento</text>
+<path class="dg-feedback" d="M91.0 464 V429" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="99.0" y="448" text-anchor="start">extracto</text>
+<path class="dg-feedback" d="M520 464 V319" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="528" y="448" text-anchor="start">saldos</text>
+<path class="dg-feedback" d="M700 464 V319" marker-end="url(#fcp1a)"/>
+<text class="dg-tiny" x="692" y="448" text-anchor="end">agregados</text>
+</svg>
+          </div>
+          <figcaption><b>Figura C.1.</b> Arriba, el camino de una request, que nunca espera a Stripe ni al ledger: reserva tramos en el saldo caliente de su región. En el medio, el uso se vuelve asientos por hora. Abajo, el dinero entra por Stripe, se registra por webhooks y llega al banco por payouts; la conciliación compara las tres fuentes. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+        </figure>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Pieza</th><th>Qué guarda</th><th>Qué garantiza</th><th>Viene de</th></tr></thead>
+            <tbody>
+              <tr><td>Red de borde</td><td>Nada</td><td>Desafío solo en la página de compra; límites por IP, dispositivo y sesión</td><td>M28</td></tr>
+              <tr><td>API gateway</td><td>Las reservas abiertas de sus streams</td><td>Ninguna request prepaga empieza sin un tramo reservado; el evento de uso sale al cerrar</td><td>M18, M21</td></tr>
+              <tr><td>Saldo caliente (Valkey, uno por región)</td><td>Saldo, sobregiro, umbral, versión y reservas de cada organización</td><td>Descuento atómico en un milisegundo; el cruce del umbral se detecta una sola vez</td><td>M04, M18</td></tr>
+              <tr><td>API de facturación</td><td>Compras, configuración de la recarga, topes</td><td>Compras idempotentes; cada lectura verifica a qué organización pertenece</td><td>M02, M10</td></tr>
+              <tr><td>Pagos y facturas (workers)</td><td>Recargas y facturas con su estado</td><td>Un intento por cruce del umbral; una factura por organización y mes</td><td>M27</td></tr>
+              <tr><td>Receptor de webhooks y barrido</td><td>Los eventos de Stripe vistos</td><td>Cada evento cambia el ledger una sola vez, llegue cuando llegue</td><td>M27</td></tr>
+              <tr><td>Ledger (Aurora PostgreSQL)</td><td>Asientos inmutables, lotes de créditos, saldos materializados</td><td>Cada asiento suma cero; un asiento por <code>source_ref</code></td><td>M27, M21</td></tr>
+              <tr><td>Metering y rating</td><td>Eventos crudos y agregados por hora</td><td>Cada token cuenta una vez, al precio de su hora</td><td>M21</td></tr>
+              <tr><td>Conciliación</td><td>Excepciones con dueño y fecha</td><td>Toda diferencia se explica con una regla o se investiga</td><td>M27, M21</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>La regla que ordena todo: <b>el ledger es la verdad y el saldo caliente es una proyección rápida.</b> El gateway nunca lee el ledger y nunca llama a Stripe. El ledger nunca está en el camino de una request. Si el saldo caliente y el ledger no coinciden, gana el ledger y el saldo caliente se corrige.</p>
+
+        <h3>El ledger</h3>
+        <p>El saldo de una organización deja de ser una columna que se resta y pasa a ser la suma de asientos de doble entrada, como en el <a href="m27-pagos-stripe.html#ledger">M27</a>. Los créditos que el cliente pagó y no usó son un ingreso diferido: servicio que la empresa le debe (<a href="m21-metering.html#creditos">M21</a>). Cada compra o promoción es un lote con su vencimiento, y el uso consume primero el que vence antes.</p>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Cuenta</th><th>Tipo</th><th>Saldo normal</th><th>Qué representa</th></tr></thead>
+            <tbody>
+              <tr><td><code>stripe:pendiente</code></td><td>Activo</td><td>Deudor</td><td>Cobrado y todavía no liquidado por Stripe</td></tr>
+              <tr><td><code>stripe:disponible</code></td><td>Activo</td><td>Deudor</td><td>Liquidado; se puede pagar al banco</td></tr>
+              <tr><td><code>banco</code></td><td>Activo</td><td>Deudor</td><td>Lo que llegó a la cuenta de la empresa</td></tr>
+              <tr><td><code>por_facturar:{org}</code></td><td>Activo</td><td>Deudor</td><td>Uso del mes de un cliente de pospago, todavía sin factura</td></tr>
+              <tr><td><code>por_cobrar:{org}</code></td><td>Activo</td><td>Deudor</td><td>Facturas emitidas sin pagar</td></tr>
+              <tr><td><code>creditos:{org}:{lote}</code></td><td>Pasivo</td><td>Acreedor</td><td>Ingreso diferido: servicio que se debe, por lote</td></tr>
+              <tr><td><code>ingresos:uso:{0..31}</code></td><td>Ingreso</td><td>Acreedor</td><td>Uso entregado, repartido en 32 subcuentas</td></tr>
+              <tr><td><code>ingresos:ajustes</code></td><td>Ingreso</td><td>Deudor</td><td>Correcciones a la baja de lo facturado</td></tr>
+              <tr><td><code>gasto:comisiones_pago</code></td><td>Gasto</td><td>Deudor</td><td>Comisiones de Stripe por cobro</td></tr>
+              <tr><td><code>gasto:promociones</code>, <code>gasto:creditos_sla</code></td><td>Gasto</td><td>Deudor</td><td>Créditos regalados y créditos por incumplir el SLA</td></tr>
+              <tr><td><code>gasto:disputas</code></td><td>Gasto</td><td>Deudor</td><td>Tarifas de disputa</td></tr>
+              <tr><td><code>perdidas:contracargos</code>, <code>perdidas:fraude</code></td><td>Gasto</td><td>Deudor</td><td>Servicio entregado que nadie pagó</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Los asientos, con los débitos en positivo y los créditos en negativo. Cada bloque suma cero; se comprobó con un script que los recorre todos en nanodólares.</p>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Movimiento</th><th><code>source_ref</code></th><th>Cuenta</th><th class="r">USD</th></tr></thead>
+            <tbody>
+              <tr><td rowspan="3">Compra de 50 USD; Stripe cobra 1.75</td><td rowspan="3"><code>pi_3Qa…:captura</code></td><td><code>stripe:pendiente</code></td><td class="r">+48.25</td></tr>
+              <tr><td><code>gasto:comisiones_pago</code></td><td class="r">+1.75</td></tr>
+              <tr><td><code>creditos:org_7:lote_41</code></td><td class="r">−50.00</td></tr>
+              <tr><td rowspan="2">Promoción de bienvenida</td><td rowspan="2"><code>promo:org_7:bienvenida</code></td><td><code>gasto:promociones</code></td><td class="r">+5.00</td></tr>
+              <tr><td><code>creditos:org_7:promo_3</code></td><td class="r">−5.00</td></tr>
+              <tr><td rowspan="2">Uso de una hora</td><td rowspan="2"><code>uso:org_7:2026-10-04T14:v1</code></td><td><code>creditos:org_7:promo_3</code></td><td class="r">+3.214</td></tr>
+              <tr><td><code>ingresos:uso:17</code></td><td class="r">−3.214</td></tr>
+              <tr><td rowspan="2">Stripe libera los fondos</td><td rowspan="2"><code>txn_…:disponible</code></td><td><code>stripe:disponible</code></td><td class="r">+48.25</td></tr>
+              <tr><td><code>stripe:pendiente</code></td><td class="r">−48.25</td></tr>
+              <tr><td rowspan="2">Payout al banco</td><td rowspan="2"><code>po_2Hx…</code></td><td><code>banco</code></td><td class="r">+91&#8239;310.42</td></tr>
+              <tr><td><code>stripe:disponible</code></td><td class="r">−91&#8239;310.42</td></tr>
+              <tr><td rowspan="2">Reembolso de 20 USD sin usar</td><td rowspan="2"><code>re_…</code></td><td><code>creditos:org_7:lote_41</code></td><td class="r">+20.00</td></tr>
+              <tr><td><code>stripe:disponible</code></td><td class="r">−20.00</td></tr>
+              <tr><td rowspan="3">Alerta temprana de fraude: se reembolsa todo, quedaban 25</td><td rowspan="3"><code>re_…:fraude</code></td><td><code>creditos:org_7:lote_41</code></td><td class="r">+25.00</td></tr>
+              <tr><td><code>perdidas:fraude</code></td><td class="r">+25.00</td></tr>
+              <tr><td><code>stripe:disponible</code></td><td class="r">−50.00</td></tr>
+              <tr><td rowspan="4">Disputa por fraude, quedaban 25</td><td rowspan="4"><code>dp_7Lm…:abierta</code></td><td><code>creditos:org_7:lote_41</code></td><td class="r">+25.00</td></tr>
+              <tr><td><code>perdidas:contracargos</code></td><td class="r">+25.00</td></tr>
+              <tr><td><code>gasto:disputas</code></td><td class="r">+15.00</td></tr>
+              <tr><td><code>stripe:disponible</code></td><td class="r">−65.00</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Tres detalles de Stripe que deciden los asientos. Los reembolsos salen del saldo disponible, no del pendiente, y Stripe no devuelve la comisión del cobro original. <span class="badge badge--doc">Documentado</span> Por eso el reembolso no toca <code>gasto:comisiones_pago</code>: esos 1.75 ya se perdieron. Y una disputa retira el monto más la tarifa en el momento en que se abre; si se gana, el monto vuelve y la disputa se cierra con otro asiento que revierte <code>perdidas:contracargos</code>.</p>
+        <figure class="figure">
+          <div class="figure-frame">
+<svg viewBox="0 0 770 433" role="img" aria-labelledby="fcp2t fcp2d">
+<title id="fcp2t">Saldos de cada cuenta en la vida de 50 USD de créditos</title>
+<desc id="fcp2d">Una rejilla con diez cuentas en las filas y seis momentos en las columnas: una promoción de 5 USD, una compra de 50 USD con 1.75 de comisión, 30 USD de uso, el dinero disponible en Stripe, el payout al banco y una disputa por fraude cuando quedaban 25 USD sin usar. Cada celda es el saldo acumulado, con los débitos positivos y los créditos negativos, y las celdas que cambian en cada momento van en negrita. Cada columna suma cero. Al final, la empresa reconoció 30 USD de ingresos que nunca cobró, perdió 16.75 USD de caja entre la comisión y la tarifa de disputa, y entregó 25 USD de uso que nadie pagó, además de los 5 de la promoción.</desc>
+<defs><marker id="fcp2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker>
+</defs>
+<text class="dg-group" x="259.0" y="30" text-anchor="middle">1. Promo</text>
+<text class="dg-tiny" x="259.0" y="48" text-anchor="middle">5 USD</text>
+<text class="dg-group" x="349.0" y="30" text-anchor="middle">2. Compra</text>
+<text class="dg-tiny" x="349.0" y="48" text-anchor="middle">50 USD</text>
+<text class="dg-group" x="439.0" y="30" text-anchor="middle">3. Uso</text>
+<text class="dg-tiny" x="439.0" y="48" text-anchor="middle">30 USD</text>
+<text class="dg-group" x="529.0" y="30" text-anchor="middle">4. Disponible</text>
+<text class="dg-tiny" x="529.0" y="48" text-anchor="middle">día 2</text>
+<text class="dg-group" x="619.0" y="30" text-anchor="middle">5. Payout</text>
+<text class="dg-tiny" x="619.0" y="48" text-anchor="middle">día 3</text>
+<text class="dg-group" x="709.0" y="30" text-anchor="middle">6. Disputa</text>
+<text class="dg-tiny" x="709.0" y="48" text-anchor="middle">día 40</text>
+<text class="dg-group" x="16" y="48" text-anchor="start">Cuenta</text>
+<text class="dg-small" x="16" y="92" text-anchor="start">Stripe, pendiente</text>
+<text class="dg-tiny" x="259.0" y="92" text-anchor="middle">0</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="308" y="77" width="82" height="21" rx="6"/>
+<text class="dg-tiny dg-in" x="349.0" y="92" text-anchor="middle">+48.25</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="398" y="77" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="439.0" y="92" text-anchor="middle">+48.25</text>
+<text class="dg-tiny dg-in" x="529.0" y="92" text-anchor="middle">0</text>
+<text class="dg-tiny" x="619.0" y="92" text-anchor="middle">0</text>
+<text class="dg-tiny" x="709.0" y="92" text-anchor="middle">0</text>
+<text class="dg-small" x="16" y="119" text-anchor="start">Stripe, disponible</text>
+<text class="dg-tiny" x="259.0" y="119" text-anchor="middle">0</text>
+<text class="dg-tiny" x="349.0" y="119" text-anchor="middle">0</text>
+<text class="dg-tiny" x="439.0" y="119" text-anchor="middle">0</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="488" y="104" width="82" height="21" rx="6"/>
+<text class="dg-tiny dg-in" x="529.0" y="119" text-anchor="middle">+48.25</text>
+<text class="dg-tiny dg-in" x="619.0" y="119" text-anchor="middle">0</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="668" y="104" width="82" height="21" rx="6"/>
+<text class="dg-tiny dg-in" x="709.0" y="119" text-anchor="middle">−65.00</text>
+<text class="dg-small" x="16" y="146" text-anchor="start">Banco</text>
+<text class="dg-tiny" x="259.0" y="146" text-anchor="middle">0</text>
+<text class="dg-tiny" x="349.0" y="146" text-anchor="middle">0</text>
+<text class="dg-tiny" x="439.0" y="146" text-anchor="middle">0</text>
+<text class="dg-tiny" x="529.0" y="146" text-anchor="middle">0</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="578" y="131" width="82" height="21" rx="6"/>
+<text class="dg-tiny dg-in" x="619.0" y="146" text-anchor="middle">+48.25</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="668" y="131" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="709.0" y="146" text-anchor="middle">+48.25</text>
+<text class="dg-small" x="16" y="173" text-anchor="start">Créditos org_7, promo</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="218" y="158" width="82" height="21" rx="6"/>
+<text class="dg-tiny dg-in" x="259.0" y="173" text-anchor="middle">−5.00</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="308" y="158" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="349.0" y="173" text-anchor="middle">−5.00</text>
+<text class="dg-tiny dg-in" x="439.0" y="173" text-anchor="middle">0</text>
+<text class="dg-tiny" x="529.0" y="173" text-anchor="middle">0</text>
+<text class="dg-tiny" x="619.0" y="173" text-anchor="middle">0</text>
+<text class="dg-tiny" x="709.0" y="173" text-anchor="middle">0</text>
+<text class="dg-small" x="16" y="200" text-anchor="start">Créditos org_7, lote 41</text>
+<text class="dg-tiny" x="259.0" y="200" text-anchor="middle">0</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="308" y="185" width="82" height="21" rx="6"/>
+<text class="dg-tiny dg-in" x="349.0" y="200" text-anchor="middle">−50.00</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="398" y="185" width="82" height="21" rx="6"/>
+<text class="dg-tiny dg-in" x="439.0" y="200" text-anchor="middle">−25.00</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="488" y="185" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="529.0" y="200" text-anchor="middle">−25.00</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="578" y="185" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="619.0" y="200" text-anchor="middle">−25.00</text>
+<text class="dg-tiny dg-in" x="709.0" y="200" text-anchor="middle">0</text>
+<text class="dg-small" x="16" y="227" text-anchor="start">Ingresos por uso</text>
+<text class="dg-tiny" x="259.0" y="227" text-anchor="middle">0</text>
+<text class="dg-tiny" x="349.0" y="227" text-anchor="middle">0</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="398" y="212" width="82" height="21" rx="6"/>
+<text class="dg-tiny dg-in" x="439.0" y="227" text-anchor="middle">−30.00</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="488" y="212" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="529.0" y="227" text-anchor="middle">−30.00</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="578" y="212" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="619.0" y="227" text-anchor="middle">−30.00</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="668" y="212" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="709.0" y="227" text-anchor="middle">−30.00</text>
+<text class="dg-small" x="16" y="254" text-anchor="start">Comisiones de pago</text>
+<text class="dg-tiny" x="259.0" y="254" text-anchor="middle">0</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="308" y="239" width="82" height="21" rx="6"/>
+<text class="dg-tiny dg-in" x="349.0" y="254" text-anchor="middle">+1.75</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="398" y="239" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="439.0" y="254" text-anchor="middle">+1.75</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="488" y="239" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="529.0" y="254" text-anchor="middle">+1.75</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="578" y="239" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="619.0" y="254" text-anchor="middle">+1.75</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="668" y="239" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="709.0" y="254" text-anchor="middle">+1.75</text>
+<text class="dg-small" x="16" y="281" text-anchor="start">Gasto promocional</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="218" y="266" width="82" height="21" rx="6"/>
+<text class="dg-tiny dg-in" x="259.0" y="281" text-anchor="middle">+5.00</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="308" y="266" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="349.0" y="281" text-anchor="middle">+5.00</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="398" y="266" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="439.0" y="281" text-anchor="middle">+5.00</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="488" y="266" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="529.0" y="281" text-anchor="middle">+5.00</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="578" y="266" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="619.0" y="281" text-anchor="middle">+5.00</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="668" y="266" width="82" height="21" rx="6"/>
+<text class="dg-tiny" x="709.0" y="281" text-anchor="middle">+5.00</text>
+<text class="dg-small" x="16" y="308" text-anchor="start">Pérdidas por contracargos</text>
+<text class="dg-tiny" x="259.0" y="308" text-anchor="middle">0</text>
+<text class="dg-tiny" x="349.0" y="308" text-anchor="middle">0</text>
+<text class="dg-tiny" x="439.0" y="308" text-anchor="middle">0</text>
+<text class="dg-tiny" x="529.0" y="308" text-anchor="middle">0</text>
+<text class="dg-tiny" x="619.0" y="308" text-anchor="middle">0</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="668" y="293" width="82" height="21" rx="6"/>
+<text class="dg-tiny dg-in" x="709.0" y="308" text-anchor="middle">+25.00</text>
+<text class="dg-small" x="16" y="335" text-anchor="start">Tarifas de disputa</text>
+<text class="dg-tiny" x="259.0" y="335" text-anchor="middle">0</text>
+<text class="dg-tiny" x="349.0" y="335" text-anchor="middle">0</text>
+<text class="dg-tiny" x="439.0" y="335" text-anchor="middle">0</text>
+<text class="dg-tiny" x="529.0" y="335" text-anchor="middle">0</text>
+<text class="dg-tiny" x="619.0" y="335" text-anchor="middle">0</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="668" y="320" width="82" height="21" rx="6"/>
+<text class="dg-tiny dg-in" x="709.0" y="335" text-anchor="middle">+15.00</text>
+<path class="dg-frame" d="M16 346 H754"/>
+<text class="dg-group" x="16" y="364" text-anchor="start">Suma de la columna</text>
+<text class="dg-tiny dg-in" x="259.0" y="364" text-anchor="middle">0</text>
+<text class="dg-tiny dg-in" x="349.0" y="364" text-anchor="middle">0</text>
+<text class="dg-tiny dg-in" x="439.0" y="364" text-anchor="middle">0</text>
+<text class="dg-tiny dg-in" x="529.0" y="364" text-anchor="middle">0</text>
+<text class="dg-tiny dg-in" x="619.0" y="364" text-anchor="middle">0</text>
+<text class="dg-tiny dg-in" x="709.0" y="364" text-anchor="middle">0</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="16" y="400" width="22" height="14" rx="4"/>
+<text class="dg-tiny" x="46" y="411" text-anchor="start">dinero: Stripe y banco</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="214" y="400" width="22" height="14" rx="4"/>
+<text class="dg-tiny" x="244" y="411" text-anchor="start">servicio que se debe (ingreso diferido)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="500" y="400" width="22" height="14" rx="4"/>
+<text class="dg-tiny" x="530" y="411" text-anchor="start">resultados: ingresos y gastos</text>
+</svg>
+          </div>
+          <figcaption><b>Figura C.2.</b> La vida de 50 USD de créditos comprados con una tarjeta robada, cuenta por cuenta. Cada columna suma cero. Al final, el ledger dice exactamente lo que pasó: 30 USD de uso entregado (5 de la promoción y 25 del lote), 16.75 USD de caja perdida (el payout de 48.25 menos los 65 que retiró la disputa) y 25 USD de servicio que nadie pagó. Una columna <code>balance</code> solo diría "0". <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+        </figure>
+
+        <h4>Un asiento por organización y hora</h4>
+        <p>El uso no se asienta request por request. El rating del M21 ya produce el costo de cada organización por hora, versionado; ese agregado es un asiento, con <code>source_ref</code> = <code>uso:{org}:{hora}:v{versión}</code>. Son 432&#8239;000 asientos por día, 5 por segundo. Uno por evento serían 260 por segundo, 520 en el pico, todos contra la misma cuenta de ingresos. Si una hora se reprocesa (<a href="m21-metering.html#correcciones">M21</a>), la versión nueva no reemplaza el asiento: se asienta la diferencia como <code>v2</code>.</p>
+        <p>La cuenta de ingresos se reparte en 32 subcuentas, <code>ingresos:uso:{hash(org) % 32}</code>, igual que la de comisiones del <a href="m27-pagos-stripe.html#ledger-diseno">M27</a>. A 5 asientos por segundo una sola fila aguantaría; las subcuentas quedan para el día en que se asiente por minuto, y al leer solo cuestan una suma.</p>
+
+        <h4>El esquema</h4>
+<pre data-lang="sql"><code>CREATE TABLE ledger_accounts (
+  account_id  text PRIMARY KEY,                 -- 'creditos:org_7:lote_41', 'ingresos:uso:17'
+  kind        text NOT NULL CHECK (kind IN ('activo', 'pasivo', 'ingreso', 'gasto')),
+  org_id      text,                             -- NULL en las cuentas de la empresa
+  currency    text NOT NULL DEFAULT 'usd'
+);
+
+CREATE TABLE ledger_transactions (
+  tx_id        bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  source_ref   text NOT NULL UNIQUE,            -- 'pi_3Qa…:captura', 'uso:org_7:2026-10-04T14:v1'
+  kind         text NOT NULL,                   -- compra, uso, promo, reembolso, disputa, factura, pago, payout
+  effective_at timestamptz NOT NULL,            -- cuándo ocurrió
+  recorded_at  timestamptz NOT NULL DEFAULT now(),   -- cuándo se supo
+  metadata     jsonb NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE ledger_entries (
+  tx_id       bigint NOT NULL REFERENCES ledger_transactions,
+  account_id  text   NOT NULL REFERENCES ledger_accounts,
+  amount_nano bigint NOT NULL CHECK (amount_nano &lt;&gt; 0),  -- débito +, crédito −, en nanodólares
+  PRIMARY KEY (tx_id, account_id)
+);
+-- Más el trigger diferido suma_cero del M27: cada tx_id suma 0 al confirmar.
+
+CREATE TABLE credit_lots (
+  lot_id         text PRIMARY KEY,              -- 'lote_41'
+  org_id         text NOT NULL,
+  origin         text NOT NULL CHECK (origin IN ('compra', 'recarga', 'promo', 'sla')),
+  granted_nano   bigint NOT NULL,
+  expires_at     timestamptz NOT NULL,          -- compra: un año; promoción: 30 días
+  state          text NOT NULL DEFAULT 'vigente'
+                 CHECK (state IN ('vigente', 'congelado', 'agotado', 'vencido', 'reembolsado')),
+  payment_intent text UNIQUE                    -- un lote por cobro, aunque el asiento se intente dos veces
+);
+CREATE INDEX lotes_por_vencer ON credit_lots (org_id, expires_at) WHERE state = 'vigente';
+
+CREATE TABLE org_balances (                     -- saldo materializado, en la misma transacción que los asientos
+  org_id         text PRIMARY KEY,
+  available_nano bigint NOT NULL,
+  ledger_seq     bigint NOT NULL                -- último tx_id aplicado: la versión del saldo
+);</code></pre>
+        <p>El dinero va en nanodólares en un <code>bigint</code>, la misma unidad que los precios del M21 (<code>nanousd_per_unit</code>): un double no representa 0.1 exacto y los errores se acumulan; los enteros suman exacto, y un <code>bigint</code> llega a 9.2 × 10<sup>18</sup> nanodólares, unos 9&#8239;200 millones de USD por cuenta. La aplicación escribe con un rol que puede hacer <code>INSERT</code> en las tablas del ledger y no puede hacer <code>UPDATE</code> ni <code>DELETE</code>: nada se edita, todo se corrige con un asiento nuevo.</p>
+
+        <h4>Postear una sola vez</h4>
+<pre data-lang="python"><code>from dataclasses import dataclass
+
+NANO_POR_CENTAVO = 10_000_000          # 1 USD = 100 centavos = 10**9 nanodólares
+
+@dataclass(frozen=True)
+class Linea:
+    cuenta: str
+    nano: int                          # débito +, crédito −
+
+def postear(db, source_ref: str, tipo: str, effective_at, lineas: list[Linea]) -&gt; int | None:
+    """Escribe un asiento una sola vez. Devuelve el tx_id, o None si ese source_ref ya existía."""
+    assert sum(l.nano for l in lineas) == 0, "un asiento suma cero"
+    with db.transaction():
+        tx = db.fetchval("""
+            INSERT INTO ledger_transactions (source_ref, kind, effective_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (source_ref) DO NOTHING
+            RETURNING tx_id""", source_ref, tipo, effective_at)
+        if tx is None:
+            return None                # un reintento o un webhook repetido: ya está asentado
+        db.executemany("INSERT INTO ledger_entries (tx_id, account_id, amount_nano) VALUES ($1, $2, $3)",
+                       [(tx, l.cuenta, l.nano) for l in lineas])
+        for org, delta in efecto_en_creditos(lineas).items():      # suma de las cuentas creditos:{org}:*
+            db.execute("""UPDATE org_balances
+                          SET available_nano = available_nano - $2, ledger_seq = $3
+                          WHERE org_id = $1""", org, delta, tx)
+            if tipo != "uso":          # el uso ya lo descontó el gateway en caliente
+                db.execute("INSERT INTO outbox (topic, key, payload) VALUES ('saldos', $1, $2)",
+                           org, {"tx_id": tx, "delta_nano": -delta})
+    return tx</code></pre>
+        <p>El <code>ON CONFLICT DO NOTHING</code> sobre <code>source_ref</code> es la idempotencia del ledger, independiente de la de la API: el webhook, el camino síncrono y el barrido pueden intentar el mismo asiento, y solo uno lo escribe. El cambio de saldo sale por un outbox (<a href="m07-mensajeria.html#outbox">M07</a>) en la misma transacción, así que no hay asiento sin aviso ni aviso sin asiento. Las cuentas de créditos son pasivos, con saldo acreedor: una compra las mueve en negativo y el saldo disponible sube, de ahí el signo menos.</p>
+
+        <h3>El saldo prepago en caliente</h3>
+        <p>Una request prepaga tiene que saber si puede empezar, pero su costo se conoce al final. Es el problema del <a href="m18-cuotas-tokens.html#reservar">M18</a> con dinero en lugar de tokens, y el <a href="m21-metering.html#creditos-reserva">M21</a> comparó tres políticas: cobrar al terminar, reservar el máximo y reservar por tramos. Pruébalas en el simulador del M21 con el caso de este checkpoint: saldo bajo y muchos streams a la vez. El simulador usa tramos de 0.04 USD; este diseño elige 0.05, por la cuenta que sigue.</p>
+        <div data-sim="credits"></div>
+        <p><b>Decisión: tramos de 0.05 USD con un sobregiro de 5 USD.</b> Un tramo paga 6.25 requests de costo medio, así que la mayoría de las requests reserva una sola vez; la más cara del M21, de 0.48 USD, pide 10 tramos a lo largo de su stream. El cliente de los 40 streams y 2 USD reserva 40 tramos, exactamente su saldo, y sus extensiones siguen hasta −5 USD: como mucho gasta 7 USD, no 13. El stream que no consigue el tramo siguiente se corta con un evento de error de SSE (<a href="m17-api-streaming.html">M17</a>) y se cobra lo usado hasta ahí. Los 5 USD de sobregiro se descuentan de la próxima compra.</p>
+        <p>Cada organización tiene dos claves en Valkey con el mismo hash tag, para que vivan en el mismo slot y un script pueda tocarlas juntas (<a href="m18-cuotas-tokens.html#redis-cluster">M18</a>):</p>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Clave</th><th>Tipo</th><th>Contenido</th></tr></thead>
+            <tbody>
+              <tr><td><code>saldo:{org_7}</code></td><td>Hash</td><td><code>disp</code> (nanodólares), <code>sobregiro</code>, <code>umbral</code> de recarga, <code>ver</code> (versión), <code>seq</code> (último asiento aplicado), <code>estado</code> y <code>cruce</code> (versión del último cruce del umbral)</td></tr>
+              <tr><td><code>reservas:{org_7}</code></td><td>Hash</td><td>id de la request → nanodólares reservados</td></tr>
+            </tbody>
+          </table>
+        </div>
+<pre data-lang="python"><code># Script de Lua que corre atómico en Valkey. Las comparaciones usan los doubles de Lua, exactos
+# hasta 2**53 nanodólares (unos 9 millones de USD); lo que se guarda lo suma HINCRBY con enteros.
+RESERVAR = """
+local s = redis.call('HMGET', KEYS[1], 'disp', 'sobregiro', 'umbral', 'estado')
+if s[4] ~= 'activa' then return {'bloqueada', s[4]} end
+local disp, sobregiro, umbral = tonumber(s[1]), tonumber(s[2]), tonumber(s[3])
+if disp - tonumber(ARGV[2]) &lt; -sobregiro then return {'sin_saldo', s[1]} end
+local nuevo = redis.call('HINCRBY', KEYS[1], 'disp', '-' .. ARGV[2])   -- lo que se guarda, en enteros de 64 bits
+local ver = redis.call('HINCRBY', KEYS[1], 'ver', 1)
+redis.call('HINCRBY', KEYS[2], ARGV[1], ARGV[2])
+if umbral &gt; 0 and disp &gt;= umbral and nuevo &lt; umbral then
+  -- el cruce se marca en la misma operación: solo una reserva lo puede ver
+  redis.call('HSET', KEYS[1], 'cruce', ver)
+  return {'ok', nuevo, ver}
+end
+return {'ok', nuevo}
+"""
+# KEYS = saldo:{org_7}, reservas:{org_7}; ARGV = request_id, tramo
+
+CERRAR = """
+local reservado = tonumber(redis.call('HGET', KEYS[2], ARGV[1]) or '0')
+redis.call('HINCRBY', KEYS[1], 'disp', reservado - tonumber(ARGV[2]))   -- devuelve lo que sobró
+redis.call('HDEL', KEYS[2], ARGV[1])
+return 'ok'
+"""
+# ARGV = request_id, costo real en nanodólares</code></pre>
+<pre data-lang="python"><code>TRAMO = 50_000_000                     # 0.05 USD en nanodólares
+
+async def servir_prepago(req, org):
+    r = await saldo.reservar(org, req.id, TRAMO)          # el script RESERVAR, ~1 ms
+    if r.estado == "sin_saldo":
+        return error(402, "insufficient_balance")         # sin Retry-After: hay que comprar
+    if r.cruce:                                           # esta reserva cruzó el umbral de recarga
+        await kafka.publicar("cruces", clave=org, valor={"org": org, "version": r.cruce})
+    reservado, gastado = TRAMO, 0
+    try:
+        async for trozo in flota.generar(req):
+            gastado = costo_nano(trozo.uso, req.precios)  # el mismo rating del M21, sin redondear
+            if gastado &gt; reservado - TRAMO // 5:          # queda menos del 20 % del tramo
+                if not await saldo.extender(org, req.id, TRAMO):
+                    yield evento_error("insufficient_balance")
+                    break                                 # se cobra lo usado hasta acá
+                reservado += TRAMO
+            yield trozo
+    finally:
+        await saldo.cerrar(org, req.id, gastado)          # el script CERRAR
+        await emitir_uso(req)                             # spool local y Kafka, como en el M21</code></pre>
+        <p>A 400 requests por segundo, entre reservas, cierres y extensiones son unas 880 operaciones por segundo por región: nada para Valkey, que atiende decenas de miles por segundo en un nodo (<a href="m04-cache.html">M04</a>). La reserva se pide cuando la request ya pasó el limitador de cuotas.</p>
+        <p><b>El cruce del umbral se detecta dentro del script.</b> Solo la reserva que lleva el saldo de "arriba del umbral" a "debajo" lo ve: marca el cruce con su versión en el mismo hash, en la misma operación atómica que el descuento, y el gateway lo publica en el tópico <code>cruces</code> de Kafka. Si el gateway muere entre las dos cosas, un barrido que corre cada minuto sobre las organizaciones con recarga activa encuentra el campo <code>cruce</code> sin su recarga y lo publica. Publicar dos veces no hace daño, porque la recarga se identifica por la versión (más abajo). Así se arregla lo que causó los dos cobros del piloto: dos gateways leían el saldo, los dos veían el cruce y los dos cobraban con claves distintas.</p>
+        <p><b>Cómo entran las compras al saldo caliente.</b> Un proyector consume el outbox del ledger y aplica cada cambio una sola vez, comparando el <code>tx_id</code> con el campo <code>seq</code>: si el asiento ya se aplicó, no hace nada. El uso no se aplica, porque el gateway ya lo descontó. Cada hora, la conciliación comprueba la cuenta:</p>
+        <p class="no-autolink" style="text-align:center"><code>saldo caliente = saldo del ledger − uso todavía sin asentar − reservas abiertas</code></p>
+        <p>La diferencia que pasa de 1 centavo por organización se corrige en el saldo caliente, porque el ledger gana, y se cuenta en una métrica: si crece, hay un bug en el gateway o en el proyector.</p>
+
+        <h4>Si Valkey no responde</h4>
+        <p>Valkey es la única pieza que el gateway necesita para atender a un cliente prepago, así que su caída tiene que tener un costo acotado. Cada gateway guarda en memoria, actualizada cada 30 s, una marca por organización: <b>saldo holgado</b>, que significa que el saldo alcanza para 20 minutos del gasto máximo que permiten las cuotas de su nivel.</p>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Nivel</th><th class="r">Gasto máximo por minuto</th><th class="r">Holgado desde</th></tr></thead>
+            <tbody>
+              <tr><td>1 (cuentas nuevas)</td><td class="r">1 USD</td><td class="r">20 USD</td></tr>
+              <tr><td>2</td><td class="r">5 USD</td><td class="r">100 USD</td></tr>
+              <tr><td>3</td><td class="r">20 USD</td><td class="r">400 USD</td></tr>
+              <tr><td>4</td><td class="r">50 USD</td><td class="r">1&#8239;000 USD</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Con Valkey caído, las organizaciones holgadas se atienden a ciegas hasta 10 minutos por región. Con las dos regiones a ciegas a la vez son 20 minutos del gasto máximo, que el saldo cubre: la exposición es cero. Las demás organizaciones prepago reciben un 503 con <code>Retry-After</code>, porque no hicieron nada mal y el problema es del proveedor; nunca un 402 ni un 429 (<a href="m18-cuotas-tokens.html#admision">M18</a>). Los clientes de pospago no dependen del saldo y siguen sin cambios. Al volver Valkey, el saldo de cada organización se reconstruye desde el ledger y el metering, y se descuentan por precaución los tramos que pudieran haber quedado en vuelo.</p>
+
+        <h3>La compra desde la consola</h3>
+        <ol class="steps">
+          <li><span class="step-title">El navegador genera la clave</span>Al abrir el formulario, la consola crea un UUID y lo manda como <code>Idempotency-Key</code> en cada intento de esa compra. Un doble clic o un reintento del navegador repiten la clave, y el servidor devuelve la misma compra.</li>
+          <li><span class="step-title">La API registra la compra</span>Comprueba los límites (mínimo de 10 USD y 100 USD en los primeros 7 días de la cuenta) y guarda la compra con la clave del navegador, en una transacción que bloquea la fila de la organización.</li>
+          <li><span class="step-title">La API crea el PaymentIntent</span>Con su propia idempotency key, <code>compra:{id}</code>, pide 3D Secure en la primera compra de la cuenta y guarda la tarjeta para cobrarla después sin el cliente (<code>setup_future_usage</code>). Devuelve el <code>client_secret</code>.</li>
+          <li><span class="step-title">El navegador confirma con Stripe</span>Los datos de la tarjeta van del formulario de Stripe Elements directo a Stripe, y si el banco pide 3D Secure el desafío aparece ahí mismo. Los servidores de la empresa nunca ven un número de tarjeta.</li>
+          <li><span class="step-title">El ledger acredita</span>Llegan dos avisos: la consola llama a <code>POST …/{id}/sync</code>, que vuelve a leer el PaymentIntent, y el webhook <code>payment_intent.succeeded</code> llega segundos después. Los dos intentan el mismo asiento, con <code>source_ref</code> <code>pi_…:captura</code>, y solo uno lo escribe.</li>
+        </ol>
+
+        <div class="endpoint">
+          <div class="ep-head">
+            <span class="ep-method" data-m="POST">POST</span>
+            <code class="ep-path">/v1/billing/credit_purchases</code>
+            <span class="badge badge--ref">Diseño de referencia</span>
+          </div>
+          <p class="ep-desc">Crea una compra de créditos. Lo llama la consola con la sesión de un usuario con el rol de administrador de facturación, nunca con una API key.</p>
+          <div class="ep-body">
+            <p class="ep-sec">Request</p>
+<pre data-lang="http"><code>POST /v1/billing/credit_purchases HTTP/1.1
+Cookie: sesion=…
+Idempotency-Key: 6f1c2a9e-3b7d-4c55-9a0e-1d2f3e4a5b6c
+Content-Type: application/json
+
+{"amount_cents": 5000}</code></pre>
+            <p class="ep-sec">Respuesta 201</p>
+<pre data-lang="json"><code>{
+  "id": "cp_88412",
+  "status": "requires_confirmation",
+  "amount_cents": 5000,
+  "client_secret": "pi_3Qa…_secret_…"
+}</code></pre>
+            <p class="ep-sec">Códigos de respuesta</p>
+            <ul class="ep-responses">
+              <li><span class="st st--2xx">201</span><span>Compra creada; el navegador la confirma con Stripe Elements.</span></li>
+              <li><span class="st st--2xx">200</span><span>La misma clave otra vez: devuelve la compra que ya existía.</span></li>
+              <li><span class="st st--4xx">400</span><span><code>amount_too_small</code>: menos de 10 USD.</span></li>
+              <li><span class="st st--4xx">409</span><span><code>idempotency_key_reused</code>: la clave ya se usó con otro monto.</span></li>
+              <li><span class="st st--4xx">422</span><span><code>new_account_purchase_limit</code>: la cuenta tiene menos de 7 días y pasaría de 100 USD.</span></li>
+              <li><span class="st st--4xx">429</span><span>Demasiados intentos fallidos en la sesión o demasiadas tarjetas distintas en el día.</span></li>
+            </ul>
+          </div>
+        </div>
+
+<pre data-lang="sql"><code>CREATE TABLE credit_purchases (
+  id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  org_id          text   NOT NULL,
+  idempotency_key text   NOT NULL,              -- la que mandó el navegador
+  amount_cents    bigint NOT NULL CHECK (amount_cents &gt;= 1000),
+  payment_intent  text UNIQUE,
+  state           text NOT NULL DEFAULT 'creada'
+                  CHECK (state IN ('creada', 'pagada', 'fallida', 'reembolsada', 'disputada')),
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (org_id, idempotency_key)
+);</code></pre>
+<pre data-lang="python"><code>import stripe
+
+MINIMO = 1_000                      # 10 USD en centavos
+TOPE_CUENTA_NUEVA = 10_000          # 100 USD en los primeros 7 días
+
+def crear_compra(db, org, clave_navegador: str, centavos: int) -&gt; dict:
+    if centavos &lt; MINIMO:
+        raise ErrorApi(400, "amount_too_small")
+    with db.transaction():
+        # Bloquear la organización serializa sus compras: dos pestañas no pueden pasar
+        # juntas el tope de la cuenta nueva leyendo el mismo total (M05).
+        db.execute("SELECT 1 FROM orgs WHERE id = $1 FOR UPDATE", org.id)
+        compra = db.fetchrow("SELECT * FROM credit_purchases WHERE org_id = $1 AND idempotency_key = $2",
+                             org.id, clave_navegador)
+        if compra is None:
+            if org.edad_dias &lt; 7 and comprado_en_7_dias(db, org.id) + centavos &gt; TOPE_CUENTA_NUEVA:
+                raise ErrorApi(422, "new_account_purchase_limit")
+            compra = db.fetchrow("""INSERT INTO credit_purchases (org_id, idempotency_key, amount_cents)
+                                    VALUES ($1, $2, $3) RETURNING *""", org.id, clave_navegador, centavos)
+        elif compra["amount_cents"] != centavos:
+            raise ErrorApi(409, "idempotency_key_reused")
+    if compra["payment_intent"]:
+        # Stripe puede olvidar una clave después de 24 h: si ya hay PaymentIntent, se relee.
+        pi = stripe.PaymentIntent.retrieve(compra["payment_intent"])
+    else:
+        pi = stripe.PaymentIntent.create(
+            amount=centavos, currency="usd", customer=org.stripe_customer,
+            setup_future_usage="off_session",               # la tarjeta queda para la recarga automática
+            payment_method_options={"card": {
+                "request_three_d_secure": "automatic" if org.tiene_compras_pagadas else "any"}},
+            metadata={"org_id": org.id, "purchase_id": str(compra["id"])},
+            idempotency_key=f"compra:{compra['id']}",       # el mismo PaymentIntent en cada reintento
+        )
+        db.execute("UPDATE credit_purchases SET payment_intent = $2 WHERE id = $1", compra["id"], pi.id)
+    return {"id": f"cp_{compra['id']}", "status": pi.status, "amount_cents": centavos,
+            "client_secret": pi.client_secret}</code></pre>
+        <p>Hay dos claves y cada una protege un tramo distinto. La del navegador evita dos compras por un doble clic; la de Stripe, <code>compra:{id}</code>, evita dos PaymentIntents si el servidor se cae entre la llamada a Stripe y el <code>UPDATE</code>. La llamada a Stripe va fuera de la transacción: nunca se sostiene un bloqueo de la base mientras se espera a un tercero. Con Stripe Elements, los datos de la tarjeta nunca pasan por los servidores de la empresa, y el alcance de PCI queda en el cuestionario más corto, el SAQ A (<a href="m27-pagos-stripe.html#pci">M27</a>). <span class="badge badge--doc">Documentado</span></p>
+
+        <h3>La recarga automática</h3>
+        <p>El cliente configura un umbral y un monto: por ejemplo, recargar 50 USD cuando el saldo baja de 10. La recarga se cobra sin el cliente presente, con la tarjeta que guardó la primera compra.</p>
+        <figure class="figure">
+          <div class="figure-frame">
+<svg viewBox="0 0 770 572" role="img" aria-labelledby="fcp3t fcp3d">
+<title id="fcp3t">La recarga automática paso a paso</title>
+<desc id="fcp3d">El gateway reserva un tramo y el saldo cruza el umbral de 10 USD. El servicio de saldo avisa al de pagos por un outbox, con la versión del saldo. El servicio de pagos registra un solo intento por versión y crea el PaymentIntent en Stripe con una idempotency key derivada de esa versión. La conexión se corta, el worker reintenta con la misma clave y Stripe devuelve la misma respuesta, sin cobrar dos veces. El servicio de pagos asienta la captura en el ledger; el webhook que llega después intenta el mismo asiento, choca con la clave única y no lo duplica. El ledger acredita los 50 USD en el saldo caliente.</desc>
+<defs><marker id="fcp3-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fcp3-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fcp3-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fcp3-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="11.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Gateway</text>
+<path class="dg-frame" d="M70.0 40 V514"/>
+<rect class="dg-box" x="137.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="196.0" y="29" text-anchor="middle" style="font-size:13.5px">Saldo</text>
+<path class="dg-frame" d="M196.0 40 V514"/>
+<rect class="dg-box" x="263.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="322.0" y="29" text-anchor="middle" style="font-size:13.5px">Pagos</text>
+<path class="dg-frame" d="M322.0 40 V514"/>
+<rect class="dg-box" x="389.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="448.0" y="29" text-anchor="middle" style="font-size:13.5px">Stripe</text>
+<path class="dg-frame" d="M448.0 40 V514"/>
+<rect class="dg-box" x="515.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="574.0" y="29" text-anchor="middle" style="font-size:13.5px">Webhooks</text>
+<path class="dg-frame" d="M574.0 40 V514"/>
+<rect class="dg-box" x="641.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Ledger</text>
+<path class="dg-frame" d="M700.0 40 V514"/>
+<path class="dg-edge" d="M73.0 72 L191.0 72" marker-end="url(#fcp3-a)"/>
+<rect x="21.400000000000006" y="55" width="223.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="133.0" y="66" text-anchor="middle">reserva un tramo de 0.05 (org_7)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M193.0 106 L75.0 106" marker-end="url(#fcp3-r)"/>
+<rect x="34.60000000000001" y="89" width="196.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="133.0" y="100" text-anchor="middle">ok: quedan 9.95 (umbral: 10)</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M199.0 140 L317.0 140" marker-end="url(#fcp3-q)"/>
+<rect x="137.5" y="123" width="243.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="259.0" y="134" text-anchor="middle">umbral cruzado en v4182 (por Kafka)</text>
+<rect x="332.0" y="160" width="360" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="342.0" y="176">un intento por versión: INSERT … ON CONFLICT DO NOTHING</text>
+<path class="dg-edge" d="M325.0 208 L443.0 208" marker-end="url(#fcp3-a)"/>
+<rect x="151.3" y="191" width="467.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="202" text-anchor="middle">POST /v1/payment_intents · Idempotency-Key: org_7:recarga:saldo-v4182</text>
+<path d="M20 240 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="229" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="244" text-anchor="middle" style="fill:var(--fail)">se corta la conexión; el worker reintenta</text>
+<path class="dg-edge" d="M325.0 276 L443.0 276" marker-end="url(#fcp3-a)"/>
+<rect x="273.4" y="259" width="223.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">el mismo POST con la misma clave</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M445.0 310 L327.0 310" marker-end="url(#fcp3-r)"/>
+<rect x="233.8" y="293" width="302.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="304" text-anchor="middle">200 · pi_3Qa… succeeded (la misma respuesta)</text>
+<path class="dg-edge" d="M325.0 344 L695.0 344" marker-end="url(#fcp3-a)"/>
+<rect x="379.6" y="327" width="262.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="511.0" y="338" text-anchor="middle">asiento con source_ref pi_3Qa…:captura</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M451.0 378 L569.0 378" marker-end="url(#fcp3-q)"/>
+<rect x="389.5" y="361" width="243.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="511.0" y="372" text-anchor="middle">payment_intent.succeeded (evt_1Rb…)</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M577.0 412 L695.0 412" marker-end="url(#fcp3-f)"/>
+<rect x="525.4" y="395" width="223.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="637.0" y="406" text-anchor="middle">choca con source_ref: no duplica</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M697.0 446 L201.0 446" marker-end="url(#fcp3-q)"/>
+<rect x="346.3" y="429" width="203.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="448.0" y="440" text-anchor="middle">saldo + 50 USD, versión v4183</text>
+<rect class="dg-box dg-box--em" x="11.0" y="526" width="118.0" height="38" rx="4"/>
+<text class="dg-small" x="70.0" y="542" text-anchor="middle" style="font-weight:700">gw-use1-14</text>
+<text class="dg-tiny" x="70.0" y="557" text-anchor="middle">reserva tramos</text>
+<rect class="dg-box dg-box--em" x="137.0" y="526" width="118.0" height="38" rx="4"/>
+<text class="dg-small" x="196.0" y="542" text-anchor="middle" style="font-weight:700">Valkey</text>
+<text class="dg-tiny" x="196.0" y="557" text-anchor="middle">saldo en caliente</text>
+<rect class="dg-box dg-box--em" x="263.0" y="526" width="118.0" height="38" rx="4"/>
+<text class="dg-small" x="322.0" y="542" text-anchor="middle" style="font-weight:700">worker</text>
+<text class="dg-tiny" x="322.0" y="557" text-anchor="middle">recargas</text>
+<rect class="dg-box dg-box--em" x="389.0" y="526" width="118.0" height="38" rx="4"/>
+<text class="dg-small" x="448.0" y="542" text-anchor="middle" style="font-weight:700">API</text>
+<text class="dg-tiny" x="448.0" y="557" text-anchor="middle">PaymentIntents</text>
+<rect class="dg-box dg-box--em" x="515.0" y="526" width="118.0" height="38" rx="4"/>
+<text class="dg-small" x="574.0" y="542" text-anchor="middle" style="font-weight:700">receptor</text>
+<text class="dg-tiny" x="574.0" y="557" text-anchor="middle">firma y dedupe</text>
+<rect class="dg-box dg-box--em" x="641.0" y="526" width="118.0" height="38" rx="4"/>
+<text class="dg-small" x="700.0" y="542" text-anchor="middle" style="font-weight:700">Aurora</text>
+<text class="dg-tiny" x="700.0" y="557" text-anchor="middle">asientos</text>
+</svg>
+          </div>
+          <figcaption><b>Figura C.3.</b> Una recarga con un corte de red en el medio. La versión del saldo en el momento del cruce da la clave de la recarga; el reintento con la misma clave recibe la misma respuesta de Stripe; el webhook que llega después choca con el asiento que ya existe. Hay un solo cobro y un solo asiento. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+        </figure>
+<pre data-lang="sql"><code>CREATE TABLE recharges (
+  id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  org_id         text   NOT NULL,
+  clave          text   NOT NULL UNIQUE,        -- 'org_7:recarga:saldo-v4182': una recarga por cruce
+  amount_cents   bigint NOT NULL,
+  attempt        int    NOT NULL DEFAULT 1,     -- forma la idempotency key de Stripe
+  payment_intent text,
+  state          text   NOT NULL DEFAULT 'pendiente'
+                 CHECK (state IN ('pendiente', 'pagada', 'rechazada', 'requiere_accion')),
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+-- Como mucho una recarga abierta por organización, aunque lleguen dos cruces seguidos.
+CREATE UNIQUE INDEX una_recarga_abierta ON recharges (org_id) WHERE state = 'pendiente';</code></pre>
+<pre data-lang="python"><code>MAX_RECARGAS_DIA = 3
+
+def procesar_cruce(db, org_id: str, version: int):
+    """Consume el tópico cruces. Llega al menos una vez: la clave hace el resto."""
+    org = cargar_org(db, org_id)
+    if not org.recarga.activa:
+        return
+    with db.transaction():
+        if recargas_de_hoy(db, org_id) &gt;= MAX_RECARGAS_DIA:
+            pausar_recarga(db, org_id, motivo="tope_diario")      # un bug o un abuso no cobra sin fin
+            notificar(org_id, "recharge.paused")
+            return
+        r = db.fetchrow("""INSERT INTO recharges (org_id, clave, amount_cents)
+                           VALUES ($1, $2, $3)
+                           ON CONFLICT DO NOTHING RETURNING *""",
+                        org_id, f"{org_id}:recarga:saldo-v{version}", org.recarga.monto_centavos)
+    if r is not None:          # None: este cruce ya tiene recarga, o hay otra abierta
+        cobrar_recarga(db, r, org)
+
+def cobrar_recarga(db, r, org):
+    try:
+        pi = stripe.PaymentIntent.create(
+            amount=r["amount_cents"], currency="usd",
+            customer=org.stripe_customer, payment_method=org.metodo_guardado,
+            off_session=True, confirm=True,                       # sin el cliente presente
+            metadata={"org_id": r["org_id"], "recharge": r["clave"]},
+            expand=["latest_charge.balance_transaction"],         # la comisión real, para el asiento
+            idempotency_key=f"{r['clave']}:intento-{r['attempt']}",
+        )
+    except stripe.CardError as e:
+        estado = "requiere_accion" if e.error.code == "authentication_required" else "rechazada"
+        db.execute("UPDATE recharges SET state = $2 WHERE id = $1", r["id"], estado)
+        pausar_recarga(db, r["org_id"], motivo=estado)
+        notificar(r["org_id"], "recharge.requires_action" if estado == "requiere_accion" else "recharge.failed")
+        return
+    # Un corte de red o un 5xx no se atrapan aquí: el worker reintenta y repite la misma clave.
+    bt = pi.latest_charge.balance_transaction
+    if bt is not None:                                            # si todavía no existe, asienta el webhook
+        acreditar(db, pi, comision_centavos=bt.fee, origen="recarga")   # postear() con source_ref pi_…:captura
+    db.execute("UPDATE recharges SET state = 'pagada', payment_intent = $2 WHERE id = $1", r["id"], pi.id)</code></pre>
+        <p><b>Por qué la clave sale de la versión del saldo.</b> Una clave aleatoria se genera en cada proceso: dos workers que procesan el mismo cruce generan dos claves y cobran dos veces, que es lo que pasó en el piloto. La versión es determinista, así que cualquier proceso que vea el cruce v4182 llega a la misma clave. Y es distinta para cada cruce legítimo: después de la recarga el saldo sube, la próxima vez que baje del umbral la versión será otra, y esa recarga sí tiene que cobrarse. El tope de tres recargas por día corta el caso que nada de esto ve: un bug que haga cruzar el umbral en bucle.</p>
+        <p>Stripe guarda el código y el cuerpo de la primera respuesta a una clave una vez que la request empezó a ejecutarse, incluso si fue un 500, y cualquier reintento con esa clave recibe la misma respuesta. No la guarda si los parámetros no pasaron la validación o si chocó con otra request concurrente con la misma clave, y puede olvidar la clave pasadas 24 horas. Si los parámetros de un reintento no coinciden con los del original, responde con un error. <span class="badge badge--doc">Documentado</span> De ahí sale la tabla:</p>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Lo que devuelve Stripe</th><th>Qué hace el worker</th><th>Clave del intento siguiente</th></tr></thead>
+            <tbody>
+              <tr><td>El cobro salió bien</td><td>Asienta y marca la recarga como pagada</td><td>No hay intento siguiente</td></tr>
+              <tr><td>Se corta la red, timeout o 5xx</td><td>Reintenta con backoff y jitter (<a href="m08-resiliencia.html#reintentos">M08</a>)</td><td>La misma: si el cobro se hizo, Stripe devuelve ese resultado</td></tr>
+              <tr><td><code>card_declined</code></td><td>Marca la recarga como rechazada, la pausa y avisa con <code>recharge.failed</code></td><td><code>…:intento-2</code>, cuando el cliente cambia la tarjeta; con la misma clave Stripe repetiría el rechazo</td></tr>
+              <tr><td><code>authentication_required</code></td><td>Marca la recarga como que necesita una acción y avisa con un enlace para autenticar en la consola</td><td><code>…:intento-2</code>, ya con el cliente presente</td></tr>
+              <tr><td>Error de idempotencia por parámetros distintos</td><td>No reintenta: es un bug. Alerta a la guardia</td><td>Ninguna hasta corregirlo</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>La regulación europea de autenticación reforzada (SCA, <a href="m27-pagos-stripe.html#sca">M27</a>) permite que el banco pida autenticar incluso un cobro sin el cliente presente. Por eso el estado <code>requiere_accion</code> existe y la recarga se pausa en lugar de reintentar: reintentar sin el cliente daría el mismo error.</p>
+
+        <h3>El pospago y el dunning</h3>
+        <p>Las 3&#8239;000 empresas de pospago no tienen saldo: su uso se asienta por hora en <code>por_facturar:{org}</code> y se factura el día 1 a las 06:00 UTC, cuando las horas del mes ya se conciliaron (<a href="m21-metering.html#factura">M21</a>). Un ejemplo con la organización org_3, que firmó un contrato con un 20&#8239;% de descuento y un compromiso mínimo de 20&#8239;000 USD por mes:</p>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Línea de la factura de octubre</th><th>De dónde sale</th><th class="r">USD</th></tr></thead>
+            <tbody>
+              <tr><td>Uso a precio de lista</td><td>El rating del M21, un redondeo por línea</td><td class="r">31&#8239;250.00</td></tr>
+              <tr><td>Descuento de contrato, 20&#8239;%</td><td>El precio con <code>scope = org:org_3</code></td><td class="r">−6&#8239;250.00</td></tr>
+              <tr><td>Subtotal</td><td>Supera el compromiso de 20&#8239;000: no hay línea de mínimo</td><td class="r">25&#8239;000.00</td></tr>
+              <tr><td>Ajuste por un evento contado dos veces en septiembre</td><td>Línea negativa que cita el <code>event_id</code> (<a href="m21-metering.html#correcciones">M21</a>)</td><td class="r">−12.40</td></tr>
+              <tr><td>Crédito por incumplir el SLA de octubre</td><td>Nota de crédito y asiento en <code>gasto:creditos_sla</code></td><td class="r">−250.00</td></tr>
+              <tr><td><b>Total</b></td><td></td><td class="r"><b>24&#8239;737.60</b></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Movimiento</th><th>Cuenta</th><th class="r">USD</th></tr></thead>
+            <tbody>
+              <tr><td rowspan="2">Una hora del pico, a precio de contrato</td><td><code>por_facturar:org_3</code></td><td class="r">+41.875</td></tr>
+              <tr><td><code>ingresos:uso:05</code></td><td class="r">−41.875</td></tr>
+              <tr><td rowspan="4">Factura emitida</td><td><code>por_cobrar:org_3</code></td><td class="r">+24&#8239;737.60</td></tr>
+              <tr><td><code>ingresos:ajustes</code></td><td class="r">+12.40</td></tr>
+              <tr><td><code>gasto:creditos_sla</code></td><td class="r">+250.00</td></tr>
+              <tr><td><code>por_facturar:org_3</code></td><td class="r">−25&#8239;000.00</td></tr>
+              <tr><td rowspan="3">Factura pagada por débito ACH</td><td><code>stripe:pendiente</code></td><td class="r">+24&#8239;732.60</td></tr>
+              <tr><td><code>gasto:comisiones_pago</code></td><td class="r">+5.00</td></tr>
+              <tr><td><code>por_cobrar:org_3</code></td><td class="r">−24&#8239;737.60</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><b>El medio de pago importa más que cualquier optimización.</b> El débito ACH cuesta el 0.8&#8239;% con un tope de 5 USD, y la tarjeta el 2.9&#8239;% más 0.30. <span class="badge badge--doc">Documentado</span> Para esta factura son 5.00 USD contra 717.69. Por eso el contrato de pospago pide débito bancario o transferencia, y la tarjeta queda para las facturas chicas. Stripe Billing cobra además el 0.7&#8239;% del volumen facturado: 20&#8239;344.80 USD por mes sobre los 2.9 millones del pospago. <span class="badge badge--doc">Documentado</span> Es la línea <code>stripe_fee</code> que aparece en la conciliación.</p>
+<pre data-lang="sql"><code>CREATE TABLE invoices (
+  id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  org_id         text   NOT NULL,
+  period         text   NOT NULL,                -- '2026-10'
+  total_cents    bigint NOT NULL,
+  stripe_invoice text UNIQUE,
+  state          text   NOT NULL DEFAULT 'borrador'
+                 CHECK (state IN ('borrador', 'emitida', 'pagada', 'incobrable')),
+  UNIQUE (org_id, period)                        -- una factura por organización y mes
+);</code></pre>
+<pre data-lang="python"><code>def cerrar_factura(db, org_id: str, mes: str):
+    """Corre el día 1 a las 06:00 UTC. Se puede correr dos veces sin emitir dos facturas."""
+    lineas = calcular_lineas(db, org_id, mes)      # rate_line del M21, en un orden fijo
+    total = sum(l.centavos for l in lineas)
+    previo = total_del_mes_anterior(db, org_id, mes)
+    if previo and not (previo // 2 &lt;= total &lt;= previo * 2):
+        abrir_revision(org_id, mes, total, previo)  # el doble o la mitad: una persona lo mira antes
+        return
+    f = db.fetchrow("""INSERT INTO invoices (org_id, period, total_cents) VALUES ($1, $2, $3)
+                       ON CONFLICT (org_id, period) DO UPDATE SET period = EXCLUDED.period
+                       RETURNING *""", org_id, mes, total)     # devuelve la fila aunque ya existiera
+    if f["state"] != "borrador":
+        return
+    base = f"factura:{org_id}:{mes}"                            # factura:org_3:2026-10
+    cliente = cliente_stripe(db, org_id)
+    inv = stripe.Invoice.create(
+        customer=cliente, collection_method="charge_automatically",
+        pending_invoice_items_behavior="exclude",              # solo las líneas de este cierre
+        auto_advance=False, metadata={"org_id": org_id, "period": mes},
+        idempotency_key=base,
+    )
+    for i, l in enumerate(lineas, start=1):
+        stripe.InvoiceItem.create(
+            customer=cliente, invoice=inv.id, currency="usd",
+            amount=l.centavos, description=l.descripcion,
+            idempotency_key=f"{base}:linea-{i}",
+        )
+    stripe.Invoice.finalize_invoice(inv.id, idempotency_key=f"{base}:finalizar")
+    postear(db, base, "factura", fin_de_mes(mes), asiento_de_factura(org_id, lineas))
+    db.execute("UPDATE invoices SET stripe_invoice = $2, state = 'emitida' WHERE id = $1", f["id"], inv.id)</code></pre>
+        <p>La factura la arma la empresa y Stripe solo la cobra: el rating y los precios viven en un solo lugar (M21), y Stripe recibe líneas ya calculadas, cada una con su clave. Si el job se cae a mitad de las líneas, la segunda corrida repite las mismas claves y Stripe no duplica nada. Después del cobro manda Stripe: los reintentos inteligentes (Smart Retries) eligen cuándo volver a intentar el débito. <span class="badge badge--doc">Documentado</span> Los estados de la cuenta, en cambio, los decide la empresa:</p>
+        <figure class="figure">
+          <div class="figure-frame">
+<svg viewBox="0 0 770 446" role="img" aria-labelledby="fcp4t fcp4d">
+<title id="fcp4t">Estados de facturación de una organización</title>
+<desc id="fcp4d">Dos máquinas de estados. A la izquierda, el prepago: con saldo, sobregiro hasta 5 USD y sin saldo, con la recarga o una compra que vuelven al primero. A la derecha, el pospago: al día, en mora cuando falla el cobro de la factura, restringida a los 7 días y suspendida a los 21, con el pago de la factura que vuelve a al día desde cualquiera. Debajo de cada estado, qué hace el gateway. Abajo, el estado congelada, al que se llega desde cualquier otro por una alerta temprana de fraude o una disputa por fraude, y que solo se deja con una revisión humana.</desc>
+<defs><marker id="fcp4a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker>
+</defs>
+<text class="dg-group" x="16" y="26" text-anchor="start">Prepago</text>
+<text class="dg-group" x="300" y="26" text-anchor="start">Pospago</text>
+<path class="dg-frame" d="M290 16 V330"/>
+<rect class="dg-ok" x="30" y="40" width="190" height="56" rx="10"/>
+<text class="dg-label" x="125" y="64" text-anchor="middle">Con saldo</text>
+<text class="dg-tiny" x="125" y="83" text-anchor="middle">atiende</text>
+<rect class="dg-warnbox" x="30" y="140" width="190" height="56" rx="10"/>
+<text class="dg-label" x="125" y="164" text-anchor="middle">Sobregiro</text>
+<text class="dg-tiny" x="125" y="183" text-anchor="middle">atiende hasta −5 USD</text>
+<rect class="dg-bad" x="30" y="240" width="190" height="56" rx="10"/>
+<text class="dg-label" x="125" y="264" text-anchor="middle">Sin saldo</text>
+<text class="dg-tiny dg-mono" x="125" y="283" text-anchor="middle">402 insufficient_balance</text>
+<path class="dg-edge" d="M125 98 V137" marker-end="url(#fcp4a)"/>
+<text class="dg-tiny" x="133" y="122" text-anchor="start">saldo &lt; 0</text>
+<path class="dg-edge" d="M125 198 V237" marker-end="url(#fcp4a)"/>
+<text class="dg-tiny" x="133" y="222" text-anchor="start">saldo &lt; −5</text>
+<path class="dg-edge" d="M222 268 H248 V68 H223" marker-end="url(#fcp4a)"/>
+<path class="dg-edge" d="M222 168 H248"/>
+<text class="dg-tiny" x="264" y="168" text-anchor="middle" transform="rotate(-90 264 168)">recarga o compra</text>
+<rect class="dg-ok" x="300" y="40" width="200" height="56" rx="10"/>
+<text class="dg-label" x="400" y="64" text-anchor="middle">Al día</text>
+<text class="dg-tiny" x="400" y="83" text-anchor="middle">atiende</text>
+<rect class="dg-warnbox" x="540" y="40" width="200" height="56" rx="10"/>
+<text class="dg-label" x="640" y="64" text-anchor="middle">En mora</text>
+<text class="dg-tiny" x="640" y="83" text-anchor="middle">atiende; reintentos</text>
+<rect class="dg-warnbox" x="540" y="160" width="200" height="56" rx="10"/>
+<text class="dg-label" x="640" y="184" text-anchor="middle">Restringida</text>
+<text class="dg-tiny" x="640" y="203" text-anchor="middle">tope de gasto reducido</text>
+<rect class="dg-bad" x="540" y="270" width="200" height="56" rx="10"/>
+<text class="dg-label" x="640" y="294" text-anchor="middle">Suspendida</text>
+<text class="dg-tiny dg-mono" x="640" y="313" text-anchor="middle">403 account_suspended</text>
+<path class="dg-edge" d="M502 58 H537" marker-end="url(#fcp4a)"/>
+<text class="dg-tiny dg-mono" x="520" y="28" text-anchor="middle">invoice.payment_failed</text>
+<path class="dg-feedback" d="M520 32 V54"/>
+<path class="dg-edge" d="M640 98 V157" marker-end="url(#fcp4a)"/>
+<text class="dg-tiny" x="648" y="132" text-anchor="start">día 7 sin pagar</text>
+<path class="dg-edge" d="M640 218 V267" marker-end="url(#fcp4a)"/>
+<text class="dg-tiny" x="648" y="246" text-anchor="start">día 21 sin pagar</text>
+<path class="dg-edge" d="M538 298 H400 V99" marker-end="url(#fcp4a)"/>
+<path class="dg-edge" d="M538 188 H400"/>
+<path class="dg-edge" d="M538 80 H503" marker-end="url(#fcp4a)"/>
+<text class="dg-tiny dg-mono" x="408" y="250" text-anchor="start">invoice.paid</text>
+<text class="dg-tiny" x="408" y="266" text-anchor="start">desde cualquiera</text>
+<rect class="dg-bad" x="30" y="352" width="710" height="70" rx="10" style="stroke-dasharray: 6 4"/>
+<text class="dg-label" x="385" y="376" text-anchor="middle">Congelada</text>
+<text class="dg-tiny" x="385" y="396" text-anchor="middle">desde cualquier estado, por una alerta temprana de fraude o una disputa por fraude</text>
+<text class="dg-tiny" x="385" y="412" text-anchor="middle">claves revocadas, lotes congelados; solo sale con una revisión humana</text>
+</svg>
+          </div>
+          <figcaption><b>Figura C.4.</b> Las dos máquinas de estados de una cuenta. En prepago, el saldo decide: se atiende hasta −5 USD y después se responde 402. En pospago, los días sin pagar: siete días después del primer cobro fallido se baja el tope de gasto, y a los 21 días se suspende. Cualquier cuenta pasa a congelada ante una alerta de fraude o una disputa por fraude, y solo sale con una revisión humana. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+        </figure>
+
+        <h3>El mapa de idempotencia</h3>
+        <p>Cada paso que puede repetirse tiene su clave, y cada clave vive donde se puede comprobar en la misma transacción que el efecto (<a href="m02-apis.html#idempotencia">M02</a>, <a href="m27-pagos-stripe.html#idempotencia">M27</a>):</p>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Paso</th><th>Clave</th><th>Dónde se comprueba</th><th>Qué evita</th></tr></thead>
+            <tbody>
+              <tr><td>Compra en la consola</td><td>UUID del navegador</td><td><code>credit_purchases (org_id, idempotency_key)</code></td><td>Dos compras por un doble clic</td></tr>
+              <tr><td>PaymentIntent de la compra</td><td><code>compra:{id}</code></td><td>Stripe, al menos 24 h</td><td>Dos cobros si el servidor se cae a mitad</td></tr>
+              <tr><td>Cruce del umbral</td><td>Versión del saldo</td><td>El script de Lua, atómico</td><td>Dos gateways que ven el mismo cruce</td></tr>
+              <tr><td>Recarga</td><td><code>org_7:recarga:saldo-v4182</code></td><td><code>recharges.clave UNIQUE</code></td><td>Dos workers con el mismo cruce</td></tr>
+              <tr><td>PaymentIntent de la recarga</td><td><code>{clave}:intento-{n}</code></td><td>Stripe</td><td>Dos cobros por un corte de red</td></tr>
+              <tr><td>Evento de uso</td><td><code>event_id</code> determinista</td><td>La deduplicación del M21</td><td>Uso contado dos veces por un reintento del gateway (<a href="m21-metering.html#dedupe-id">M21</a>)</td></tr>
+              <tr><td>Asiento de uso</td><td><code>uso:{org}:{hora}:v{n}</code></td><td><code>ledger_transactions.source_ref</code></td><td>Una hora asentada dos veces por un reproceso</td></tr>
+              <tr><td>Asiento de Stripe</td><td><code>pi_…:captura</code>, <code>re_…</code>, <code>dp_…:abierta</code></td><td><code>ledger_transactions.source_ref</code></td><td>Webhook, camino síncrono y barrido que llegan al mismo asiento</td></tr>
+              <tr><td>Evento de Stripe</td><td><code>evt_…</code></td><td><code>stripe_events</code></td><td>Reentregas del mismo evento</td></tr>
+              <tr><td>Factura</td><td><code>factura:{org}:{mes}</code> y <code>:linea-{n}</code></td><td><code>invoices (org_id, period)</code> y Stripe</td><td>Un cierre corrido dos veces</td></tr>
+              <tr><td>Webhook al cliente</td><td><code>whe_…</code></td><td>El receptor del cliente</td><td>Nuestras reentregas</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Los webhooks que entran</h3>
+        <p>El receptor hace lo mínimo y responde rápido: verifica la firma sobre el cuerpo crudo, guarda el evento si es nuevo y deja el trabajo a un worker por un outbox. Stripe pide justamente eso: responder con un 2xx antes de cualquier lógica compleja, porque reintenta lo que no respondió a tiempo, durante hasta tres días en modo live. <span class="badge badge--doc">Documentado</span></p>
+<pre data-lang="python"><code>@app.post("/hooks/stripe")
+async def recibir(request):
+    cuerpo = await request.body()                       # los bytes crudos: la firma es sobre ellos
+    try:
+        evento = stripe.Webhook.construct_event(         # HMAC-SHA256 y 5 minutos de tolerancia
+            cuerpo, request.headers.get("Stripe-Signature", ""), SECRETO_WEBHOOK)
+    except (ValueError, stripe.SignatureVerificationError):
+        return Response(status_code=400)
+    async with db.transaction():
+        nuevo = await db.fetchval("""
+            INSERT INTO stripe_events (event_id, type, object_id, created)
+            VALUES ($1, $2, $3, to_timestamp($4))
+            ON CONFLICT DO NOTHING RETURNING event_id""",
+            evento.id, evento.type, evento.data.object.id, evento.created)
+        if nuevo:
+            await db.execute("INSERT INTO outbox (topic, key, payload) VALUES ('stripe', $1, $2)",
+                             evento.data.object.id, {"event_id": evento.id, "type": evento.type})
+    return Response(status_code=200)</code></pre>
+<pre data-lang="sql"><code>CREATE TABLE stripe_events (
+  event_id     text PRIMARY KEY,                -- evt_…: deduplica las reentregas y el barrido
+  type         text NOT NULL,
+  object_id    text NOT NULL,                   -- pi_…, in_…, dp_…: el worker lo vuelve a leer
+  created      timestamptz NOT NULL,
+  received_at  timestamptz NOT NULL DEFAULT now(),
+  processed_at timestamptz                      -- NULL: pendiente; la alerta mira cuántos y desde cuándo
+);</code></pre>
+        <p><b>El worker no confía en el orden ni en la foto del evento.</b> Stripe no garantiza que los eventos lleguen en el orden en que se generaron, y a veces genera dos eventos distintos para el mismo cambio; recomienda deduplicar por id del evento y, para esos casos, por el objeto y el tipo. <span class="badge badge--doc">Documentado</span> Por eso el worker vuelve a leer el objeto con la API y actúa según su estado actual, y el asiento se deduplica por <code>source_ref</code>, que nombra el objeto y no el evento. Un <code>charge.dispute.closed</code> que llega antes que el <code>created</code> encuentra la disputa ya cerrada al leerla, asienta la apertura y el cierre, y cuando llega el <code>created</code> ya no tiene nada que hacer.</p>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Evento</th><th>Qué hace el worker</th><th><code>source_ref</code> del asiento</th></tr></thead>
+            <tbody>
+              <tr><td><code>payment_intent.succeeded</code></td><td>Acredita la compra o la recarga y crea el lote</td><td><code>pi_…:captura</code></td></tr>
+              <tr><td><code>charge.refunded</code></td><td>Asienta el reembolso y cierra el lote</td><td><code>re_…</code></td></tr>
+              <tr><td><code>radar.early_fraud_warning.created</code></td><td>Congela la cuenta y decide si reembolsar (más abajo)</td><td><code>re_…:fraude</code>, si reembolsa</td></tr>
+              <tr><td><code>charge.dispute.created</code></td><td>Congela la cuenta, asienta el retiro y junta la evidencia</td><td><code>dp_…:abierta</code></td></tr>
+              <tr><td><code>charge.dispute.closed</code></td><td>Si se ganó, revierte el retiro</td><td><code>dp_…:cerrada</code></td></tr>
+              <tr><td><code>invoice.paid</code></td><td>Asienta el cobro y pasa la cuenta a al día</td><td><code>in_…:pago</code></td></tr>
+              <tr><td><code>invoice.payment_failed</code></td><td>Pasa la cuenta a en mora y avisa</td><td>Sin asiento</td></tr>
+              <tr><td><code>payout.paid</code> y <code>payout.failed</code></td><td>Asienta el payout o lo revierte, y alerta si falló</td><td><code>po_…</code>, <code>po_…:fallido</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>El paso de <code>stripe:pendiente</code> a <code>stripe:disponible</code> no tiene webhook propio: un job diario lee las balance transactions cuya fecha <code>available_on</code> ya pasó y asienta el movimiento, con el id de la balance transaction como <code>source_ref</code>.</p>
+        <p><b>El barrido.</b> Un webhook puede perderse: el receptor estaba caído más de tres días, o alguien deshabilitó el endpoint. Cada 10 minutos, un job lista los eventos de la última hora y media con la API y los pasa por el mismo <code>INSERT … ON CONFLICT</code>. La API lista eventos de los últimos 30 días. <span class="badge badge--doc">Documentado</span></p>
+<pre data-lang="python"><code>TIPOS = ["payment_intent.succeeded", "charge.refunded", "charge.dispute.created",
+         "charge.dispute.closed", "radar.early_fraud_warning.created",
+         "invoice.paid", "invoice.payment_failed", "payout.paid", "payout.failed"]
+
+def barrer(db, ahora: int):
+    desde = ahora - 90 * 60                    # 10 minutos de período más una hora de solapamiento
+    for evento in stripe.Event.list(created={"gte": desde}, types=TIPOS, limit=100).auto_paging_iter():
+        guardar_si_es_nuevo(db, evento)        # el mismo INSERT … ON CONFLICT del receptor</code></pre>
+        <p>Rotar el secreto del webhook no corta nada: Stripe permite mantener el secreto anterior activo hasta 24 horas y, mientras tanto, firma cada evento con los dos. <span class="badge badge--doc">Documentado</span> El receptor cambia al secreto nuevo en cualquier momento de esa ventana.</p>
+
+        <h3>Los webhooks que salen</h3>
+        <p>Los clientes también quieren enterarse sin consultar: <code>balance.low</code>, <code>recharge.succeeded</code>, <code>recharge.failed</code>, <code>recharge.requires_action</code>, <code>spend_limit.reached</code> e <code>invoice.issued</code>. El diseño copia lo que funciona en Stripe (<a href="m02-apis.html#webhooks">M02</a>):</p>
+        <ul>
+          <li>Cada entrega lleva un id <code>whe_…</code> que se repite en las reentregas, para que el cliente deduplique.</li>
+          <li>La firma es un HMAC-SHA256 del timestamp y el cuerpo (<a href="m36-criptografia.html#hmac">M36</a>). Firmar también el timestamp impide reenviar una entrega vieja capturada.</li>
+          <li>Cada endpoint de cliente tiene su propia cola: un cliente lento o caído no demora a los demás.</li>
+          <li>Reintentos con backoff exponencial y jitter (1 min, 5 min, 30 min, 2 h, 8 h…) durante tres días. Después se deshabilita el endpoint y se avisa por correo.</li>
+        </ul>
+<pre data-lang="python"><code>import hashlib, hmac, time
+
+def firmar(secreto: bytes, cuerpo: bytes, ahora: int | None = None) -&gt; str:
+    t = ahora if ahora is not None else int(time.time())
+    mac = hmac.new(secreto, f"{t}.".encode() + cuerpo, hashlib.sha256).hexdigest()
+    return f"t={t},v1={mac}"                   # va en el header Webhook-Signature
+
+def verificar(secreto: bytes, cuerpo: bytes, firma: str, tolerancia: int = 300) -&gt; bool:
+    """Lo que publicamos en la documentación para que el cliente compruebe la firma."""
+    partes = dict(p.split("=", 1) for p in firma.split(","))
+    t = int(partes["t"])
+    if abs(time.time() - t) &gt; tolerancia:
+        return False                           # una entrega vieja reenviada
+    esperado = hmac.new(secreto, f"{t}.".encode() + cuerpo, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(esperado, partes.get("v1", ""))</code></pre>
+
+        <h3>Fraude, card testing y disputas</h3>
+        <p>El autoservicio con tarjeta es exactamente lo que buscan dos clases de atacantes. El que tiene tarjetas robadas compra créditos y los gasta antes de que el titular se entere: el servicio se entrega y nunca se cobra. El que hace card testing usa el formulario para averiguar cuáles de miles de números robados funcionan, con compras chicas (<a href="m27-pagos-stripe.html#card-testing">M27</a>). Ninguna defensa sola alcanza, así que se apilan:</p>
+        <figure class="figure">
+          <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="fcp7t fcp7d">
+<title id="fcp7t">Las capas contra una tarjeta robada</title>
+<desc id="fcp7d">Seis etapas en la vida de una tarjeta robada, de izquierda a derecha, cada una con su defensa. En el alta, correo verificado y un desafío en el formulario. En la primera compra, 3D Secure, que pasa la responsabilidad por fraude al emisor. En cada intento, como mucho tres tarjetas por cuenta y por día, cinco fallos por sesión y reglas de Radar por IP. En los primeros siete días, hasta 100 USD de compras y cuotas bajas. Ante una alerta temprana de fraude, congelar el lote, reembolsar y revocar las claves. Si igual se abre la disputa, el asiento se hace el primer día, se manda la evidencia de uso y la cuenta queda congelada. Abajo, la pérdida máxima por tarjeta robada baja de 129.49 USD a 53.36 USD sin 3D Secure.</desc>
+<defs><marker id="fcp7a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker>
+</defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="12" y="24" width="116" height="44" rx="10"/>
+<text class="dg-small dg-in" x="70.0" y="51" text-anchor="middle">Alta</text>
+<rect class="dg-box" x="12" y="86" width="116" height="78" rx="8"/>
+<text class="dg-tiny" x="70.0" y="108" text-anchor="middle">correo verificado</text>
+<text class="dg-tiny" x="70.0" y="128" text-anchor="middle">desafío en el</text>
+<text class="dg-tiny" x="70.0" y="148" text-anchor="middle">formulario</text>
+<path class="dg-feedback" d="M70.0 70 V84"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="138" y="24" width="116" height="44" rx="10"/>
+<text class="dg-small dg-in" x="196.0" y="51" text-anchor="middle">Primera compra</text>
+<rect class="dg-box" x="138" y="86" width="116" height="78" rx="8"/>
+<text class="dg-tiny" x="196.0" y="108" text-anchor="middle">3D Secure:</text>
+<text class="dg-tiny" x="196.0" y="128" text-anchor="middle">el fraude lo paga</text>
+<text class="dg-tiny" x="196.0" y="148" text-anchor="middle">el emisor</text>
+<path class="dg-feedback" d="M196.0 70 V84"/>
+<path class="dg-edge" d="M129 46 H136" marker-end="url(#fcp7a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="264" y="24" width="116" height="44" rx="10"/>
+<text class="dg-small dg-in" x="322.0" y="51" text-anchor="middle">Cada intento</text>
+<rect class="dg-box" x="264" y="86" width="116" height="78" rx="8"/>
+<text class="dg-tiny" x="322.0" y="108" text-anchor="middle">3 tarjetas por día</text>
+<text class="dg-tiny" x="322.0" y="128" text-anchor="middle">5 fallos por sesión</text>
+<text class="dg-tiny" x="322.0" y="148" text-anchor="middle">Radar por IP</text>
+<path class="dg-feedback" d="M322.0 70 V84"/>
+<path class="dg-edge" d="M255 46 H262" marker-end="url(#fcp7a)"/>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="390" y="24" width="116" height="44" rx="10"/>
+<text class="dg-small dg-in" x="448.0" y="51" text-anchor="middle">Primeros 7 días</text>
+<rect class="dg-box" x="390" y="86" width="116" height="78" rx="8"/>
+<text class="dg-tiny" x="448.0" y="108" text-anchor="middle">hasta 100 USD</text>
+<text class="dg-tiny" x="448.0" y="128" text-anchor="middle">cuotas bajas</text>
+<text class="dg-tiny" x="448.0" y="148" text-anchor="middle">(M18)</text>
+<path class="dg-feedback" d="M448.0 70 V84"/>
+<path class="dg-edge" d="M381 46 H388" marker-end="url(#fcp7a)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="516" y="24" width="116" height="44" rx="10"/>
+<text class="dg-small dg-in" x="574.0" y="51" text-anchor="middle">Alerta temprana</text>
+<rect class="dg-box" x="516" y="86" width="116" height="78" rx="8"/>
+<text class="dg-tiny" x="574.0" y="108" text-anchor="middle">congelar el lote</text>
+<text class="dg-tiny" x="574.0" y="128" text-anchor="middle">reembolsar</text>
+<text class="dg-tiny" x="574.0" y="148" text-anchor="middle">revocar claves</text>
+<path class="dg-feedback" d="M574.0 70 V84"/>
+<path class="dg-edge" d="M507 46 H514" marker-end="url(#fcp7a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="642" y="24" width="116" height="44" rx="10"/>
+<text class="dg-small dg-in" x="700.0" y="51" text-anchor="middle">Disputa</text>
+<rect class="dg-box" x="642" y="86" width="116" height="78" rx="8"/>
+<text class="dg-tiny" x="700.0" y="108" text-anchor="middle">asiento el día 1</text>
+<text class="dg-tiny" x="700.0" y="128" text-anchor="middle">evidencia de uso</text>
+<text class="dg-tiny" x="700.0" y="148" text-anchor="middle">cuenta congelada</text>
+<path class="dg-feedback" d="M700.0 70 V84"/>
+<path class="dg-edge" d="M633 46 H640" marker-end="url(#fcp7a)"/>
+<text class="dg-group" x="12" y="196" text-anchor="start">Pérdida máxima por tarjeta robada</text>
+<text class="dg-small" x="12" y="229" text-anchor="start">Antes: 300 USD gastados en un día</text>
+<rect class="dg-box" x="300" y="214" width="300" height="22" rx="4"/>
+<rect class="dg-bad" x="300" y="214" width="300.0" height="22" rx="4"/>
+<text class="dg-tiny" x="310" y="229" text-anchor="start">15 + 9.00 + 105.49</text>
+<text class="dg-small dg-in" x="612" y="229" text-anchor="start">129.49 USD</text>
+<text class="dg-small" x="12" y="265" text-anchor="start">Después, sin 3D Secure: tope de 100 USD</text>
+<rect class="dg-box" x="300" y="250" width="300" height="22" rx="4"/>
+<rect class="dg-warnbox" x="300" y="250" width="123.6" height="22" rx="4"/>
+<text class="dg-tiny" x="310" y="265" text-anchor="start">15 + 3.20 + 35.16</text>
+<text class="dg-small dg-in" x="612" y="265" text-anchor="start">53.36 USD</text>
+<text class="dg-small" x="12" y="301" text-anchor="start">Después, con 3D Secure aprobado</text>
+<rect class="dg-box" x="300" y="286" width="300" height="22" rx="4"/>
+<text class="dg-tiny" x="310" y="301" text-anchor="start">el contracargo por fraude es del emisor</text>
+<text class="dg-small dg-in" x="612" y="301" text-anchor="start">≈ 0</text>
+</svg>
+          </div>
+          <figcaption><b>Figura C.5.</b> Una defensa en cada etapa de la vida de una tarjeta robada, y lo que cambia la pérdida máxima. Con el tope de 100 USD para las cuentas nuevas, la pérdida baja de 129.49 USD a 53.36 USD por tarjeta; con 3D Secure aprobado, la responsabilidad por fraude pasa al banco emisor. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+        </figure>
+        <p>La pérdida máxima por tarjeta, con la cuenta de la tabla de estimaciones: antes se podían comprar 300 USD y gastarlos en un día, así que una disputa costaba 15 de tarifa, 9.00 de comisión y 300 × 0.35 = 105.49 de GPU, 129.49 USD en total. Con el tope de 100 USD, el peor caso es 15 + 3.20 + 35.16 = 53.36 USD. Y si el pago se autenticó con 3D Secure, la disputa por fraude todavía puede llegar, pero la responsabilidad pasó al emisor y Stripe adjunta la evidencia de la autenticación. <span class="badge badge--doc">Documentado</span> Pedir 3D Secure en la primera compra de cada cuenta agrega fricción una sola vez.</p>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Ruta en el borde</th><th>Desafío</th><th>Por qué</th></tr></thead>
+            <tbody>
+              <tr><td><code>console.…/billing/purchase</code></td><td>Sí, un desafío gestionado</td><td>La usan personas, y es por donde entra el card testing (<a href="m28-cloudflare.html#ddos">M28</a>)</td></tr>
+              <tr><td><code>api.…/v1/*</code></td><td>No</td><td>Los clientes son programas que no resuelven desafíos. Los protegen la API key, los límites por clave y la validación del esquema</td></tr>
+              <tr><td><code>hooks.…/stripe</code></td><td>No</td><td>Stripe tampoco resuelve desafíos. Se verifica la firma, y se puede limitar a las IP desde las que Stripe publica que envía. <span class="badge badge--doc">Documentado</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Los 30&#8239;000 intentos en dos horas del piloto son 250 por minuto, unos 4 por segundo: nada para el borde, pero cada uno es una autorización real contra un banco, y las tarjetas que resulten válidas se usan después contra otros comercios. Contra eso, límites que el atacante no puede repartir: como mucho 3 tarjetas distintas por cuenta y por día, 5 intentos fallidos por sesión y por hora, y el alta con correo verificado y desafío. Para probar 30&#8239;000 tarjetas con 3 por cuenta, el atacante necesita 10&#8239;000 cuentas verificadas.</p>
+
+        <h4>La alerta temprana: ¿reembolsar o esperar?</h4>
+        <p>Los emisores de Visa, Mastercard y JCB reportan los pagos que sospechan fraudulentos, y Stripe los entrega como alertas tempranas (<code>radar.early_fraud_warning.created</code>). Según Stripe, si no se reembolsa, cerca del 40&#8239;% de esas alertas terminan en una disputa por fraude; reembolsar antes evita la disputa, aunque no borra el reporte de fraude. <span class="badge badge--doc">Documentado</span> La cuenta con la compra de 50 USD de la que quedaban 25 sin usar:</p>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Opción</th><th>Cálculo</th><th class="r">Pérdida esperada</th></tr></thead>
+            <tbody>
+              <tr><td>Reembolsar todo</td><td>25 de servicio entregado + 1.75 de comisión que no vuelve</td><td class="r">26.75 USD</td></tr>
+              <tr><td>Congelar el lote y esperar</td><td>40&#8239;% × (25 de servicio + 1.75 + 15 de tarifa)</td><td class="r">16.70 USD</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Esperar sale más barato en promedio, y coincide con lo que recomienda Stripe: reembolsar las alertas de pagos de más o menos el monto de la tarifa de disputa, y no las de pagos bastante mayores. <span class="badge badge--doc">Documentado</span> La excepción es este piloto: con un 0.58&#8239;% de disputas, cada disputa más empuja la cuenta hacia los programas de monitoreo de las redes, que cuestan mucho más que 10 USD. <b>Decisión:</b> ante una alerta, siempre se congela la cuenta y se revocan sus claves, para que no se gaste nada más; y se reembolsa todo mientras la tasa de disputas esté por encima del 0.3&#8239;% o el pago sea de 20 USD o menos. Cuando la tasa baje, se espera.</p>
+        <p><b>La disputa.</b> Stripe retira el monto disputado más la tarifa el día en que se abre, y el asiento se hace ese mismo día (<a href="m27-pagos-stripe.html#disputas">M27</a>). Responder con evidencia cuesta otra tarifa, que Stripe devuelve si se gana; la tarifa de la disputa recibida no vuelve. <span class="badge badge--doc">Documentado</span> Por eso no se responden todas: una disputa por fraude sin 3D Secure casi nunca se gana, y responderla agrega 15 USD. Se responden las autenticadas con 3D Secure y las de más de 100 USD con evidencia fuerte de uso legítimo (las mismas IP y el mismo dispositivo de siempre, el uso de la API con la clave de la cuenta).</p>
+
+        <h3>La conciliación</h3>
+        <p>Es el control que habría explicado los 3&#8239;400 USD del piloto. Cada día, tres fuentes que no dependen entre sí se comparan línea por línea (<a href="m27-pagos-stripe.html#conciliacion">M27</a>):</p>
+        <figure class="figure">
+          <div class="figure-frame">
+<svg viewBox="0 0 770 380" role="img" aria-labelledby="fcp5t fcp5d">
+<title id="fcp5t">Conciliación de tres vías de un día</title>
+<desc id="fcp5d">Tres columnas: el ledger, las balance transactions de Stripe y el extracto del banco. Las líneas que coinciden se unen: la compra de 50 USD por el id del PaymentIntent, el pago de la factura de org_3 por el id de la factura, y el payout por su id. Hay tres diferencias. Un cobro de 40 USD está en Stripe y no en el ledger porque se perdió el webhook; se recupera con la API de eventos. Una comisión mensual de Stripe Billing no tiene asiento; una regla la asienta sola. Y el depósito del payout todavía no llegó al banco, lo normal durante uno o dos días hábiles; se cruza por el trace id cuando llegue.</desc>
+<defs><marker id="fcp5a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker>
+</defs>
+<text class="dg-group" x="125" y="24" text-anchor="middle">Ledger</text>
+<text class="dg-tiny" x="125" y="41" text-anchor="middle">lo que creemos</text>
+<text class="dg-group" x="385" y="24" text-anchor="middle">Stripe</text>
+<text class="dg-tiny" x="385" y="41" text-anchor="middle">balance transactions</text>
+<text class="dg-group" x="645" y="24" text-anchor="middle">Banco</text>
+<text class="dg-tiny" x="645" y="41" text-anchor="middle">extracto</text>
+<rect class="dg-box" x="16" y="56" width="218" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="28" y="83" text-anchor="start">pi_3Qa:captura  +48.25 +1.75</text>
+<rect class="dg-box" x="16" y="114" width="218" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="28" y="141" text-anchor="start">in_9Kz:pago  +24 732.60 +5.00</text>
+<rect class="hb-lost" x="16" y="172" width="218" height="44" rx="8"/>
+<text class="dg-tiny" x="28" y="199" text-anchor="start">sin asiento</text>
+<rect class="hb-lost" x="16" y="230" width="218" height="44" rx="8"/>
+<text class="dg-tiny" x="28" y="257" text-anchor="start">sin asiento</text>
+<rect class="dg-box" x="16" y="288" width="218" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="28" y="315" text-anchor="start">po_2Hx  −91 310.42</text>
+<rect class="dg-box" x="276" y="56" width="218" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="288" y="83" text-anchor="start">charge  50.00 · fee 1.75</text>
+<rect class="dg-box" x="276" y="114" width="218" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="288" y="141" text-anchor="start">charge  24 737.60 · fee 5.00</text>
+<rect class="dg-warnbox" x="276" y="172" width="218" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="288" y="199" text-anchor="start">charge  40.00 · fee 1.46</text>
+<rect class="dg-warnbox" x="276" y="230" width="218" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="288" y="257" text-anchor="start">stripe_fee  −20 344.80</text>
+<rect class="dg-box" x="276" y="288" width="218" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="288" y="315" text-anchor="start">payout  −91 310.42</text>
+<rect class="hb-lost" x="536" y="288" width="218" height="44" rx="8"/>
+<text class="dg-tiny" x="548" y="315" text-anchor="start">depósito de 91 310.42</text>
+<text class="dg-tiny" x="544" y="82" text-anchor="start">el banco solo ve los payouts</text>
+<path class="dg-edge" d="M236 78.0 H274"/>
+<path class="dg-edge" d="M236 136.0 H274"/>
+<path class="dg-edge" d="M236 310.0 H274"/>
+<path class="dg-feedback" d="M496 310.0 H534"/>
+<text class="dg-tiny" x="544" y="190" text-anchor="start">webhook perdido: se recupera</text>
+<text class="dg-tiny" x="544" y="206" text-anchor="start">con la API de eventos</text>
+<text class="dg-tiny" x="544" y="248" text-anchor="start">comisión de Billing del mes:</text>
+<text class="dg-tiny" x="544" y="264" text-anchor="start">una regla la asienta sola</text>
+<text class="dg-tiny" x="645.0" y="352" text-anchor="middle">en tránsito: normal 1 o 2 días hábiles</text>
+</svg>
+          </div>
+          <figcaption><b>Figura C.6.</b> La conciliación de un día. Dos filas coinciden en las tres fuentes. Un cobro de 40 USD está en Stripe y no en el ledger: un webhook perdido, que el barrido recupera. La comisión mensual de Billing está en Stripe sin asiento: una regla la asienta sola. El payout coincide entre el ledger y Stripe, y el depósito todavía está en tránsito hacia el banco. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+        </figure>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Comparación</th><th>Cada cuánto</th><th>Diferencias esperadas</th><th>Diferencias que son un incidente</th></tr></thead>
+            <tbody>
+              <tr><td>Ledger contra las balance transactions de Stripe</td><td>Diaria</td><td>Comisiones mensuales sin asiento, que una regla asienta</td><td>Un cobro sin asiento (un cliente pagó y no tiene créditos) o un asiento sin cobro (créditos regalados)</td></tr>
+              <tr><td>Payouts de Stripe contra el extracto del banco</td><td>Diaria</td><td>Depósitos en tránsito uno o dos días hábiles</td><td>Un payout que no llega en cinco días hábiles, o un <code>payout.failed</code></td></tr>
+              <tr><td>Rating del metering contra los asientos de uso</td><td>Horaria</td><td>Horas tardías que entran como <code>v2</code></td><td>Una hora sin asiento después de dos horas (<a href="m21-metering.html#conciliacion">M21</a>)</td></tr>
+              <tr><td>Saldo caliente contra el ledger</td><td>Horaria</td><td>Reservas abiertas y uso todavía sin asentar</td><td>Una diferencia que crece: un bug en el gateway o en el proyector</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>El informe de conciliación de payouts de Stripe relaciona cada balance transaction con el payout que la incluyó, pero solo existe con los payouts automáticos. <span class="badge badge--doc">Documentado</span> Es otra razón para no hacer payouts manuales. Cada diferencia que ninguna regla explica abre una excepción con un dueño y una fecha. La más urgente es un cobro sin asiento, porque hay un cliente que pagó y no recibió sus créditos.</p>
+
+        <h3>Dos regiones</h3>
+        <figure class="figure">
+          <div class="figure-frame">
+<svg viewBox="0 0 770 364" role="img" aria-labelledby="fcp6t fcp6d">
+<title id="fcp6t">El saldo de una organización en dos regiones</title>
+<desc id="fcp6d">Dos regiones lado a lado. En us-east-1, la región de origen de org_7, el saldo en caliente tiene 41.20 USD y registra 0.50 USD prestados a eu-west-1; ahí también está el primario del ledger. En eu-west-1, el saldo local de org_7 es solo un préstamo de diez tramos, del que quedan 0.35 USD, y el ledger es una réplica asíncrona para lectura y recuperación. Cada gateway reserva tramos en el saldo de su región; el europeo pide más prestado a la región de origen cuando le quedan pocos, fuera del camino de la request. Si el enlace se corta, eu-west-1 solo puede gastar lo prestado.</desc>
+<defs><marker id="fcp6a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker>
+</defs>
+<rect class="dg-box" x="16" y="16" width="340" height="236" rx="12" style="stroke-dasharray: 6 4"/>
+<text class="dg-group" x="32" y="40" text-anchor="start">us-east-1 · región de origen de org_7</text>
+<rect class="dg-box" x="414" y="16" width="340" height="236" rx="12" style="stroke-dasharray: 6 4"/>
+<text class="dg-group" x="430" y="40" text-anchor="start">eu-west-1</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="30" y="60" width="140" height="54" rx="10"/>
+<text class="dg-label" x="100.0" y="83.0" text-anchor="middle">Gateway</text>
+<text class="dg-tiny" x="100.0" y="101.0" text-anchor="middle">reserva tramos</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="600" y="60" width="140" height="54" rx="10"/>
+<text class="dg-label" x="670.0" y="83.0" text-anchor="middle">Gateway</text>
+<text class="dg-tiny" x="670.0" y="101.0" text-anchor="middle">reserva tramos</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="196" y="60" width="140" height="54" rx="10"/>
+<text class="dg-label" x="266.0" y="83.0" text-anchor="middle">Saldo de org_7</text>
+<text class="dg-tiny" x="266.0" y="101.0" text-anchor="middle">41.20 · prestó 0.50</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="434" y="60" width="140" height="54" rx="10"/>
+<text class="dg-label" x="504.0" y="83.0" text-anchor="middle">Préstamo</text>
+<text class="dg-tiny" x="504.0" y="101.0" text-anchor="middle">quedan 0.35 de 0.50</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="196" y="176" width="140" height="54" rx="10"/>
+<text class="dg-label" x="266.0" y="199.0" text-anchor="middle">Ledger</text>
+<text class="dg-tiny" x="266.0" y="217.0" text-anchor="middle">primario</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="434" y="176" width="140" height="54" rx="10"/>
+<text class="dg-label" x="504.0" y="199.0" text-anchor="middle">Ledger</text>
+<text class="dg-tiny" x="504.0" y="217.0" text-anchor="middle">réplica de lectura</text>
+<path class="dg-edge" d="M172 87 H193" marker-start="url(#fcp6a)" marker-end="url(#fcp6a)"/>
+<path class="dg-edge" d="M598 87 H577" marker-start="url(#fcp6a)" marker-end="url(#fcp6a)"/>
+<path class="dg-edge" d="M431 80 H339" marker-end="url(#fcp6a)"/>
+<path class="dg-edge" style="stroke-dasharray: 5 3" d="M339 94 H431" marker-end="url(#fcp6a)"/>
+<text class="dg-tiny" x="385" y="72" text-anchor="middle">pide</text>
+<text class="dg-tiny" x="385" y="112" text-anchor="middle">presta</text>
+<path class="dg-edge" style="stroke: var(--l-queue); stroke-dasharray: 6 4" d="M338 203 H431" marker-end="url(#fcp6q)"/>
+<text class="dg-tiny" x="385" y="196" text-anchor="middle">copia</text>
+<text class="dg-tiny" x="385" y="224" text-anchor="middle">&lt; 1 s</text>
+<path class="dg-edge" d="M266 174 V117" marker-end="url(#fcp6a)"/>
+<text class="dg-tiny" x="258" y="150" text-anchor="end">acredita compras</text>
+<rect class="dg-warnbox" x="16" y="272" width="738" height="76" rx="10"/>
+<text class="dg-label" x="32" y="296" text-anchor="start">Si el enlace entre regiones se corta</text>
+<text class="dg-small" x="32" y="316" text-anchor="start">eu-west-1 gasta como mucho lo prestado: 0.50 USD por organización. Las organizaciones con saldo holgado</text>
+<text class="dg-small" x="32" y="334" text-anchor="start">siguen sin préstamos hasta 10 minutos; las demás reciben un 503 con Retry-After en eu-west-1.</text>
+</svg>
+          </div>
+          <figcaption><b>Figura C.7.</b> El saldo de una organización vive en su región de origen. Las demás regiones gastan un préstamo de diez tramos que piden por adelantado, fuera del camino de la request. Si el enlace se corta, cada región puede gastar como mucho lo prestado. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+        </figure>
+        <p>Un saldo único y sincrónico para las dos regiones costaría un viaje de unos 80 ms a us-east-1 en cada request europea, y dejaría a eu-west-1 sin servicio prepago si el enlace se corta: el CAP del <a href="m06-teoria-distribuida.html#cap">M06</a> aplicado al dinero. La solución es la del escrow del <a href="m18-cuotas-tokens.html#tres-formas">M18</a>:</p>
+        <ul>
+          <li>Cada organización tiene una región de origen, la de su alta, donde vive su saldo caliente.</li>
+          <li>La otra región pide prestados 10 tramos (0.50 USD) y reserva contra ese préstamo. Cuando le quedan menos de 3, pide más en segundo plano. El origen descuenta lo prestado de su saldo en el momento de prestarlo, así que el dinero nunca está disponible en los dos lados a la vez.</li>
+          <li>Si el enlace se corta, eu-west-1 gasta como mucho lo que tenía prestado, y no hay exceso posible. Después atiende a ciegas solo a las organizaciones con saldo holgado, hasta 10 minutos, y a las demás les responde 503 con <code>Retry-After</code>.</li>
+          <li>El ledger es un Aurora PostgreSQL Global Database: el primario en us-east-1 y una réplica en eu-west-1, con un retraso de replicación que normalmente es menor a un segundo. <span class="badge badge--doc">Documentado</span> Los receptores de webhooks de las dos regiones escriben en el primario; si no lo alcanzan, responden con error y Stripe reintenta.</li>
+          <li>Si us-east-1 cae más de 10 minutos, se promueve la réplica (<a href="m08-resiliencia.html#failover">M08</a>) y los saldos calientes se reconstruyen en eu-west-1. Lo que se haya perdido en el último segundo de replicación se recupera de fuentes externas: el dinero, con el barrido de eventos de Stripe; el uso, con el log crudo del metering.</li>
+        </ul>
+        <p>Esa última propiedad es la que hace seguro el failover: <b>todo asiento se puede reconstruir desde afuera.</b> Los de dinero, desde Stripe; los de uso, desde el log del M21. El ledger no es el único lugar donde existe un hecho, sino el lugar donde los hechos se cruzan.</p>
+
+        <h3>La API de facturación</h3>
+        <div class="endpoint">
+          <div class="ep-head">
+            <span class="ep-method" data-m="GET">GET</span>
+            <code class="ep-path">/v1/billing/balance</code>
+            <span class="badge badge--ref">Diseño de referencia</span>
+          </div>
+          <p class="ep-desc">El saldo de la organización de la clave o de la sesión. Lo leen la consola y los clientes que vigilan su gasto.</p>
+          <div class="ep-body">
+            <p class="ep-sec">Respuesta 200</p>
+<pre data-lang="json"><code>{
+  "available": "41.204350",
+  "currency": "usd",
+  "reserved": "0.650000",
+  "overdraft_limit": "5.00",
+  "auto_recharge": {"enabled": true, "threshold": "10.00", "amount": "50.00", "state": "active"},
+  "as_of": "2026-10-04T14:05:09Z"
+}</code></pre>
+            <p class="ep-sec">Códigos de respuesta</p>
+            <ul class="ep-responses">
+              <li><span class="st st--2xx">200</span><span>Los montos van como cadenas decimales, para que ningún cliente los pase por un double.</span></li>
+              <li><span class="st st--4xx">401</span><span>Sin credenciales válidas.</span></li>
+            </ul>
+          </div>
+        </div>
+        <div class="endpoint">
+          <div class="ep-head">
+            <span class="ep-method" data-m="PUT">PUT</span>
+            <code class="ep-path">/v1/billing/auto_recharge</code>
+            <span class="badge badge--ref">Diseño de referencia</span>
+          </div>
+          <p class="ep-desc">Configura la recarga automática. Solo con la sesión de un administrador de facturación. PUT reemplaza la configuración entera, así que repetirlo es idempotente.</p>
+          <div class="ep-body">
+            <p class="ep-sec">Request</p>
+<pre data-lang="json"><code>{"enabled": true, "threshold_cents": 1000, "amount_cents": 5000}</code></pre>
+            <p class="ep-sec">Códigos de respuesta</p>
+            <ul class="ep-responses">
+              <li><span class="st st--2xx">200</span><span>Guardada. Si la recarga estaba pausada por un rechazo, se reanuda.</span></li>
+              <li><span class="st st--4xx">409</span><span><code>no_payment_method</code>: la organización todavía no tiene una tarjeta guardada.</span></li>
+              <li><span class="st st--4xx">422</span><span>El monto es menor a 10 USD o menor que el umbral.</span></li>
+            </ul>
+          </div>
+        </div>
+        <div class="endpoint">
+          <div class="ep-head">
+            <span class="ep-method" data-m="GET">GET</span>
+            <code class="ep-path">/v1/billing/invoices/{id}/pdf</code>
+            <span class="badge badge--ref">Diseño de referencia</span>
+          </div>
+          <p class="ep-desc">Descarga el PDF de una factura.</p>
+          <div class="ep-body">
+            <p class="ep-sec">Códigos de respuesta</p>
+            <ul class="ep-responses">
+              <li><span class="st st--2xx">302</span><span>Redirige a una URL firmada que vence en 5 minutos (<a href="m09-objetos.html#signed-urls">M09</a>), generada después de comprobar que la factura es de la organización que pregunta (<a href="m10-seguridad.html#bola-detalle">M10</a>).</span></li>
+              <li><span class="st st--4xx">404</span><span>La factura no existe o es de otra organización: la respuesta es la misma, para no revelar qué ids existen.</span></li>
+            </ul>
+          </div>
+        </div>
+        <p>Y los errores que puede recibir una request a la API de inferencia por culpa del cobro, cada uno con un significado distinto para el cliente:</p>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Código</th><th>Tipo</th><th><code>Retry-After</code></th><th>Cuándo</th></tr></thead>
+            <tbody>
+              <tr><td>402</td><td><code>insufficient_balance</code></td><td>No: esperar no arregla nada</td><td>Prepago sin saldo, ni siquiera dentro del sobregiro</td></tr>
+              <tr><td>429</td><td><code>spend_limit_reached</code></td><td>No: el tope se levanta en la consola o con el mes nuevo</td><td>La organización o el proyecto llegó a su tope de gasto (<a href="m21-metering.html#topes">M21</a>)</td></tr>
+              <tr><td>403</td><td><code>account_suspended</code></td><td>No</td><td>Pospago con 21 días de mora, o cuenta congelada</td></tr>
+              <tr><td>503</td><td><code>billing_unavailable</code></td><td>Sí, unos segundos</td><td>Valkey no responde y la organización no tiene saldo holgado: el problema es nuestro</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Qué pasa cuando falla cada pieza</h3>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Falla</th><th>Qué pasa</th><th>Mitigación</th></tr></thead>
+            <tbody>
+              <tr><td>Stripe caído o lento</td><td>Fallan las compras y las recargas; la inferencia sigue</td><td>El gateway nunca espera a Stripe. Las recargas reintentan con la misma clave; el sobregiro y el umbral de recarga dan margen</td></tr>
+              <tr><td>Un webhook que no llega</td><td>Un cliente pagó y no tiene créditos</td><td>El camino síncrono de la consola, el barrido cada 10 minutos y la conciliación diaria</td></tr>
+              <tr><td>Webhooks fuera de orden o repetidos</td><td>Una disputa cerrada antes de abierta; un evento dos veces</td><td>El worker relee el objeto; el asiento se deduplica por <code>source_ref</code></td></tr>
+              <tr><td>Valkey no responde</td><td>No se puede autorizar a los clientes prepago</td><td>Saldo holgado a ciegas 10 minutos; 503 al resto; reconstrucción desde el ledger y el metering</td></tr>
+              <tr><td>Kafka con 60 s de lag</td><td>El saldo prepago no depende de Kafka; el tope de gasto sí</td><td>El exceso sobre el tope pasa de 28 a 144 USD (<a href="m21-metering.html#topes-exceso">M21</a>); alerta de lag y tope aplicado con margen</td></tr>
+              <tr><td>El primario del ledger caído</td><td>No se acreditan compras; la inferencia sigue con el saldo caliente</td><td>Stripe reintenta tres días y el barrido cubre el resto; se promueve la réplica pasados 10 minutos</td></tr>
+              <tr><td>Una región aislada</td><td>Cada región gasta lo que tiene prestado</td><td>El escrow; las organizaciones holgadas siguen; las demás reciben 503 en la región aislada</td></tr>
+              <tr><td>Dos workers con el mismo cruce</td><td>Dos intentos de recarga</td><td><code>recharges.clave UNIQUE</code> y la idempotency key en Stripe</td></tr>
+              <tr><td>El cierre del mes corre dos veces</td><td>Dos facturas</td><td><code>invoices (org_id, period)</code> único y claves por línea en Stripe</td></tr>
+              <tr><td>Un precio mal cargado</td><td>Facturas del doble o de la mitad</td><td>Revisión humana de las facturas fuera de 0.5× a 2× del mes anterior; corrección con ajustes</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Observabilidad</h3>
+        <p>Las métricas técnicas no ven la mayoría de estas fallas: un webhook roto no produce errores, solo un silencio. Las alertas que importan son de negocio (<a href="m11-observabilidad.html#alertas">M11</a>):</p>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Señal</th><th>Alerta cuando</th><th>Qué suele significar</th></tr></thead>
+            <tbody>
+              <tr><td>Compras acreditadas por minuto</td><td>Menos de la mitad que a la misma hora de la semana anterior</td><td>El webhook o el receptor están rotos, o Stripe tiene un problema</td></tr>
+              <tr><td>Tasa de rechazo de tarjetas</td><td>El triple de lo normal durante 10 minutos</td><td>Card testing en curso</td></tr>
+              <tr><td>Eventos de Stripe sin procesar</td><td>Alguno con más de 15 minutos</td><td>El worker está caído o un evento falla siempre: va a la cola de mensajes fallidos (<a href="m07-mensajeria.html#dlq">M07</a>)</td></tr>
+              <tr><td>Diferencia entre el saldo caliente y el ledger</td><td>Más de 1 centavo en más del 0.1&#8239;% de las organizaciones</td><td>Un bug en el gateway o en el proyector</td></tr>
+              <tr><td>Recargas que necesitan acción</td><td>El doble que la semana anterior</td><td>Un banco que cambió sus reglas de SCA</td></tr>
+              <tr><td>Disputas por semana sobre compras</td><td>Más del 0.3&#8239;%</td><td>Las defensas contra el fraude fallan</td></tr>
+              <tr><td>p99 de la reserva de tramos</td><td>Más de 5 ms</td><td>Valkey saturado, o un hot key</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Seguridad</h3>
+        <ul>
+          <li>Claves restringidas de Stripe, una por servicio y con los permisos mínimos, en un gestor de secretos (<a href="m37-nube.html#kms">M37</a>). <span class="badge badge--doc">Documentado</span> El gateway no tiene ninguna: nunca habla con Stripe.</li>
+          <li>Stripe Elements: los datos de tarjeta no tocan los servidores de la empresa, y PCI queda en el SAQ A.</li>
+          <li>Ledger de solo escritura: el rol de la aplicación puede hacer <code>INSERT</code> y no puede hacer <code>UPDATE</code> ni <code>DELETE</code> (<a href="m35-seguridad-bd.html#rbac">M35</a>).</li>
+          <li>Los créditos manuales (por un SLA incumplido o un acuerdo comercial) necesitan la aprobación de dos personas y quedan en el audit log (<a href="m10-seguridad.html#audit-log">M10</a>).</li>
+          <li>Las rutas de facturación comprueban que el objeto es de la organización que pregunta, y los PDF salen por URL firmada.</li>
+          <li>Solo el rol de administrador de facturación compra créditos o cambia la recarga, y siempre desde la consola: una API key filtrada puede gastar el saldo, pero no puede comprar más con la tarjeta guardada.</li>
+        </ul>
+
+        <h3>Decisiones</h3>
+        <div class="table-wrap">
+          <table class="t">
+            <thead><tr><th>Decisión</th><th>Alternativa descartada</th><th>Por qué</th></tr></thead>
+            <tbody>
+              <tr><td>Ledger de doble entrada como verdad</td><td>Una columna <code>balance</code></td><td>Una columna no explica de dónde viene una diferencia; el ledger descompone los 3&#8239;400 USD en hechos</td></tr>
+              <tr><td>Saldo caliente en Valkey, por tramos</td><td>Autorizar contra el ledger</td><td>400 requests por segundo con dos escrituras sobre la misma fila, y la base en el camino de cada request</td></tr>
+              <tr><td>Tramos de 0.05 USD y sobregiro de 5</td><td>Reservar el máximo, o cobrar al final</td><td>El máximo bloquea saldo que no se usa; cobrar al final deja llegar a −11 USD</td></tr>
+              <tr><td>Un asiento de uso por organización y hora</td><td>Un asiento por evento</td><td>5 por segundo contra 520 en el pico, sobre las mismas cuentas</td></tr>
+              <tr><td>Tarifar en casa; Stripe solo cobra</td><td>Medir y tarifar en Stripe</td><td>El saldo caliente y el rating del M21 ya existen; dos lugares con precios se contradicen</td></tr>
+              <tr><td>Clave de recarga a partir de la versión del saldo</td><td>Un UUID por intento</td><td>Dos procesos con el mismo cruce llegan a la misma clave</td></tr>
+              <tr><td>3D Secure en la primera compra</td><td>Nunca pedirlo</td><td>Fricción una sola vez; la responsabilidad por fraude pasa al emisor</td></tr>
+              <tr><td>Tope de 100 USD en la primera semana</td><td>Sin tope</td><td>La pérdida máxima por tarjeta baja de 129.49 a 53.36 USD</td></tr>
+              <tr><td>Débito bancario para el pospago</td><td>Tarjeta</td><td>5 USD contra 717.69 por una factura de 24&#8239;737.60</td></tr>
+              <tr><td>Escrow por región</td><td>Un saldo global sincrónico</td><td>80 ms en cada request europea, y sin servicio si el enlace se corta</td></tr>
+              <tr><td>503 si Valkey cae, salvo saldo holgado</td><td>Atender a todos a ciegas</td><td>A ciegas, la exposición no tiene cota</td></tr>
+              <tr><td>Un receptor que solo guarda y responde</td><td>Procesar dentro del handler</td><td>Los timeouts generan reentregas, y un bug devuelve 500 a cada evento</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        </div>
+      </details>
+
+      <h2 id="repaso"><span class="sec-num">C.4</span>Qué repasar</h2>
+      <div class="table-wrap no-autolink">
+        <table class="t">
+          <thead><tr><th>Si te costó</th><th>Repasa</th></tr></thead>
+          <tbody>
+            <tr><td>Las estimaciones y el design doc</td><td><a href="m00-metodo.html#estimaciones">M00</a></td></tr>
+            <tr><td>Idempotencia y webhooks en una API</td><td><a href="m02-apis.html#idempotencia">M02</a></td></tr>
+            <tr><td>Transacciones, aislamiento y bloqueos de fila</td><td><a href="m05-bases-de-datos.html#transacciones">M05</a></td></tr>
+            <tr><td>CAP y qué consistencia elegir por región</td><td><a href="m06-teoria-distribuida.html#cap">M06</a></td></tr>
+            <tr><td>Outbox, entrega al menos una vez y cola de fallidos</td><td><a href="m07-mensajeria.html#outbox">M07</a></td></tr>
+            <tr><td>Reintentos, backoff y failover entre regiones</td><td><a href="m08-resiliencia.html#reintentos">M08</a></td></tr>
+            <tr><td>URLs firmadas</td><td><a href="m09-objetos.html#signed-urls">M09</a></td></tr>
+            <tr><td>Autorización por objeto, API keys y audit log</td><td><a href="m10-seguridad.html#bola-detalle">M10</a></td></tr>
+            <tr><td>Alertas por síntomas de negocio</td><td><a href="m11-observabilidad.html#alertas">M11</a></td></tr>
+            <tr><td>Reservar, consumir y reconciliar; escrow</td><td><a href="m18-cuotas-tokens.html#reservar">M18</a></td></tr>
+            <tr><td>Metering, precios, créditos, topes y facturas</td><td><a href="m21-metering.html#creditos">M21</a></td></tr>
+            <tr><td>Stripe: idempotencia, ledger, webhooks, disputas y conciliación</td><td><a href="m27-pagos-stripe.html#ledger">M27</a></td></tr>
+            <tr><td>El borde: desafíos, bots y límites</td><td><a href="m28-cloudflare.html#ddos">M28</a></td></tr>
+            <tr><td>HMAC y firmas</td><td><a href="m36-criptografia.html#hmac">M36</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div data-checkpoint="cpc"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/cpc.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/widgets/sim-meter.js"></script>
+</body>
+</html>
