@@ -91,8 +91,8 @@ window.SD.course = {
           summary: 'Anycast, Unimog, DDoS, Workers frente a Kubernetes, Durable Objects, configuración global y tu propia red de borde en AWS.' },
         { id: 'm29', num: 'M29', title: 'WhatsApp', short: 'WhatsApp', mins: 150, href: 'modules/m29-whatsapp.html', status: 'ready',
           summary: 'Conexiones persistentes y gateways, registro de sesiones, buzones, grupos, cifrado de extremo a extremo y tu clon en AWS.' },
-        { id: 'cpc', num: 'CP-C', kind: 'checkpoint', title: 'Checkpoint C: diseño final', short: 'Checkpoint C', mins: 90, href: 'modules/checkpoint-c.html', status: 'soon',
-          summary: 'Diseña la plataforma de pagos por uso para el producto de IA de la Parte II.' }
+        { id: 'cpc', num: 'CP-C', kind: 'checkpoint', title: 'Checkpoint C: cobrar el uso de una API de IA', short: 'Checkpoint C', mins: 120, href: 'modules/checkpoint-c.html', status: 'ready',
+          summary: 'Examen de las Partes I a III y diseño del cobro por uso de la API de IA: ledger, saldo en caliente, recargas, facturas, fraude, dos regiones y conciliación.' }
       ]
     },
     {
@@ -118,12 +118,20 @@ window.SD.course = {
       ]
     },
     {
+      id: 'p5', label: 'Parte V', title: 'Manejo de pagos', line: '--line-p5',
+      intro: 'Del lado del comercio que cobra: cómo se diseñan las tablas, las transacciones y los webhooks para que un pago no se duplique ni se pierda, aunque la red falle y cien personas quieran lo mismo a la vez. Las intuiciones de diseño; el código está en las guías A15, A27 y A28.',
+      items: [
+        { id: 'm39', num: 'M39', title: 'Manejo de pagos: cómo se diseña un sistema que cobra sin duplicar ni perder', short: 'Manejo de pagos', mins: 150, href: 'modules/m39-manejo-pagos.html', status: 'ready',
+          summary: 'Invariantes, tablas de intención, intento y evento, la tabla de idempotencia, fases atómicas, estados que solo avanzan, locks pesimistas y optimistas, apartados con vencimiento, rangos con exclusion constraint, filas calientes, webhooks con inbox, implementación propia y seguridad.' }
+      ]
+    },
+    {
       id: 'f2', label: 'Fase 2', title: 'Más casos de estudio', line: '--line-f2', phase: 2,
       intro: 'Se construye al terminar la Fase 1: redes sociales y colaboración en tiempo real.',
       items: [
         { id: 'm30', num: 'M30', title: 'Twitter/X', short: 'Twitter/X', mins: 120, href: 'modules/m30-twitter.html', status: 'ready',
           summary: 'Fan-out on write vs on read, timelines híbridos, IDs Snowflake, contadores y trending.' },
-        { id: 'm31', num: 'M31', title: 'Google Docs', short: 'Google Docs', mins: 90, href: 'modules/m31-google-docs.html', status: 'soon',
+        { id: 'm31', num: 'M31', title: 'Google Docs', short: 'Google Docs', mins: 180, href: 'modules/m31-google-docs.html', status: 'ready',
           summary: 'OT vs CRDT, sesión por documento, cursores y presencia, historial y permisos.' },
         { id: 'cpd', num: 'CP-D', kind: 'checkpoint', title: 'Checkpoint D: diseña un Slack', short: 'Checkpoint D', mins: 90, href: 'modules/checkpoint-d.html', status: 'soon',
           summary: 'Examen y diseño completo de una plataforma de chat para equipos.' }

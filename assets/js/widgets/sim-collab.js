@@ -298,7 +298,7 @@
       }
     }
   };
-  var LATS = [50, 200, 600, 1500, 3000];
+  var LATS = [50, 100, 300, 600, 900, 1500, 3000];
 
   function initOT(host) {
     var preset = 'easy', ot = true, paused = true, sess, timer = null, last = 0;
@@ -343,8 +343,8 @@
       return col;
     }
     cols[0] = clientCol(0); cols[1] = clientCol(1);
-    cols.s = { doc: h('p', { class: 'ot-doc ot-doc--ro' }), state: h('span', { class: 'ot-chip' }), list: h('ol', { class: 'ot-revs', 'aria-label': 'Revision log del servidor' }) };
-    cols.s.el = h('div', { class: 'ot-col ot-col--server' }, [h('div', { class: 'ot-col-head' }, [h('p', { class: 'ot-name', text: 'Servidor' }), cols.s.state]), cols.s.doc, h('p', { class: 'ot-sub', text: 'Revision log' }), cols.s.list]);
+    cols.s = { doc: h('p', { class: 'ot-doc ot-doc--ro' }), state: h('span', { class: 'ot-chip' }), list: h('ol', { class: 'ot-revs', 'aria-label': 'Log de revisiones del servidor' }) };
+    cols.s.el = h('div', { class: 'ot-col ot-col--server' }, [h('div', { class: 'ot-col-head' }, [h('p', { class: 'ot-name', text: 'Servidor' }), cols.s.state]), cols.s.doc, h('p', { class: 'ot-sub', text: 'Log de revisiones' }), cols.s.list]);
     grid.appendChild(cols[0].el); grid.appendChild(cols.s.el); grid.appendChild(cols[1].el);
 
     var wire = h('ul', { class: 'ot-wire', 'aria-label': 'Mensajes en la red' });

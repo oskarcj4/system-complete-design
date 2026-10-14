@@ -4,6 +4,8 @@
    - Dos series: los proyectos en Java (A y C) y los tutoriales de AI Engineering (IA). La ruta y el
      anterior/siguiente muestran solo la serie de la guía abierta.
    - <pre data-file="ruta"> recibe una cabecera con la ruta del archivo y un botón para copiar.
+   - Recorridos de archivo: las marcas "# (N)" del código se dibujan como números, y cada .file-card[data-where]
+     recibe una miniatura de la figura de arquitectura con su caja resaltada.
    - La caja "Tu repositorio" ([data-repo]): enlace al repositorio y lista de comprobación, que marcan
      el proyecto como terminado. */
 (function () {
@@ -161,6 +163,47 @@
     });
   }
 
+  /* ---------- Recorridos de archivo (tutoriales de IA) ---------- */
+
+  /* Un comentario que es solo una marca, "# (3)" o "-- (3)", se dibuja como un número en un círculo.
+     El texto no cambia: al copiar, sigue siendo un comentario válido. */
+  function codePins(root) {
+    root.querySelectorAll('pre[data-lang] .c-c').forEach(function (el) {
+      var m = el.textContent.trim().match(/^(?:#|--)\s*\((\d{1,2})\)$/);
+      if (!m) return;
+      el.classList.add('code-pin');
+      el.setAttribute('data-n', m[1]);
+    });
+  }
+
+  /* .file-card[data-where="a b"]: miniatura de la figura de arquitectura (figure[data-arch]) con las cajas
+     [data-part] que nombra resaltadas. La copia no lleva título ni ids repetidos y no la leen los lectores de pantalla. */
+  function fileMaps(root) {
+    var src = root.querySelector('figure[data-arch] svg');
+    if (!src) return;
+    root.querySelectorAll('.file-card[data-where]').forEach(function (card, i) {
+      var parts = card.getAttribute('data-where').split(/\s+/);
+      var svg = src.cloneNode(true);
+      svg.removeAttribute('role');
+      svg.removeAttribute('aria-labelledby');
+      svg.setAttribute('aria-hidden', 'true');
+      svg.setAttribute('focusable', 'false');
+      svg.querySelectorAll('title, desc').forEach(function (n) { n.remove(); });
+      svg.querySelectorAll('[id]').forEach(function (n) {
+        var old = n.id, nu = old + '-m' + i;
+        n.id = nu;
+        ['marker-end', 'marker-start'].forEach(function (attr) {
+          svg.querySelectorAll('[' + attr + '="url(#' + old + ')"]').forEach(function (e) { e.setAttribute(attr, 'url(#' + nu + ')'); });
+        });
+      });
+      svg.querySelectorAll('[data-part]').forEach(function (g) {
+        var mine = g.getAttribute('data-part').split(/\s+/).some(function (p) { return parts.indexOf(p) >= 0; });
+        g.classList.add(mine ? 'is-here' : 'is-away');
+      });
+      card.appendChild(h('figure', { class: 'file-card-map' }, [svg, h('figcaption', { text: 'Dónde encaja' })]));
+    });
+  }
+
   /* ---------- Ruta de proyectos ---------- */
 
   function buildRoute(container, currentId) {
@@ -314,6 +357,8 @@
     var currentId = document.body.getAttribute('data-project');
     var content = document.querySelector('.content') || document.body;
     highlight(content);
+    codePins(content);
+    fileMaps(content);
     fileHeaders(content);
     var routeEl = document.querySelector('[data-project-route]');
     var pagerEl = document.querySelector('[data-project-pager]');

@@ -10,7 +10,8 @@ Curso web en español de diseño de sistemas reales:
 - **Parte II:** de un LLM a ChatGPT (M12–M26, el mapa gigante y el Checkpoint B).
 - **Parte III:** casos de estudio: Stripe (M27), Cloudflare (M28) y WhatsApp (M29). La Fase 2 suma Twitter (M30) y Google Docs (M31).
 - **Parte IV:** ciberseguridad (M32–M38 y el Checkpoint E): firewalls, hardening de Linux, operación de SysAdmin, seguridad en bases de datos, criptografía, nube segura y Active Directory. Publicados M32 (firewalls), M33 (hardening de Linux), M34 (operación de SysAdmin), M35 (seguridad en bases de datos), M36 (criptografía desde cero), M37 (arquitecturas seguras en la nube) y M38 (Active Directory, cómo se ataca y cómo se defiende), más el Checkpoint E, que cierra la parte. La Parte IV está completa. Cuenta para el progreso. Plan detallado en `PLAN_SEGURIDAD.md`. Currículo en `PLAN.md`.
-- **Aplicación de conocimiento** (`proyectos.html` y `proyectos/`): tutoriales en Java y Spring Boot para construir lo de cada módulo, y al final de la página los tutoriales de AI Engineering, en Python (IA01, IA02…). Cada guía es una página en `proyectos/`, generada con `tools/mkguide.py`. Las reglas están en "De las guías de proyectos" y "De los tutoriales de AI Engineering".
+- **Parte V:** manejo de pagos (M39 en adelante), del lado del comercio que cobra: las intuiciones de diseño (tablas, idempotencia, locks, webhooks, implementación propia y seguridad), no el código, que está en las guías A15, A27 y A28. Publicado M39 (manejo de pagos); M40 y M41 están propuestos en `PLAN.md`. Cuenta para el progreso.
+- **Aplicación de conocimiento** (`proyectos.html` y `proyectos/`): tutoriales en Java y Spring Boot para construir lo de cada módulo, y al final de la página los tutoriales de AI Engineering, en Python (IA00, IA01, IA02…). Cada guía es una página en `proyectos/`, generada con `tools/mkguide.py`. Las reglas están en "De las guías de proyectos" y "De los tutoriales de AI Engineering".
 
 Es un sitio estático de HTML, CSS y JS vanilla, sin build ni dependencias. Funciona con doble clic (`file://`) y se publica en GitHub Pages con cada push a `main` (`.github/workflows/static.yml`).
 
@@ -47,7 +48,17 @@ Quien lo usa habla español y tiene nivel backend intermedio (REST, SQL, Docker)
 - Cada proyecto funciona solo. "Cómo conectar" va al final y solo nombra proyectos anteriores en la lista, nunca posteriores, con enlaces a los módulos y al glosario (`../glosario.html#t-<id>`).
 
 ### De los tutoriales de AI Engineering (`proyectos/iaNN-*.html`)
-- **Misma forma que las guías de Java**, con el mismo orden de secciones y las mismas reglas: todos los archivos completos, Claude los escribe y no los ejecuta, y nunca se inventan cifras ni salidas. Las dependencias son de `pyproject.toml` en lugar de Maven, y "cómo comprobar" suma evals con pass^k a las pruebas y las fallas provocadas.
+- **Mismas reglas que las guías de Java:** todos los archivos completos, Claude los escribe y no los ejecuta, y nunca se inventan cifras ni salidas. Las dependencias son de `pyproject.toml` en lugar de Maven, y "cómo comprobar" suma evals con pass^k a las pruebas y las fallas provocadas. Estas reglas no cambian nada de las guías de Java.
+- **Orden de secciones propio** (ids fijos): la excusa con la figura de arquitectura y la tabla de sus flechas (`#excusa`), Antes de empezar (`#antes`), los endpoints, las dependencias, la infraestructura, el paso a paso, El viaje de un dato (`#viaje`), las decisiones guiadas, cómo comprobar, Limitaciones (`#limitaciones`), tu repositorio y cómo conectar.
+- **Nivel Jr, sin suponer nivel.** El lector puede no haber usado Python, Docker ni Ollama. IA00 es la introducción y presenta las herramientas y las piezas de un agente; las demás la enlazan cuando usan algo de ella, pero funcionan solas. Concretamente:
+  - **La excusa** cierra con la figura de arquitectura (`figure[data-arch]`, cada caja con `data-part`) y una tabla de flechas: #, De → a, Protocolo y formato, Ejemplo, Con qué permiso. Después, un párrafo con las fronteras (qué sale de tu máquina, con qué rol entra a la base).
+  - **Antes de empezar** trae una lámina de términos (`ol.plate-key`), qué hay que tener instalado con cómo comprobarlo, y un `h3` (`ae-*`) por concepto nuevo, con analogía, figura y enlace al módulo que lo explica.
+  - **Cada archivo es un recorrido:** una `div.file-card[data-where]` (Qué hace, Quién lo usa, Qué entra, Qué sale; `data-where` nombra los `data-part` que se resaltan en la miniatura), el código en bloques de hasta unas 45 líneas con marcas `# (N)` o `-- (N)` en línea propia, y debajo de cada bloque un `ol.code-key` que explica cada marca. Las marcas son correlativas en todo el archivo.
+  - **Ayudas dentro del recorrido:** `callout--def` "Python de por medio" para la sintaxis que el lector no conoce, `callout--try` "Pruébalo ahora" con el comando y lo que debe aparecer, y `callout--fail` "Errores típicos" con `ul.pj-errs` (el error exacto y su arreglo).
+  - **El archivo entero** va al final del recorrido en `details.solution.file-full`, con su `pre[data-file]`, para copiarlo de una vez. Un archivo de pocas líneas puede ir solo, sin bloques.
+  - **El viaje de un dato:** un diagrama de secuencia (`tools/seqdiag.py`) del caso principal y una tabla Paso, De → a, Qué viaja, Dónde queda.
+  - **Limitaciones:** lo que no hace, dónde se rompe, riesgos que quedan, costo y latencia con la cuenta a mano (los supuestos se dicen como supuestos), y qué cambia en producción.
+- **Las figuras y los recorridos se generan con scripts de Python** en el scratchpad (helpers `walk()`, `figure()`), y la página se edita después con scripts que comprueban `s.count(viejo) == 1`. Una vez publicada, la página en `proyectos/` es la fuente de verdad.
 - **Python 3.13 con uv, LangGraph y LangChain 1.x.** Las versiones se verifican antes de escribir y se fijan con `==`; la sección de tutoriales en `proyectos.html` tiene la tabla de versiones con su fecha, y se actualiza cuando cambian.
 - **Dos modelos a la par:** Claude por API y uno local en Ollama, con `init_chat_model` y una variable de entorno (`GUARDIA_MODELO` en IA01). Cada paso dice qué comparar entre los dos (aciertos, pasos, tokens, segundos, costo).
 - **Cada tutorial levanta su víctima** en Docker Compose (un sistema que se rompe de verdad, con métricas, logs y una base) y trae un script que provoca las fallas. Nada de herramientas con datos de mentira.
@@ -349,7 +360,7 @@ SD.defineExercise('m06-planificador', {
 
 - Los scripts: `data/exercises/<id>.data.js` después de los datos del quiz, y `core/exercise.js` después de `core/quiz.js` (usa `SD.quizKit`). Con `mkpage.py`, alcanza con `"exercises": true` en el META; en una página existente se agregan a mano (así está en M18).
 - El glosario no enlaza dentro de `[data-exercise]`: los términos se explican en el texto del módulo.
-- Ejercicios publicados: uno en M02, siete en M06.1 (los datos siguen en `exercises/m06.data.js`), uno en M18, uno en M19, uno en M21, cinco en M22 (incidentes), uno en M23, uno en M24, uno en M25, uno en M12.1 (diagnóstico de una réplica lenta), uno en M33, uno en M34 (diagnosticar un servidor lento), uno en M36 (criptografía de una API con datos sensibles), uno en M37 (endurecer la arquitectura de un SaaS en la nube) y uno en M38 (auditar un dominio y cerrar sus rutas a tier 0).
+- Ejercicios publicados: uno en M02, siete en M06.1 (los datos siguen en `exercises/m06.data.js`), uno en M18, uno en M19, uno en M21, cinco en M22 (incidentes), uno en M23, uno en M24, uno en M25, uno en M12.1 (diagnóstico de una réplica lenta), uno en M33, uno en M34 (diagnosticar un servidor lento), uno en M36 (criptografía de una API con datos sensibles), uno en M37 (endurecer la arquitectura de un SaaS en la nube), uno en M38 (auditar un dominio y cerrar sus rutas a tier 0), uno en M39 (`m39-festival`, la venta de entradas de un festival) y uno en M31 (`m31-clase`, las clases del clon de Docs).
 
 ### Quiz y checkpoint
 
@@ -449,7 +460,9 @@ Categorías (`SD.catNames` en `glossary.js`): `metodo`, `redes`, `datos`, `distr
 | `data-sim="agentloop"`, `"durable"`, `data-calc="agentcost"`, `"trifecta"` | `widgets/sim-agent.js` | El bucle de un agente con presupuesto en cuatro escenarios (normal, bucle, herramienta caída, resultado gigante) y cinco defensas; costo de una tarea y de la flota con caché y la ley de Little; la trifecta con herramientas, defensas y ataques por día; y la ejecución durable en tres escenas; `durable` necesita `sim-dbflow.js`; lógica en `SD.agentCore` (M25) |
 | `data-sim="attnrows"`, `data-calc="fwdcost"` | `widgets/sim-fwd.js` | La matriz de atención de una cabeza pasada por pasada, con y sin KV cache (celdas y pares K, V calculados), y el costo de una pasada por pieza (proyecciones, atención, MLP y LM head) con FLOPs, bytes y qué la limita, para prefill, decode o un paso mixto; lógica en `SD.fwdCore`; usa `dModel`, `ffn` y `vocab` de `data/llm.data.js` (M12.1) |
 | `data-calc="trainmem"`, `"ckpt"` | `widgets/sim-train.js` | Memoria de un entrenamiento (16 B/param de Adam) y cuántas GPUs con data parallel vs ZeRO-3, e intervalo óptimo de checkpoint (Young/Daly); usa `data/llm.data.js`, que la página carga antes del widget (M26) |
-| `data-calc="bom" data-preset="m21\|m23\|m24\|m25\|m27\|m28\|m29\|m30"`, `data-calc="gateways"` | `widgets/sim-infra.js` | Factura mensual en AWS y dimensionamiento de gateways (módulos a fondo y casos de estudio) |
+| `data-sim="ot"`, `data-calc="collab"` | `widgets/sim-collab.js` | Dos personas editan el mismo texto y el servidor transforma sus operaciones (OT con TP1, revisiones y el log), y cuántos servidores de sesión, conexiones y operaciones por segundo necesita un clon de Docs; lógica en `SD.otCore` (M31) |
+| `data-sim="seatrace"`, `"idemkey"`, `"whinbox"` | `widgets/sim-pay.js` | Simuladores paso a paso con carriles: dos transacciones contra el mismo asiento con seis estrategias (leer y escribir, UPDATE condicional, `NOWAIT`, `FOR UPDATE` con espera, optimista, exclusion constraint), la fila de `idempotency_keys` en cinco situaciones, y el inbox de webhooks ante duplicados, desorden, firma falsa y procesar antes de responder; cada escenario termina con un veredicto (M39) |
+| `data-calc="bom" data-preset="m21\|m23\|m24\|m25\|m27\|m28\|m29\|m30\|m31"`, `data-calc="gateways"` | `widgets/sim-infra.js` | Factura mensual en AWS y dimensionamiento de gateways (módulos a fondo y casos de estudio) |
 
 Para escribir un widget nuevo:
 
@@ -553,6 +566,8 @@ ia-system-desing
 │       │   │       m36.data.js
 │       │   │       m37.data.js
 │       │   │       m38.data.js
+│       │   │       m39.data.js
+│       │   │       m31.data.js
 │       │   │
 │       │   ├───maps
 │       │   │       chatgpt.data.js
@@ -566,6 +581,7 @@ ia-system-desing
 │       │   │       m28-cloudflare.data.js
 │       │   │       m29-whatsapp.data.js
 │       │   │       m30-twitter.data.js
+│       │   │       m31-docs.data.js
 │       │   │
 │       │   ├───projects
 │       │   │       a00.data.js
@@ -579,11 +595,14 @@ ia-system-desing
 │       │   │       a08.data.js
 │       │   │       a09.data.js
 │       │   │       a10.data.js
+│       │   │       ia00.data.js
 │       │   │       ia01.data.js
+│       │   │       ia02.data.js
 │       │   │
 │       │   └───quizzes
 │       │           cpa.data.js
 │       │           cpb.data.js
+│       │           cpc.data.js
 │       │           cpe.data.js
 │       │           m00.data.js
 │       │           m01.data.js
@@ -618,6 +637,7 @@ ia-system-desing
 │       │           m28.data.js
 │       │           m29.data.js
 │       │           m30.data.js
+│       │           m31.data.js
 │       │           m32.data.js
 │       │           m33.data.js
 │       │           m34.data.js
@@ -625,6 +645,7 @@ ia-system-desing
 │       │           m36.data.js
 │       │           m37.data.js
 │       │           m38.data.js
+│       │           m39.data.js
 │       │
 │       ├───map
 │       │       flow-sim.js
@@ -667,6 +688,7 @@ ia-system-desing
 │               sim-meter.js
 │               sim-modelops.js
 │               sim-obs.js
+│               sim-pay.js
 │               sim-quant.js
 │               sim-quota.js
 │               sim-rbac.js
@@ -689,6 +711,7 @@ ia-system-desing
 ├───modules
 │       checkpoint-a.html
 │       checkpoint-b.html
+│       checkpoint-c.html
 │       checkpoint-e.html
 │       m00-metodo.html
 │       m01-viaje-request.html
@@ -723,6 +746,7 @@ ia-system-desing
 │       m28-cloudflare.html
 │       m29-whatsapp.html
 │       m30-twitter.html
+│       m31-google-docs.html
 │       m32-firewalls.html
 │       m33-hardening-linux.html
 │       m34-sysadmin.html
@@ -730,6 +754,7 @@ ia-system-desing
 │       m36-criptografia.html
 │       m37-nube.html
 │       m38-active-directory.html
+│       m39-manejo-pagos.html
 │
 ├───proyectos
 │       a00-laboratorio.html
@@ -743,7 +768,9 @@ ia-system-desing
 │       a08-lider.html
 │       a09-colas.html
 │       a10-circuit-breaker.html
+│       ia00-laboratorio.html
 │       ia01-agente-guardia.html
+│       ia02-analista.html
 │
 └───tools
     │   mkguide.py
@@ -765,7 +792,7 @@ ia-system-desing
 | `index.html` + `assets/css/home.css` + `assets/js/pages/home.js` | Portada: mapa de la ruta del curso, "continuar donde quedaste", plan por partes y respaldo del progreso |
 | `glosario.html` | Glosario con buscador y filtro por categoría; lo arma `core/glossary.js` |
 | `proyectos.html` + `assets/css/projects.css` + `assets/js/pages/projects.js` | "Aplicación de conocimiento": índice de mini-proyectos en Java y Spring Boot y de tutoriales de AI Engineering (`#ia-engineering`), con sus datos en `data/projects.data.js` (`tracks`, `capstones` y `aiTracks`; cada proyecto con `tier`, `status`, `mods` y `repo`, obligatorio para publicarlo) |
-| `proyectos/` + `assets/js/pages/project-guide.js` + `project-state.js` | Una guía por proyecto, generada con `tools/mkguide.py` y editada después a mano. `project-guide.js` arma la ruta de proyectos y el anterior/siguiente (dentro de cada serie), resalta java, javascript, yaml, xml, bash, nginx, ini, toml y dockerfile (python, sql y json los resalta `sd.js`), y le pone ruta y botón de copiar a cada `<pre data-file>`; `project-state.js` guarda el enlace al repositorio y las comprobaciones de cada guía |
+| `proyectos/` + `assets/js/pages/project-guide.js` + `project-state.js` | Una guía por proyecto, generada con `tools/mkguide.py` y editada después a mano. `project-guide.js` arma la ruta de proyectos y el anterior/siguiente (dentro de cada serie), resalta java, javascript, yaml, xml, bash, nginx, ini, toml y dockerfile (python, sql y json los resalta `sd.js`), le pone ruta y botón de copiar a cada `<pre data-file>`, dibuja las marcas `# (N)` de los recorridos y le pone a cada `.file-card[data-where]` una miniatura de la figura `[data-arch]` con su pieza resaltada; `project-state.js` guarda el enlace al repositorio y las comprobaciones de cada guía |
 | `assets/js/data/projects/` | Las decisiones guiadas de cada guía, con `SD.defineExercise('aNN-…')` o `SD.defineExercise('iaNN-…')` |
 | `modules/` | Una página por módulo y por checkpoint, generada con `mkpage.py` y editada después a mano |
 | `assets/css/tokens.css` | Colores semánticos en claro y oscuro, paleta de capas `--l-*`, tipografía y espacios |
