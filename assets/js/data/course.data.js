@@ -118,6 +118,14 @@ window.SD.course = {
       ]
     },
     {
+      id: 'p5', label: 'Parte V', title: 'Manejo de pagos', line: '--line-p5',
+      intro: 'Del lado del comercio que cobra: cómo se diseñan las tablas, las transacciones y los webhooks para que un pago no se duplique ni se pierda, aunque la red falle y cien personas quieran lo mismo a la vez. Las intuiciones de diseño; el código está en las guías A15, A27 y A28.',
+      items: [
+        { id: 'm39', num: 'M39', title: 'Manejo de pagos: cómo se diseña un sistema que cobra sin duplicar ni perder', short: 'Manejo de pagos', mins: 150, href: 'modules/m39-manejo-pagos.html', status: 'ready',
+          summary: 'Invariantes, tablas de intención, intento y evento, la tabla de idempotencia, fases atómicas, estados que solo avanzan, locks pesimistas y optimistas, apartados con vencimiento, rangos con exclusion constraint, filas calientes, webhooks con inbox, implementación propia y seguridad.' }
+      ]
+    },
+    {
       id: 'f2', label: 'Fase 2', title: 'Más casos de estudio', line: '--line-f2', phase: 2,
       intro: 'Se construye al terminar la Fase 1: redes sociales y colaboración en tiempo real.',
       items: [

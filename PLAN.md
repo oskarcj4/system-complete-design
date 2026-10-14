@@ -174,6 +174,17 @@ Numerada después de la Parte III (M32 en adelante), con su propio checkpoint. *
 
 Fuente base de M33: [How-To-Secure-A-Linux-Server](https://github.com/imthenachoman/How-To-Secure-A-Linux-Server), de Anchal Nigam (imthenachoman), licencia CC BY-SA 4.0. Se escribe prosa propia, se enlaza cada sección al original y se pone un recuadro de atribución arriba.
 
+
+### Parte V — Manejo de pagos
+
+Numerada después de la Parte IV (M39 en adelante). **Cuenta para el progreso.** El punto de vista es el del comercio que cobra a través de un proveedor (no el del procesador, que ya cubre M27), y el foco son las intuiciones de diseño, no el código: la implementación completa está en las guías A15, A27 y A28, que el módulo enlaza. Cada módulo parte de invariantes ("lo que nunca puede pasar") y ubica cada defensa lo más cerca posible de la base. Publicado M39 (2026-10-13).
+
+| # | Módulo | Contenido clave | Visual / interactivo |
+|---|---|---|---|
+| M39 | **Manejo de pagos: cómo se diseña un sistema que cobra sin duplicar ni perder** | Siete invariantes; tablas de intención (`orders`), intento (`payment_attempts`) y evento (`provider_events`) con sus restricciones; la tabla de idempotencia decisión por decisión (alcance, huella, lease en lugar de advisory lock por PgBouncer, qué se guarda); fases atómicas y claves deterministas hacia el proveedor; estados que solo avanzan; lost update, UPDATE condicional, `FOR UPDATE` / `NOWAIT` / `SKIP LOCKED`, control optimista y deadlocks; lock de fila contra apartado con vencimiento; rangos con exclusion constraint y autorizar antes de capturar; filas calientes; webhooks con inbox; un solo embudo (webhook, regreso del cliente y barrido); escalera de integración (hospedado, embebido, bóveda propia, varios PSP, saldo propio); outbox, compensación y reembolsos por worker; seguridad por pieza; detección con consultas de invariantes y conciliación | Lámina 39.A con 12 piezas y 14 figuras; tres simuladores paso a paso (`seatrace`, `idemkey`, `whinbox`); ejercicio guiado de un festival con 2 000 entradas |
+| M40 (propuesto) | **Suscripciones y cobro recurrente** | Ciclos de facturación, prorrateo, reintentos de cobro (dunning), cambios de plan a mitad de ciclo, periodos de prueba, facturas como documentos inmutables, webhooks de suscripción, relojes y zonas horarias en la fecha de cobro | Línea de tiempo de un ciclo con un cambio de plan; simulador de dunning |
+| M41 (propuesto) | **Marketplaces, payouts y disputas del lado del comercio** | Cobrar en nombre de terceros, comisiones y split de pagos, payouts y su calendario, saldos retenidos, contracargos y evidencia, fraude del lado del comercio (reglas, revisión manual), conciliación de tres partes | Flujo de dinero de un marketplace con el ledger; simulador de una disputa |
+
 ---
 
 ## 3. Checkpoints de construcción
@@ -197,6 +208,7 @@ En cada checkpoint **me detengo** para que abras el sitio en el navegador y lo r
 | **CP9** | Pulido: búsqueda global, glosario completo, móvil, accesibilidad, revisión técnica cruzada | Lighthouse ≥ 90 en accesibilidad; el sitio funciona en el móvil |
 | **CP10–12** | Fase 2: Twitter, Google Docs + Checkpoint D (WhatsApp ya está como M29) | — |
 | **CP13** | Parte IV: Ciberseguridad (M32–M38 + Checkpoint E). Publicados M32–M38 y el Checkpoint E; la Parte IV está completa | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
+| **CP14** | Parte V: Manejo de pagos (M39 en adelante). Publicado M39; M40 y M41 propuestos | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 
 ---
 

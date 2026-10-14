@@ -1,0 +1,1464 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M39. Manejo de pagos: cómo se diseña un sistema que cobra sin duplicar ni perder</title>
+<meta name="description" content="Diseño de un sistema de pagos del lado del comercio: tablas para la idempotencia, locks pesimistas y optimistas, apartados con vencimiento, filas calientes, webhooks con inbox, implementación propia y seguridad. Las intuiciones, no el código.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m39">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Manejo de pagos: cómo se diseña un sistema que cobra sin duplicar ni perder</h1>
+        <p class="lead">Cobrar es fácil mientras nada falla. Este módulo es sobre el resto: el doble clic, el timeout después de que el banco aprobó, el webhook que llega dos veces y las 200 personas que quieren el mismo asiento. Cómo se piensa el diseño para que nada de eso duplique ni pierda dinero.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M39</dd></div>
+          <div><dt>Parte</dt><dd>V. Manejo de pagos</dd></div>
+          <div><dt>Duración</dt><dd>150 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M05, M27</dd></div>
+          <div><dt>Estado</dt><dd data-status="m39">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Diseñar un sistema de pagos a partir de sus <b>invariantes</b>, lo que nunca puede pasar, y ubicar cada defensa en el tramo donde se rompe.</li>
+    <li>Modelar las <b>tablas</b> de un comercio que cobra: la orden como intención, los intentos de cobro, la clave de idempotencia y el evento del proveedor, cada uno con sus restricciones.</li>
+    <li>Decidir cómo funciona la <b>tabla de idempotencia</b>: alcance, huella, lease, qué se guarda y por qué no sirve un advisory lock detrás de PgBouncer.</li>
+    <li>Elegir entre un <b>UPDATE condicional</b>, un <b>lock pesimista</b> (<code>FOR UPDATE</code>, <code>NOWAIT</code>, <code>SKIP LOCKED</code>), uno <b>optimista</b> o una <b>restricción</b> según cuánto chocan las transacciones.</li>
+    <li>Separar el lock de fila, que dura milisegundos, del <b>apartado con vencimiento</b>, que dura minutos, y repartir una <b>fila caliente</b> cuando el tráfico entero cae sobre ella.</li>
+    <li>Recibir <b>webhooks</b> con un inbox, decidir cuándo conviene una <b>implementación propia</b> y revisar un diseño de pagos con una lista de comprobación.</li>
+  </ul>
+</section>
+
+<p>En <a href="m27-pagos-stripe.html">M27</a> estuviste del lado del procesador: cómo Stripe mueve el dinero, su máquina de estados, su ledger y cómo implementa las idempotency keys por dentro. Este módulo cruza al otro lado del mostrador. Eres el <b>comercio</b>: vendes un curso, cien asientos de cine o recargas de saldo, y le pides a un proveedor que cobre por ti. El dinero lo mueve el proveedor, pero que se cobre <b>una</b> vez, que nadie pague un asiento que ya es de otro y que un evento viejo no deshaga una compra depende de cómo diseñes tus tablas y tus transacciones.</p>
+
+<p>Aquí no hay un proyecto que construir: el código completo ya existe en las guías <a href="../proyectos/a15-pagos.html">A15</a>, <a href="../proyectos/a27-cine.html">A27</a> y <a href="../proyectos/a28-cine.html">A28</a>. Este módulo es la parte que esas guías dan por sentada: las intuiciones para diseñar el sistema antes de escribir una línea, y para reconocer un diseño frágil cuando lo revisas.</p>
+
+<h2 id="problema"><span class="sec-num">39.1</span>El problema: un efecto que no se deshace</h2>
+
+<p>Casi todo lo que viste en el curso se puede deshacer. Una transacción que falla hace <code>ROLLBACK</code>; una caché equivocada se invalida; un mensaje repetido se descarta. Un cobro no. Cuando el banco aprobó, el dinero salió de la cuenta de alguien, y ningún <code>ROLLBACK</code> de tu base lo devuelve: para corregirlo hace falta otra operación (un reembolso), que cuesta, tarda días y el cliente ve en su estado de cuenta.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un cobro es como un cheque que ya entregaste. Puedes romper tu copia, borrar tu registro o arrepentirte, pero el cheque está en otra mano. Lo único que puedes hacer es no firmar dos y, si firmaste uno de más, pedir que te lo devuelvan.</p>
+</aside>
+
+<p>Y ese efecto irreversible ocurre al final de un camino lleno de redes que fallan. La figura muestra los tres tramos donde la misma intención de compra puede llegar dos veces o ninguna.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 316" role="img" aria-labelledby="f391t f391d">
+<title id="f391t">Tres tramos donde un pago se duplica o se pierde</title>
+<desc id="f391d">Cuatro cajas en fila: navegador, tu API, el proveedor de pagos y tu webhook. Entre cada par, un tramo numerado. Bajo cada tramo, en rojo, qué falla (doble clic y reintento; timeout después de cobrar; evento duplicado, desordenado o perdido) y, en verde, qué lo detiene (idempotency key del cliente; clave determinista y fases; inbox por event_id, releer y barrido).</desc>
+<defs><marker id="f391a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="34" width="124" height="56" rx="8"/>
+<text class="dg-label" x="76" y="58" text-anchor="middle">Navegador</text>
+<text class="dg-tiny" x="76" y="76" text-anchor="middle">el cliente</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="222" y="34" width="124" height="56" rx="8"/>
+<text class="dg-label" x="284" y="58" text-anchor="middle">Tu API</text>
+<text class="dg-tiny" x="284" y="76" text-anchor="middle">crea la orden</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="430" y="34" width="124" height="56" rx="8"/>
+<text class="dg-label" x="492" y="58" text-anchor="middle">Proveedor</text>
+<text class="dg-tiny" x="492" y="76" text-anchor="middle">PSP: Stripe, Adyen…</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="632" y="34" width="124" height="56" rx="8"/>
+<text class="dg-label" x="694" y="58" text-anchor="middle">Tu webhook</text>
+<text class="dg-tiny" x="694" y="76" text-anchor="middle">y tu worker</text>
+<path class="dg-edge" d="M140 62 H218" marker-end="url(#f391a)"/>
+<text class="dg-num" x="180.0" y="52" text-anchor="middle">1</text>
+<path class="dg-edge" d="M348 62 H426" marker-end="url(#f391a)"/>
+<text class="dg-num" x="388.0" y="52" text-anchor="middle">2</text>
+<path class="dg-edge" d="M556 62 H628" marker-end="url(#f391a)"/>
+<text class="dg-num" x="593.0" y="52" text-anchor="middle">3</text>
+<path class="dg-feedback" d="M180 66 V118"/>
+<rect class="dg-bad" x="86" y="118" width="188" height="72" rx="8"/>
+<text class="dg-small dg-fail-text" x="180" y="136" text-anchor="middle">Qué falla</text>
+<text class="dg-tiny" x="180" y="152" text-anchor="middle">Doble clic, timeout, reintento:</text>
+<text class="dg-tiny" x="180" y="166" text-anchor="middle">la misma intención</text>
+<text class="dg-tiny" x="180" y="180" text-anchor="middle">llega dos veces</text>
+<path class="dg-feedback" d="M388 66 V118"/>
+<rect class="dg-bad" x="294" y="118" width="188" height="72" rx="8"/>
+<text class="dg-small dg-fail-text" x="388" y="136" text-anchor="middle">Qué falla</text>
+<text class="dg-tiny" x="388" y="152" text-anchor="middle">Timeout después de cobrar:</text>
+<text class="dg-tiny" x="388" y="166" text-anchor="middle">no sabes si el banco</text>
+<text class="dg-tiny" x="388" y="180" text-anchor="middle">aprobó el pago</text>
+<path class="dg-feedback" d="M593 66 V118"/>
+<rect class="dg-bad" x="499" y="118" width="188" height="72" rx="8"/>
+<text class="dg-small dg-fail-text" x="593" y="136" text-anchor="middle">Qué falla</text>
+<text class="dg-tiny" x="593" y="152" text-anchor="middle">El evento llega duplicado,</text>
+<text class="dg-tiny" x="593" y="166" text-anchor="middle">desordenado o nunca</text>
+<text class="dg-tiny" x="593" y="180" text-anchor="middle">llega</text>
+<path class="dg-edge" d="M180 192 V206" marker-end="url(#f391a)"/>
+<rect class="dg-ok" x="86" y="210" width="188" height="72" rx="8"/>
+<text class="dg-small" x="180" y="228" text-anchor="middle">Qué lo detiene</text>
+<text class="dg-tiny" x="180" y="244" text-anchor="middle">Idempotency-Key del cliente</text>
+<text class="dg-tiny" x="180" y="258" text-anchor="middle">y la tabla</text>
+<text class="dg-tiny" x="180" y="272" text-anchor="middle">idempotency_keys</text>
+<path class="dg-edge" d="M388 192 V206" marker-end="url(#f391a)"/>
+<rect class="dg-ok" x="294" y="210" width="188" height="72" rx="8"/>
+<text class="dg-small" x="388" y="228" text-anchor="middle">Qué lo detiene</text>
+<text class="dg-tiny" x="388" y="244" text-anchor="middle">Clave determinista hacia</text>
+<text class="dg-tiny" x="388" y="258" text-anchor="middle">el proveedor y fases que</text>
+<text class="dg-tiny" x="388" y="272" text-anchor="middle">se retoman</text>
+<path class="dg-edge" d="M593 192 V206" marker-end="url(#f391a)"/>
+<rect class="dg-ok" x="499" y="210" width="188" height="72" rx="8"/>
+<text class="dg-small" x="593" y="228" text-anchor="middle">Qué lo detiene</text>
+<text class="dg-tiny" x="593" y="244" text-anchor="middle">Inbox por event_id, releer</text>
+<text class="dg-tiny" x="593" y="258" text-anchor="middle">el objeto y un barrido</text>
+<text class="dg-tiny" x="593" y="272" text-anchor="middle">de respaldo</text>
+<text class="dg-tiny" x="385" y="304" text-anchor="middle">Dentro de tu API hay un cuarto tramo: dos requests distintas sobre la misma fila (sección 39.7).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.1.</b> Un pago cruza tres tramos de red, y en cada uno la misma intención puede llegar dos veces o ninguna. Cada defensa del módulo vive en uno de estos tramos; la cuarta, la concurrencia sobre una misma fila, vive dentro de tu base.</figcaption>
+</figure>
+
+
+<p>El error de diseño más común es tratar estos tramos como si fueran confiables: «el cliente hace un POST», «el proveedor responde», «el webhook avisa». Cada una de esas frases es falsa una de cada muchas veces, y con suficiente volumen, «una de cada muchas» es todos los días. Por eso un sistema de pagos no se diseña a partir de los casos felices, sino de lo que <b>nunca</b> puede pasar.</p>
+
+<h3 id="invariantes">Primero las invariantes</h3>
+
+<p>Una <b>invariante</b> es una regla que tiene que ser verdadera en cualquier instante, pase lo que pase con la red, los procesos y los relojes. Escribirlas antes que las tablas cambia la pregunta de diseño: ya no es «¿cómo cobro?», sino «¿qué mecanismo impide que esta regla se rompa, y dónde vive?». Estas son las de cualquier comercio que cobra:</p>
+
+<ol class="steps">
+  <li><span class="step-title">Un cobro por intención</span>La misma acción del usuario produce como máximo una orden y un pago, aunque llegue diez veces.</li>
+  <li><span class="step-title">Nada vendido dos veces</span>Si lo que vendes es escaso (un asiento, la última unidad), cada unidad tiene como máximo un dueño.</li>
+  <li><span class="step-title">Nada entregado sin dinero</span>El producto se entrega solo si el pago está confirmado por el proveedor.</li>
+  <li><span class="step-title">Nada cobrado sin entregar o devolver</span>Si cobraste y no pudiste entregar, el sistema devuelve el dinero o libera la retención solo, sin que alguien lo note.</li>
+  <li><span class="step-title">El monto lo decide el servidor</span>El cliente nunca manda precios; el monto sale de tu base y se compara con el que reporta el proveedor antes de entregar.</li>
+  <li><span class="step-title">Un solo reloj</span>Los vencimientos se calculan con el reloj de la base, nunca con el del navegador ni con el de cada servidor.</li>
+  <li><span class="step-title">La tarjeta no toca tus servidores</span>El número viaja del navegador al proveedor; tú solo ves identificadores.</li>
+</ol>
+
+<p>Son las mismas siete que sostienen las guías <a href="../proyectos/a15-pagos.html">A15</a> a <a href="../proyectos/a28-cine.html">A28</a>. Cada sección de este módulo cierra con la invariante que protege. Una regla práctica para el resto: <b>cuanto más cerca de la base vive el mecanismo, menos caminos del código pueden olvidarlo</b>. Una restricción <code>UNIQUE</code> protege aunque un programador nuevo escriba un endpoint sin leer la documentación; un <code>if</code> en un servicio, no.</p>
+
+<h2 id="lamina"><span class="sec-num">39.2</span>Las piezas de un sistema de pagos</h2>
+
+<p>Antes de entrar en cada decisión, conviene ver todas las piezas juntas. La lámina sigue el camino de un pago: entra con su clave, se registra como intención, sale hacia el proveedor y vuelve como evento.</p>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 384" role="img" aria-labelledby="f39pt f39pd">
+<title id="f39pt">Las piezas de un sistema de pagos del lado del comercio</title>
+<desc id="f39pd">Arriba, el navegador manda la request con su Idempotency-Key a la API, que llama al proveedor de pagos con una clave determinista. El proveedor avisa al webhook, que guarda el evento en la base. Un worker procesa los eventos y llama al proveedor; un barrido y la conciliación preguntan y comparan. Abajo, la base con seis tablas: idempotency_keys, orders, payment_attempts, provider_events, outbox y ledger_entries. Doce marcas numeradas señalan cada pieza.</desc>
+<defs><marker id="f39pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="40" width="130" height="58" rx="8"/>
+<text class="dg-label" x="85" y="65" text-anchor="middle">Navegador</text>
+<text class="dg-tiny" x="85" y="83" text-anchor="middle">pulsa Pagar</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="250" y="40" width="150" height="58" rx="8"/>
+<text class="dg-label" x="325" y="65" text-anchor="middle">API</text>
+<text class="dg-tiny" x="325" y="83" text-anchor="middle">orden e idempotencia</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="610" y="40" width="140" height="58" rx="8"/>
+<text class="dg-label" x="680" y="65" text-anchor="middle">Proveedor (PSP)</text>
+<text class="dg-tiny" x="680" y="83" text-anchor="middle">cobra con la tarjeta</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="430" y="150" width="140" height="52" rx="8"/>
+<text class="dg-label" x="500" y="172" text-anchor="middle">Worker</text>
+<text class="dg-tiny" x="500" y="189" text-anchor="middle">procesa y reintenta</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="610" y="150" width="140" height="52" rx="8"/>
+<text class="dg-label" x="680" y="172" text-anchor="middle">Webhook</text>
+<text class="dg-tiny" x="680" y="189" text-anchor="middle">verifica la firma</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="20" y="150" width="170" height="52" rx="8"/>
+<text class="dg-small" x="105" y="172" text-anchor="middle" style="font-weight:600;fill:var(--label)">Barrido y conciliación</text>
+<text class="dg-tiny" x="105" y="189" text-anchor="middle">pregunta y compara</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="250" width="730" height="120" rx="12"/>
+<text class="dg-group" x="36" y="272" text-anchor="start">PostgreSQL</text>
+<rect class="dg-box" x="36" y="290" width="132" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="102.0" y="308" text-anchor="middle">idempotency_keys</text>
+<rect class="dg-box" x="180" y="290" width="98" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="229.0" y="308" text-anchor="middle">orders</text>
+<rect class="dg-box" x="290" y="290" width="138" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="359.0" y="308" text-anchor="middle">payment_attempts</text>
+<rect class="dg-box" x="440" y="290" width="136" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="508.0" y="308" text-anchor="middle">outbox</text>
+<rect class="dg-box" x="588" y="290" width="146" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="661.0" y="308" text-anchor="middle">provider_events</text>
+<rect class="dg-box" x="36" y="328" width="132" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="102.0" y="346" text-anchor="middle">ledger_entries</text>
+<text class="dg-tiny" x="180" y="347" text-anchor="start">Ningún rol de la aplicación es dueño de estas tablas.</text>
+<path class="dg-edge" d="M150 69 H246" marker-end="url(#f39pa)"/>
+<path class="dg-edge" d="M400 69 H606" marker-end="url(#f39pa)"/>
+<path class="dg-edge" d="M680 98 V146" marker-end="url(#f39pa)"/>
+<path class="dg-edge" d="M680 202 V286" marker-end="url(#f39pa)"/>
+<path class="dg-edge" d="M330 98 V286" marker-end="url(#f39pa)"/>
+<path class="dg-edge" d="M500 202 V286" marker-end="url(#f39pa)"/>
+<path class="dg-edge" d="M560 150 L630 102" marker-end="url(#f39pa)"/>
+<path class="dg-edge" d="M105 202 V286" marker-end="url(#f39pa)"/>
+<text class="dg-tiny dg-mono" x="198" y="26" text-anchor="middle">Idempotency-Key</text>
+<path class="dg-feedback" d="M198 31 V66"/>
+<text class="dg-tiny" x="503" y="60" text-anchor="middle">clave determinista</text>
+<g class="pl-pin"><circle cx="198" cy="82" r="11"/><text x="198" y="86" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="168" cy="290" r="11"/><text x="168" y="294" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="278" cy="290" r="11"/><text x="278" y="294" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="428" cy="290" r="11"/><text x="428" y="294" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="503" cy="84" r="11"/><text x="503" y="88" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="750" cy="40" r="11"/><text x="750" y="44" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="750" cy="150" r="11"/><text x="750" y="154" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="734" cy="290" r="11"/><text x="734" y="294" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="430" cy="150" r="11"/><text x="430" y="154" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="576" cy="290" r="11"/><text x="576" y="294" text-anchor="middle">10</text></g>
+<g class="pl-pin"><circle cx="190" cy="150" r="11"/><text x="190" y="154" text-anchor="middle">11</text></g>
+<g class="pl-pin"><circle cx="168" cy="328" r="11"/><text x="168" y="332" text-anchor="middle">12</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 39.A.</b> Las doce piezas de un sistema de pagos del lado del comercio. Las marcas siguen el camino de un pago: entra con su clave, se registra como intención, sale hacia el proveedor y vuelve como evento.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Idempotency-Key</b><span>UUID que el navegador genera al abrir la intención (pulsar Pagar) y repite en cada reintento. <a href="#idempotencia">39.4</a></span></li>
+  <li><b>idempotency_keys</b><span>La tabla que recuerda cada clave, su huella, en qué fase quedó y qué se respondió. <a href="#idempotencia">39.4</a></span></li>
+  <li><b>orders</b><span>La intención de compra: quién, qué y cuánto, con el monto congelado al crearla. <a href="#tablas">39.3</a></span></li>
+  <li><b>payment_attempts</b><span>Un intento por cada vez que tocas al proveedor; una orden puede tener varios. <a href="#tablas-intento">39.3</a></span></li>
+  <li><b>Clave determinista</b><span>La clave que mandas al proveedor, derivada de tu id (<code>pay-create:{orden}</code>), nunca aleatoria. <a href="#fases">39.5</a></span></li>
+  <li><b>Proveedor (PSP)</b><span>Quien cobra de verdad: Stripe, Adyen, Mercado Pago. Su respuesta puede perderse. <a href="#fases">39.5</a></span></li>
+  <li><b>Endpoint de webhooks</b><span>Verifica la firma, guarda el evento y responde. No decide nada. <a href="#webhooks">39.11</a></span></li>
+  <li><b>provider_events</b><span>El inbox: un evento por fila, con su id como clave primaria para deduplicar. <a href="#webhooks">39.11</a></span></li>
+  <li><b>Worker</b><span>Toma eventos y tareas con <code>SKIP LOCKED</code>, relee al proveedor y aplica transiciones que solo avanzan. <a href="#webhooks">39.11</a></span></li>
+  <li><b>outbox</b><span>Los efectos secundarios (correo, boletos) escritos en la misma transacción que el cambio de estado. <a href="#efectos">39.14</a></span></li>
+  <li><b>Barrido y conciliación</b><span>Los procesos que preguntan en lugar de esperar: vencen apartados y comparan contra el proveedor. <a href="#detectar">39.16</a></span></li>
+  <li><b>ledger_entries</b><span>Si guardas saldo propio, cada movimiento es un asiento inmutable de doble entrada. <a href="#propio">39.13</a></span></li>
+</ol>
+
+<h2 id="tablas"><span class="sec-num">39.3</span>Las tablas: intención, intento y evento</h2>
+
+<p>La pregunta que ordena el modelo de datos es: <b>¿qué cosas distintas pueden pasar más de una vez?</b> Un usuario quiere comprar (una intención), esa intención puede necesitar varios intentos de cobro (la primera tarjeta fue rechazada), y cada intento produce varios eventos del proveedor (creado, requiere 3D Secure, exitoso, reembolsado). Si las tres cosas viven en la misma fila, un reintento o un evento tardío pisa información que no debía tocar. Separadas, cada una tiene su propia clave y su propia regla de unicidad.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f392t f392d">
+<title id="f392t">Las tablas mínimas de un sistema de pagos</title>
+<desc id="f392d">Seis tablas. products alimenta a orders (uno a muchos); orders tiene muchos payment_attempts. idempotency_keys apunta a la orden que creó con resource_id. provider_events guarda los eventos del proveedor y se une a los intentos por object_id, sin clave foránea. outbox se escribe en la misma transacción que la orden.</desc>
+<defs><marker id="f392a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="20" width="170" height="108" rx="8"/>
+<path class="dg-frame" d="M20 46 H190" style="stroke-dasharray:0"/>
+<text class="dg-label dg-mono" x="30" y="38" text-anchor="start" style="font-size:13px">products</text>
+<text class="dg-tiny dg-mono" x="30" y="64" text-anchor="start">id</text>
+<text class="dg-tiny" x="182" y="64" text-anchor="end" style="font-weight:600">PK</text>
+<text class="dg-tiny dg-mono" x="30" y="82" text-anchor="start">sku</text>
+<text class="dg-tiny" x="182" y="82" text-anchor="end" style="font-weight:600">UK</text>
+<text class="dg-tiny dg-mono" x="30" y="100" text-anchor="start">price_minor</text>
+<text class="dg-tiny dg-mono" x="30" y="118" text-anchor="start">currency</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="260" y="20" width="210" height="180" rx="8"/>
+<path class="dg-frame" d="M260 46 H470" style="stroke-dasharray:0"/>
+<text class="dg-label dg-mono" x="270" y="38" text-anchor="start" style="font-size:13px">orders</text>
+<text class="dg-tiny dg-mono" x="270" y="64" text-anchor="start">id</text>
+<text class="dg-tiny" x="462" y="64" text-anchor="end" style="font-weight:600">PK</text>
+<text class="dg-tiny dg-mono" x="270" y="82" text-anchor="start">user_id</text>
+<text class="dg-tiny dg-mono" x="270" y="100" text-anchor="start">product_id</text>
+<text class="dg-tiny" x="462" y="100" text-anchor="end" style="font-weight:600">FK</text>
+<text class="dg-tiny dg-mono" x="270" y="118" text-anchor="start">amount_minor</text>
+<text class="dg-tiny dg-mono" x="270" y="136" text-anchor="start">currency</text>
+<text class="dg-tiny dg-mono" x="270" y="154" text-anchor="start">status</text>
+<text class="dg-tiny dg-mono" x="270" y="172" text-anchor="start">psp_payment_id</text>
+<text class="dg-tiny" x="462" y="172" text-anchor="end" style="font-weight:600">UK</text>
+<text class="dg-tiny dg-mono" x="270" y="190" text-anchor="start">created_at</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="540" y="20" width="210" height="162" rx="8"/>
+<path class="dg-frame" d="M540 46 H750" style="stroke-dasharray:0"/>
+<text class="dg-label dg-mono" x="550" y="38" text-anchor="start" style="font-size:13px">payment_attempts</text>
+<text class="dg-tiny dg-mono" x="550" y="64" text-anchor="start">id</text>
+<text class="dg-tiny" x="742" y="64" text-anchor="end" style="font-weight:600">PK</text>
+<text class="dg-tiny dg-mono" x="550" y="82" text-anchor="start">order_id</text>
+<text class="dg-tiny" x="742" y="82" text-anchor="end" style="font-weight:600">FK</text>
+<text class="dg-tiny dg-mono" x="550" y="100" text-anchor="start">psp_idem_key</text>
+<text class="dg-tiny" x="742" y="100" text-anchor="end" style="font-weight:600">UK</text>
+<text class="dg-tiny dg-mono" x="550" y="118" text-anchor="start">psp_object_id</text>
+<text class="dg-tiny" x="742" y="118" text-anchor="end" style="font-weight:600">UK</text>
+<text class="dg-tiny dg-mono" x="550" y="136" text-anchor="start">status</text>
+<text class="dg-tiny dg-mono" x="550" y="154" text-anchor="start">error_code</text>
+<text class="dg-tiny dg-mono" x="550" y="172" text-anchor="start">created_at</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="260" y="230" width="210" height="162" rx="8"/>
+<path class="dg-frame" d="M260 256 H470" style="stroke-dasharray:0"/>
+<text class="dg-label dg-mono" x="270" y="248" text-anchor="start" style="font-size:13px">idempotency_keys</text>
+<text class="dg-tiny dg-mono" x="270" y="274" text-anchor="start">(user_id, idem_key)</text>
+<text class="dg-tiny" x="462" y="274" text-anchor="end" style="font-weight:600">PK</text>
+<text class="dg-tiny dg-mono" x="270" y="292" text-anchor="start">method_path</text>
+<text class="dg-tiny dg-mono" x="270" y="310" text-anchor="start">request_hash</text>
+<text class="dg-tiny dg-mono" x="270" y="328" text-anchor="start">recovery_point</text>
+<text class="dg-tiny dg-mono" x="270" y="346" text-anchor="start">locked_until</text>
+<text class="dg-tiny dg-mono" x="270" y="364" text-anchor="start">resource_id</text>
+<text class="dg-tiny dg-mono" x="270" y="382" text-anchor="start">response_body</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="540" y="230" width="210" height="162" rx="8"/>
+<path class="dg-frame" d="M540 256 H750" style="stroke-dasharray:0"/>
+<text class="dg-label dg-mono" x="550" y="248" text-anchor="start" style="font-size:13px">provider_events</text>
+<text class="dg-tiny dg-mono" x="550" y="274" text-anchor="start">event_id</text>
+<text class="dg-tiny" x="742" y="274" text-anchor="end" style="font-weight:600">PK</text>
+<text class="dg-tiny dg-mono" x="550" y="292" text-anchor="start">type</text>
+<text class="dg-tiny dg-mono" x="550" y="310" text-anchor="start">object_id</text>
+<text class="dg-tiny dg-mono" x="550" y="328" text-anchor="start">payload</text>
+<text class="dg-tiny dg-mono" x="550" y="346" text-anchor="start">received_at</text>
+<text class="dg-tiny dg-mono" x="550" y="364" text-anchor="start">processed_at</text>
+<text class="dg-tiny dg-mono" x="550" y="382" text-anchor="start">attempts</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="230" width="170" height="126" rx="8"/>
+<path class="dg-frame" d="M20 256 H190" style="stroke-dasharray:0"/>
+<text class="dg-label dg-mono" x="30" y="248" text-anchor="start" style="font-size:13px">outbox</text>
+<text class="dg-tiny dg-mono" x="30" y="274" text-anchor="start">id</text>
+<text class="dg-tiny" x="182" y="274" text-anchor="end" style="font-weight:600">PK</text>
+<text class="dg-tiny dg-mono" x="30" y="292" text-anchor="start">aggregate_id</text>
+<text class="dg-tiny dg-mono" x="30" y="310" text-anchor="start">topic</text>
+<text class="dg-tiny dg-mono" x="30" y="328" text-anchor="start">payload</text>
+<text class="dg-tiny dg-mono" x="30" y="346" text-anchor="start">sent_at</text>
+<path class="dg-edge" d="M190 62 H256" marker-end="url(#f392a)"/>
+<text class="dg-tiny" x="223" y="54" text-anchor="middle">1:N</text>
+<path class="dg-edge" d="M470 62 H536" marker-end="url(#f392a)"/>
+<text class="dg-tiny" x="503" y="54" text-anchor="middle">1:N</text>
+<path class="dg-edge" d="M365 230 V204" marker-end="url(#f392a)"/>
+<text class="dg-tiny dg-mono" x="372" y="221" text-anchor="start">resource_id</text>
+<path class="dg-feedback" d="M645 230 V186"/>
+<text class="dg-tiny" x="652" y="212" text-anchor="start">object_id, sin FK</text>
+<path class="dg-feedback" d="M190 262 L258 202"/>
+<text class="dg-tiny" x="176" y="214" text-anchor="end">misma TX</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.2.</b> Seis tablas alcanzan para cobrar sin duplicar. La orden es la intención y congela el monto; cada intento de cobro es una fila propia; la clave de idempotencia y el evento del proveedor se guardan como filas, no en memoria.</figcaption>
+</figure>
+
+
+<h3 id="tablas-orden">La orden congela el monto</h3>
+
+<p>La orden es lo que el usuario quiso comprar, con el precio <b>en el momento en que lo quiso</b>. Si el catálogo cambia un minuto después, la orden conserva su monto: ese es el número que se compara con lo que reporta el proveedor antes de entregar (invariante 5). El dinero va en unidades menores y en enteros, con la moneda al lado, como en <a href="m27-pagos-stripe.html#dinero">M27</a>.</p>
+
+<figure class="schema">
+  <figcaption class="schema-head">
+    <code class="schema-name">orders</code>
+    <span class="schema-chip">PostgreSQL</span>
+    <span class="badge badge--ref">Diseño de referencia</span>
+  </figcaption>
+  <div class="table-wrap">
+    <table class="t t--schema">
+      <thead><tr><th>Campo</th><th>Tipo</th><th>Restricciones</th><th>Para qué</th></tr></thead>
+      <tbody>
+        <tr><td><code>id</code><span class="key">PK</span></td><td><code>uuid</code></td><td><code>DEFAULT uuidv7()</code></td><td>Ordenable por tiempo y sin exponer un contador</td></tr>
+        <tr><td><code>user_id</code></td><td><code>bigint</code></td><td><code>NOT NULL</code></td><td>Toda consulta lleva <code>AND user_id = :actual</code></td></tr>
+        <tr><td><code>amount_minor</code></td><td><code>integer</code></td><td><code>CHECK (amount_minor &gt; 0)</code></td><td>El monto congelado, en centavos</td></tr>
+        <tr><td><code>currency</code></td><td><code>char(3)</code></td><td><code>NOT NULL</code></td><td>Nunca se suma un monto sin su moneda</td></tr>
+        <tr><td><code>status</code></td><td><code>text</code></td><td><code>CHECK (status IN (…))</code></td><td>La máquina de estados de <a href="#estados">39.6</a></td></tr>
+        <tr><td><code>psp_payment_id</code></td><td><code>text</code></td><td><code>UNIQUE</code></td><td>Dos órdenes nunca apuntan al mismo pago del proveedor</td></tr>
+        <tr><td><code>paid_at</code></td><td><code>timestamptz</code></td><td><code>CHECK (status &lt;&gt; 'paid' OR paid_at IS NOT NULL)</code></td><td>Una orden pagada siempre dice cuándo</td></tr>
+        <tr><td><code>amount_refunded_minor</code></td><td><code>integer</code></td><td><code>CHECK (… BETWEEN 0 AND amount_minor)</code></td><td>Nunca se devuelve más de lo cobrado</td></tr>
+      </tbody>
+    </table>
+  </div>
+</figure>
+
+<h3 id="tablas-intento">Un intento por cada vez que tocas al proveedor</h3>
+
+<p>Si guardas el id del pago del proveedor directamente en la orden, el segundo intento (otra tarjeta, después de un rechazo) sobrescribe el primero y pierdes el rastro de lo que intentaste. Una tabla <code>payment_attempts</code> guarda cada intento con su propia clave hacia el proveedor (<code>psp_idem_key</code>, <code>UNIQUE</code>), su id externo (<code>UNIQUE</code>) y su resultado. La orden apunta al intento que terminó bien. Es el mismo razonamiento por el que el PaymentIntent de Stripe es un objeto aparte del cargo: el intento es un proceso, no un campo (<a href="m27-pagos-stripe.html#paymentintent">M27</a>).</p>
+
+<p>Con un proveedor que ya modela los reintentos dentro de un mismo objeto (un PaymentIntent acepta otra tarjeta sin crear uno nuevo), la tabla de intentos puede ser más chica, pero no desaparece: sigue siendo tu registro de qué llamadas hiciste y con qué clave, que es lo primero que vas a necesitar cuando la conciliación no cuadre.</p>
+
+<h3 id="tablas-restricciones">La base como red de seguridad</h3>
+
+<p>Cada regla que se puede escribir como restricción se escribe como restricción, aunque el código ya la verifique. El código tiene muchos caminos (el endpoint, el worker, el script que alguien corrió a mano un viernes) y la base tiene uno solo. Las restricciones típicas de un sistema de pagos:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Restricción</th><th>Qué impide</th><th>Invariante</th></tr></thead>
+    <tbody>
+      <tr><td><code>UNIQUE</code> sobre cada id externo (<code>psp_payment_id</code>, <code>refund_id</code>)</td><td>Que dos órdenes reclamen el mismo pago o el mismo reembolso</td><td>1</td></tr>
+      <tr><td><code>PRIMARY KEY (user_id, idem_key)</code></td><td>Que la misma intención cree dos filas</td><td>1</td></tr>
+      <tr><td><code>CHECK</code> que ata el estado a sus columnas (<code>paid</code> exige <code>paid_at</code>)</td><td>Combinaciones imposibles, aunque el código tenga un bug</td><td>3</td></tr>
+      <tr><td><code>CHECK (amount_refunded_minor BETWEEN 0 AND amount_minor)</code></td><td>Devolver más de lo cobrado</td><td>4</td></tr>
+      <tr><td>Índice único parcial (<code>WHERE status IN ('held', 'checkout')</code>)</td><td>Que un usuario acapare con varias reservas activas</td><td>2</td></tr>
+      <tr><td>Exclusion constraint sobre rangos de tiempo</td><td>Que un asiento tenga dos dueños a la vez</td><td>2</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Y una restricción que no está en el esquema sino en los permisos: <b>ningún rol de la aplicación tiene <code>DELETE</code> sobre las tablas de dinero</b>, y ninguno es su dueño (el dueño se salta los permisos y la row-level security, <a href="m05-bases-de-datos.html#roles-grant">M05</a>). Una orden pagada no se borra; avanza a otro estado. Lo retomas en <a href="#seguridad">39.15</a>.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Las restricciones cuestan: cada <code>UNIQUE</code> es un índice que se mantiene en cada escritura, y un <code>CHECK</code> mal pensado bloquea una migración legítima. En tablas de dinero el trade-off casi siempre se inclina hacia la restricción, porque el costo de un dato imposible (una orden pagada dos veces) es mucho mayor que el de un índice. En tablas de logs o de métricas, no.</p>
+</aside>
+
+<h2 id="idempotencia"><span class="sec-num">39.4</span>La tabla de idempotencia, decisión por decisión</h2>
+
+<p><a href="m02-apis.html#idempotencia">M02</a> presentó la idea y <a href="m27-pagos-stripe.html#idempotencia">M27</a> mostró cómo la implementa un procesador. Del lado del comercio, la tabla es la misma idea con decisiones propias. Esta es su forma completa, la de las guías:</p>
+
+<pre data-lang="sql"><code>CREATE TABLE idempotency_keys (
+  user_id         bigint      NOT NULL,
+  idem_key        uuid        NOT NULL,
+  method_path     text        NOT NULL,                 -- 'POST /v1/orders'
+  request_hash    bytea       NOT NULL,                 -- SHA-256 del body canónico
+  recovery_point  text        NOT NULL DEFAULT 'started'
+                  CHECK (recovery_point IN ('started', 'remote_done', 'finished')),
+  locked_until    timestamptz,                          -- el lease
+  resource_id     uuid,                                 -- la orden que creó
+  response_status smallint,
+  response_body   jsonb,                                -- sin secretos
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, idem_key),
+  CHECK ((recovery_point = 'finished') = (response_status IS NOT NULL))
+);</code></pre>
+
+<p>Cada request que trae una clave recorre el mismo árbol de decisiones. La puerta es el <code>INSERT … ON CONFLICT DO NOTHING</code>: solo una request puede crear la fila; las demás leen lo que dejó.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 418" role="img" aria-labelledby="f393t f393d">
+<title id="f393t">Qué hace el servidor con una request que trae Idempotency-Key</title>
+<desc id="f393d">Un diagrama de flujo de arriba abajo. Si la clave no es un UUID, 400. Si el INSERT con ON CONFLICT inserta, es una clave nueva y se ejecuta con un lease de 30 segundos. Si ya existía con otra huella o ruta, 422. Si terminó, se repite la respuesta guardada. Si el lease está vigente, 409 con Retry-After. Si el lease venció, se retoma desde el recovery point.</desc>
+<defs><marker id="f393a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box--em dg-box" x="20" y="16" width="290" height="38" rx="7"/>
+<text class="dg-small" x="165" y="40" text-anchor="middle" style="fill:var(--label)">POST con Idempotency-Key</text>
+<path class="dg-edge" d="M165 54 V72" marker-end="url(#f393a)"/>
+<rect class="dg-box" x="20" y="74" width="290" height="38" rx="7"/>
+<text class="dg-small" x="165" y="98" text-anchor="middle" style="fill:var(--label)">¿Es un UUID?</text>
+<path class="dg-edge" d="M165 112 V130" marker-end="url(#f393a)"/>
+<text class="dg-tiny" x="172" y="125" text-anchor="start">sí</text>
+<path class="dg-edge" d="M310 93 H366" marker-end="url(#f393a)"/>
+<text class="dg-tiny" x="338" y="87" text-anchor="middle">no</text>
+<rect class="dg-bad" x="370" y="74" width="380" height="38" rx="7"/>
+<text class="dg-small dg-mono" x="560" y="98" text-anchor="middle" style="fill:var(--label)">400 IDEMPOTENCY_KEY_REQUIRED</text>
+<rect class="dg-box" x="20" y="132" width="290" height="38" rx="7"/>
+<text class="dg-small" x="165" y="156" text-anchor="middle" style="fill:var(--label)">INSERT … ON CONFLICT DO NOTHING</text>
+<path class="dg-edge" d="M165 170 V188" marker-end="url(#f393a)"/>
+<text class="dg-tiny" x="172" y="183" text-anchor="start">ya existía</text>
+<path class="dg-edge" d="M310 151 H366" marker-end="url(#f393a)"/>
+<text class="dg-tiny" x="338" y="145" text-anchor="middle">insertó</text>
+<rect class="dg-ok" x="370" y="132" width="380" height="38" rx="7"/>
+<text class="dg-small" x="560" y="156" text-anchor="middle" style="fill:var(--label)">Clave nueva: ejecuta con un lease de 30 s</text>
+<rect class="dg-box" x="20" y="190" width="290" height="38" rx="7"/>
+<text class="dg-small" x="165" y="214" text-anchor="middle" style="fill:var(--label)">Ya existía: ¿misma huella y ruta?</text>
+<path class="dg-edge" d="M165 228 V246" marker-end="url(#f393a)"/>
+<text class="dg-tiny" x="172" y="241" text-anchor="start">sí</text>
+<path class="dg-edge" d="M310 209 H366" marker-end="url(#f393a)"/>
+<text class="dg-tiny" x="338" y="203" text-anchor="middle">no</text>
+<rect class="dg-bad" x="370" y="190" width="380" height="38" rx="7"/>
+<text class="dg-small dg-mono" x="560" y="214" text-anchor="middle" style="fill:var(--label)">422 IDEMPOTENCY_KEY_REUSED</text>
+<rect class="dg-box" x="20" y="248" width="290" height="38" rx="7"/>
+<text class="dg-small" x="165" y="272" text-anchor="middle" style="fill:var(--label)">¿Terminó (finished)?</text>
+<path class="dg-edge" d="M165 286 V304" marker-end="url(#f393a)"/>
+<text class="dg-tiny" x="172" y="299" text-anchor="start">no</text>
+<path class="dg-edge" d="M310 267 H366" marker-end="url(#f393a)"/>
+<text class="dg-tiny" x="338" y="261" text-anchor="middle">sí</text>
+<rect class="dg-ok" x="370" y="248" width="380" height="38" rx="7"/>
+<text class="dg-small" x="560" y="272" text-anchor="middle" style="fill:var(--label)">Repite status y body, Idempotent-Replayed: true</text>
+<rect class="dg-box" x="20" y="306" width="290" height="38" rx="7"/>
+<text class="dg-small" x="165" y="330" text-anchor="middle" style="fill:var(--label)">¿Lease vigente? locked_until &gt; now()</text>
+<path class="dg-edge" d="M165 344 V362" marker-end="url(#f393a)"/>
+<text class="dg-tiny" x="172" y="357" text-anchor="start">no</text>
+<path class="dg-edge" d="M310 325 H366" marker-end="url(#f393a)"/>
+<text class="dg-tiny" x="338" y="319" text-anchor="middle">sí</text>
+<rect class="dg-warnbox" x="370" y="306" width="380" height="38" rx="7"/>
+<text class="dg-small dg-mono" x="560" y="330" text-anchor="middle" style="fill:var(--label)">409 IDEMPOTENCY_IN_PROGRESS, Retry-After: 1</text>
+<rect class="dg-box" x="20" y="364" width="290" height="38" rx="7"/>
+<text class="dg-small" x="165" y="388" text-anchor="middle" style="fill:var(--label)">Lease vencido: su dueño murió</text>
+<path class="dg-edge" d="M310 383 H366" marker-end="url(#f393a)"/>
+<rect class="dg-ok" x="370" y="364" width="380" height="38" rx="7"/>
+<text class="dg-small" x="560" y="388" text-anchor="middle" style="fill:var(--label)">Retoma desde el recovery_point guardado</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.3.</b> Seis salidas para una sola pregunta: ¿ya vi esta clave? El <code>INSERT … ON CONFLICT DO NOTHING</code> es la puerta: solo una request puede crear la fila, y las demás leen lo que dejó.</figcaption>
+</figure>
+
+
+<div data-sim="idemkey"></div>
+
+<h3 id="idem-alcance">Alcance y huella</h3>
+
+<p><b>El alcance es por usuario</b>: la clave primaria es <code>(user_id, idem_key)</code>, no solo <code>idem_key</code>. Dos usuarios que por casualidad (o a propósito) mandan el mismo UUID no chocan, y nadie puede leer la respuesta guardada de otro probando claves. En una API para empresas, el alcance es la cuenta, como en Stripe <span class="badge badge--doc">Documentado</span>.</p>
+
+<p><b>La huella del body</b> es un SHA-256 del JSON en forma canónica (claves ordenadas y, si una lista es un conjunto, como los asientos, también ordenada). Sin forma canónica, <code>{"a":1,"b":2}</code> y <code>{"b":2,"a":1}</code> darían huellas distintas y un reintento legítimo recibiría un 422. Junto a la huella se guarda el método y la ruta: la misma clave en otro endpoint es otra intención, y también es 422.</p>
+
+<h3 id="idem-exclusion">Exclusión: un lease, no un advisory lock</h3>
+
+<p>Mientras una request ejecuta, otra con la misma clave no puede ejecutar a la vez. La tentación es usar un <code>pg_advisory_lock(hash(clave))</code>: es exactamente un mutex con nombre. El problema es que un advisory lock de <b>sesión</b> vive en la conexión, y detrás de un pooler como PgBouncer en modo transacción la conexión física se reparte entre clientes en cada transacción: el lock queda en una conexión que ahora usa otro, o se suelta cuando no debía. La documentación de PgBouncer lo lista como incompatible con ese modo <span class="badge badge--doc">Documentado</span>.</p>
+
+<p>La variante de transacción (<code>pg_advisory_xact_lock</code>) sí funciona con el pooler, pero dura lo que dura la transacción, y la request completa no cabe en una sola: en el medio hay una llamada al proveedor (<a href="#fases">39.5</a>). Por eso la exclusión es un <dfn data-term="lease">lease</dfn> guardado como dato, en la columna <code>locked_until</code>:</p>
+
+<pre data-lang="sql"><code>UPDATE idempotency_keys
+SET locked_until = now() + interval '30 seconds'
+WHERE user_id = $1 AND idem_key = $2
+  AND recovery_point &lt;&gt; 'finished'
+  AND (locked_until IS NULL OR locked_until &lt; now())
+RETURNING recovery_point;
+-- 0 filas: otra request la tiene (409) o ya terminó (repetir)</code></pre>
+
+<p>Si el proceso dueño muere, nadie tiene que soltar nada: a los 30 segundos el lease vence solo y el siguiente reintento retoma. El valor de 30 segundos sale de cuánto puede tardar la request más lenta, con margen; si es demasiado corto, dos requests vivas ejecutan a la vez, y si es demasiado largo, un cliente espera de más después de una caída.</p>
+
+<h3 id="idem-guardar">Qué se guarda y qué no</h3>
+
+<ul>
+  <li><b>Se guardan las respuestas de requests que cambiaron algo</b>, éxito o error, porque repetirlas es el punto. Un 201 se repite como 201.</li>
+  <li><b>No se guardan los errores sin efectos.</b> Un <code>409 SEAT_UNAVAILABLE</code> no cambió nada; si se guardara, el reintento con la misma clave recibiría el 409 para siempre, aunque el asiento se haya liberado. Stripe toma la decisión contraria y guarda también los errores de ejecución <span class="badge badge--doc">Documentado</span>; la diferencia es deliberada y conviene escribirla en el design doc.</li>
+  <li><b>No se guardan secretos.</b> El <code>client_secret</code> de un pago no va en <code>response_body</code>: al repetir, el servidor lo vuelve a pedir al proveedor y lo inserta. Una tabla de respuestas guardadas es una tabla que alguien va a consultar para depurar.</li>
+  <li><b>Las claves vencen.</b> Un job borra las de más de 24 horas, en lotes. Un reintento del día siguiente es una intención nueva, y la tabla no crece para siempre.</li>
+</ul>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Los errores clásicos, cada uno con su síntoma: generar la clave en el servidor (no protege del doble clic, que manda dos requests distintas); generarla de nuevo en cada reintento del cliente (dos cobros, el último escenario del simulador); no comparar la huella (un cliente con un bug repite «compra de 1» cuando quiso comprar 3); y guardar la respuesta solo si fue exitosa (el reintento de un 500 vuelve a ejecutar la mitad que sí ocurrió).</p>
+</aside>
+
+<h2 id="fases"><span class="sec-num">39.5</span>Nunca una transacción abierta durante la llamada al proveedor</h2>
+
+<p>Lo más natural es envolver todo el endpoint en una transacción: insertar la orden, llamar al proveedor, guardar el resultado y confirmar. Es un error por dos razones. La primera es de recursos: mientras esperas al proveedor (cientos de milisegundos, o 30 segundos si está lento) la transacción ocupa una conexión del pool y sostiene sus locks, así que una degradación del proveedor se convierte en una caída tuya. La segunda es de corrección: si la transacción hace <code>ROLLBACK</code> después de que el proveedor cobró, tu base dice «no pasó nada» y el dinero salió igual.</p>
+
+<p>La alternativa es partir el endpoint en <dfn data-term="fases-atomicas">fases atómicas</dfn>: cada fase hace cambios locales en su propia transacción y avanza el <code>recovery_point</code>; entre fases van las llamadas externas, cada una con una clave que el otro lado entiende. Es el diseño que publicó Brandur Leach, ingeniero de Stripe <span class="badge badge--ref">Diseño de referencia</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 478" role="img" aria-labelledby="f394t f394d">
+<title id="f394t">Fases atómicas: la API muere entre la llamada al proveedor y la última transacción</title>
+<desc id="f394d">El navegador manda la request con la clave K. La API confirma la primera transacción con la clave en started y la orden, y llama al proveedor con una clave derivada de la orden. La API muere antes de la tercera transacción. El reintento con la misma K encuentra el lease vencido, repite la llamada con la misma clave determinista, recibe el mismo pago y lo guarda.</desc>
+<defs><marker id="f394-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f394-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f394-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f394-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador</text>
+<path class="dg-frame" d="M70.0 40 V468"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Tu API</text>
+<path class="dg-frame" d="M280.0 40 V468"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">PostgreSQL</text>
+<path class="dg-frame" d="M490.0 40 V468"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Proveedor</text>
+<path class="dg-frame" d="M700.0 40 V468"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#f394-a)"/>
+<rect x="56.80000000000001" y="55" width="236.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">POST /v1/orders, Idempotency-Key K</text>
+<path class="dg-edge" d="M283.0 106 L485.0 106" marker-end="url(#f394-a)"/>
+<rect x="276.7" y="89" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">TX1: K started + orden (commit)</text>
+<path class="dg-edge" d="M283.0 140 L695.0 140" marker-end="url(#f394-a)"/>
+<rect x="365.2" y="123" width="249.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="134" text-anchor="middle">crear pago, clave pay-create:{orden}</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 174 L285.0 174" marker-end="url(#f394-r)"/>
+<rect x="437.8" y="157" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="168" text-anchor="middle">pay_123 creado</text>
+<path d="M20 206 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="195" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="210" text-anchor="middle" style="fill:var(--fail)">la API muere antes de TX3</text>
+<path class="dg-edge" d="M73.0 242 L275.0 242" marker-end="url(#f394-a)"/>
+<rect x="89.80000000000001" y="225" width="170.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="236" text-anchor="middle">reintento con la misma K</text>
+<path class="dg-edge" d="M283.0 276 L485.0 276" marker-end="url(#f394-a)"/>
+<rect x="270.1" y="259" width="229.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">K started, lease vencido: retomar</text>
+<path class="dg-edge" d="M283.0 310 L695.0 310" marker-end="url(#f394-a)"/>
+<rect x="385.0" y="293" width="210.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="304" text-anchor="middle">misma clave pay-create:{orden}</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 344 L285.0 344" marker-end="url(#f394-r)"/>
+<rect x="385.0" y="327" width="210.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="338" text-anchor="middle">el mismo pay_123, no crea otro</text>
+<path class="dg-edge" d="M283.0 378 L485.0 378" marker-end="url(#f394-a)"/>
+<rect x="276.7" y="361" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="372" text-anchor="middle">TX3: guarda pay_123, K finished</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 412 L75.0 412" marker-end="url(#f394-r)"/>
+<rect x="112.9" y="395" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="406" text-anchor="middle">201: un solo pago</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.4.</b> Tres fases, cada una con su commit, y ninguna transacción abierta mientras se espera al proveedor. El reintento no crea un segundo pago porque la clave hacia el proveedor no es aleatoria: sale del id de la orden.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Fase</th><th>Qué hace</th><th>Si el proceso muere aquí</th></tr></thead>
+    <tbody>
+      <tr><td>TX1</td><td>Inserta la clave (<code>started</code>) y la orden, con el monto congelado</td><td>Nada salió de tu sistema; el reintento empieza de cero</td></tr>
+      <tr><td>Llamada remota</td><td>Crea el pago con la clave <code>pay-create:{orden}</code>, sin transacción abierta</td><td>El reintento repite la llamada con la misma clave y recibe el mismo pago</td></tr>
+      <tr><td>TX3</td><td>Guarda el id del pago, la respuesta y <code>finished</code></td><td>Ya está todo; el reintento repite la respuesta</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="fases-claves">Claves deterministas hacia el proveedor</h3>
+
+<p>La pieza que hace funcionar el reintento es que la clave que mandas al proveedor <b>no es aleatoria</b>: sale de tus ids. <code>pay-create:{orden}</code>, <code>pay-cancel:{pago}</code>, <code>refund:{orden}</code>. Si la llamada se repite por cualquier motivo (la API murió, el worker reintentó, dos réplicas del barrido vieron la misma fila), el proveedor reconoce la clave y devuelve el objeto que ya creó. Un UUID nuevo por llamada convertiría cada reintento en un cobro nuevo.</p>
+
+<p>Una consecuencia sutil: el proveedor compara los parámetros de la repetición con los de la primera llamada y responde con error si cambian <span class="badge badge--doc">Documentado</span>. Así que <b>todo parámetro que dependa del tiempo se calcula una vez y se guarda</b>. Si mandas <code>expires_at = now() + 60 min</code> calculado en cada intento, el reintento manda otro valor y rompe la idempotencia. La guía A15 guarda <code>checkout_expires_at</code> en la orden por esa razón.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Cuando la llamada al proveedor termina en timeout, la respuesta correcta al cliente no es «falló» sino «no sé»: <code>503</code> y la clave en <code>started</code>, para que el reintento retome. Decir «falló» invita al usuario a pagar otra vez con otra intención, y si el primer cobro sí ocurrió, son dos. Es la misma ambigüedad del commit que viste en <a href="m05-bases-de-datos.html#tx-ciclo">M05</a>: desde afuera, «se cortó antes» y «se cortó después» se ven igual.</p>
+</aside>
+
+<h2 id="estados"><span class="sec-num">39.6</span>Estados que solo avanzan</h2>
+
+<p>La orden tiene una máquina de estados, igual que el PaymentIntent de <a href="m27-pagos-stripe.html#paymentintent">M27</a>. La decisión de diseño importante no es qué estados hay, sino <b>cómo se escribe cada transición</b>: como un <code>UPDATE</code> que exige el estado de origen.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 384" role="img" aria-labelledby="f395t f395d">
+<title id="f395t">La máquina de estados de una orden</title>
+<desc id="f395d">Estados como cápsulas. awaiting_payment pasa a paid si se paga al instante, o a processing si el método es diferido; de processing pasa a paid o a failed. awaiting_payment vence en expired. Desde paid, el cliente pide el reembolso: refund_requested, refund_pending y refunded, o refund_failed. Un recuadro explica que cada flecha es un UPDATE condicionado al estado anterior y que cero filas significa que ya se aplicó.</desc>
+<defs><marker id="f395a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="30" y="60" width="170" height="36" rx="18"/>
+<text class="dg-small dg-mono" x="115.0" y="83" text-anchor="middle" style="fill:var(--label)">awaiting_payment</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="290" y="60" width="130" height="36" rx="18"/>
+<text class="dg-small dg-mono" x="355.0" y="83" text-anchor="middle" style="fill:var(--label)">processing</text>
+<rect class="dg-ok" x="510" y="60" width="110" height="36" rx="18"/>
+<text class="dg-small dg-mono" x="565.0" y="83" text-anchor="middle" style="fill:var(--label)">paid</text>
+<rect class="dg-bad" x="30" y="150" width="170" height="36" rx="18"/>
+<text class="dg-small dg-mono" x="115.0" y="173" text-anchor="middle" style="fill:var(--label)">expired</text>
+<rect class="dg-bad" x="290" y="150" width="130" height="36" rx="18"/>
+<text class="dg-small dg-mono" x="355.0" y="173" text-anchor="middle" style="fill:var(--label)">failed</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="470" y="236" width="170" height="36" rx="18"/>
+<text class="dg-small dg-mono" x="555.0" y="259" text-anchor="middle" style="fill:var(--label)">refund_requested</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="250" y="236" width="150" height="36" rx="18"/>
+<text class="dg-small dg-mono" x="325.0" y="259" text-anchor="middle" style="fill:var(--label)">refund_pending</text>
+<rect class="dg-ok" x="30" y="236" width="150" height="36" rx="18"/>
+<text class="dg-small dg-mono" x="105.0" y="259" text-anchor="middle" style="fill:var(--label)">refunded</text>
+<rect class="dg-bad" x="250" y="316" width="150" height="36" rx="18"/>
+<text class="dg-small dg-mono" x="325.0" y="339" text-anchor="middle" style="fill:var(--label)">refund_failed</text>
+<path class="dg-edge" d="M200 78 H286" marker-end="url(#f395a)"/>
+<text class="dg-tiny" x="243" y="70" text-anchor="middle">diferido</text>
+<path class="dg-edge" d="M420 78 H506" marker-end="url(#f395a)"/>
+<text class="dg-tiny" x="463" y="70" text-anchor="middle">confirmado</text>
+<path class="dg-edge" d="M150 60 C 200 18, 520 18, 560 56" marker-end="url(#f395a)"/>
+<text class="dg-tiny" x="360" y="18" text-anchor="middle">pagado al instante</text>
+<path class="dg-edge" d="M115 96 V146" marker-end="url(#f395a)"/>
+<text class="dg-tiny" x="122" y="126" text-anchor="start">venció</text>
+<path class="dg-edge" d="M355 96 V146" marker-end="url(#f395a)"/>
+<text class="dg-tiny" x="362" y="126" text-anchor="start">rechazado</text>
+<path class="dg-edge" d="M565 96 V232" marker-end="url(#f395a)"/>
+<text class="dg-tiny" x="572" y="170" text-anchor="start">el cliente pide</text>
+<text class="dg-tiny" x="572" y="184" text-anchor="start">reembolso</text>
+<path class="dg-edge" d="M470 254 H404" marker-end="url(#f395a)"/>
+<text class="dg-tiny" x="437" y="246" text-anchor="middle">worker</text>
+<path class="dg-edge" d="M250 254 H184" marker-end="url(#f395a)"/>
+<text class="dg-tiny" x="217" y="246" text-anchor="middle">ok</text>
+<path class="dg-edge" d="M325 272 V312" marker-end="url(#f395a)"/>
+<text class="dg-tiny" x="332" y="296" text-anchor="start">falló</text>
+<rect class="dg-warnbox" x="450" y="300" width="300" height="74" rx="8"/>
+<text class="dg-tiny" x="600" y="318" text-anchor="middle">Cada flecha es un UPDATE condicionado:</text>
+<text class="dg-tiny" x="600" y="332" text-anchor="middle">… SET status = &#x27;paid&#x27;</text>
+<text class="dg-tiny" x="600" y="346" text-anchor="middle">WHERE id = $1 AND status IN (…)</text>
+<text class="dg-tiny" x="600" y="360" text-anchor="middle">0 filas: ya se aplicó, no es un error</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.5.</b> Una orden solo avanza. Cada flecha es un <code>UPDATE</code> que exige el estado de origen, así que repetir un evento, o recibirlo tarde, no hace retroceder nada: el segundo intento afecta cero filas y termina sin error.</figcaption>
+</figure>
+
+
+<pre data-lang="sql"><code>UPDATE orders
+SET status = 'paid', paid_at = now(), psp_payment_id = $2, updated_at = now()
+WHERE id = $1 AND status IN ('awaiting_payment', 'processing')
+RETURNING id;
+-- 1 fila: la transición se aplicó ahora
+-- 0 filas: ya estaba paid (otro camino llegó antes) o está más adelante; no es un error</code></pre>
+
+<p>Esa forma da tres propiedades a la vez. Es <b>idempotente</b>: aplicar el mismo evento dos veces afecta una fila la primera y cero la segunda. Es <b>segura en concurrencia</b>: si el webhook y la página de éxito llegan en el mismo milisegundo, el lock de fila que toma el <code>UPDATE</code> los ordena y solo uno ve la fila en el estado de origen (lo verás en <a href="#concurrencia">39.7</a>). Y es <b>monótona</b>: un evento viejo que llega tarde no puede devolver la orden a un estado anterior, porque el <code>WHERE</code> no lo deja.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Definición</p>
+  <p class="def-term">Cero filas no es un error</p>
+  <p class="def-one">En un handler de pagos, un <code>UPDATE</code> condicionado que no afecta filas significa casi siempre «alguien ya hizo esto», y la respuesta correcta es terminar sin error.</p>
+  <dl class="def-rows">
+    <dt>Intuición</dt><dd>Llegaste a una puerta que otro ya cerró. No hace falta cerrarla de nuevo ni gritar.</dd>
+    <dt>Ejemplo</dt><dd>El worker procesa <code>payment.succeeded</code> y la orden ya está <code>paid</code> porque la página de éxito llamó primero.</dd>
+    <dt>Por qué importa en producción</dt><dd>Si el handler lanza un error, el sistema reintenta para siempre algo que ya está hecho, y las alertas se llenan de ruido que esconde los errores reales.</dd>
+  </dl>
+</aside>
+
+<h2 id="concurrencia"><span class="sec-num">39.7</span>Concurrencia: cuando dos llegan a la misma fila</h2>
+
+<p>Hasta aquí, cada defensa protegía de la <b>misma</b> intención repetida. Falta el cuarto tramo de la figura 39.1: dos intenciones <b>distintas</b>, de dos personas, que quieren lo mismo. Ana y Beto pulsan el asiento F7 en el mismo instante. Cada uno tiene su propia clave de idempotencia, así que la tabla de claves no ayuda: el problema es la fila del asiento.</p>
+
+<h3 id="lost-update">La actualización perdida</h3>
+
+<p>El patrón ingenuo es leer, decidir en el código y escribir. Funciona con un usuario y falla con dos, porque las dos transacciones deciden con la misma foto vieja. Esto se llama <dfn data-term="lost-update">actualización perdida</dfn>: la segunda escritura pisa a la primera sin enterarse de que existió. <a href="m05-bases-de-datos.html#tx-niveles">M05</a> la mostró junto al write skew y <a href="m02-apis.html#etag">M02</a> la resolvió entre requests con un ETag; aquí aparece dentro de una sola request.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 320" role="img" aria-labelledby="f396t f396d">
+<title id="f396t">Actualización perdida contra un lock de fila</title>
+<desc id="f396d">Dos paneles con dos carriles, Ana y Beto. A la izquierda, los dos leen F7 libre, Ana escribe y confirma, y Beto escribe encima: F7 queda vendido dos veces. A la derecha, Ana lee con FOR UPDATE y toma el lock; Beto espera; Ana confirma y suelta; Beto lee F7 de Ana y responde 409.</desc>
+<defs><marker id="f396a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="10" y="10" width="365" height="300" rx="10"/>
+<text class="dg-label" x="192" y="32" text-anchor="middle">Leer y después escribir</text>
+<text class="dg-group" x="105" y="56" text-anchor="middle">Ana</text>
+<text class="dg-group" x="280" y="56" text-anchor="middle">Beto</text>
+<path class="dg-frame" d="M192 44 V250"/>
+<rect class="dg-box" x="28" y="66" width="154" height="34" rx="6"/>
+<text class="dg-tiny" x="105" y="80" text-anchor="middle">SELECT status: F7</text>
+<text class="dg-tiny" x="105" y="93" text-anchor="middle">available</text>
+<rect class="dg-box" x="205" y="106" width="154" height="34" rx="6"/>
+<text class="dg-tiny" x="282" y="120" text-anchor="middle">SELECT status: F7</text>
+<text class="dg-tiny" x="282" y="133" text-anchor="middle">available</text>
+<rect class="dg-box" x="28" y="146" width="154" height="34" rx="6"/>
+<text class="dg-tiny" x="105" y="160" text-anchor="middle">UPDATE F7 = Ana</text>
+<text class="dg-tiny" x="105" y="173" text-anchor="middle">COMMIT</text>
+<rect class="dg-bad" x="205" y="186" width="154" height="34" rx="6"/>
+<text class="dg-tiny" x="282" y="200" text-anchor="middle">UPDATE F7 = Beto</text>
+<text class="dg-tiny" x="282" y="213" text-anchor="middle">COMMIT (pisa a Ana)</text>
+<rect class="dg-bad" x="28" y="262" width="330" height="36" rx="8"/>
+<text class="dg-small" x="192" y="285" text-anchor="middle" style="fill:var(--label);font-weight:600">F7 vendido dos veces</text>
+<rect class="dg-box" x="395" y="10" width="365" height="300" rx="10"/>
+<text class="dg-label" x="577" y="32" text-anchor="middle">SELECT … FOR UPDATE</text>
+<text class="dg-group" x="490" y="56" text-anchor="middle">Ana</text>
+<text class="dg-group" x="665" y="56" text-anchor="middle">Beto</text>
+<path class="dg-frame" d="M577 44 V250"/>
+<rect class="dg-box" x="413" y="66" width="154" height="34" rx="6"/>
+<text class="dg-tiny" x="490" y="80" text-anchor="middle">SELECT … FOR UPDATE</text>
+<text class="dg-tiny" x="490" y="93" text-anchor="middle">F7 available, lock</text>
+<rect class="dg-warnbox" x="590" y="106" width="154" height="34" rx="6"/>
+<text class="dg-tiny" x="667" y="120" text-anchor="middle">SELECT … FOR UPDATE</text>
+<text class="dg-tiny" x="667" y="133" text-anchor="middle">espera el lock…</text>
+<rect class="dg-box" x="413" y="146" width="154" height="34" rx="6"/>
+<text class="dg-tiny" x="490" y="160" text-anchor="middle">UPDATE F7 = Ana</text>
+<text class="dg-tiny" x="490" y="173" text-anchor="middle">COMMIT, suelta</text>
+<rect class="dg-ok" x="590" y="186" width="154" height="34" rx="6"/>
+<text class="dg-tiny" x="667" y="200" text-anchor="middle">lee F7 = Ana</text>
+<text class="dg-tiny" x="667" y="213" text-anchor="middle">ROLLBACK, 409</text>
+<rect class="dg-ok" x="413" y="262" width="330" height="36" rx="8"/>
+<text class="dg-small" x="577" y="285" text-anchor="middle" style="fill:var(--label);font-weight:600">Un solo dueño; Beto se entera</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.6.</b> Lo que se decide con un dato leído tiene que proteger ese dato hasta escribir. Sin lock, las dos transacciones deciden con la misma foto vieja; con <code>FOR UPDATE</code>, la segunda decide con la foto nueva.</figcaption>
+</figure>
+
+
+<p>La regla general detrás de la figura: <b>lo que se decide con un dato leído tiene que proteger ese dato hasta escribir</b>. Hay varias formas de protegerlo, y elegir bien depende de dos preguntas: cuánto chocan las transacciones, y qué tiene que pasar con la que pierde.</p>
+
+<h3 id="opciones">Cinco formas de decidir quién gana</h3>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f397t f397d">
+<title id="f397t">Cinco formas de decidir quién gana una fila</title>
+<desc id="f397d">Cinco tarjetas en fila, de la más cercana a la base a la más cercana al código: restricción (UNIQUE, CHECK, EXCLUDE), UPDATE condicional, FOR UPDATE NOWAIT, FOR UPDATE con lock_timeout y control optimista con versión. Cada una dice qué pasa si choca y cuándo usarla. Abajo, la advertencia de que ninguna sirve para una espera larga.</desc>
+<defs><marker id="f397a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="50" width="142" height="196" rx="10"/>
+<text class="dg-small" x="85" y="74" text-anchor="middle" style="fill:var(--label);font-weight:600">Restricción</text>
+<text class="dg-tiny dg-mono" x="85" y="92" text-anchor="middle">UNIQUE, EXCLUDE</text>
+<path class="dg-frame" d="M26 104 H144"/>
+<text class="dg-num" x="85" y="124" text-anchor="middle">Si choca</text>
+<text class="dg-tiny" x="85" y="141" text-anchor="middle">La base rechaza</text>
+<text class="dg-tiny" x="85" y="155" text-anchor="middle">la segunda escritura</text>
+<text class="dg-num" x="85" y="186" text-anchor="middle">Úsalo cuando</text>
+<text class="dg-tiny" x="85" y="203" text-anchor="middle">La regla se puede</text>
+<text class="dg-tiny" x="85" y="217" text-anchor="middle">escribir como dato</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="164" y="50" width="142" height="196" rx="10"/>
+<text class="dg-small" x="235" y="74" text-anchor="middle" style="fill:var(--label);font-weight:600">UPDATE condicional</text>
+<text class="dg-tiny dg-mono" x="235" y="92" text-anchor="middle">WHERE status = …</text>
+<path class="dg-frame" d="M176 104 H294"/>
+<text class="dg-num" x="235" y="124" text-anchor="middle">Si choca</text>
+<text class="dg-tiny" x="235" y="141" text-anchor="middle">0 filas: otro</text>
+<text class="dg-tiny" x="235" y="155" text-anchor="middle">llegó antes</text>
+<text class="dg-num" x="235" y="186" text-anchor="middle">Úsalo cuando</text>
+<text class="dg-tiny" x="235" y="203" text-anchor="middle">La decisión cabe</text>
+<text class="dg-tiny" x="235" y="217" text-anchor="middle">en una sentencia</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="314" y="50" width="142" height="196" rx="10"/>
+<text class="dg-small" x="385" y="74" text-anchor="middle" style="fill:var(--label);font-weight:600">FOR UPDATE NOWAIT</text>
+<text class="dg-tiny" x="385" y="92" text-anchor="middle">lock pesimista</text>
+<path class="dg-frame" d="M326 104 H444"/>
+<text class="dg-num" x="385" y="124" text-anchor="middle">Si choca</text>
+<text class="dg-tiny" x="385" y="141" text-anchor="middle">Error 55P03 al</text>
+<text class="dg-tiny" x="385" y="155" text-anchor="middle">instante: 409</text>
+<text class="dg-num" x="385" y="186" text-anchor="middle">Úsalo cuando</text>
+<text class="dg-tiny" x="385" y="203" text-anchor="middle">Mucho choque y la</text>
+<text class="dg-tiny" x="385" y="217" text-anchor="middle">respuesta es «no»</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="464" y="50" width="142" height="196" rx="10"/>
+<text class="dg-small" x="535" y="74" text-anchor="middle" style="fill:var(--label);font-weight:600">FOR UPDATE</text>
+<text class="dg-tiny" x="535" y="92" text-anchor="middle">con lock_timeout</text>
+<path class="dg-frame" d="M476 104 H594"/>
+<text class="dg-num" x="535" y="124" text-anchor="middle">Si choca</text>
+<text class="dg-tiny" x="535" y="141" text-anchor="middle">Espera y decide</text>
+<text class="dg-tiny" x="535" y="155" text-anchor="middle">con el dato nuevo</text>
+<text class="dg-num" x="535" y="186" text-anchor="middle">Úsalo cuando</text>
+<text class="dg-tiny" x="535" y="203" text-anchor="middle">Hay que hacerlo</text>
+<text class="dg-tiny" x="535" y="217" text-anchor="middle">igual, en orden</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="614" y="50" width="142" height="196" rx="10"/>
+<text class="dg-small" x="685" y="74" text-anchor="middle" style="fill:var(--label);font-weight:600">Optimista</text>
+<text class="dg-tiny" x="685" y="92" text-anchor="middle">columna version, ETag</text>
+<path class="dg-frame" d="M626 104 H744"/>
+<text class="dg-num" x="685" y="124" text-anchor="middle">Si choca</text>
+<text class="dg-tiny" x="685" y="141" text-anchor="middle">0 filas: reintenta</text>
+<text class="dg-tiny" x="685" y="155" text-anchor="middle">o avisa al usuario</text>
+<text class="dg-num" x="685" y="186" text-anchor="middle">Úsalo cuando</text>
+<text class="dg-tiny" x="685" y="203" text-anchor="middle">Choque raro o</text>
+<text class="dg-tiny" x="685" y="217" text-anchor="middle">decisión humana</text>
+<path class="dg-edge" d="M700 28 H70" marker-end="url(#f397a)"/>
+<text class="dg-tiny" x="385" y="20" text-anchor="middle">más cerca de la base: menos código que puede olvidarlo</text>
+<text class="dg-tiny" x="385" y="268" text-anchor="middle">Ninguno sirve para una espera larga: un lock dura lo que dura su transacción (sección 39.8).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.7.</b> El espectro del control de concurrencia en un sistema de pagos. Cuanto más a la izquierda vive la regla, menos caminos del código pueden olvidarla.</figcaption>
+</figure>
+
+
+<p><b>Restricción.</b> Si la regla se puede escribir como un dato (un id único, un rango que no se solapa), la base rechaza la segunda escritura y no hace falta lock explícito. Es la opción más robusta y la que menos depende del código.</p>
+
+<p><b>UPDATE condicional.</b> Si la decisión cabe en el <code>WHERE</code> de una sentencia (<code>WHERE status = 'available'</code>, <code>WHERE balance &gt;= 500</code>), el propio <code>UPDATE</code> lee, decide y escribe con el lock de fila tomado. En <code>READ COMMITTED</code>, si otra transacción tenía la fila, la tuya espera y después <b>vuelve a evaluar el WHERE sobre la versión recién confirmada</b> <span class="badge badge--doc">Documentado</span>: si ya no cumple, afecta cero filas. Es el lock más barato que existe, y el que deberías probar primero.</p>
+
+<p><b>Lock pesimista.</b> Cuando la decisión necesita varias lecturas (el asiento, la reserva vieja que lo tenía, el límite del usuario), se bloquea antes de leer con <code>SELECT … FOR UPDATE</code>. Es <dfn data-term="lock-pesimista">pesimista</dfn> porque supone que va a haber choque y lo previene. Sus variantes cambian qué pasa con quien llega segundo:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Cláusula</th><th>Si la fila está tomada</th><th>Cuándo usarla</th></tr></thead>
+    <tbody>
+      <tr><td><code>FOR UPDATE</code></td><td>Espera a que la otra transacción termine y sigue con el dato nuevo</td><td>La segunda tiene que hacer su trabajo igual (aplicar otro evento a la misma orden)</td></tr>
+      <tr><td><code>FOR UPDATE NOWAIT</code></td><td>Falla en el acto con <code>55P03 lock_not_available</code> <span class="badge badge--doc">Documentado</span></td><td>Mucho choque y la respuesta al perdedor es «no disponible» (reservar un asiento)</td></tr>
+      <tr><td><code>SET LOCAL lock_timeout = '2s'</code></td><td>Espera hasta el límite y después falla con el mismo error</td><td>Quieres esperar un poco, pero nunca ocupar la conexión indefinidamente</td></tr>
+      <tr><td><code>FOR UPDATE SKIP LOCKED</code></td><td>Salta las filas tomadas y sigue con las libres</td><td>Repartir trabajo entre varios workers, o tomar «cualquier unidad libre» (<a href="#filas-calientes">39.10</a>)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p><b>Optimista.</b> El control <dfn data-term="lock-optimista">optimista</dfn> no bloquea al leer: anota una versión y, al escribir, exige que siga siendo la misma (<code>WHERE version = 41</code>). Si cambió, la escritura afecta cero filas y la aplicación decide si reintenta o avisa. Brilla cuando entre leer y escribir hay tiempo humano (el formulario que el usuario tiene abierto, el ETag de M02) o cuando los choques son raros. Bajo mucha contención es un desperdicio: con 200 personas sobre el mismo asiento, 199 hacen todo el trabajo para tirarlo al final.</p>
+
+<p>El simulador pone a Ana y a Beto frente a F7 con cada estrategia. Fíjate en tres cosas: en qué paso se entera Beto, si espera o no, y qué tiene que hacer la aplicación después.</p>
+
+<div data-sim="seatrace"></div>
+
+<h3 id="deadlocks">Deadlocks: tomar los locks en orden</h3>
+
+<p>Ana quiere F7 y F8; Beto quiere F8 y F7. Ana bloquea F7, Beto bloquea F8, y cada uno espera la fila que tiene el otro. Es un <dfn data-term="deadlock">deadlock</dfn>. PostgreSQL lo detecta después de <code>deadlock_timeout</code> (1 segundo por defecto) y aborta a una de las dos con <code>40P01</code> <span class="badge badge--doc">Documentado</span>, pero mientras tanto las dos esperaron, y una falló sin necesidad.</p>
+
+<p>La prevención es simple y hay que hacerla siempre: <b>toma los locks en un orden global</b>, por ejemplo por id (<code>ORDER BY id FOR UPDATE</code>). Si Ana y Beto bloquean primero F7 y después F8, el segundo espera en F7 y nunca tiene F8 tomado mientras espera. Con <code>NOWAIT</code> los deadlocks no pueden formarse (nadie espera), pero el orden se mantiene igual, por si una versión futura cambia a esperar.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>¿Y subir el aislamiento a <code>SERIALIZABLE</code>? Resuelve la actualización perdida sin pensar en locks: la base aborta a una de las dos con <code>40001</code> y la aplicación reintenta (<a href="m05-bases-de-datos.html#tx-niveles">M05</a>). Es una opción válida si todo el código está preparado para reintentar transacciones enteras. En un sistema de pagos suele preferirse <code>READ COMMITTED</code> con locks explícitos, porque cada choque tiene una respuesta de negocio distinta (409, esperar, saltar) que un reintento genérico no expresa.</p>
+</aside>
+
+<h2 id="locks-cortos"><span class="sec-num">39.8</span>Un lock dura milisegundos; un apartado dura minutos</h2>
+
+<p>Muchos negocios necesitan apartar algo mientras el usuario piensa: el asiento durante 30 segundos mientras decide, y durante 3 minutos mientras llena la tarjeta. La primera idea es «un lock pesimista de 3 minutos». No funciona, porque <b>un lock de fila dura lo que dura su transacción</b>, y una transacción abierta 3 minutos mientras una persona mira la pantalla ocupa una conexión del pool por persona. Con un pool de 20 conexiones, la persona 21 espera; además, la transacción larga retrasa el <code>VACUUM</code> de esas filas, y si el servidor cae, el lock queda colgado hasta que la conexión muera.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 284" role="img" aria-labelledby="f398t f398d">
+<title id="f398t">Dos niveles de lock: el de fila y el apartado lógico</title>
+<desc id="f398d">Una línea de tiempo de 0 a 200 segundos con dos carriles. Arriba, el lock de fila aparece como tres marcas finas, de milisegundos, al reservar, al pasar al checkout y al vender. Abajo, el apartado lógico es una barra: held de 0 a 12 segundos, checkout de 12 a 107, y sold desde 107. Un recuadro explica que un lock de minutos agotaría el pool de conexiones.</desc>
+<defs><marker id="f398a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="20" y="66" text-anchor="start" style="fill:var(--label);font-weight:600">Lock de fila</text>
+<text class="dg-tiny" x="20" y="82" text-anchor="start">FOR UPDATE, dura una TX</text>
+<text class="dg-small" x="20" y="142" text-anchor="start" style="fill:var(--label);font-weight:600">Apartado lógico</text>
+<text class="dg-tiny dg-mono" x="20" y="158" text-anchor="start">status + hold_expires_at</text>
+<path class="dg-frame" d="M190.0 72 H740.0"/>
+<rect class="dg-box dg-box--em" x="188.0" y="60" width="5" height="24" rx="1"/>
+<text class="dg-tiny" x="196.0" y="54" text-anchor="start">reservar (ms)</text>
+<rect class="dg-box dg-box--em" x="221.0" y="60" width="5" height="24" rx="1"/>
+<text class="dg-tiny" x="229.0" y="100" text-anchor="start">checkout (ms)</text>
+<rect class="dg-box dg-box--em" x="482.25" y="60" width="5" height="24" rx="1"/>
+<text class="dg-tiny" x="490.25" y="54" text-anchor="start">vender (ms)</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="190.0" y="132" width="33.0" height="30" rx="4"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="223.0" y="132" width="261.25" height="30" rx="4"/>
+<text class="dg-tiny" x="355.0" y="152" text-anchor="middle">checkout</text>
+<rect class="dg-ok" x="484.25" y="132" width="255.75" height="30" rx="4"/>
+<text class="dg-tiny" x="602.5" y="152" text-anchor="middle">sold, para siempre</text>
+<path class="dg-feedback" d="M223.0 168 V176 H718.0 V168"/>
+<text class="dg-tiny" x="470.5" y="190" text-anchor="middle">plazo del checkout: 3 min desde el segundo 12</text>
+<path class="dg-feedback" d="M190.0 126 V118 H272.5 V126"/>
+<text class="dg-tiny" x="278.5" y="122" text-anchor="start">hold de 30 s</text>
+<text class="dg-num" x="190.0" y="214" text-anchor="middle">0 s</text>
+<text class="dg-num" x="272.5" y="214" text-anchor="middle">30 s</text>
+<text class="dg-num" x="355.0" y="214" text-anchor="middle">60 s</text>
+<text class="dg-num" x="437.5" y="214" text-anchor="middle">90 s</text>
+<text class="dg-num" x="520.0" y="214" text-anchor="middle">120 s</text>
+<text class="dg-num" x="602.5" y="214" text-anchor="middle">150 s</text>
+<text class="dg-num" x="685.0" y="214" text-anchor="middle">180 s</text>
+<rect class="dg-warnbox" x="20" y="228" width="730" height="46" rx="8"/>
+<text class="dg-tiny" x="385" y="247" text-anchor="middle">Un lock de 3 min ocuparía una conexión por persona: con un pool de 20, la persona 21 espera.</text>
+<text class="dg-tiny" x="385" y="263" text-anchor="middle">Por eso el lock protege el cambio de estado (milisegundos) y la columna representa el apartado (minutos).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.8.</b> El asiento F7 de Ana, en dos escalas. El lock de fila dura lo que tarda cada transacción; lo que dura minutos es una columna con su vencimiento, que todos pueden leer sin bloquear a nadie.</figcaption>
+</figure>
+
+
+<p>Por eso hay dos niveles, cada uno con su trabajo:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Nivel</th><th>Qué es</th><th>Cuánto dura</th><th>Para qué</th></tr></thead>
+    <tbody>
+      <tr><td>Lock de fila</td><td><code>FOR UPDATE NOWAIT</code> o el lock del <code>UPDATE</code></td><td>Milisegundos</td><td>Que dos transacciones no cambien el mismo asiento a la vez</td></tr>
+      <tr><td><dfn data-term="hold-logico">Apartado con vencimiento</dfn></td><td><code>status = 'held'</code> y <code>hold_expires_at</code></td><td>30 s o 3 min</td><td>Que todos vean el asiento apartado entre una request y otra</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>El lock protege la <b>transición</b>; la columna representa el <b>apartado</b>. Leer el apartado no bloquea a nadie: el mapa de asientos lo muestra con una consulta normal.</p>
+
+<h3 id="vencer">Vencer: perezoso, con barrido y con dinero de por medio</h3>
+
+<p>Un apartado que vence tiene que liberarse, y aquí aparecen las decisiones finas que la guía <a href="../proyectos/a27-cine.html">A27</a> implementa:</p>
+
+<ul>
+  <li><b>Toma perezosa.</b> Un asiento con el apartado vencido se considera libre en el momento: si Beto lo pide un segundo después de que venció el de Ana, su transacción lo toma y marca vencida la reserva vieja. No hay que esperar a ningún proceso.</li>
+  <li><b>Barrido.</b> Un worker cada pocos segundos vence lo que nadie pidió, en lotes con <code>FOR UPDATE SKIP LOCKED</code>, para que varias réplicas barran sin pisarse y sin elegir un líder.</li>
+  <li><b>Con dinero en juego, cancelar antes de liberar.</b> Un asiento en checkout tiene un pago en vuelo. Si se libera al vencer y el cliente termina de pagar un segundo después, cobraste un asiento que ya es de otro. Por eso el checkout vencido no se toma de forma perezosa: solo lo libera el barrido, y solo después de que el proveedor confirme que el pago quedó cancelado. Si el proveedor responde que el pago ya está en curso o terminó, no se libera: el dinero ganó la carrera.</li>
+  <li><b>Un solo reloj.</b> <code>hold_expires_at</code> se calcula con <code>now()</code> de la base, y el servidor devuelve <code>server_time</code> para que el navegador dibuje su cuenta regresiva con su propio desfase. Ninguna decisión depende del reloj del cliente (invariante 6).</li>
+</ul>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Los plazos chocan con la realidad del banco. Cuando el emisor pide <dfn data-term="3ds">3D Secure</dfn>, el pago queda en <code>requires_action</code> mientras el cliente confirma en su app <span class="badge badge--doc">Documentado</span>, y eso puede ocurrir justo al vencer. Cancelar ahí castiga a quien sí estaba pagando. La guía A27 da una prórroga única de 60 segundos solo en ese estado: es una regla de negocio, y se escribe como tal (<code>grace_used</code>), no como un plazo más largo para todos.</p>
+</aside>
+
+<h2 id="rangos"><span class="sec-num">39.9</span>La base como árbitro: rangos y autorizar antes de capturar</h2>
+
+<p>El diseño de dos niveles funciona, pero su corrección depende de que el código haga bien tres cosas: la regla de disponibilidad, la toma perezosa y el barrido que cancela antes de liberar. Un bug en cualquiera vende un asiento dos veces. La alternativa que recomienda la guía <a href="../proyectos/a28-cine.html">A28</a> cambia dos ideas.</p>
+
+<p><b>El apartado es un rango de tiempo, y la base prohíbe que se solapen.</b> Cada apartado, checkout o venta es una fila con <code>active_during tstzrange</code>, y una <dfn data-term="exclusion-constraint">exclusion constraint</dfn> garantiza que dos rangos del mismo asiento nunca se pisen. Un apartado de 30 s es <code>[19:00:00, 19:00:30)</code>; al vencer no hay que cambiar nada, porque el rango simplemente quedó en el pasado. Una venta es <code>[t, infinity)</code>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 256" role="img" aria-labelledby="f3910t f3910d">
+<title id="f3910t">Apartados como rangos de tiempo que la base no deja solapar</title>
+<desc id="f3910d">Una línea de tiempo de 0 a 4 minutos para el asiento F7. El hold de Ana, de 0 a 30 segundos, ya venció. Beto aparta y pasa al checkout de 0:45 a 2:30, y desde ahí su claim vendido va hasta el infinito. Carla intenta apartar de 1:40 a 2:10, se solapa con Beto y la base la rechaza con 23P01. Abajo, la exclusion constraint.</desc>
+<defs><marker id="f3910a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-frame" d="M150.0 150 H726.0"/>
+<text class="dg-num" x="150.0" y="178" text-anchor="middle">0:00</text>
+<text class="dg-num" x="222.0" y="178" text-anchor="middle">0:30</text>
+<text class="dg-num" x="294.0" y="178" text-anchor="middle">1:00</text>
+<text class="dg-num" x="366.0" y="178" text-anchor="middle">1:30</text>
+<text class="dg-num" x="438.0" y="178" text-anchor="middle">2:00</text>
+<text class="dg-num" x="510.0" y="178" text-anchor="middle">2:30</text>
+<text class="dg-num" x="582.0" y="178" text-anchor="middle">3:00</text>
+<text class="dg-num" x="654.0" y="178" text-anchor="middle">3:30</text>
+<text class="dg-num" x="726.0" y="178" text-anchor="middle">4:00</text>
+<text class="dg-small" x="20" y="90" text-anchor="start" style="fill:var(--label);font-weight:600">Asiento F7</text>
+<text class="dg-tiny dg-mono" x="20" y="106" text-anchor="start">seat_claims</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="150.0" y="76" width="72.0" height="30" rx="4"/>
+<text class="dg-tiny" x="186.0" y="96" text-anchor="middle">Ana</text>
+<text class="dg-tiny" x="150.0" y="66" text-anchor="start">hold vencido</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="258.0" y="76" width="252.0" height="30" rx="4"/>
+<text class="dg-tiny" x="382.79999999999995" y="96" text-anchor="middle">Beto: hold y checkout</text>
+<rect class="dg-ok" x="510.0" y="76" width="216.0" height="30" rx="4"/>
+<text class="dg-tiny" x="618.0" y="96" text-anchor="middle">Beto: sold [2:30, ∞)</text>
+<rect class="dg-bad" x="390.0" y="116" width="72.0" height="26" rx="4"/>
+<text class="dg-tiny" x="426.0" y="133" text-anchor="middle">Carla</text>
+<path class="dg-feedback" d="M462.0 129 H550.0"/>
+<text class="dg-tiny dg-fail-text" x="556.0" y="133" text-anchor="start">se solapa: 23P01, 409</text>
+<rect class="dg-warnbox" x="20" y="196" width="730" height="50" rx="8"/>
+<text class="dg-tiny dg-mono" x="385" y="216" text-anchor="middle">EXCLUDE USING gist (seat_id WITH =, active_during WITH &amp;&amp;)</text>
+<text class="dg-tiny" x="385" y="234" text-anchor="middle">Un hold que vence no se borra: su rango queda en el pasado y ya no choca con nadie.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.10.</b> Con rangos, vencer no es una tarea: es el paso del tiempo. La regla «un asiento, un dueño a la vez» deja de vivir en el código y pasa a ser una restricción que la base aplica en cada <code>INSERT</code> y cada <code>UPDATE</code>.</figcaption>
+</figure>
+
+
+<pre data-lang="sql"><code>CREATE EXTENSION IF NOT EXISTS btree_gist;     -- igualdad sobre bigint dentro de un índice GiST
+
+CREATE TABLE seat_claims (
+  id              uuid        PRIMARY KEY DEFAULT uuidv7(),
+  seat_id         bigint      NOT NULL REFERENCES seats (id),
+  reservation_id  uuid        NOT NULL REFERENCES reservations (id),
+  kind            text        NOT NULL CHECK (kind IN ('hold', 'checkout', 'sold', 'void')),
+  active_during   tstzrange   NOT NULL,
+  CONSTRAINT one_claim_per_seat_at_a_time
+    EXCLUDE USING gist (seat_id WITH =, active_during WITH &amp;&amp;)
+);</code></pre>
+
+<p>PostgreSQL 18 expresa lo mismo con una clave temporal, <code>UNIQUE (seat_id, active_during WITHOUT OVERLAPS)</code>, implementada como esta misma restricción <span class="badge badge--doc">Documentado</span>. A28 usa <code>EXCLUDE</code> porque <code>WITHOUT OVERLAPS</code> no admite rangos vacíos, y anular un apartado en la misma transacción que lo creó produce uno.</p>
+
+<p><b>El dinero se retiene, no se cobra, hasta tener el asiento.</b> El pago se crea con captura manual: la tarjeta del cliente solo <b>autoriza</b> el monto (<a href="m27-pagos-stripe.html#red">M27</a> explica autorizar, capturar y liquidar). El servidor intenta convertir el apartado en venta y solo si la base lo acepta, captura. Si el asiento ya es de otro, cancela la autorización y el banco libera la retención: no hay reembolso, porque nunca hubo cobro. Una autorización de tarjeta iniciada por el cliente en línea vale 7 días en las redes principales <span class="badge badge--doc">Documentado</span>, así que sobra tiempo para reintentar la captura.</p>
+
+<p>Las dos mitades se necesitan. Sin la captura manual, un checkout que vence solo dejaría pasar un pago tardío por un asiento entregado a otro; sin la restricción, la captura manual no impide vender dos veces. Juntas, el barrido deja de ser necesario para la corrección: si se cae una hora, nadie compra dos veces y nadie paga sin asiento.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Criterio</th><th>Locks + apartado + barrido (A27)</th><th>Rangos + captura manual (A28)</th><th>Locks en Redis</th></tr></thead>
+    <tbody>
+      <tr><td>Dónde vive «un asiento, un dueño»</td><td>En el código y en la forma de la tabla</td><td>En una restricción de la base</td><td>En Redis, con la venta final en la base</td></tr>
+      <tr><td>Vencer</td><td>Toma perezosa y barrido obligatorio</td><td>Automático: es un rango</td><td>TTL de la clave</td></tr>
+      <tr><td>Pago que llega tarde</td><td>No ocurre si el barrido cancela antes de liberar</td><td>Se vende si el asiento sigue libre; si no, se cancela la retención</td><td>Hay que resolverlo aparte</td></tr>
+      <tr><td>Si el worker se cae</td><td>Los checkouts vencidos quedan apartados</td><td>Nada se rompe</td><td>Depende del diseño</td></tr>
+      <tr><td>Riesgo propio</td><td>Un bug en la regla de disponibilidad vende dos veces</td><td>La retención se ve en el estado de cuenta; solo tarjetas</td><td>Una conmutación con replicación asíncrona puede perder locks (<a href="m061-teoria-distribuida-a-fondo.html#redlock">M06.1</a>)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Para una demanda muchísimo mayor que la oferta (50&#8239;000 personas para 100 asientos en un estreno), ningún diseño de locks alcanza solo. Se pone delante una fila de espera virtual que deja pasar a pocos usuarios a la vez, y detrás queda el diseño de rangos sin cambios. La fila controla <b>cuántos</b> compiten; la base sigue decidiendo <b>quién</b> gana.</p>
+
+<h2 id="filas-calientes"><span class="sec-num">39.10</span>Filas calientes: saldos, stock y contadores</h2>
+
+<p>Los locks de fila tienen un costo que no se ve con poco tráfico: una fila con lock admite <b>una transacción a la vez</b>. Si todo el tráfico cae sobre la misma fila (el saldo de la cuenta de un comercio grande, el contador de «quedan 2&#8239;000 entradas»), esa fila es una <dfn data-term="fila-caliente">fila caliente</dfn>, y su techo no depende de cuántos servidores tengas.</p>
+
+<p>La cuenta, con un supuesto dicho como supuesto: si cada transacción sostiene el lock de la fila unos 2 ms (leer, escribir y confirmar, con el <code>fsync</code> del commit dentro), la fila admite como máximo <code>1 / 0.002 s = 500</code> transacciones por segundo. Con 5 ms, 200. Ninguna cantidad de réplicas de la API cambia ese número, porque todas esperan en la misma fila. Es el mismo problema que el contador de likes de <a href="m30-twitter.html">M30</a>, pero con dinero, donde no se puede aproximar.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f399t f399d">
+<title id="f399t">Tres formas de repartir una fila caliente</title>
+<desc id="f399d">Tres paneles. En el primero, cinco transacciones esperan en fila sobre una sola fila de saldo: si cada una sostiene el lock 2 milisegundos, no pasan más de 500 por segundo. En el segundo, el saldo se reparte en N filas y cada transacción toma una al azar. En el tercero, cada entrada es una fila y cada compra toma las primeras libres con SKIP LOCKED.</desc>
+<defs><marker id="f399a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="10" y="10" width="240" height="250" rx="10"/>
+<text class="dg-small" x="130" y="32" text-anchor="middle" style="fill:var(--label);font-weight:600">Una fila: en fila india</text>
+<rect class="dg-box" x="265" y="10" width="240" height="250" rx="10"/>
+<text class="dg-small" x="385" y="32" text-anchor="middle" style="fill:var(--label);font-weight:600">N filas: el saldo repartido</text>
+<rect class="dg-box" x="520" y="10" width="240" height="250" rx="10"/>
+<text class="dg-small" x="640" y="32" text-anchor="middle" style="fill:var(--label);font-weight:600">Unidades con SKIP LOCKED</text>
+<rect class="dg-box" x="40" y="52" width="32" height="24" rx="4"/>
+<text class="dg-tiny" x="56" y="68" text-anchor="middle">T1</text>
+<rect class="dg-box" x="78" y="52" width="32" height="24" rx="4"/>
+<text class="dg-tiny" x="94" y="68" text-anchor="middle">T2</text>
+<rect class="dg-box" x="116" y="52" width="32" height="24" rx="4"/>
+<text class="dg-tiny" x="132" y="68" text-anchor="middle">T3</text>
+<rect class="dg-box" x="154" y="52" width="32" height="24" rx="4"/>
+<text class="dg-tiny" x="170" y="68" text-anchor="middle">T4</text>
+<rect class="dg-box" x="192" y="52" width="32" height="24" rx="4"/>
+<text class="dg-tiny" x="208" y="68" text-anchor="middle">T5</text>
+<path class="dg-edge" d="M130 80 V108" marker-end="url(#f399a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="70" y="110" width="120" height="34" rx="6"/>
+<text class="dg-tiny" x="130" y="132" text-anchor="middle">saldo de la cuenta</text>
+<text class="dg-tiny" x="130" y="168" text-anchor="middle">Cada TX sostiene el lock</text>
+<text class="dg-tiny" x="130" y="183" text-anchor="middle">≈ 2 ms (supuesto):</text>
+<text class="dg-tiny" x="130" y="198" text-anchor="middle">máximo ≈ 500 por segundo</text>
+<text class="dg-tiny dg-mono" x="130" y="238" text-anchor="middle">1 / 0.002 s = 500 TX/s</text>
+<rect class="dg-box" x="283" y="52" width="44" height="24" rx="4"/>
+<text class="dg-tiny" x="305" y="68" text-anchor="middle">T1</text>
+<path class="dg-edge" d="M305 78 V108" marker-end="url(#f399a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="283" y="110" width="44" height="34" rx="6"/>
+<text class="dg-tiny dg-mono" x="305" y="132" text-anchor="middle">s0</text>
+<rect class="dg-box" x="335" y="52" width="44" height="24" rx="4"/>
+<text class="dg-tiny" x="357" y="68" text-anchor="middle">T2</text>
+<path class="dg-edge" d="M357 78 V108" marker-end="url(#f399a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="335" y="110" width="44" height="34" rx="6"/>
+<text class="dg-tiny dg-mono" x="357" y="132" text-anchor="middle">s1</text>
+<rect class="dg-box" x="387" y="52" width="44" height="24" rx="4"/>
+<text class="dg-tiny" x="409" y="68" text-anchor="middle">T3</text>
+<path class="dg-edge" d="M409 78 V108" marker-end="url(#f399a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="387" y="110" width="44" height="34" rx="6"/>
+<text class="dg-tiny dg-mono" x="409" y="132" text-anchor="middle">s2</text>
+<rect class="dg-box" x="439" y="52" width="44" height="24" rx="4"/>
+<text class="dg-tiny" x="461" y="68" text-anchor="middle">T4</text>
+<path class="dg-edge" d="M461 78 V108" marker-end="url(#f399a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="439" y="110" width="44" height="34" rx="6"/>
+<text class="dg-tiny dg-mono" x="461" y="132" text-anchor="middle">s3</text>
+<text class="dg-tiny" x="385" y="168" text-anchor="middle">Saldo = suma de N filas;</text>
+<text class="dg-tiny" x="385" y="183" text-anchor="middle">cada TX toma una al azar:</text>
+<text class="dg-tiny" x="385" y="198" text-anchor="middle">≈ N × 500 por segundo</text>
+<text class="dg-tiny" x="385" y="238" text-anchor="middle">débito: busca otra fila si no alcanza</text>
+<rect class="dg-ok" x="540" y="56" width="60" height="30" rx="5"/>
+<text class="dg-tiny" x="570" y="75" text-anchor="middle">#1 ✓</text>
+<rect class="dg-box" x="608" y="56" width="60" height="30" rx="5"/>
+<text class="dg-tiny" x="638" y="75" text-anchor="middle">#2</text>
+<rect class="dg-ok" x="676" y="56" width="60" height="30" rx="5"/>
+<text class="dg-tiny" x="706" y="75" text-anchor="middle">#3 ✓</text>
+<rect class="dg-box" x="540" y="96" width="60" height="30" rx="5"/>
+<text class="dg-tiny" x="570" y="115" text-anchor="middle">#4</text>
+<rect class="dg-box" x="608" y="96" width="60" height="30" rx="5"/>
+<text class="dg-tiny" x="638" y="115" text-anchor="middle">#5</text>
+<rect class="dg-box" x="676" y="96" width="60" height="30" rx="5"/>
+<text class="dg-tiny" x="706" y="115" text-anchor="middle">#6</text>
+<text class="dg-tiny" x="640" y="168" text-anchor="middle">2 000 entradas = 2 000 filas;</text>
+<text class="dg-tiny" x="640" y="183" text-anchor="middle">cada compra toma las primeras</text>
+<text class="dg-tiny" x="640" y="198" text-anchor="middle">libres y salta las tomadas</text>
+<text class="dg-tiny dg-mono" x="640" y="238" text-anchor="middle">LIMIT 2 FOR UPDATE SKIP LOCKED</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.9.</b> Una fila con lock admite una transacción a la vez. Si todo el tráfico cae en la misma fila, el techo es <code>1 / tiempo del lock</code>, sin importar cuántos servidores tengas. Repartir la fila sube el techo.</figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Acortar el lock.</b> Lo primero: que la transacción que toca la fila caliente haga lo mínimo y la toque al final, justo antes del commit. Nada de llamadas externas ni cálculos con el lock tomado.</li>
+  <li><b>Decremento condicional.</b> Para un saldo o un stock, <code>UPDATE wallets SET balance = balance - 500 WHERE id = $1 AND balance &gt;= 500</code> más un <code>CHECK (balance &gt;= 0)</code> evita la lectura previa. No sube el techo, pero acorta el lock y elimina la actualización perdida.</li>
+  <li><b>Repartir la fila.</b> El saldo se guarda en N filas (<code>s0</code> a <code>s7</code>) y es su suma. Cada transacción toma una al azar, así que el techo se multiplica por N. El costo: un débito que no cabe en una fila tiene que buscar otra, y leer el saldo es sumar N filas.</li>
+  <li><b>Unidades como filas.</b> Si vendes 2&#8239;000 entradas sin numerar, no guardes un contador: crea 2&#8239;000 filas. Cada compra toma las primeras libres con <code>SELECT … WHERE status = 'available' LIMIT 2 FOR UPDATE SKIP LOCKED</code>. Las compras concurrentes no se esperan entre sí, porque <dfn data-term="skip-locked">SKIP LOCKED</dfn> salta las que otra transacción tiene tomadas. El stock es <code>count(*)</code>, y la invariante «nada vendido dos veces» la da la forma de la tabla.</li>
+  <li><b>Asientos que no se tocan.</b> Para dinero que entra y sale todo el tiempo, el saldo no se actualiza en caliente: cada movimiento es un asiento de un ledger que solo se agrega, y el saldo se calcula o se materializa aparte. Es el diseño del ledger de <a href="m27-pagos-stripe.html#ledger">M27</a> y del saldo en caliente del <a href="checkpoint-c.html">Checkpoint C</a>.</li>
+</ul>
+
+<h2 id="webhooks"><span class="sec-num">39.11</span>Webhooks del lado del comercio: guardar y responder</h2>
+
+<p><a href="m02-apis.html#webhooks">M02</a> presentó los webhooks y <a href="m27-pagos-stripe.html#webhooks">M27</a> los vio desde el procesador que los envía. Del lado que los recibe, el contrato que hay que asumir es incómodo: el proveedor puede entregar un evento <b>más de una vez</b>, <b>no garantiza el orden</b>, reintenta si no recibe un 2xx a tiempo (en Stripe, hasta tres días en modo live) y no hay garantía de que un evento llegue antes que el cliente vuelva a tu página <span class="badge badge--doc">Documentado</span>.</p>
+
+<p>El diseño que absorbe todo eso es el <dfn data-term="patron-inbox">patrón inbox</dfn>, el espejo del <a href="m07-mensajeria.html#outbox">outbox de M07</a>: el endpoint no procesa, solo verifica, guarda y responde; un worker procesa aparte.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 478" role="img" aria-labelledby="f3911t f3911d">
+<title id="f3911t">El webhook guarda y responde; el worker procesa</title>
+<desc id="f3911d">El proveedor manda el evento evt_1 con su firma. El webhook verifica la firma sobre el body crudo, lo inserta en provider_events con ON CONFLICT DO NOTHING y responde 200. Cuando el mismo evento llega otra vez, el insert no hace nada y responde 200. El worker toma los pendientes con SKIP LOCKED, vuelve a leer el pago en el proveedor y aplica una transición que solo avanza.</desc>
+<defs><marker id="f3911-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f3911-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f3911-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f3911-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Proveedor</text>
+<path class="dg-frame" d="M70.0 40 V468"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Webhook</text>
+<path class="dg-frame" d="M280.0 40 V468"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">PostgreSQL</text>
+<path class="dg-frame" d="M490.0 40 V468"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Worker</text>
+<path class="dg-frame" d="M700.0 40 V468"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#f3911-a)"/>
+<rect x="109.6" y="55" width="130.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">POST evt_1 + firma</text>
+<path class="dg-edge" d="M280.0 98 h40 v14 h-38" marker-end="url(#f3911-a)"/>
+<text class="dg-tiny" x="326.0" y="109">firma sobre el body crudo, ±300 s</text>
+<path class="dg-edge" d="M283.0 140 L485.0 140" marker-end="url(#f3911-a)"/>
+<rect x="230.5" y="123" width="309.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="134" text-anchor="middle">INSERT provider_events ON CONFLICT DO NOTHING</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 174 L75.0 174" marker-end="url(#f3911-r)"/>
+<rect x="129.4" y="157" width="91.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="168" text-anchor="middle">200 (rápido)</text>
+<path class="dg-edge" d="M73.0 208 L275.0 208" marker-end="url(#f3911-a)"/>
+<rect x="83.2" y="191" width="183.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="202" text-anchor="middle">evt_1 otra vez (duplicado)</text>
+<path class="dg-edge" d="M283.0 242 L485.0 242" marker-end="url(#f3911-a)"/>
+<rect x="313.0" y="225" width="144.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="236" text-anchor="middle">ON CONFLICT: 0 filas</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 276 L75.0 276" marker-end="url(#f3911-r)"/>
+<rect x="159.1" y="259" width="31.799999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="270" text-anchor="middle">200</text>
+<path class="dg-edge" d="M697.0 310 L495.0 310" marker-end="url(#f3911-a)"/>
+<rect x="476.8" y="293" width="236.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="304" text-anchor="middle">pendientes, FOR UPDATE SKIP LOCKED</text>
+<path class="dg-edge" d="M697.0 344 L75.0 344" marker-end="url(#f3911-a)"/>
+<rect x="289.9" y="327" width="190.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="338" text-anchor="middle">leer pay_123: estado fresco</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M73.0 378 L695.0 378" marker-end="url(#f3911-r)"/>
+<rect x="349.3" y="361" width="71.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="372" text-anchor="middle">succeeded</text>
+<path class="dg-edge" d="M697.0 412 L495.0 412" marker-end="url(#f3911-a)"/>
+<rect x="453.70000000000005" y="395" width="282.59999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="406" text-anchor="middle">transición que solo avanza + processed_at</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.11.</b> El patrón inbox: el endpoint de webhooks no decide nada, solo verifica, guarda y responde. Decidir es trabajo del worker, que no confía en el contenido del evento y vuelve a leer el objeto en el proveedor.</figcaption>
+</figure>
+
+
+<pre data-lang="sql"><code>CREATE TABLE provider_events (
+  event_id     text        PRIMARY KEY,             -- evt_…: la deduplicación es la clave primaria
+  type         text        NOT NULL,
+  object_id    text        NOT NULL,                -- pay_…, re_…
+  livemode     boolean     NOT NULL,
+  payload      jsonb       NOT NULL,                -- para auditar; no se confía en él para actuar
+  received_at  timestamptz NOT NULL DEFAULT now(),
+  processed_at timestamptz,
+  attempts     integer     NOT NULL DEFAULT 0,
+  last_error   text
+);
+CREATE INDEX provider_events_pending ON provider_events (received_at) WHERE processed_at IS NULL;</code></pre>
+
+<p>Las reglas, cada una con su razón:</p>
+
+<ol class="steps">
+  <li><span class="step-title">Verificar la firma sobre el body crudo</span>El proveedor firma con un <a href="m36-criptografia.html#hmac">HMAC</a> los bytes exactos que envió, más un timestamp. Cualquier filtro que lea o reformatee el body antes (un parser de JSON que reordena claves) rompe la firma. Se compara en tiempo constante y se rechaza un timestamp fuera de la tolerancia, cinco minutos por defecto en las librerías de Stripe <span class="badge badge--doc">Documentado</span>, para cortar repeticiones.</li>
+  <li><span class="step-title">Guardar con la clave primaria</span><code>INSERT … ON CONFLICT (event_id) DO NOTHING</code>. Un duplicado no inserta nada, y se le responde 200 igual: si respondes error, el proveedor lo seguirá reintentando.</li>
+  <li><span class="step-title">Responder rápido</span>El 2xx sale en cuanto el evento está guardado. Si el endpoint procesa antes de responder, una base lenta se convierte en timeouts, el proveedor reintenta, y la lentitud se convierte en duplicados en paralelo.</li>
+  <li><span class="step-title">Releer el objeto antes de actuar</span>El evento es un aviso de que algo cambió, no la verdad actual. El worker pide el pago al proveedor con su propia clave y actúa según el estado que recibe. Eso vuelve irrelevante el orden de llegada y hace inútil un evento falso: aunque alguien lograra una firma válida, no podría inventar un pago que el proveedor no tiene.</li>
+  <li><span class="step-title">Transiciones que solo avanzan</span>El estado leído se aplica con el <code>UPDATE … WHERE status = …</code> de <a href="#estados">39.6</a>. Un evento viejo afecta cero filas.</li>
+  <li><span class="step-title">Separar entornos</span>Un evento con <code>livemode = true</code> en un entorno de prueba (o al revés) se rechaza y alerta: es una configuración equivocada, y procesarlo mezcla dinero real con pruebas.</li>
+</ol>
+
+<div data-sim="whinbox"></div>
+
+<h2 id="embudo"><span class="sec-num">39.12</span>Un solo embudo: webhook, regreso del cliente y barrido</h2>
+
+<p>Un error de diseño frecuente es tratar el webhook como <b>el</b> camino por el que te enteras de un pago. Si el endpoint estuvo caído, si el proveedor tuvo una demora o si el evento quedó en una cola con un bug, la orden se queda en <code>awaiting_payment</code> para siempre aunque el cliente pagó. La regla: <b>el webhook es el camino más rápido, pero nunca el único</b>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 262" role="img" aria-labelledby="f3912t f3912d">
+<title id="f3912t">Tres caminos a la verdad y un solo embudo</title>
+<desc id="f3912d">A la izquierda, tres fuentes: el webhook que empuja el proveedor, el regreso del cliente por la página de éxito o el endpoint confirm, y el barrido o la conciliación que preguntan. Las tres llaman a la misma función fulfill, que lee el pago en el proveedor, compara monto y moneda, aplica un UPDATE condicionado y escribe en el outbox. A la derecha, la orden queda paid una sola vez.</desc>
+<defs><marker id="f3912a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="30" width="200" height="56" rx="8"/>
+<text class="dg-small" x="120" y="54" text-anchor="middle" style="fill:var(--label);font-weight:600">Webhook</text>
+<text class="dg-tiny" x="120" y="72" text-anchor="middle">el proveedor empuja</text>
+<path class="dg-edge" d="M220 58 L296 138" marker-end="url(#f3912a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="110" width="200" height="56" rx="8"/>
+<text class="dg-small" x="120" y="134" text-anchor="middle" style="fill:var(--label);font-weight:600">Regreso del cliente</text>
+<text class="dg-tiny" x="120" y="152" text-anchor="middle">/confirm o página de éxito</text>
+<path class="dg-edge" d="M220 138 L296 138" marker-end="url(#f3912a)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="20" y="190" width="200" height="56" rx="8"/>
+<text class="dg-small" x="120" y="214" text-anchor="middle" style="fill:var(--label);font-weight:600">Barrido y conciliación</text>
+<text class="dg-tiny" x="120" y="232" text-anchor="middle">tú preguntas</text>
+<path class="dg-edge" d="M220 218 L296 138" marker-end="url(#f3912a)"/>
+<rect class="dg-box dg-box--em" x="300" y="84" width="230" height="108" rx="10"/>
+<text class="dg-label dg-mono" x="415" y="106" text-anchor="middle">fulfill(pago)</text>
+<text class="dg-tiny" x="415" y="128" text-anchor="middle">1. leer el pago en el proveedor</text>
+<text class="dg-tiny" x="415" y="143" text-anchor="middle">2. comparar monto y moneda</text>
+<text class="dg-tiny" x="415" y="158" text-anchor="middle">3. UPDATE … WHERE status = …</text>
+<text class="dg-tiny" x="415" y="173" text-anchor="middle">4. outbox: correo, boletos</text>
+<path class="dg-edge" d="M530 138 H596" marker-end="url(#f3912a)"/>
+<rect class="dg-ok" x="600" y="100" width="150" height="76" rx="10"/>
+<text class="dg-small" x="675" y="126" text-anchor="middle" style="fill:var(--label);font-weight:600">orden paid</text>
+<text class="dg-tiny" x="675" y="146" text-anchor="middle">una sola vez,</text>
+<text class="dg-tiny" x="675" y="161" text-anchor="middle">llegue por donde llegue</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.12.</b> No importa quién se entere primero: los tres caminos terminan en la misma función idempotente. El webhook es el más rápido, pero ninguno es el único.</figcaption>
+</figure>
+
+
+<p>Hay tres maneras de enterarse, y las tres llaman a la misma función:</p>
+
+<ul>
+  <li><b>Empujar (webhook).</b> El proveedor avisa. Es lo más rápido y lo más barato.</li>
+  <li><b>El cliente vuelve.</b> La página de éxito (o un <code>POST /confirm</code> desde el navegador) llama a la función antes de responder. Stripe recomienda disparar la entrega también desde ahí, porque el webhook puede tardar, y nunca <b>solo</b> desde ahí, porque el cliente puede cerrar la pestaña <span class="badge badge--doc">Documentado</span>.</li>
+  <li><b>Preguntar.</b> El barrido consulta los pagos que llevan demasiado tiempo en un estado intermedio, y la conciliación diaria compara todo contra el reporte del proveedor (<a href="#detectar">39.16</a>).</li>
+</ul>
+
+<p>Como la función relee el pago, compara el monto (invariante 5) y aplica una transición condicionada, no importa cuál de las tres llegue primero ni si llegan las tres a la vez: la orden pasa a <code>paid</code> una sola vez y el correo con el producto sale una sola vez (por el outbox, <a href="#efectos">39.14</a>).</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>¿Por qué no solo preguntar (polling) y olvidarse de los webhooks? Porque preguntar por cada pago abierto cada pocos segundos multiplica las llamadas al proveedor (y sus límites de tasa), y agrega la latencia del intervalo a cada compra. El polling es la red de seguridad para lo que se quedó atascado, no el camino principal. Al revés, confiar solo en el webhook ahorra llamadas a cambio de pedidos perdidos cuando algo falla.</p>
+</aside>
+
+<h2 id="propio"><span class="sec-num">39.13</span>Proveedor o implementación propia</h2>
+
+<p>«Usar webhooks» o «implementarlo nosotros» no es una sola decisión, sino una escalera. Cada peldaño suma lo de los anteriores, y lo que cambia es cuánto del camino de la tarjeta y del dinero pasa a ser tuyo.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 318" role="img" aria-labelledby="f3913t f3913d">
+<title id="f3913t">Cinco niveles de integración de pagos</title>
+<desc id="f3913d">Cinco filas. Checkout hospedado: diseñas orden, idempotencia y webhooks. Componentes embebidos: además la página de pago con una CSP estricta. API directa con bóveda propia: además tokenización, HSM y auditoría PCI completa. Orquestar varios proveedores: además ruteo, failover y conciliación por proveedor. Saldo propio: además un ledger, conciliación y la regulación del saldo. Una barra crece con lo que es tuyo.</desc>
+<defs><marker id="f3913a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-num" x="20" y="24" text-anchor="start">Cómo se integra</text>
+<text class="dg-num" x="230" y="24" text-anchor="start">Lo que es tuyo (largo de la barra)</text>
+<text class="dg-small" x="20" y="58" text-anchor="start" style="fill:var(--label);font-weight:600">Checkout hospedado</text>
+<text class="dg-tiny" x="20" y="74" text-anchor="start">redirección a la página del PSP</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="230" y="42" width="190" height="38" rx="6"/>
+<text class="dg-tiny" x="240" y="57" text-anchor="start">orden, idempotencia,</text>
+<text class="dg-tiny" x="240" y="71" text-anchor="start">webhooks</text>
+<text class="dg-small" x="20" y="110" text-anchor="start" style="fill:var(--label);font-weight:600">Componentes embebidos</text>
+<text class="dg-tiny" x="20" y="126" text-anchor="start">iframe del PSP en tu página</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="230" y="94" width="270" height="38" rx="6"/>
+<text class="dg-tiny" x="240" y="109" text-anchor="start">+ página de pago,</text>
+<text class="dg-tiny" x="240" y="123" text-anchor="start">CSP sin scripts ajenos</text>
+<text class="dg-small" x="20" y="162" text-anchor="start" style="fill:var(--label);font-weight:600">API directa con bóveda</text>
+<text class="dg-tiny" x="20" y="178" text-anchor="start">tu servidor ve el número</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="230" y="146" width="360" height="38" rx="6"/>
+<text class="dg-tiny" x="240" y="161" text-anchor="start">+ tokenización, HSM,</text>
+<text class="dg-tiny" x="240" y="175" text-anchor="start">auditoría PCI completa</text>
+<text class="dg-small" x="20" y="214" text-anchor="start" style="fill:var(--label);font-weight:600">Orquestar varios PSP</text>
+<text class="dg-tiny" x="20" y="230" text-anchor="start">enrutas cada pago</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="230" y="198" width="440" height="38" rx="6"/>
+<text class="dg-tiny" x="240" y="213" text-anchor="start">+ ruteo, failover,</text>
+<text class="dg-tiny" x="240" y="227" text-anchor="start">conciliar por PSP</text>
+<text class="dg-small" x="20" y="266" text-anchor="start" style="fill:var(--label);font-weight:600">Saldo propio</text>
+<text class="dg-tiny" x="20" y="282" text-anchor="start">monedero, créditos</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="230" y="250" width="520" height="38" rx="6"/>
+<text class="dg-tiny" x="240" y="265" text-anchor="start">+ ledger, conciliación,</text>
+<text class="dg-tiny" x="240" y="279" text-anchor="start">regulación del saldo</text>
+<path class="dg-edge" d="M760 46 V292" marker-end="url(#f3913a)"/>
+<text class="dg-tiny" x="752" y="308" text-anchor="end">más alcance de PCI y más diseño propio</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.13.</b> Cada nivel suma lo de los anteriores. La idempotencia, la máquina de estados y el inbox están en todos: lo que cambia es cuánto del camino de la tarjeta y del dinero pasa a ser tuyo.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Nivel</th><th>Qué toca tu sistema</th><th>Qué diseñas además</th><th>Cuándo conviene</th></tr></thead>
+    <tbody>
+      <tr><td>Checkout hospedado</td><td>Ids, nunca el número de tarjeta</td><td>Orden, idempotencia, webhooks, conciliación</td><td>Casi siempre al empezar. Stripe indica que Checkout y Elements permiten validar <dfn data-term="pci-dss">PCI DSS</dfn> con el cuestionario más corto, el SAQ A <span class="badge badge--doc">Documentado</span></td></tr>
+      <tr><td>Componentes embebidos</td><td>Tu página contiene el iframe del proveedor</td><td>La página de pago: CSP estricta, sin scripts de terceros</td><td>Plazos cortos o una experiencia que no puede redirigir (el mapa de asientos de A27)</td></tr>
+      <tr><td>API directa con bóveda propia</td><td>El número de tarjeta pasa por tus servidores</td><td>Tokenización, HSM, red segmentada, auditoría PCI completa</td><td>Casi nunca; solo si el volumen paga un equipo de cumplimiento</td></tr>
+      <tr><td>Orquestar varios proveedores</td><td>Decides a qué PSP va cada pago</td><td>Ruteo, failover, idempotencia y conciliación por proveedor</td><td>Volumen alto, varios países o una dependencia que no puedes aceptar</td></tr>
+      <tr><td>Saldo propio</td><td>Eres el banco del saldo (monedero, créditos)</td><td>Ledger de doble entrada, conciliación, regulación del dinero guardado</td><td>Créditos prepagos, como el cobro por uso del <a href="checkpoint-c.html">Checkpoint C</a></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="propio-varios">Varios proveedores: la idempotencia cruza fronteras</h3>
+
+<p>Orquestar dos proveedores parece solo un <code>if</code>: si el primero falla, usar el segundo. Es más delicado. Un timeout del primero no dice si cobró, así que pasar al segundo puede cobrar dos veces. La regla: <b>el failover solo ocurre cuando el primero respondió un error definitivo</b> (un rechazo, un 4xx de validación), nunca ante un timeout; ante un timeout se pregunta al primero con su clave antes de decidir. Cada intento vive en <code>payment_attempts</code> con su proveedor y su clave, y la orden acepta como máximo un intento exitoso (un índice único parcial lo garantiza).</p>
+
+<h3 id="propio-saldo">Saldo propio: tú eres el ledger</h3>
+
+<p>Con un monedero propio, el proveedor solo interviene en las recargas; las compras con saldo son movimientos internos. Ahí cambia la naturaleza del sistema: ya no confías en el registro del proveedor, el registro eres tú. Cada movimiento se escribe como asientos de un <a href="m27-pagos-stripe.html#ledger">ledger de doble entrada</a> que suman cero, nunca como un <code>UPDATE</code> del saldo sin rastro; la idempotencia de cada débito es la misma de 39.4; y el saldo caliente se reparte como en <a href="#filas-calientes">39.10</a>. Además, guardar dinero de terceros suele estar regulado, algo que se consulta antes de diseñar.</p>
+
+<h3 id="propio-emisor">Cuando tú envías los webhooks</h3>
+
+<p>Si tu plataforma avisa a tus propios clientes, cruzas al lado de Stripe: <a href="m27-pagos-stripe.html#webhooks-envio">M27</a> describe ese servicio. La versión corta: cada evento nace en un outbox en la misma transacción que el cambio, se entrega desde una cola con reintentos y backoff, se firma con HMAC y timestamp, lleva un id para que el receptor deduplique, y tus clientes reciben exactamente las mismas advertencias que tú recibiste del proveedor: duplicados posibles, sin orden garantizado.</p>
+
+<h2 id="efectos"><span class="sec-num">39.14</span>Efectos secundarios: outbox, compensación y reembolsos</h2>
+
+<p>Cuando la orden pasa a <code>paid</code> hay que hacer cosas: mandar el correo con el producto, emitir los boletos, avisar a contabilidad. Si se hacen dentro del handler después del commit y el proceso muere, se pierden; si se hacen antes del commit y la transacción falla, el cliente recibe un producto que no pagó. La solución es el <dfn data-term="outbox">outbox</dfn> de <a href="m07-mensajeria.html#outbox">M07</a>: el efecto se escribe como fila en la misma transacción que el cambio de estado, y un worker lo envía después, al menos una vez.</p>
+
+<p>Cuando un paso posterior al cobro falla de forma definitiva (cobraste, pero el asiento ya era de otro), no hay <code>ROLLBACK</code> posible: hay una <a href="m27-pagos-stripe.html#sagas">saga</a> y su compensación. En el diseño de rangos, la compensación de «capturar» es «cancelar la autorización»; en el de dos niveles, es un reembolso, y por eso ese diseño trata el reembolso por tiempo como una alarma, no como un camino normal (invariante 4).</p>
+
+<p>Los reembolsos pedidos por el cliente tienen su propia forma, la de <a href="../proyectos/a15-pagos.html">A15</a>: el endpoint es una sola transacción que verifica, marca <code>refund_requested</code> y responde <code>202</code>; el reembolso real lo crea un worker con la clave <code>refund:{orden}</code>. Así la API no necesita permiso de reembolsar, y una API comprometida no puede devolver dinero. El dinero vuelve solo al método de pago original <span class="badge badge--doc">Documentado</span>, así que una sesión robada no puede desviarlo.</p>
+
+<h2 id="seguridad"><span class="sec-num">39.15</span>Seguridad del diseño</h2>
+
+<p>La seguridad de un sistema de pagos no es una capa al final: está en qué puede hacer cada pieza. La pregunta que ordena las decisiones es «si roban esta pieza, ¿cuánto dinero pueden mover?». El <a href="m35-seguridad-bd.html#modelo">mínimo privilegio de M35</a> aplicado a pagos se ve así:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 282" role="img" aria-labelledby="f3914t f3914d">
+<title id="f3914t">Una clave y un rol por servicio</title>
+<desc id="f3914d">Cuatro columnas: API, webhook, worker y jobs. Para cada una, qué puede hacer con la clave del proveedor y qué permisos tiene en la base. La API crea y lee pagos sin reembolsos; el webhook no tiene clave de API y solo inserta eventos; el worker lee, cancela, captura y reembolsa; los jobs solo borran claves vencidas.</desc>
+<defs><marker id="f3914a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="14" width="178" height="206" rx="10"/>
+<text class="dg-label" x="103" y="40" text-anchor="middle">API</text>
+<text class="dg-num" x="103" y="66" text-anchor="middle">Clave del proveedor</text>
+<text class="dg-tiny" x="103" y="84" text-anchor="middle">crear y leer pagos</text>
+<text class="dg-tiny" x="103" y="99" text-anchor="middle">sin reembolsos</text>
+<path class="dg-frame" d="M28 122 H178"/>
+<text class="dg-num" x="103" y="144" text-anchor="middle">Rol de la base</text>
+<text class="dg-tiny" x="103" y="162" text-anchor="middle">orders, idempotency_keys:</text>
+<text class="dg-tiny" x="103" y="177" text-anchor="middle">SELECT, INSERT, UPDATE</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="202" y="14" width="178" height="206" rx="10"/>
+<text class="dg-label" x="291" y="40" text-anchor="middle">Webhook</text>
+<text class="dg-num" x="291" y="66" text-anchor="middle">Clave del proveedor</text>
+<text class="dg-tiny" x="291" y="84" text-anchor="middle">ninguna clave de API</text>
+<text class="dg-tiny" x="291" y="99" text-anchor="middle">solo el secreto de firma</text>
+<path class="dg-frame" d="M216 122 H366"/>
+<text class="dg-num" x="291" y="144" text-anchor="middle">Rol de la base</text>
+<text class="dg-tiny" x="291" y="162" text-anchor="middle">provider_events:</text>
+<text class="dg-tiny" x="291" y="177" text-anchor="middle">solo INSERT</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="390" y="14" width="178" height="206" rx="10"/>
+<text class="dg-label" x="479" y="40" text-anchor="middle">Worker</text>
+<text class="dg-num" x="479" y="66" text-anchor="middle">Clave del proveedor</text>
+<text class="dg-tiny" x="479" y="84" text-anchor="middle">leer, cancelar, capturar</text>
+<text class="dg-tiny" x="479" y="99" text-anchor="middle">y reembolsar</text>
+<path class="dg-frame" d="M404 122 H554"/>
+<text class="dg-num" x="479" y="144" text-anchor="middle">Rol de la base</text>
+<text class="dg-tiny" x="479" y="162" text-anchor="middle">orders, provider_events:</text>
+<text class="dg-tiny" x="479" y="177" text-anchor="middle">SELECT, UPDATE</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="578" y="14" width="178" height="206" rx="10"/>
+<text class="dg-label" x="667" y="40" text-anchor="middle">Jobs</text>
+<text class="dg-num" x="667" y="66" text-anchor="middle">Clave del proveedor</text>
+<text class="dg-tiny" x="667" y="84" text-anchor="middle">ninguna</text>
+<path class="dg-frame" d="M592 122 H742"/>
+<text class="dg-num" x="667" y="144" text-anchor="middle">Rol de la base</text>
+<text class="dg-tiny" x="667" y="162" text-anchor="middle">idempotency_keys:</text>
+<text class="dg-tiny" x="667" y="177" text-anchor="middle">DELETE de vencidas</text>
+<rect class="dg-warnbox" x="14" y="232" width="742" height="40" rx="8"/>
+<text class="dg-tiny" x="385" y="256" text-anchor="middle">Si roban la API, no pueden devolver dinero ni borrar filas: el permiso no vive en el código: vive en la clave y en el rol.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.14.</b> El mínimo privilegio aplicado a un sistema de pagos. Separar quién crea cobros de quién devuelve dinero convierte el peor robo posible en uno acotado.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Amenaza</th><th>Defensa de diseño</th><th>Invariante</th></tr></thead>
+    <tbody>
+      <tr><td>Precio manipulado desde el navegador</td><td>El cliente manda <code>product_id</code> y cantidad, nunca montos; el monto sale de la base y se compara con el del proveedor antes de entregar</td><td>5</td></tr>
+      <tr><td>Ver o pagar la orden de otro (IDOR)</td><td>Toda consulta lleva <code>AND user_id = :actual</code>; si no es tuya, <code>404</code>, no <code>403</code>, para no confirmar que existe</td><td>—</td></tr>
+      <tr><td>Webhook falso o repetido</td><td>Firma HMAC sobre el body crudo, tolerancia de tiempo, deduplicación y releer el objeto</td><td>3</td></tr>
+      <tr><td>Card testing: probar tarjetas robadas</td><td>Cuenta obligatoria, límites de tasa por usuario en el checkout (<a href="m08-resiliencia.html#rate-limiting">M08</a>) y las reglas antifraude del proveedor (<a href="m27-pagos-stripe.html#card-testing">M27</a>)</td><td>—</td></tr>
+      <tr><td>Clave del proveedor filtrada</td><td>Una clave restringida por servicio, en variables de entorno o un gestor de secretos; la API no puede reembolsar</td><td>4</td></tr>
+      <tr><td>La aplicación comprometida borra el rastro</td><td>Ningún rol con <code>DELETE</code> en tablas de dinero; el único <code>DELETE</code> es el de claves vencidas, en un rol aparte</td><td>—</td></tr>
+      <tr><td>Datos sensibles en los logs</td><td>Se loguean ids (<code>pay_…</code>, <code>evt_…</code>, la clave de idempotencia), nunca secretos de cliente ni cuerpos completos</td><td>7</td></tr>
+      <tr><td>Scripts ajenos en la página de pago</td><td>CSP estricta que solo permite el dominio del proveedor; sin analítica ni widgets de terceros en esa página</td><td>7</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Las claves restringidas convierten el mínimo privilegio en una configuración del proveedor: Stripe permite crear una clave por servicio con permisos por recurso (ninguno, lectura o escritura) <span class="badge badge--doc">Documentado</span>. La API recibe una que crea y lee pagos; el worker, una que además cancela, captura y reembolsa; el endpoint de webhooks no recibe ninguna, solo el secreto con el que verifica firmas.</p>
+</aside>
+
+<h2 id="detectar"><span class="sec-num">39.16</span>Detectar lo que se rompió</h2>
+
+<p>Todas las defensas anteriores pueden tener un bug. La última línea es un sistema que <b>se da cuenta</b> cuando una invariante se rompió, antes que el cliente. Tres herramientas, de la más rápida a la más completa:</p>
+
+<ul>
+  <li><b>Consultas de invariantes.</b> Cada invariante se escribe como una consulta que debería devolver cero filas, y un job la corre cada minuto. Si devuelve algo, es una alerta crítica, no un warning.</li>
+  <li><b>Métricas del flujo.</b> Eventos pendientes en el inbox y su antigüedad, pagos en estados intermedios por más de N minutos, choques de locks por función, prórrogas dadas y cuántas terminan en pago. La <a href="m11-observabilidad.html">observabilidad de M11</a> aplicada a dinero.</li>
+  <li><b>Conciliación diaria.</b> Cada pago de tu base contra el reporte del proveedor, y al revés. Encuentra lo que ninguna consulta interna ve: un pago que el proveedor tiene y tú no. Es la <a href="m27-pagos-stripe.html#conciliacion">conciliación de M27</a> desde el lado del comercio.</li>
+</ul>
+
+<pre data-lang="sql"><code>-- Nada entregado sin dinero: un asiento vendido sin reserva pagada
+SELECT s.id FROM seats s JOIN reservations r ON r.id = s.reservation_id
+WHERE s.status = 'sold' AND r.status &lt;&gt; 'paid';
+
+-- Un pago atascado: confirmado por el proveedor según el inbox, sin orden pagada
+SELECT e.object_id FROM provider_events e
+LEFT JOIN orders o ON o.psp_payment_id = e.object_id AND o.status = 'paid'
+WHERE e.type = 'payment.succeeded' AND e.received_at &lt; now() - interval '10 minutes'
+  AND o.id IS NULL;</code></pre>
+
+<h2 id="revision"><span class="sec-num">39.17</span>Lista para revisar un diseño de pagos</h2>
+
+<p>Cuando revises un diseño (tuyo o ajeno), estas preguntas encuentran los problemas más caros. Cada una apunta a la sección que la explica.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Pregunta</th><th>Respuesta que buscas</th><th>Sección</th></tr></thead>
+    <tbody>
+      <tr><td>¿Qué invariantes tiene y dónde vive cada una?</td><td>Escritas, y las caras en la base</td><td><a href="#invariantes">39.1</a></td></tr>
+      <tr><td>¿Dónde nace la clave de idempotencia?</td><td>En el cliente, al abrir la intención, y sobrevive a los reintentos</td><td><a href="#idempotencia">39.4</a></td></tr>
+      <tr><td>¿Hay alguna transacción abierta durante una llamada externa?</td><td>Ninguna: fases con su commit</td><td><a href="#fases">39.5</a></td></tr>
+      <tr><td>¿Las claves hacia el proveedor son deterministas?</td><td>Derivadas de tus ids; los parámetros con tiempo, guardados</td><td><a href="#fases-claves">39.5</a></td></tr>
+      <tr><td>¿Cada transición exige su estado de origen?</td><td><code>UPDATE … WHERE status = …</code>; cero filas no es error</td><td><a href="#estados">39.6</a></td></tr>
+      <tr><td>¿Qué pasa si dos personas quieren lo mismo a la vez?</td><td>Un mecanismo nombrado (condicional, <code>NOWAIT</code>, restricción) y locks en orden</td><td><a href="#concurrencia">39.7</a></td></tr>
+      <tr><td>¿Algún lock dura más que una transacción corta?</td><td>No: lo largo es una columna o un rango con vencimiento</td><td><a href="#locks-cortos">39.8</a></td></tr>
+      <tr><td>¿Qué pasa con un pago que llega después del vencimiento?</td><td>Cancelar antes de liberar, o autorizar y capturar</td><td><a href="#rangos">39.9</a></td></tr>
+      <tr><td>¿Hay una fila por la que pasa todo el tráfico?</td><td>Lock corto, repartida o convertida en unidades</td><td><a href="#filas-calientes">39.10</a></td></tr>
+      <tr><td>¿El webhook procesa antes de responder o aplica el payload?</td><td>No: guarda, responde y el worker relee</td><td><a href="#webhooks">39.11</a></td></tr>
+      <tr><td>¿Qué pasa si el webhook nunca llega?</td><td>El regreso del cliente y el barrido llaman a la misma función</td><td><a href="#embudo">39.12</a></td></tr>
+      <tr><td>¿Quién puede devolver dinero?</td><td>Solo el worker, con su clave; la API no</td><td><a href="#seguridad">39.15</a></td></tr>
+      <tr><td>¿Cómo te enteras de que algo se rompió?</td><td>Consultas de invariantes, métricas y conciliación</td><td><a href="#detectar">39.16</a></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="implementalo">Impleméntalo: las guías</h3>
+
+<p>Las tres guías de la serie de proyectos construyen estas ideas de punta a punta, en Java con Spring Boot, PostgreSQL y Stripe en sandbox. Cada una funciona sola:</p>
+
+<ul>
+  <li><a href="../proyectos/a15-pagos.html">A15. Idempotencia de punta a punta</a>: un botón de pagar con la tabla de claves, fases atómicas, Checkout hospedado, el inbox de webhooks y reembolsos por worker (39.3 a 39.6, 39.11 a 39.15).</li>
+  <li><a href="../proyectos/a27-cine.html">A27. Cien asientos con locks pesimistas</a>: <code>FOR UPDATE NOWAIT</code>, apartado de 30 s, checkout de 3 min, toma perezosa, barrido que cancela antes de liberar y la prórroga de 3D Secure (39.7 y 39.8).</li>
+  <li><a href="../proyectos/a28-cine.html">A28. Cien asientos con la base como árbitro</a>: rangos con exclusion constraint y autorizar antes de capturar (39.9).</li>
+</ul>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m39"></div>
+
+<div data-exercise="m39-festival"></div>
+
+<div data-checkpoint="m39"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m39.data.js"></script>
+<script src="../assets/js/data/exercises/m39.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-pay.js"></script>
+</body>
+</html>
