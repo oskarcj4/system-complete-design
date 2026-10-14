@@ -165,11 +165,12 @@
 
   /* ---------- Recorridos de archivo (tutoriales de IA) ---------- */
 
-  /* Un comentario que es solo una marca, "# (3)" o "-- (3)", se dibuja como un número en un círculo.
-     El texto no cambia: al copiar, sigue siendo un comentario válido. */
+  /* Un comentario que es solo una marca, "# (3)", "-- (3)", "// (3)", "; (3)" o "<!-- (3) -->", se dibuja como
+     un número en un círculo. El texto no cambia: al copiar, sigue siendo un comentario válido. */
   function codePins(root) {
     root.querySelectorAll('pre[data-lang] .c-c').forEach(function (el) {
-      var m = el.textContent.trim().match(/^(?:#|--)\s*\((\d{1,2})\)$/);
+      var t = el.textContent.trim();
+      var m = t.match(/^(?:#|--|\/\/|;)\s*\((\d{1,2})\)$/) || t.match(/^<!--\s*\((\d{1,2})\)\s*-->$/);
       if (!m) return;
       el.classList.add('code-pin');
       el.setAttribute('data-n', m[1]);

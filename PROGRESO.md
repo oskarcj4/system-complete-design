@@ -3,7 +3,23 @@
 > Archivo de continuidad. Se actualiza al terminar cada módulo. Si la sesión se corta, una sesión nueva puede
 > retomar leyendo este archivo, `PLAN.md` (currículo completo) y una página ya hecha como plantilla (`modules/m00-metodo.html`).
 
-**Última actualización:** 2026-10-13.
+**Última actualización:** 2026-10-14.
+
+**Pedido del usuario (2026-10-14, A14), terminado:** "Implementa A14, con el mismo nivel de detalle con el que haces las guias de IA".
+
+- **A14 publicada:** `proyectos/a14-observabilidad.html`, "Observabilidad de un backend y su base" (Bloque 4, 8 a 10 h, mods M11, M05, M00, M08). Es una guía Java con el formato de las de IA:
+  - figura de arquitectura `figure[data-arch]` (A14.1) con tabla de 15 flechas y fronteras;
+  - `#antes` con la Lámina A14.2 (13 términos) y once `h3` `ae-*` (instalar, señales, agente, otlp, histograma, red-use, pools, exemplar, cardinalidad, slo, indice), cada uno con figura (A14.3 a A14.12) y cuenta a mano;
+  - recorridos `file-card` con marcas `// (N)`, `# (N)`, `-- (N)`, `; (N)` y `<!-- (N) -->`, y el archivo entero en `details.file-full`;
+  - `#viaje` con la figura A14.13 (`seqdiag.py`) y su tabla, y `#limitaciones` con los cinco `lim-*`.
+- **El laboratorio:** una tienda (500 productos, 50 000 clientes, 2 000 000 de pedidos) en Spring Boot 4.1.1 y Java 25, con el agente de OpenTelemetry 2.32.0 (jar con `ADD --checksum`), PgBouncer 1.26 en transaction (8 conexiones), PostgreSQL 18 con `pg_stat_statements` y Redis 8.10. Las señales van por OTLP al Collector 0.162.0 y de ahí a Prometheus 3.15 (receptor OTLP y exemplars), Tempo 3.1 y Loki 3.7.8; Grafana 13.2.4 tiene las fuentes y el tablero aprovisionados (`tienda.json`, 16 paneles: RED, SLO, USE, Redis y cardinalidad). Tres exporters (postgres, pgbouncer, redis), k6 2.3.0 y dos SLO con reglas de grabación y cuatro alertas por burn rate (14.4 en 1 h y 5 min; 6 en 6 h y 30 min).
+- **Los incidentes** (`scripts/incidente.sh`): el índice que falta, el reporte que llena el pool de PgBouncer, Redis en `CLIENT PAUSE` y la etiqueta `cliente_id` que lleva el contador al tope de 2000 series del SDK. Se arreglan con `scripts/arreglar.sh`. Cada uno dice qué mirar en cada señal y la cuenta a mano contra la que se compara; los números los anota el lector.
+- **Pruebas del proyecto:** 11 pruebas con Testcontainers y un SDK de OpenTelemetry en memoria (`TelemetriaTest`: el tope de cardinalidad y el filtro `X-Trace-Id`).
+- **Decisiones guiadas:** 8, en `assets/js/data/projects/a14.data.js` (`a14-observabilidad`: umbral, span-largo, burn, cliente-id, redis-timeout, primero, collector, exporter). En `projects.data.js`: `status: 'ready'`, `href`, `repoName: 'a14-observabilidad'`, `mods: ['m11', 'm05']` y `front: true`.
+- **Cambio en el sitio:** `codePins` de `project-guide.js` ahora reconoce las marcas `// (N)`, `; (N)` y `<!-- (N) -->`, además de `# (N)` y `-- (N)`. Así las marcas se dibujan en Java, ini y XML.
+- **Revisión sin ejecutar:** YAML, JSON, XML, bash (`bash -n`), JS (`node --check`) y Java (javac, solo sintaxis) en `scratchpad/a14/check.py`. Generadores en `scratchpad/a14/` (`figs.py`, `walk.py`, `p1.py` a `p5.py`, `page.py`); la página en `proyectos/` es ahora la fuente de verdad. En la página, "agente" y "normalizada" van en `span.no-autolink` para que el glosario no los enlace con el agente de IA (M25) ni con la normalización de tablas (M05).
+- **Pruebas de la página:** 0 errores de consola, 0 términos faltantes, 45 entradas en el índice, 0 desborde a 390 px, `links.mjs` 0 problemas, `quiz-bias.mjs` pasa (1/7 larga, 2/7 corta; 18.8&#8239;% en el sitio). Las figuras se revisaron en claro, en oscuro y a 390 px.
+- **No verificado** (la guía lo dice y le pide al lector que lo compruebe): los nombres de las métricas de Hikari según la convención del agente, el campo del `trace_id` en Loki para los enlaces de Grafana, si el p99 normal queda bajo 250 ms (`RITMO` lo ajusta), y qué hace `redis_up` durante la pausa. Claude no ejecutó el proyecto.
 
 **Pedido del usuario (2026-10-13, M39), terminado:** "Implementa una guía extra […] cómo manejar sistemas de pagos, es decir, cómo se deben estructurar las tablas de la base de datos para poder manejar idempotencia, cómo manejar locks pesimistas para sistemas altamente concurridos, cómo diseñarlo, no cómo implementarlo, eso ya existe, pero las intuiciones e ideas para poder diseñar un sistema de pagos seguro, ya sea con webhooks o con implementaciones propias." Aclaración: "Un nuevo módulo que se llame manejo de pagos, del M39 en adelante".
 

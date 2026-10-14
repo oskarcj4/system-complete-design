@@ -595,6 +595,13 @@ ia-system-desing
 │       │   │       a08.data.js
 │       │   │       a09.data.js
 │       │   │       a10.data.js
+│       │   │       a11.data.js
+│       │   │       a12.data.js
+│       │   │       a13.data.js
+│       │   │       a14.data.js
+│       │   │       a15.data.js
+│       │   │       a27.data.js
+│       │   │       a28.data.js
 │       │   │       ia00.data.js
 │       │   │       ia01.data.js
 │       │   │       ia02.data.js
@@ -768,6 +775,13 @@ ia-system-desing
 │       a08-lider.html
 │       a09-colas.html
 │       a10-circuit-breaker.html
+│       a11-album.html
+│       a12-sesiones.html
+│       a13-oauth.html
+│       a14-observabilidad.html
+│       a15-pagos.html
+│       a27-cine.html
+│       a28-cine.html
 │       ia00-laboratorio.html
 │       ia01-agente-guardia.html
 │       ia02-analista.html
@@ -792,7 +806,7 @@ ia-system-desing
 | `index.html` + `assets/css/home.css` + `assets/js/pages/home.js` | Portada: mapa de la ruta del curso, "continuar donde quedaste", plan por partes y respaldo del progreso |
 | `glosario.html` | Glosario con buscador y filtro por categoría; lo arma `core/glossary.js` |
 | `proyectos.html` + `assets/css/projects.css` + `assets/js/pages/projects.js` | "Aplicación de conocimiento": índice de mini-proyectos en Java y Spring Boot y de tutoriales de AI Engineering (`#ia-engineering`), con sus datos en `data/projects.data.js` (`tracks`, `capstones` y `aiTracks`; cada proyecto con `tier`, `status`, `mods` y `repo`, obligatorio para publicarlo) |
-| `proyectos/` + `assets/js/pages/project-guide.js` + `project-state.js` | Una guía por proyecto, generada con `tools/mkguide.py` y editada después a mano. `project-guide.js` arma la ruta de proyectos y el anterior/siguiente (dentro de cada serie), resalta java, javascript, yaml, xml, bash, nginx, ini, toml y dockerfile (python, sql y json los resalta `sd.js`), le pone ruta y botón de copiar a cada `<pre data-file>`, dibuja las marcas `# (N)` de los recorridos y le pone a cada `.file-card[data-where]` una miniatura de la figura `[data-arch]` con su pieza resaltada; `project-state.js` guarda el enlace al repositorio y las comprobaciones de cada guía |
+| `proyectos/` + `assets/js/pages/project-guide.js` + `project-state.js` | Una guía por proyecto, generada con `tools/mkguide.py` y editada después a mano. `project-guide.js` arma la ruta de proyectos y el anterior/siguiente (dentro de cada serie), resalta java, javascript, yaml, xml, bash, nginx, ini, toml y dockerfile (python, sql y json los resalta `sd.js`), le pone ruta y botón de copiar a cada `<pre data-file>`, dibuja las marcas de los recorridos (`# (N)`, `-- (N)`, `// (N)`, `; (N)` y `<!-- (N) -->`) y le pone a cada `.file-card[data-where]` una miniatura de la figura `[data-arch]` con su pieza resaltada; `project-state.js` guarda el enlace al repositorio y las comprobaciones de cada guía |
 | `assets/js/data/projects/` | Las decisiones guiadas de cada guía, con `SD.defineExercise('aNN-…')` o `SD.defineExercise('iaNN-…')` |
 | `modules/` | Una página por módulo y por checkpoint, generada con `mkpage.py` y editada después a mano |
 | `assets/css/tokens.css` | Colores semánticos en claro y oscuro, paleta de capas `--l-*`, tipografía y espacios |

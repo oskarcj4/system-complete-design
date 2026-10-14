@@ -86,7 +86,7 @@ SD.data.projects = {
           excuse: 'Un inicio de sesión único para varias aplicaciones.',
           learn: 'El servidor de autorización en TypeScript sobre Cloudflare Workers, un IdP local con usuarios sembrados: Authorization Code con PKCE, access tokens JWT firmados con ES256, refresh tokens que rotan con detección de reuso guardados en D1, JWKS y rotación de claves. Del lado de Java, Spring Boot como resource server con scopes y Spring Cloud Gateway como BFF: el token nunca llega al JavaScript del navegador.',
           stack: ['Cloudflare Workers (TypeScript)', 'D1', 'Spring Cloud Gateway', 'Spring Security'] },
-        { id: 'a14', num: 'A14', title: 'Observabilidad de un backend y su base', tier: 'core', status: 'proposed', repo: '', mods: ['m11'], front: false,
+        { id: 'a14', num: 'A14', title: 'Observabilidad de un backend y su base', tier: 'core', status: 'ready', href: 'proyectos/a14-observabilidad.html', repo: '', repoName: 'a14-observabilidad', mods: ['m11', 'm05'], front: true,
           excuse: 'Encontrar por qué una API se volvió lenta un martes a las once.',
           learn: 'Traces con OpenTelemetry de la API a PgBouncer, PostgreSQL y Redis, métricas RED y USE, logs con trace_id, los exporters de PostgreSQL, PgBouncer y Redis, la consulta lenta en pg_stat_statements, y un SLO con alertas por burn rate.',
           stack: ['OpenTelemetry', 'Prometheus', 'Grafana', 'Tempo', 'Loki'] },
