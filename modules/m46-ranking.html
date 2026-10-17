@@ -1,0 +1,1371 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M46. Ranking: del modelo lineal al multi-tarea</title>
+<meta name="description" content="Qué predice un ranker, regresión logística y log loss, árboles con boosting, learning to rank y LambdaMART, Wide & Deep y DLRM, modelos multi-tarea con MMoE, la historia como secuencia, combinar objetivos, calibración, AUC, NDCG y la cascada de rankers.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m46">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Ranking: del modelo lineal al multi-tarea</h1>
+        <p class="lead">De 9 000 candidatos a los 50 que importan: qué predice el modelo, cómo se combinan sus probabilidades en un orden y cómo se mide si el orden es bueno.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M46</dd></div>
+          <div><dt>Parte</dt><dd>VI. ML System Design</dd></div>
+          <div><dt>Duración</dt><dd>150 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M45</dd></div>
+          <div><dt>Estado</dt><dd data-status="m46">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Explicar qué predice un ranker y por qué predice probabilidades por acción en lugar de un puntaje único.</li>
+    <li>Calcular a mano una regresión logística, su log loss y su AUC con un ejemplo chico.</li>
+    <li>Elegir entre regresión logística, árboles con boosting y modelos profundos según las features, los datos y el costo.</li>
+    <li>Distinguir pointwise, pairwise y listwise, y decir cuándo importa el orden y cuándo la probabilidad.</li>
+    <li>Diseñar un ranker multi-tarea, combinar sus salidas con pesos de producto y <span class="no-autolink">calibrarlas</span>.</li>
+    <li>Medir un ranking con AUC, log loss, precisión@k, recall@k y NDCG, y armar una cascada de ranking liviano y pesado.</li>
+  </ul>
+</section>
+
+<p>La recuperación de <a href="m45-recuperacion.html">M45</a> dejó unos 9 000 candidatos que nadie ordenó con cuidado: cada fuente los eligió con su propio criterio barato, y el producto punto de las dos torres no podía mirar a la persona y al ítem juntos. Este módulo los ordena. Primero, qué tiene que predecir un modelo de ranking; después, la familia de modelos que se usa, de la regresión logística a los modelos multi-tarea; y al final, cómo se combinan sus salidas en un orden, cómo se <span class="no-autolink">calibran</span> y cómo se mide si el orden es bueno.</p>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f46at f46ad">
+<title id="f46at">Las piezas de un ranker</title>
+<desc id="f46ad">De izquierda a derecha: 500 candidatos entran con cuatro grupos de features (de la persona, del ítem, cruces y contexto) a un modelo multi-tarea con tablas de embeddings, expertos compartidos y una cabeza por acción. Las probabilidades se calibran, se combinan con pesos que decide el producto y se ordenan; los 50 mejores van al re-ranking. Abajo, lo que se muestra queda en el log de impresiones, que entrena el modelo siguiente y mide las métricas offline.</desc>
+<defs><marker id="f46aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="140" width="110" height="64" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="75.0" y="160.0" text-anchor="middle">500</text>
+<text class="dg-small" x="75.0" y="176.0" text-anchor="middle">candidatos</text>
+<text class="dg-tiny" x="75.0" y="192.0" text-anchor="middle">de recuperación</text>
+<text class="dg-group" x="160" y="46" text-anchor="start">Features (M43)</text>
+<rect class="dg-layer" x="160" y="58" width="140" height="36" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="230.0" y="80.0" text-anchor="middle">Persona: historia, país</text>
+<rect class="dg-layer" x="160" y="104" width="140" height="36" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="230.0" y="126.0" text-anchor="middle">Ítem: precio, vendedor</text>
+<rect class="dg-layer" x="160" y="150" width="140" height="36" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="230.0" y="172.0" text-anchor="middle">Cruces: ya le compró</text>
+<rect class="dg-layer" x="160" y="196" width="140" height="36" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="230.0" y="218.0" text-anchor="middle">Contexto: hora, dispositivo</text>
+<path class="dg-edge" d="M132 172 H156" marker-end="url(#f46aa)"/>
+<text class="dg-group" x="330" y="46" text-anchor="start">Modelo multi-tarea</text>
+<rect class="dg-frame" x="322" y="52" width="236" height="186" rx="10"/>
+<rect class="dg-layer" x="334" y="62" width="212" height="34" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="440.0" y="83.0" text-anchor="middle">Tablas de embeddings</text>
+<rect class="dg-layer" x="334" y="108" width="212" height="50" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="440.0" y="129.0" text-anchor="middle">Expertos compartidos</text>
+<text class="dg-tiny" x="440.0" y="145.0" text-anchor="middle">y una compuerta por tarea</text>
+<rect class="dg-box" x="334" y="186" width="47" height="36" rx="8"/>
+<text class="dg-tiny" x="357.5" y="208.0" text-anchor="middle">p(clic)</text>
+<path class="dg-edge" d="M357 160 V182" marker-end="url(#f46aa)"/>
+<rect class="dg-box" x="389" y="186" width="47" height="36" rx="8"/>
+<text class="dg-tiny" x="412.5" y="208.0" text-anchor="middle">compra</text>
+<path class="dg-edge" d="M412 160 V182" marker-end="url(#f46aa)"/>
+<rect class="dg-box" x="444" y="186" width="47" height="36" rx="8"/>
+<text class="dg-tiny" x="467.5" y="208.0" text-anchor="middle">p(10 s)</text>
+<path class="dg-edge" d="M467 160 V182" marker-end="url(#f46aa)"/>
+<rect class="dg-box" x="499" y="186" width="47" height="36" rx="8"/>
+<text class="dg-tiny" x="522.5" y="208.0" text-anchor="middle">ocultar</text>
+<path class="dg-edge" d="M522 160 V182" marker-end="url(#f46aa)"/>
+<path class="dg-edge" d="M302 150 H318" marker-end="url(#f46aa)"/>
+<path class="dg-edge" d="M440 98 V104" marker-end="url(#f46aa)"/>
+<rect class="dg-layer" x="600" y="52" width="150" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="675.0" y="76.0" text-anchor="middle">Calibración</text>
+<rect class="dg-layer" x="600" y="112" width="150" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="675.0" y="133.0" text-anchor="middle">Σ wᵢ · pᵢ</text>
+<text class="dg-tiny" x="675.0" y="149.0" text-anchor="middle">pesos del producto</text>
+<rect class="dg-box dg-box--em" x="600" y="182" width="150" height="40" rx="8"/>
+<text class="dg-tiny" x="675.0" y="206.0" text-anchor="middle">Orden: los 50 mejores</text>
+<path class="dg-edge" d="M560 204 H576 V72 H596" marker-end="url(#f46aa)"/>
+<path class="dg-edge" d="M675 94 V108" marker-end="url(#f46aa)"/>
+<path class="dg-edge" d="M675 164 V178" marker-end="url(#f46aa)"/>
+<rect class="dg-box" x="600" y="266" width="150" height="40" rx="8"/>
+<text class="dg-small" x="675.0" y="290.0" text-anchor="middle">Re-ranking (M47)</text>
+<path class="dg-edge" d="M675 224 V262" marker-end="url(#f46aa)"/>
+<rect class="dg-layer" x="334" y="266" width="212" height="40" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="440.0" y="290.0" text-anchor="middle">Log de impresiones</text>
+<path class="dg-edge" d="M598 286 H550" marker-end="url(#f46aa)"/>
+<text class="dg-tiny" x="574" y="302" text-anchor="middle">lo mostrado</text>
+<rect class="dg-box" x="130" y="266" width="170" height="40" rx="8"/>
+<text class="dg-tiny" x="215.0" y="290.0" text-anchor="middle">Entrenamiento y métricas</text>
+<path class="dg-edge" d="M332 286 H304" marker-end="url(#f46aa)"/>
+<path class="dg-feedback" d="M215 264 V250 H300" marker-end="url(#f46aa)"/>
+<text class="dg-tiny" x="228" y="322" text-anchor="start">el modelo nuevo vuelve al ranker</text>
+<path class="dg-feedback" d="M300 250 H440 V226" marker-end="url(#f46aa)"/>
+<g class="pl-pin"><circle cx="130" cy="140" r="11"/><text x="130" y="144" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="300" cy="58" r="11"/><text x="300" y="62" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="300" cy="150" r="11"/><text x="300" y="154" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="546" cy="62" r="11"/><text x="546" y="66" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="546" cy="108" r="11"/><text x="546" y="112" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="552" cy="186" r="11"/><text x="552" y="190" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="750" cy="52" r="11"/><text x="750" y="56" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="750" cy="112" r="11"/><text x="750" y="116" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="750" cy="182" r="11"/><text x="750" y="186" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="130" cy="266" r="11"/><text x="130" y="270" text-anchor="middle">10</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 46.A.</b> El ranker por dentro. Entran unos cientos de candidatos, sale un orden. En el medio, un modelo que predice la probabilidad de cada acción, una <span class="no-autolink">calibración</span> que hace que esas probabilidades signifiquen lo que dicen y una combinación con pesos que no decide el modelo sino el producto.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Candidatos</b><span>Los ítems que dejaron la recuperación, los filtros y el ranking liviano: unos 500 en Mercado Barrio. <a href="#cascada">46.11</a></span></li>
+  <li><b>Features</b><span>Lo que el modelo sabe de la persona, del ítem y del momento; salen del feature store de M43. <a href="#que-predice">46.1</a></span></li>
+  <li><b>Features cruzadas</b><span>Las que miran a la persona y al ítem juntos, lo que la recuperación no podía usar. <a href="#logistica">46.2</a></span></li>
+  <li><b>Tablas de embeddings</b><span>Un vector aprendido por cada id: ítem, persona, vendedor. Son casi toda la memoria del modelo. <a href="#profundo">46.5</a></span></li>
+  <li><b>Expertos compartidos</b><span>Capas que usan todas las tareas, con una compuerta por tarea que elige cuánto de cada experto tomar. <a href="#multitarea">46.6</a></span></li>
+  <li><b>Cabezas por tarea</b><span>Una salida por acción: la probabilidad de clic, de compra, de mirar 10 segundos, de ocultar. <a href="#multitarea">46.6</a></span></li>
+  <li><b><span class="no-autolink">Calibración</span></b><span>Que un 0.2 signifique un 20&#8239;% de verdad, para poder sumar y comparar. <a href="#calibracion">46.9</a></span></li>
+  <li><b>Combinación con pesos</b><span>Un puntaje que suma cada probabilidad por lo que vale esa acción; los pesos los elige el producto. <a href="#combinar">46.8</a></span></li>
+  <li><b>Orden y corte</b><span>Los 50 de mayor puntaje pasan al re-ranking. Lo que importa es el orden, y se mide con NDCG. <a href="#metricas-rank">46.10</a></span></li>
+  <li><b>Entrenamiento y métricas</b><span>El log de lo mostrado entrena el modelo siguiente y permite medirlo offline antes del experimento. <a href="#metricas-rank">46.10</a></span></li>
+</ol>
+
+<p>El caso sigue siendo el feed de Mercado Barrio, con los números de <a href="m42-ml-system-design.html#numeros">M42</a>: 13 889 requests por segundo en el pico, 9 000 candidatos después de los filtros, un ranking liviano que deja 500 y un ranking pesado que deja 50 para el re-ranking. El pesado tiene 50 ms del presupuesto: con 500 candidatos, unos 0.1 ms por ítem, y en el pico son 13 889 × 500 = 6.9 millones de puntajes por segundo.</p>
+
+<h2 id="que-predice"><span class="sec-num">46.1</span>Qué predice un ranker</h2>
+
+<p>Un <dfn data-term="ranker">ranker</dfn> es el modelo que recibe un par (persona, ítem) con su contexto y devuelve qué tan probable es cada acción que importa: que haga clic, que compre, que mire el video más de 10 segundos, que lo oculte. Mira de a un par y puede usar todo lo que la recuperación no podía: features de la persona, del ítem y, sobre todo, cruces entre los dos.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es la diferencia entre el filtro de un sitio de departamentos y la visita con un <span class="no-autolink">agente</span> que te conoce. El filtro dejó 40 avisos por zona y precio. El <span class="no-autolink">agente</span> mira cada uno pensando en ti: "este tiene la luz que te gusta, pero queda lejos de la escuela de tus hijos". Esa mirada de a uno es cara, y por eso se hace sobre 40 y no sobre 50 000.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 350" role="img" aria-labelledby="f461t f461d">
+<title id="f461t">un ranker</title>
+<desc id="f461d">Ficha de un ranker. Qué entra: Un par (persona, ítem) con su contexto: unas centenas de features por candidato, para unos 500 candidatos por request. Qué hace: Predice, para cada candidato, la probabilidad de cada acción que importa, con un modelo que mira a la persona y al ítem juntos. Qué sale: Varias probabilidades por candidato. Combinadas con pesos, un puntaje; ordenadas por puntaje, la lista. Ejemplo: ítem 88213 (zapatillas, 59 USD, vendedor 412) para la persona 7741, martes 21:40, móvil p(clic) = 0.031   p(compra) = 0.0024   p(ver 10 s) = 0.18   p(ocultar) = 0.004 puntaje = 1 × 0.031 + 40 × 0.0024 + 0.2 × 0.18 − 20 × 0.004 = 0.083 Qué falla sin él: El orden sale de la recuperación, que no ve cruces: el producto punto de dos torres no sabe que a esta persona ya le compró a este vendedor. Dónde vive: Etapa pesada del embudo (Lámina 42.A, marca 5): 50 ms para 500 candidatos. Lo entrena el log de impresiones de M43.</desc>
+<defs><marker id="f461a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="118" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Un par (persona, ítem) con su</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">contexto: unas centenas de</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">features por candidato, para</text>
+<text class="dg-tiny" x="32" y="104" text-anchor="start">unos 500 candidatos por</text>
+<text class="dg-tiny" x="32" y="120" text-anchor="start">request.</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="118" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Predice, para cada candidato,</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">la probabilidad de cada acción</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">que importa, con un modelo que</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">mira a la persona y al ítem</text>
+<text class="dg-tiny" x="291" y="120" text-anchor="start">juntos.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="118" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Varias probabilidades por</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">candidato. Combinadas con</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">pesos, un puntaje; ordenadas</text>
+<text class="dg-tiny" x="550" y="104" text-anchor="start">por puntaje, la lista.</text>
+<path class="dg-edge" d="M234 75.0 H275" marker-end="url(#f461a)"/>
+<path class="dg-edge" d="M493 75.0 H534" marker-end="url(#f461a)"/>
+<rect class="dg-box" x="20" y="148" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="168" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="188" text-anchor="start" style="white-space:pre">ítem 88213 (zapatillas, 59 USD, vendedor 412) para la persona 7741, martes 21:40, móvil</text>
+<text class="dg-tiny dg-mono" x="32" y="204" text-anchor="start" style="white-space:pre">p(clic) = 0.031   p(compra) = 0.0024   p(ver 10 s) = 0.18   p(ocultar) = 0.004</text>
+<text class="dg-tiny dg-mono" x="32" y="220" text-anchor="start" style="white-space:pre">puntaje = 1 × 0.031 + 40 × 0.0024 + 0.2 × 0.18 − 20 × 0.004 = 0.083</text>
+<rect class="dg-warnbox" x="20" y="248" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="268" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="288" text-anchor="start">El orden sale de la recuperación, que no ve cruces:</text>
+<text class="dg-tiny" x="32" y="304" text-anchor="start">el producto punto de dos torres no sabe que a esta</text>
+<text class="dg-tiny" x="32" y="320" text-anchor="start">persona ya le compró a este vendedor.</text>
+<rect class="dg-box" x="393" y="248" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="268" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="288" text-anchor="start">Etapa pesada del embudo (Lámina 42.A, marca 5): 50 ms</text>
+<text class="dg-tiny" x="405" y="304" text-anchor="start">para 500 candidatos. Lo entrena el log de impresiones</text>
+<text class="dg-tiny" x="405" y="320" text-anchor="start">de M43.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.1.</b> La ficha del ranker. El ejemplo y sus pesos son inventados; la forma (varias probabilidades, una suma pesada) es la que usan los sistemas reales. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>¿Por qué varias probabilidades y no un solo puntaje de "qué tan bueno es"? Por tres razones.</p>
+
+<ol class="steps">
+  <li><span class="step-title">Cada acción tiene su etiqueta</span>El log de impresiones de <a href="m43-datos-recomendacion.html#log">M43</a> registra qué se mostró y qué pasó: clic, compra, tiempo de video, ocultar. Cada una es una etiqueta 0 o 1 que se puede predecir. "Qué tan bueno es" no tiene etiqueta: es una mezcla que alguien tiene que decidir.</li>
+  <li><span class="step-title">La mezcla cambia sin reentrenar</span>Si el producto decide que una compra vale más que antes, cambia un peso en la combinación (46.8); el modelo sigue prediciendo lo mismo.</li>
+  <li><span class="step-title">Las probabilidades se pueden revisar</span>Una probabilidad de clic de 0.03 se compara contra el 3&#8239;% de clics que de verdad ocurrieron. Un puntaje de 7.2 no se compara contra nada.</li>
+</ol>
+
+<p>La unidad de entrenamiento es la impresión: una fila por cada ítem que se mostró, con las features tal como eran en ese momento (el point-in-time de <a href="m43-datos-recomendacion.html#fugas">M43</a>) y las etiquetas de lo que pasó después. Los negativos son las impresiones sin acción; los muestreos de <a href="m43-datos-recomendacion.html#negativos">M43</a> deciden cuántas se guardan. Y la métrica que el ranker optimiza no es la del negocio: es una <span data-term="metrica-proxy">métrica proxy</span> elegida en <a href="m42-ml-system-design.html#objetivo">M42</a>, y la distancia entre las dos es el riesgo de todo el módulo.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> un ranker mira de a un par (persona, ítem), con cruces, y predice una probabilidad por cada acción que tiene etiqueta en el log; el orden sale de combinar esas probabilidades.</p>
+
+<h2 id="logistica"><span class="sec-num">46.2</span>Regresión logística: el primer ranker</h2>
+
+<p>La <dfn data-term="regresion-logistica">regresión logística</dfn> es el ranker más simple que sirve en producción. Suma las features multiplicadas por un peso cada una, más un término fijo, y pasa esa suma por la sigmoide, que la convierte en un número entre 0 y 1. Durante años fue el ranker de los anuncios de casi todas las empresas, y sigue siendo la línea de base que todo modelo nuevo tiene que superar.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: la sigmoide y los pesos</p>
+  <p>Con features <i>x</i><sub>1</sub>, …, <i>x</i><sub>n</sub> y pesos <i>w</i><sub>1</sub>, …, <i>w</i><sub>n</sub>, el modelo calcula <i>z</i> = <i>b</i> + Σ <i>w</i><sub>i</sub> · <i>x</i><sub>i</sub> y devuelve <i>p</i> = σ(<i>z</i>) = 1 / (1 + e<sup>−<i>z</i></sup>).</p>
+  <p>Un ejemplo con tres features que valen 0 o 1, para un ítem y una persona: miró la categoría hoy (<i>w</i> = 1.2), ya le compró a este vendedor (<i>w</i> = 1.5) y el precio es alto para lo que suele gastar (<i>w</i> = −0.8), con <i>b</i> = −3.0.</p>
+  <ul>
+    <li>Sin ninguna señal: <i>z</i> = −3.0, <i>p</i> = 0.047.</li>
+    <li>Miró la categoría y el precio es alto: <i>z</i> = −3.0 + 1.2 − 0.8 = −2.6, <i>p</i> = 0.069.</li>
+    <li>Las tres: <i>z</i> = −3.0 + 1.2 + 1.5 − 0.8 = −1.1, <i>p</i> = 0.250.</li>
+    <li>Categoría y vendedor, precio normal: <i>z</i> = −0.3, <i>p</i> = 0.426.</li>
+  </ul>
+  <p>Cada peso se lee: <i>e</i><sup><i>w</i></sup> es cuánto multiplica las chances (<i>p</i> / (1 − <i>p</i>)) esa feature. Haberle comprado al vendedor multiplica las chances por e<sup>1.5</sup> = 4.5.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f462t f462d">
+<title id="f462t">La función sigmoide</title>
+<desc id="f462d">La curva en forma de S que convierte cualquier número z en una probabilidad entre 0 y 1. Están marcados los cuatro ejemplos del texto: sin señales, z = −3.0 y p = 0.047; categoría y precio alto, z = −2.6 y p = 0.069; las tres señales, z = −1.1 y p = 0.250; categoría y vendedor, z = −0.3 y p = 0.426.</desc>
+
+<path class="sim-axis" d="M70 240 H690 M70 240 V36" style="fill: none; stroke: var(--label-3)"/>
+<text class="dg-tiny" x="70.0" y="258" text-anchor="middle">−6</text>
+<text class="dg-tiny" x="173.3" y="258" text-anchor="middle">−4</text>
+<text class="dg-tiny" x="276.7" y="258" text-anchor="middle">−2</text>
+<text class="dg-tiny" x="380.0" y="258" text-anchor="middle">0</text>
+<text class="dg-tiny" x="483.3" y="258" text-anchor="middle">2</text>
+<text class="dg-tiny" x="586.7" y="258" text-anchor="middle">4</text>
+<text class="dg-tiny" x="690.0" y="258" text-anchor="middle">6</text>
+<text class="dg-tiny" x="60" y="244" text-anchor="end">0</text>
+<line class="sim-grid" x1="70" x2="690" y1="240.0" y2="240.0"/>
+<text class="dg-tiny" x="60" y="144.0" text-anchor="end">0.5</text>
+<line class="sim-grid" x1="70" x2="690" y1="140.0" y2="140.0"/>
+<text class="dg-tiny" x="60" y="44" text-anchor="end">1</text>
+<line class="sim-grid" x1="70" x2="690" y1="40.0" y2="40.0"/>
+<text class="dg-tiny dg-mono" x="690" y="274" text-anchor="end">z = b + Σ wᵢ · xᵢ</text>
+<text class="dg-small dg-mono" x="80" y="30" text-anchor="start">p = σ(z) = 1 / (1 + e^−z)</text>
+<path class="" d="M70.0 239.5 L75.2 239.5 L80.3 239.4 L85.5 239.3 L90.7 239.3 L95.8 239.2 L101.0 239.1 L106.2 239.0 L111.3 238.9 L116.5 238.8 L121.7 238.7 L126.8 238.5 L132.0 238.4 L137.2 238.2 L142.3 238.0 L147.5 237.8 L152.7 237.6 L157.8 237.3 L163.0 237.0 L168.2 236.7 L173.3 236.4 L178.5 236.0 L183.7 235.6 L188.8 235.2 L194.0 234.7 L199.2 234.1 L204.3 233.5 L209.5 232.9 L214.7 232.2 L219.8 231.4 L225.0 230.5 L230.2 229.6 L235.3 228.5 L240.5 227.4 L245.7 226.2 L250.8 224.8 L256.0 223.4 L261.2 221.8 L266.3 220.0 L271.5 218.2 L276.7 216.2 L281.8 214.0 L287.0 211.6 L292.2 209.1 L297.3 206.4 L302.5 203.5 L307.7 200.4 L312.8 197.2 L318.0 193.7 L323.2 190.1 L328.3 186.2 L333.5 182.2 L338.7 178.0 L343.8 173.6 L349.0 169.1 L354.2 164.5 L359.3 159.7 L364.5 154.9 L369.7 150.0 L374.8 145.0 L380.0 140.0 L385.2 135.0 L390.3 130.0 L395.5 125.1 L400.7 120.3 L405.8 115.5 L411.0 110.9 L416.2 106.4 L421.3 102.0 L426.5 97.8 L431.7 93.8 L436.8 89.9 L442.0 86.3 L447.2 82.8 L452.3 79.6 L457.5 76.5 L462.7 73.6 L467.8 70.9 L473.0 68.4 L478.2 66.0 L483.3 63.8 L488.5 61.8 L493.7 60.0 L498.8 58.2 L504.0 56.6 L509.2 55.2 L514.3 53.8 L519.5 52.6 L524.7 51.5 L529.8 50.4 L535.0 49.5 L540.2 48.6 L545.3 47.8 L550.5 47.1 L555.7 46.5 L560.8 45.9 L566.0 45.3 L571.2 44.8 L576.3 44.4 L581.5 44.0 L586.7 43.6 L591.8 43.3 L597.0 43.0 L602.2 42.7 L607.3 42.4 L612.5 42.2 L617.7 42.0 L622.8 41.8 L628.0 41.6 L633.2 41.5 L638.3 41.3 L643.5 41.2 L648.7 41.1 L653.8 41.0 L659.0 40.9 L664.2 40.8 L669.3 40.7 L674.5 40.7 L679.7 40.6 L684.8 40.5 L690.0 40.5" style="fill: none; stroke: var(--l-service); stroke-width: 2.5"/>
+<circle cx="225.0" cy="230.5" r="4.5" style="fill: var(--l-service)"/>
+<g><circle cx="211.0" cy="212.5" r="9" style="fill: var(--bg); stroke: var(--label-2); stroke-width: 1.5"/><text class="dg-tiny" x="211.0" y="216.5" text-anchor="middle">1</text></g>
+<circle cx="245.7" cy="226.2" r="4.5" style="fill: var(--l-service)"/>
+<g><circle cx="255.7" cy="206.2" r="9" style="fill: var(--bg); stroke: var(--label-2); stroke-width: 1.5"/><text class="dg-tiny" x="255.7" y="210.2" text-anchor="middle">2</text></g>
+<circle cx="323.2" cy="190.1" r="4.5" style="fill: var(--l-service)"/>
+<g><circle cx="307.2" cy="176.1" r="9" style="fill: var(--bg); stroke: var(--label-2); stroke-width: 1.5"/><text class="dg-tiny" x="307.2" y="180.1" text-anchor="middle">3</text></g>
+<circle cx="364.5" cy="154.9" r="4.5" style="fill: var(--l-service)"/>
+<g><circle cx="348.5" cy="140.9" r="9" style="fill: var(--bg); stroke: var(--label-2); stroke-width: 1.5"/><text class="dg-tiny" x="348.5" y="144.9" text-anchor="middle">4</text></g>
+<text class="dg-tiny" x="450" y="150" text-anchor="start">1  sin señales: z = −3.0, p = 0.047</text>
+<text class="dg-tiny" x="450" y="168" text-anchor="start">2  categoría, precio alto: z = −2.6, p = 0.069</text>
+<text class="dg-tiny" x="450" y="186" text-anchor="start">3  las tres señales: z = −1.1, p = 0.250</text>
+<text class="dg-tiny" x="450" y="204" text-anchor="start">4  categoría y vendedor: z = −0.3, p = 0.426</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.2.</b> La sigmoide aplasta cualquier suma en una probabilidad. Cerca de 0 es casi una recta; en los extremos se satura: sumar más evidencia a algo que ya es casi seguro cambia poco.</figcaption>
+</figure>
+
+<p>Los pesos se aprenden minimizando la <dfn data-term="log-loss">log loss</dfn> (pérdida logarítmica, o entropía cruzada binaria): para cada impresión, −ln <i>p</i> si hubo clic y −ln(1 − <i>p</i>) si no. Castiga poco equivocarse con dudas y muchísimo equivocarse con confianza. El gradiente de cada peso es (<i>p</i> − <i>y</i>) · <i>x</i>: si el modelo predijo de más, el peso de las features presentes baja; si predijo de menos, sube. Es el <span data-term="descenso-gradiente">descenso por gradiente</span> de <a href="m44-modelos-clasicos.html#factorizacion-perdida">M44</a>, con otra pérdida.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: log loss con tres impresiones</p>
+  <p>Tres impresiones: la primera con <i>p</i> = 0.8 y clic, la segunda con <i>p</i> = 0.3 sin clic, la tercera con <i>p</i> = 0.1 y clic.</p>
+  <ul>
+    <li>−ln 0.8 = 0.223</li>
+    <li>−ln(1 − 0.3) = −ln 0.7 = 0.357</li>
+    <li>−ln 0.1 = 2.303</li>
+  </ul>
+  <p>Promedio: (0.223 + 0.357 + 2.303) / 3 = 0.961. La tercera, sola, es el 80&#8239;% del total: un modelo que dice "casi seguro que no" y se equivoca paga mucho más que uno que duda.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f463t f463d">
+<title id="f463t">La pérdida logarítmica</title>
+<desc id="f463d">Dos curvas: la pérdida cuando hubo clic, −ln p, que crece sin límite cuando p se acerca a 0, y la pérdida cuando no hubo clic, −ln(1 − p), que crece cuando p se acerca a 1. Marcadas, las tres impresiones del ejemplo: 0.8 con clic pierde 0.223; 0.3 sin clic pierde 0.357; 0.1 con clic pierde 2.303. El promedio es 0.961.</desc>
+
+<path d="M70 250 H450 M70 250 V30" style="fill: none; stroke: var(--label-3)"/>
+<text class="dg-tiny" x="70" y="268" text-anchor="middle">0</text>
+<text class="dg-tiny" x="165.0" y="268" text-anchor="middle">0.25</text>
+<text class="dg-tiny" x="260.0" y="268" text-anchor="middle">0.5</text>
+<text class="dg-tiny" x="355.0" y="268" text-anchor="middle">0.75</text>
+<text class="dg-tiny" x="450" y="268" text-anchor="middle">1</text>
+<text class="dg-tiny" x="60" y="254.0" text-anchor="end">0</text>
+<line class="sim-grid" x1="70" x2="450" y1="250.0" y2="250.0"/>
+<text class="dg-tiny" x="60" y="201.5" text-anchor="end">1</text>
+<line class="sim-grid" x1="70" x2="450" y1="197.5" y2="197.5"/>
+<text class="dg-tiny" x="60" y="149.0" text-anchor="end">2</text>
+<line class="sim-grid" x1="70" x2="450" y1="145.0" y2="145.0"/>
+<text class="dg-tiny" x="60" y="96.5" text-anchor="end">3</text>
+<line class="sim-grid" x1="70" x2="450" y1="92.5" y2="92.5"/>
+<text class="dg-tiny" x="60" y="44.0" text-anchor="end">4</text>
+<line class="sim-grid" x1="70" x2="450" y1="40.0" y2="40.0"/>
+<text class="dg-tiny" x="450" y="284" text-anchor="end">probabilidad predicha p</text>
+<path class="" d="M77.6 44.6 L81.4 65.9 L85.2 81.0 L89.0 92.7 L92.8 102.3 L96.6 110.4 L100.4 117.4 L104.2 123.6 L108.0 129.1 L111.8 134.1 L115.6 138.7 L119.4 142.9 L123.2 146.8 L127.0 150.4 L130.8 153.8 L134.6 157.0 L138.4 160.0 L142.2 162.8 L146.0 165.5 L149.8 168.1 L153.6 170.5 L157.4 172.8 L161.2 175.1 L165.0 177.2 L168.8 179.3 L172.6 181.3 L176.4 183.2 L180.2 185.0 L184.0 186.8 L187.8 188.5 L191.6 190.2 L195.4 191.8 L199.2 193.4 L203.0 194.9 L206.8 196.4 L210.6 197.8 L214.4 199.2 L218.2 200.6 L222.0 201.9 L225.8 203.2 L229.6 204.5 L233.4 205.7 L237.2 206.9 L241.0 208.1 L244.8 209.2 L248.6 210.4 L252.4 211.5 L256.2 212.5 L260.0 213.6 L263.8 214.6 L267.6 215.7 L271.4 216.7 L275.2 217.7 L279.0 218.6 L282.8 219.6 L286.6 220.5 L290.4 221.4 L294.2 222.3 L298.0 223.2 L301.8 224.0 L305.6 224.9 L309.4 225.7 L313.2 226.6 L317.0 227.4 L320.8 228.2 L324.6 229.0 L328.4 229.8 L332.2 230.5 L336.0 231.3 L339.8 232.0 L343.6 232.8 L347.4 233.5 L351.2 234.2 L355.0 234.9 L358.8 235.6 L362.6 236.3 L366.4 237.0 L370.2 237.6 L374.0 238.3 L377.8 238.9 L381.6 239.6 L385.4 240.2 L389.2 240.8 L393.0 241.5 L396.8 242.1 L400.6 242.7 L404.4 243.3 L408.2 243.9 L412.0 244.5 L415.8 245.0 L419.6 245.6 L423.4 246.2 L427.2 246.8 L431.0 247.3 L434.8 247.9 L438.6 248.4 L442.4 248.9 L446.2 249.5 L450.0 250.0" style="fill: none; stroke: var(--l-service); stroke-width: 2.5"/>
+<path class="" d="M70.0 250.0 L73.8 249.5 L77.6 248.9 L81.4 248.4 L85.2 247.9 L89.0 247.3 L92.8 246.8 L96.6 246.2 L100.4 245.6 L104.2 245.0 L108.0 244.5 L111.8 243.9 L115.6 243.3 L119.4 242.7 L123.2 242.1 L127.0 241.5 L130.8 240.8 L134.6 240.2 L138.4 239.6 L142.2 238.9 L146.0 238.3 L149.8 237.6 L153.6 237.0 L157.4 236.3 L161.2 235.6 L165.0 234.9 L168.8 234.2 L172.6 233.5 L176.4 232.8 L180.2 232.0 L184.0 231.3 L187.8 230.5 L191.6 229.8 L195.4 229.0 L199.2 228.2 L203.0 227.4 L206.8 226.6 L210.6 225.7 L214.4 224.9 L218.2 224.0 L222.0 223.2 L225.8 222.3 L229.6 221.4 L233.4 220.5 L237.2 219.6 L241.0 218.6 L244.8 217.7 L248.6 216.7 L252.4 215.7 L256.2 214.6 L260.0 213.6 L263.8 212.5 L267.6 211.5 L271.4 210.4 L275.2 209.2 L279.0 208.1 L282.8 206.9 L286.6 205.7 L290.4 204.5 L294.2 203.2 L298.0 201.9 L301.8 200.6 L305.6 199.2 L309.4 197.8 L313.2 196.4 L317.0 194.9 L320.8 193.4 L324.6 191.8 L328.4 190.2 L332.2 188.5 L336.0 186.8 L339.8 185.0 L343.6 183.2 L347.4 181.3 L351.2 179.3 L355.0 177.2 L358.8 175.1 L362.6 172.8 L366.4 170.5 L370.2 168.1 L374.0 165.5 L377.8 162.8 L381.6 160.0 L385.4 157.0 L389.2 153.8 L393.0 150.4 L396.8 146.8 L400.6 142.9 L404.4 138.7 L408.2 134.1 L412.0 129.1 L415.8 123.6 L419.6 117.4 L423.4 110.4 L427.2 102.3 L431.0 92.7 L434.8 81.0 L438.6 65.9 L442.4 44.6" style="fill: none; stroke: var(--l-edge); stroke-width: 2.5; stroke-dasharray: 6 4"/>
+<text class="dg-tiny" x="96.6" y="44" text-anchor="start">hubo clic: −ln p</text>
+<text class="dg-tiny" x="442.4" y="44" text-anchor="end">no hubo: −ln(1 − p)</text>
+<circle cx="374.0" cy="238.3" r="5" style="fill: var(--l-service)"/>
+<g><circle cx="390.0" cy="224.3" r="9" style="fill: var(--bg); stroke: var(--label-2); stroke-width: 1.5"/><text class="dg-tiny" x="390.0" y="228.3" text-anchor="middle">1</text></g>
+<circle cx="184.0" cy="231.3" r="5" style="fill: var(--l-service)"/>
+<g><circle cx="200.0" cy="217.3" r="9" style="fill: var(--bg); stroke: var(--label-2); stroke-width: 1.5"/><text class="dg-tiny" x="200.0" y="221.3" text-anchor="middle">2</text></g>
+<circle cx="108.0" cy="129.1" r="5" style="fill: var(--l-service)"/>
+<g><circle cx="124.0" cy="115.1" r="9" style="fill: var(--bg); stroke: var(--label-2); stroke-width: 1.5"/><text class="dg-tiny" x="124.0" y="119.1" text-anchor="middle">3</text></g>
+<rect class="dg-box" x="480" y="40" width="270" height="170" rx="8"/>
+<text class="dg-group" x="494" y="62" text-anchor="start">Tres impresiones</text>
+<text class="dg-tiny dg-mono" x="494" y="86" style="white-space: pre">1  p = 0.8, clic       0.223</text>
+<text class="dg-tiny dg-mono" x="494" y="104" style="white-space: pre">2  p = 0.3, sin clic   0.357</text>
+<text class="dg-tiny dg-mono" x="494" y="122" style="white-space: pre">3  p = 0.1, clic       2.303</text>
+<text class="dg-tiny dg-mono" x="494" y="140" style="white-space: pre"></text>
+<text class="dg-tiny dg-mono" x="494" y="158" style="white-space: pre">   promedio            0.961</text>
+<text class="dg-tiny" x="494" y="196" text-anchor="start">La 3 sola pesa el 80 % del total.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.3.</b> La log loss castiga la confianza equivocada. Errar con 0.3 cuesta poco; afirmar 0.1 cuando hubo clic cuesta diez veces más que acertar con 0.8.</figcaption>
+</figure>
+
+<p>La limitación está en la palabra "suma". El modelo no puede aprender solo que "miró la categoría hoy" vale mucho más cuando "el precio le queda bien": cada feature aporta lo suyo, independiente de las demás. Para eso hay que escribir a mano una <b>feature cruzada</b>, que vale 1 solo cuando las dos condiciones se cumplen, y darle su propio peso. Con cientos de features, los cruces posibles son decenas de miles, y elegir cuáles escribir es el trabajo de meses de un equipo. Los dos caminos que siguen (46.3 y 46.5) existen para que el modelo encuentre los cruces solo.</p>
+
+<pre data-lang="python"><code>import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import log_loss, roc_auc_score
+
+# Una fila por impresión del log (M43): features de la persona, del ítem y cruces.
+# y = 1 si hubo clic. Train y test se parten por tiempo, nunca al azar.
+X_train, y_train, X_test, y_test = cargar_impresiones(desde="2026-09-01", corte="2026-10-01")
+
+modelo = LogisticRegression(C=1.0, max_iter=1000)   # C es el inverso de la regularización
+modelo.fit(X_train, y_train)
+
+p = modelo.predict_proba(X_test)[:, 1]              # probabilidad de clic por impresión
+print("log loss", log_loss(y_test, p))
+print("AUC", roc_auc_score(y_test, p))
+print("promedio predicho", p.mean(), "CTR real", y_test.mean())
+</code></pre>
+
+<p>Tres líneas del código valen más que el modelo. La partición es por tiempo, porque una partición al azar mete el futuro en el entrenamiento (las <a href="m43-datos-recomendacion.html#fugas">fugas</a> de M43). La regularización (<code>C</code>) es la de <a href="m44-modelos-clasicos.html#factorizacion-perdida">M44</a>: sin ella, un peso por cada id de vendedor memoriza el ruido de los vendedores con pocas impresiones. Y la última línea compara el promedio predicho con el CTR real: si no coinciden, las probabilidades no sirven para combinar (46.9).</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> la regresión logística suma pesos y pasa la suma por una sigmoide; se entrena con log loss, que castiga la confianza equivocada; no encuentra cruces sola, hay que escribirlos.</p>
+
+<h2 id="arboles"><span class="sec-num">46.3</span>Árboles y boosting (GBDT)</h2>
+
+<p>Un árbol de decisión parte las impresiones con preguntas sobre las features ("¿miró la categoría hoy?", "¿el precio es menor que dos veces su gasto?") y guarda en cada hoja la fracción de clics de las impresiones que llegaron ahí. Encuentra cruces solo: una hoja que está debajo de dos preguntas es un cruce de dos features.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f464t f464d">
+<title id="f464t">Un árbol de decisión</title>
+<desc id="f464d">La raíz pregunta si la persona miró la categoría hoy. Si no, pregunta si ya le compró al vendedor: 1.0 % de clics si no, 3.0 % si sí. Si miró la categoría, pregunta si el precio es menor que dos veces su gasto habitual: 2.5 % si no, 8.0 % si sí. Cada hoja guarda la fracción de clics de las impresiones de entrenamiento que llegaron a ella.</desc>
+<defs><marker id="f464a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="270" y="20" width="230" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="385.0" y="46.0" text-anchor="middle">¿Miró la categoría hoy?</text>
+<rect class="dg-layer" x="60" y="120" width="250" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="185.0" y="146.0" text-anchor="middle">¿Ya le compró al vendedor?</text>
+<rect class="dg-layer" x="460" y="120" width="270" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="595.0" y="146.0" text-anchor="middle">¿Precio menor que 2 × su gasto?</text>
+<path class="dg-edge" d="M330 66 V92 H185 V116" marker-end="url(#f464a)"/>
+<path class="dg-edge" d="M440 66 V92 H595 V116" marker-end="url(#f464a)"/>
+<text class="dg-tiny" x="250" y="86" text-anchor="start">no</text>
+<text class="dg-tiny" x="510" y="86" text-anchor="start">sí</text>
+<rect class="dg-box" x="20" y="220" width="150" height="56" rx="8"/>
+<text class="dg-small" x="95.0" y="244.0" text-anchor="middle">CTR 1.0 %</text>
+<text class="dg-tiny" x="95.0" y="260.0" text-anchor="middle">410 000 impresiones</text>
+<path class="dg-edge" d="M185 166 V192 H95 V216" marker-end="url(#f464a)"/>
+<text class="dg-tiny" x="87" y="206" text-anchor="end">no</text>
+<rect class="dg-box" x="190" y="220" width="150" height="56" rx="8"/>
+<text class="dg-small" x="265.0" y="244.0" text-anchor="middle">CTR 3.0 %</text>
+<text class="dg-tiny" x="265.0" y="260.0" text-anchor="middle">38 000</text>
+<path class="dg-edge" d="M185 166 V192 H265 V216" marker-end="url(#f464a)"/>
+<text class="dg-tiny" x="273" y="206" text-anchor="start">sí</text>
+<rect class="dg-box" x="430" y="220" width="150" height="56" rx="8"/>
+<text class="dg-small" x="505.0" y="244.0" text-anchor="middle">CTR 2.5 %</text>
+<text class="dg-tiny" x="505.0" y="260.0" text-anchor="middle">96 000</text>
+<path class="dg-edge" d="M595 166 V192 H505 V216" marker-end="url(#f464a)"/>
+<text class="dg-tiny" x="497" y="206" text-anchor="end">no</text>
+<rect class="dg-box dg-box--em" x="600" y="220" width="150" height="56" rx="8"/>
+<text class="dg-small" x="675.0" y="244.0" text-anchor="middle">CTR 8.0 %</text>
+<text class="dg-tiny" x="675.0" y="260.0" text-anchor="middle">21 000</text>
+<path class="dg-edge" d="M595 166 V192 H675 V216" marker-end="url(#f464a)"/>
+<text class="dg-tiny" x="683" y="206" text-anchor="start">sí</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.4.</b> Un árbol parte las impresiones con preguntas sobre las features y guarda, en cada hoja, la fracción de clics. Encuentra solo el cruce "miró la categoría y el precio le queda bien" (8.0&#8239;%), que la regresión logística necesitaba que alguien escribiera a mano. Los números son un ejemplo. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>Un árbol solo es tosco: pocas hojas no alcanzan para ser preciso, y muchas se aprenden de memoria el ruido (el <span data-term="sobreajuste">sobreajuste</span> de M44). El <dfn data-term="gbdt">gradient boosting</dfn> con árboles (GBDT) usa cientos de árboles chicos en fila: el primero hace una predicción gruesa, el segundo se entrena con lo que el primero erra (el residuo) y su salida se suma, el tercero corrige a los dos anteriores, y así. Cada árbol es un poco de corrección; la suma es una función con escalones que sigue la curva verdadera.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es como afinar una receta con varios cocineros en fila. El primero hace el guiso; el segundo lo prueba y agrega sal donde falta; el tercero prueba lo que dejaron los dos y corrige el picante. Nadie cocina el plato entero: cada uno corrige lo que todavía está mal, un poco por vez.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f465t f465d">
+<title id="f465t">Boosting: cada árbol corrige al anterior</title>
+<desc id="f465d">Tres paneles con la misma curva verdadera, la tasa de clics que baja a medida que el precio sube respecto del gasto habitual, punteada. En línea llena, la suma de árboles de un solo corte: con un árbol es un escalón; con dos, tres escalones; con diez, una escalera que sigue la curva.</desc>
+
+<rect class="dg-box" x="20" y="30" width="230" height="190" rx="8"/>
+<text class="dg-group" x="32" y="48" text-anchor="start">1 árbol</text>
+<path class="" d="M30.0 48.4 L33.6 56.4 L37.1 63.9 L40.7 71.0 L44.2 77.6 L47.8 83.8 L51.4 89.7 L54.9 95.3 L58.5 100.5 L62.0 105.4 L65.6 110.0 L69.2 114.3 L72.7 118.4 L76.3 122.2 L79.8 125.8 L83.4 129.2 L86.9 132.4 L90.5 135.4 L94.1 138.2 L97.6 140.9 L101.2 143.4 L104.7 145.7 L108.3 148.0 L111.9 150.0 L115.4 152.0 L119.0 153.8 L122.5 155.6 L126.1 157.2 L129.7 158.8 L133.2 160.2 L136.8 161.6 L140.3 162.8 L143.9 164.0 L147.5 165.2 L151.0 166.2 L154.6 167.2 L158.1 168.2 L161.7 169.1 L165.3 169.9 L168.8 170.7 L172.4 171.4 L175.9 172.1 L179.5 172.8 L183.1 173.4 L186.6 174.0 L190.2 174.5 L193.7 175.0 L197.3 175.5 L200.8 176.0 L204.4 176.4 L208.0 176.8 L211.5 177.2 L215.1 177.5 L218.6 177.8 L222.2 178.2 L225.8 178.5 L229.3 178.7 L232.9 179.0 L236.4 179.2 L240.0 179.5" style="fill: none; stroke: var(--label-3); stroke-width: 1.5; stroke-dasharray: 5 4"/>
+<path class="" d="M30.0 92.2 L33.6 92.2 L37.1 92.2 L40.7 92.2 L44.2 92.2 L47.8 92.2 L51.4 92.2 L54.9 92.2 L58.5 92.2 L62.0 92.2 L65.6 92.2 L69.2 92.2 L72.7 92.2 L76.3 92.2 L79.8 92.2 L81.6 92.2 L81.6 164.2 L83.4 164.2 L86.9 164.2 L90.5 164.2 L94.1 164.2 L97.6 164.2 L101.2 164.2 L104.7 164.2 L108.3 164.2 L111.9 164.2 L115.4 164.2 L119.0 164.2 L122.5 164.2 L126.1 164.2 L129.7 164.2 L133.2 164.2 L136.8 164.2 L140.3 164.2 L143.9 164.2 L147.5 164.2 L151.0 164.2 L154.6 164.2 L158.1 164.2 L161.7 164.2 L165.3 164.2 L168.8 164.2 L172.4 164.2 L175.9 164.2 L179.5 164.2 L183.1 164.2 L186.6 164.2 L190.2 164.2 L193.7 164.2 L197.3 164.2 L200.8 164.2 L204.4 164.2 L208.0 164.2 L211.5 164.2 L215.1 164.2 L218.6 164.2 L222.2 164.2 L225.8 164.2 L229.3 164.2 L232.9 164.2 L236.4 164.2 L240.0 164.2" style="fill: none; stroke: var(--l-service); stroke-width: 2.5"/>
+<text class="dg-tiny" x="238" y="214" text-anchor="end">error medio 0.0102</text>
+<rect class="dg-box" x="270" y="30" width="230" height="190" rx="8"/>
+<text class="dg-group" x="282" y="48" text-anchor="start">2 árboles</text>
+<path class="" d="M280.0 48.4 L283.6 56.4 L287.1 63.9 L290.7 71.0 L294.2 77.6 L297.8 83.8 L301.4 89.7 L304.9 95.3 L308.5 100.5 L312.0 105.4 L315.6 110.0 L319.2 114.3 L322.7 118.4 L326.3 122.2 L329.8 125.8 L333.4 129.2 L336.9 132.4 L340.5 135.4 L344.1 138.2 L347.6 140.9 L351.2 143.4 L354.7 145.7 L358.3 148.0 L361.9 150.0 L365.4 152.0 L369.0 153.8 L372.5 155.6 L376.1 157.2 L379.7 158.8 L383.2 160.2 L386.8 161.6 L390.3 162.8 L393.9 164.0 L397.5 165.2 L401.0 166.2 L404.6 167.2 L408.1 168.2 L411.7 169.1 L415.3 169.9 L418.8 170.7 L422.4 171.4 L425.9 172.1 L429.5 172.8 L433.1 173.4 L436.6 174.0 L440.2 174.5 L443.7 175.0 L447.3 175.5 L450.8 176.0 L454.4 176.4 L458.0 176.8 L461.5 177.2 L465.1 177.5 L468.6 177.8 L472.2 178.2 L475.8 178.5 L479.3 178.7 L482.9 179.0 L486.4 179.2 L490.0 179.5" style="fill: none; stroke: var(--label-3); stroke-width: 1.5; stroke-dasharray: 5 4"/>
+<path class="" d="M280.0 84.4 L283.6 84.4 L287.1 84.4 L290.7 84.4 L294.2 84.4 L297.8 84.4 L301.4 84.4 L304.9 84.4 L308.5 84.4 L312.0 84.4 L315.6 84.4 L319.2 84.4 L322.7 84.4 L326.3 84.4 L329.8 84.4 L331.6 84.4 L331.6 156.4 L333.4 156.4 L336.9 156.4 L340.5 156.4 L344.1 156.4 L347.6 156.4 L351.2 156.4 L354.7 156.4 L358.3 156.4 L361.9 156.4 L365.4 156.4 L369.0 156.4 L372.5 156.4 L376.1 156.4 L379.7 156.4 L383.2 156.4 L386.8 156.4 L390.3 156.4 L393.9 156.4 L397.5 156.4 L399.2 156.4 L399.2 174.4 L401.0 174.4 L404.6 174.4 L408.1 174.4 L411.7 174.4 L415.3 174.4 L418.8 174.4 L422.4 174.4 L425.9 174.4 L429.5 174.4 L433.1 174.4 L436.6 174.4 L440.2 174.4 L443.7 174.4 L447.3 174.4 L450.8 174.4 L454.4 174.4 L458.0 174.4 L461.5 174.4 L465.1 174.4 L468.6 174.4 L472.2 174.4 L475.8 174.4 L479.3 174.4 L482.9 174.4 L486.4 174.4 L490.0 174.4" style="fill: none; stroke: var(--l-service); stroke-width: 2.5"/>
+<text class="dg-tiny" x="488" y="214" text-anchor="end">error medio 0.0087</text>
+<rect class="dg-box" x="520" y="30" width="230" height="190" rx="8"/>
+<text class="dg-group" x="532" y="48" text-anchor="start">10 árboles</text>
+<path class="" d="M530.0 48.4 L533.6 56.4 L537.1 63.9 L540.7 71.0 L544.2 77.6 L547.8 83.8 L551.4 89.7 L554.9 95.3 L558.5 100.5 L562.0 105.4 L565.6 110.0 L569.2 114.3 L572.7 118.4 L576.3 122.2 L579.8 125.8 L583.4 129.2 L586.9 132.4 L590.5 135.4 L594.1 138.2 L597.6 140.9 L601.2 143.4 L604.7 145.7 L608.3 148.0 L611.9 150.0 L615.4 152.0 L619.0 153.8 L622.5 155.6 L626.1 157.2 L629.7 158.8 L633.2 160.2 L636.8 161.6 L640.3 162.8 L643.9 164.0 L647.5 165.2 L651.0 166.2 L654.6 167.2 L658.1 168.2 L661.7 169.1 L665.3 169.9 L668.8 170.7 L672.4 171.4 L675.9 172.1 L679.5 172.8 L683.1 173.4 L686.6 174.0 L690.2 174.5 L693.7 175.0 L697.3 175.5 L700.8 176.0 L704.4 176.4 L708.0 176.8 L711.5 177.2 L715.1 177.5 L718.6 177.8 L722.2 178.2 L725.8 178.5 L729.3 178.7 L732.9 179.0 L736.4 179.2 L740.0 179.5" style="fill: none; stroke: var(--label-3); stroke-width: 1.5; stroke-dasharray: 5 4"/>
+<path class="" d="M530.0 61.5 L533.6 61.5 L537.1 61.5 L540.7 61.5 L542.5 61.5 L542.5 87.7 L544.2 87.7 L547.8 87.7 L551.4 87.7 L553.1 87.7 L553.1 103.6 L554.9 103.6 L558.5 103.6 L560.3 103.6 L560.3 111.0 L562.0 111.0 L565.6 111.0 L569.2 111.0 L572.7 111.0 L576.3 111.0 L579.8 111.0 L581.6 111.0 L581.6 147.3 L583.4 147.3 L586.9 147.3 L590.5 147.3 L594.1 147.3 L597.6 147.3 L601.2 147.3 L604.7 147.3 L608.3 147.3 L611.9 147.3 L615.4 147.3 L617.2 147.3 L617.2 155.7 L619.0 155.7 L622.5 155.7 L626.1 155.7 L629.7 155.7 L633.2 155.7 L636.8 155.7 L640.3 155.7 L643.9 155.7 L647.5 155.7 L649.2 155.7 L649.2 173.7 L651.0 173.7 L654.6 173.7 L658.1 173.7 L661.7 173.7 L665.3 173.7 L668.8 173.7 L672.4 173.7 L675.9 173.7 L679.5 173.7 L683.1 173.7 L686.6 173.7 L690.2 173.7 L693.7 173.7 L697.3 173.7 L700.8 173.7 L704.4 173.7 L708.0 173.7 L711.5 173.7 L715.1 173.7 L718.6 173.7 L722.2 173.7 L725.8 173.7 L729.3 173.7 L732.9 173.7 L736.4 173.7 L740.0 173.7" style="fill: none; stroke: var(--l-service); stroke-width: 2.5"/>
+<text class="dg-tiny" x="738" y="214" text-anchor="end">error medio 0.0038</text>
+<text class="dg-tiny" x="20" y="238" text-anchor="start">Eje horizontal: precio respecto del gasto habitual (0 a 3). Vertical: tasa de clics (0 a 9.5 %).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.5.</b> Gradient boosting con árboles de un solo corte, calculado sobre una curva de ejemplo: cada árbol nuevo se ajusta a lo que los anteriores todavía erran (el residuo) y se suma. Los GBDT reales usan árboles más profundos y una tasa de aprendizaje que achica cada paso.</figcaption>
+</figure>
+
+<p>Con features tabulares (contadores, tasas, precios, edades, la hora), un GBDT bien ajustado es difícil de superar, y por buenas razones de operación:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Lo que hace bien</th><th>Por qué importa</th></tr></thead>
+    <tbody>
+      <tr><td>Encuentra cruces y umbrales solo</td><td>No hace falta escribir "precio menor que 2 × gasto": el árbol elige el corte.</td></tr>
+      <tr><td>No le importa la escala</td><td>Precios en dólares y CTR en fracciones conviven sin <span class="no-autolink">normalizar</span>; los valores faltantes tienen su propia rama.</td></tr>
+      <tr><td>Entrena rápido en CPU</td><td>LightGBM y XGBoost entrenan millones de filas en minutos, sin GPU.</td></tr>
+      <tr><td>Se puede inspeccionar</td><td>Qué features usa más, y por qué un ítem quedó arriba.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Y tiene dos límites que empujan hacia los modelos profundos. No aprende nada útil de un id con millones de valores (cada ítem, cada persona): un árbol puede preguntar "¿el vendedor es el 412?", pero no puede aprender que el vendedor 412 se parece al 9 001, que es lo que hace un <span data-term="embedding">embedding</span>. Y no se actualiza de a poco: un GBDT se reentrena entero, mientras que una red se puede seguir entrenando con los datos de la última hora.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Facebook publicó en 2014 cómo predecía clics en anuncios: árboles con boosting cuyas hojas se usaban como features de una regresión logística. Cada árbol convierte una impresión en "a qué hoja llegó", y la regresión aprende un peso por hoja. La combinación tuvo una entropía <span class="no-autolink">normalizada</span> de 96.58&#8239;% respecto de los árboles solos (más bajo es mejor), contra 99.43&#8239;% de la regresión sola; los autores notan que la mayoría de los experimentos de features mueven esa métrica una fracción de punto. También midieron la frescura: entrenar cada día en lugar de cada semana bajó la entropía <span class="no-autolink">normalizada</span> alrededor de 1&#8239;%. <span class="badge badge--doc">Documentado</span> (He et al., ADKDD 2014)</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> un GBDT suma cientos de árboles chicos, cada uno corrigiendo el residuo de los anteriores; encuentra cruces solo y gana con features tabulares, pero no aprende de ids con millones de valores ni se actualiza de a poco.</p>
+
+<h2 id="ltr"><span class="sec-num">46.4</span>Aprender a ordenar</h2>
+
+<p>Hasta acá, el ranker predice una probabilidad por ítem y el orden sale de ordenar por esa probabilidad. Funciona, pero optimiza algo distinto de lo que se mide: la log loss pesa igual un error en el ítem 1 y en el 500, y a la persona solo le importan los de arriba. <dfn data-term="learning-to-rank">Learning to rank</dfn> (aprender a ordenar) es la familia de pérdidas que miran el orden. Hay tres, según qué compara la pérdida:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f466t f466d">
+<title id="f466t">Tres formas de aprender a ordenar</title>
+<desc id="f466d">Tres columnas. Pointwise: cada ítem por separado, con su etiqueta, y una pérdida por ítem como la log loss. Pairwise: pares de la misma lista, donde el mejor tiene que quedar arriba del peor, con una pérdida por par como RankNet o BPR. Listwise: la lista entera, con una pérdida que mira la métrica de orden, como LambdaRank o LambdaMART.</desc>
+<defs><marker id="f466a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-box" x="20" y="20" width="230" height="270" rx="8"/>
+<text class="dg-group" x="135" y="44" text-anchor="middle">Pointwise</text>
+<text class="dg-tiny" x="135" y="62" text-anchor="middle">un ítem por vez</text>
+<rect class="dg-layer" x="40" y="80" width="70" height="26" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="75" y="98" text-anchor="middle">B ✓</text>
+<text class="dg-tiny dg-mono" x="124" y="98" text-anchor="start">y = 1</text>
+<rect class="dg-layer" x="40" y="114" width="70" height="26" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="75" y="132" text-anchor="middle">A ·</text>
+<text class="dg-tiny dg-mono" x="124" y="132" text-anchor="start">y = 0</text>
+<rect class="dg-layer" x="40" y="148" width="70" height="26" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="75" y="166" text-anchor="middle">C ✓</text>
+<text class="dg-tiny dg-mono" x="124" y="166" text-anchor="start">y = 1</text>
+<rect class="dg-layer" x="40" y="182" width="70" height="26" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="75" y="200" text-anchor="middle">D ·</text>
+<text class="dg-tiny dg-mono" x="124" y="200" text-anchor="start">y = 0</text>
+<text class="dg-tiny" x="34" y="236" text-anchor="start">Pérdida: log loss, la de 46.2</text>
+<text class="dg-tiny" x="34" y="256" text-anchor="start">Cuida: probabilidades sumables</text>
+<rect class="dg-box" x="270" y="20" width="230" height="270" rx="8"/>
+<text class="dg-group" x="385" y="44" text-anchor="middle">Pairwise</text>
+<text class="dg-tiny" x="385" y="62" text-anchor="middle">pares de una lista</text>
+<rect class="dg-layer" x="290" y="80" width="70" height="26" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="325" y="98" text-anchor="middle">B ✓</text>
+<rect class="dg-layer" x="290" y="114" width="70" height="26" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="325" y="132" text-anchor="middle">A ·</text>
+<rect class="dg-layer" x="290" y="148" width="70" height="26" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="325" y="166" text-anchor="middle">C ✓</text>
+<rect class="dg-layer" x="290" y="182" width="70" height="26" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="325" y="200" text-anchor="middle">D ·</text>
+<path class="dg-edge" d="M362 93 C420 93 420 127 364 127" marker-end="url(#f466a)"/>
+<text class="dg-tiny dg-mono" x="424" y="114" text-anchor="start">B &gt; A</text>
+<path class="dg-edge" d="M362 161 C420 161 420 195 364 195" marker-end="url(#f466a)"/>
+<text class="dg-tiny dg-mono" x="424" y="182" text-anchor="start">C &gt; D</text>
+<text class="dg-tiny" x="284" y="236" text-anchor="start">Pérdida: RankNet, BPR de M44</text>
+<text class="dg-tiny" x="284" y="256" text-anchor="start">Cuida: el orden relativo, sin calibrar</text>
+<rect class="dg-box" x="520" y="20" width="230" height="270" rx="8"/>
+<text class="dg-group" x="635" y="44" text-anchor="middle">Listwise</text>
+<text class="dg-tiny" x="635" y="62" text-anchor="middle">la lista entera</text>
+<rect class="dg-layer" x="540" y="80" width="70" height="26" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="575" y="98" text-anchor="middle">B ✓</text>
+<rect class="dg-layer" x="540" y="114" width="70" height="26" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="575" y="132" text-anchor="middle">A ·</text>
+<rect class="dg-layer" x="540" y="148" width="70" height="26" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="575" y="166" text-anchor="middle">C ✓</text>
+<rect class="dg-layer" x="540" y="182" width="70" height="26" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="575" y="200" text-anchor="middle">D ·</text>
+<rect class="dg-frame" x="534" y="74" width="82" height="140" rx="8"/>
+<text class="dg-tiny" x="628" y="120" text-anchor="start">NDCG de</text>
+<text class="dg-tiny" x="628" y="135" text-anchor="start">la lista</text>
+<text class="dg-tiny" x="534" y="236" text-anchor="start">Pérdida: LambdaRank, LambdaMART</text>
+<text class="dg-tiny" x="534" y="256" text-anchor="start">Cuida: el orden arriba</text>
+<text class="dg-tiny" x="534" y="272" text-anchor="start">lo que mira NDCG</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.6.</b> Qué mira la pérdida en cada familia. Las tres pueden usar el mismo modelo (un GBDT, una red); cambia qué se compara al calcular el error.</figcaption>
+</figure>
+
+<ul>
+  <li><b>Pointwise:</b> un ítem por vez, con su etiqueta. Es la log loss de 46.2. Da probabilidades que se pueden <span class="no-autolink">calibrar</span> y sumar.</li>
+  <li><b>Pairwise:</b> pares de la misma lista; la pérdida castiga cuando el peor queda arriba del mejor. Es la <span data-term="perdida-pares">pérdida por pares</span> que apareció con <a href="m44-modelos-clasicos.html#bpr">BPR</a> en M44; en el ranking, los pares se arman con los ítems de una misma request. RankNet es la versión clásica.</li>
+  <li><b>Listwise:</b> la lista entera, con una pérdida que mira directamente una métrica de orden como NDCG (46.10).</li>
+</ul>
+
+<p>El truco que hizo práctica la tercera familia es <dfn data-term="lambdamart">LambdaMART</dfn>. NDCG no se puede derivar (cambia a saltos cuando dos ítems se cruzan), así que LambdaRank toma los gradientes de RankNet, par por par, y multiplica cada uno por cuánto cambiaría NDCG si esos dos ítems se intercambiaran. LambdaMART es esa idea entrenada con árboles con boosting. Burges, que la desarrolló en Microsoft, cuenta que un conjunto de modelos de esta familia ganó la competencia de learning to rank de Yahoo! en 2010. <span class="badge badge--doc">Documentado</span> (Burges, 2010)</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f467t f467d">
+<title id="f467t">El peso de cada par en LambdaRank</title>
+<desc id="f467d">Una lista de cuatro posiciones con relevancias 0, 3, 2 y 0. Intercambiar las posiciones 1 y 2 cambia el DCG en 2.583; intercambiar las posiciones 3 y 4, en 0.208. El mismo error de orden pesa unas 12 veces más arriba de la lista.</desc>
+<defs><marker id="f467a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-small" x="40" y="54" text-anchor="end">1</text>
+<rect class="dg-layer" x="56" y="30" width="170" height="34" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="141" y="52" text-anchor="middle">relevancia 0</text>
+<text class="dg-tiny dg-mono" x="240" y="52" text-anchor="start">descuento 1.000</text>
+<text class="dg-small" x="40" y="100" text-anchor="end">2</text>
+<rect class="dg-layer" x="56" y="76" width="170" height="34" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="141" y="98" text-anchor="middle">relevancia 3</text>
+<text class="dg-tiny dg-mono" x="240" y="98" text-anchor="start">descuento 0.631</text>
+<text class="dg-small" x="40" y="146" text-anchor="end">3</text>
+<rect class="dg-layer" x="56" y="122" width="170" height="34" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="141" y="144" text-anchor="middle">relevancia 2</text>
+<text class="dg-tiny dg-mono" x="240" y="144" text-anchor="start">descuento 0.500</text>
+<text class="dg-small" x="40" y="192" text-anchor="end">4</text>
+<rect class="dg-layer" x="56" y="168" width="170" height="34" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="141" y="190" text-anchor="middle">relevancia 0</text>
+<text class="dg-tiny dg-mono" x="240" y="190" text-anchor="start">descuento 0.431</text>
+<path class="dg-edge" d="M382 47 C440 47 440 93 382 93" marker-end="url(#f467a)"/>
+<path class="dg-edge" d="M382 93 C440 93 440 47 382 47" marker-end="url(#f467a)"/>
+<path class="dg-edge" d="M382 139 C440 139 440 185 382 185" marker-end="url(#f467a)"/>
+<path class="dg-edge" d="M382 185 C440 185 440 139 382 139" marker-end="url(#f467a)"/>
+<text class="dg-small" x="452" y="64" text-anchor="start">Intercambiar 1 y 2</text>
+<text class="dg-tiny dg-mono" x="452" y="82" text-anchor="start">|ΔDCG| = (7 − 0) × (1 − 0.631) = 2.583</text>
+<text class="dg-small" x="452" y="156" text-anchor="start">Intercambiar 3 y 4</text>
+<text class="dg-tiny dg-mono" x="452" y="174" text-anchor="start">|ΔDCG| = (3 − 0) × (0.5 − 0.431) = 0.208</text>
+<text class="dg-tiny" x="452" y="214" text-anchor="start">El mismo error, 12 veces más caro arriba.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.7.</b> LambdaRank multiplica el gradiente de cada par por lo que cambiaría la métrica si se intercambiaran. Los pares de arriba de la lista mandan; los del fondo casi no mueven al modelo.</figcaption>
+</figure>
+
+<pre data-lang="python"><code>import lightgbm as lgb
+
+# Una fila por (request, candidato). group dice cuántas filas tiene cada lista:
+# LambdaMART compara pares dentro de una misma lista, nunca entre listas.
+ranker = lgb.LGBMRanker(
+    objective="lambdarank",      # gradientes de RankNet pesados por el cambio de NDCG
+    n_estimators=500,
+    learning_rate=0.05,
+    num_leaves=63,
+)
+ranker.fit(
+    X_train, relevancia_train, group=filas_por_lista_train,
+    eval_set=[(X_valid, relevancia_valid)], eval_group=[filas_por_lista_valid],
+    eval_at=[10],                # NDCG@10 en validación
+)
+puntajes = ranker.predict(X_candidatos)   # sirven para ordenar; no son probabilidades
+</code></pre>
+
+<p>¿Cuándo vale la pena? Cuando lo único que importa es el orden de una lista y nadie va a usar los números: los resultados de un buscador, o las 10 opciones de una pestaña. Cuando las salidas del modelo se suman con pesos (46.8), se cobran (un anuncio se cobra por probabilidad de clic) o se comparan entre listas, hace falta pointwise con probabilidades <span class="no-autolink">calibradas</span>. En la práctica, muchos sistemas grandes entrenan pointwise multi-tarea y miden con métricas de orden.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> pointwise predice probabilidades, pairwise compara pares de una lista y listwise optimiza el orden de arriba; LambdaMART pesa cada par por cuánto cambiaría NDCG; sirve cuando solo importa el orden, no los números.</p>
+
+<h2 id="profundo"><span class="sec-num">46.5</span>Modelos profundos</h2>
+
+<p>Los modelos profundos de ranking resuelven el primer límite de los árboles: aprenden un embedding por cada id (cada ítem, cada persona, cada vendedor) y los cruzan entre sí. Tres arquitecturas marcan el camino.</p>
+
+<h3 id="profundo-wide">Wide &amp; Deep</h3>
+
+<p>Google publicó en 2016 el ranker de las apps de Google Play: una parte ancha, que es una regresión logística con cruces escritos a mano (memoriza "quien instaló esta app instala aquella"), y una parte profunda, con embeddings y tres capas, que generaliza a combinaciones que nunca vio. Las dos se entrenan juntas y se suman en una sigmoide.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f468t f468d">
+<title id="f468t">Wide &amp; Deep</title>
+<desc id="f468d">Dos caminos que se suman antes de la sigmoide. A la izquierda, la parte ancha: un modelo lineal sobre features cruzadas escritas a mano, que memoriza combinaciones frecuentes. A la derecha, la parte profunda: los ids pasan por tablas de embeddings y una red de varias capas, que generaliza a combinaciones que nunca vio.</desc>
+<defs><marker id="f468a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="20" y="30" text-anchor="start">Parte ancha: memoriza</text>
+<rect class="dg-layer" x="20" y="44" width="300" height="40" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="170.0" y="68.0" text-anchor="middle">Cruces: app instalada × app mostrada</text>
+<rect class="dg-layer" x="20" y="120" width="300" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="170.0" y="144.0" text-anchor="middle">Lineal: Σ wᵢ · xᵢ</text>
+<path class="dg-edge" d="M170 86 V116" marker-end="url(#f468a)"/>
+<text class="dg-group" x="440" y="30" text-anchor="start">Parte profunda: generaliza</text>
+<rect class="dg-layer" x="440" y="44" width="310" height="40" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="595.0" y="68.0" text-anchor="middle">Ids y categorías: tablas de embeddings</text>
+<rect class="dg-layer" x="440" y="104" width="310" height="28" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="595.0" y="122.0" text-anchor="middle">Capa de 1 024</text>
+<rect class="dg-layer" x="440" y="152" width="310" height="28" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="595.0" y="170.0" text-anchor="middle">Capa de 512</text>
+<rect class="dg-layer" x="440" y="200" width="310" height="28" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="595.0" y="218.0" text-anchor="middle">Capa de 256</text>
+<path class="dg-edge" d="M595 86 V100" marker-end="url(#f468a)"/>
+<path class="dg-edge" d="M595 134 V148" marker-end="url(#f468a)"/>
+<path class="dg-edge" d="M595 182 V196" marker-end="url(#f468a)"/>
+<rect class="dg-box dg-box--em" x="300" y="244" width="170" height="40" rx="8"/>
+<text class="dg-small" x="385.0" y="268.0" text-anchor="middle">σ(ancha + profunda)</text>
+<path class="dg-edge" d="M170 162 V264 H296" marker-end="url(#f468a)"/>
+<path class="dg-edge" d="M595 230 V264 H474" marker-end="url(#f468a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.8.</b> Wide &amp; Deep, el ranker de Google Play: las dos partes se entrenan juntas y se suman en una sola sigmoide. Las capas de 1 024, 512 y 256 son las del artículo. <span class="badge badge--doc">Documentado</span> (Cheng et al., 2016)</figcaption>
+</figure>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>En un experimento de tres semanas con un 1&#8239;% de usuarios por grupo, Wide &amp; Deep subió las instalaciones desde la página principal de la tienda un 3.9&#8239;% contra la regresión logística ancha que estaba en producción, y un 1&#8239;% más que la parte profunda sola. Se entrenó con más de 500 mil millones de ejemplos. En el pico, los servidores puntuaban más de 10 millones de apps por segundo; puntuar todos los candidatos de una request en un solo lote tardaba 31 ms con un hilo, y partiendo el lote en 4 hilos bajó a 14 ms. <span class="badge badge--doc">Documentado</span> (Cheng et al., 2016)</p>
+</aside>
+
+<h3 id="profundo-dlrm">DLRM y las interacciones</h3>
+
+<p><dfn data-term="dlrm">DLRM</dfn> (Deep Learning Recommendation Model), que publicó Facebook en 2019, es el modelo de referencia de la industria. Las features numéricas pasan por un <span data-term="mlp">MLP</span> de abajo; cada feature categórica busca su vector en su tabla de embeddings; todos esos vectores se cruzan de a pares con productos punto, como en la factorización de M44 pero entre todas las features; y un MLP de arriba convierte los cruces en la probabilidad. DCN (Deep &amp; Cross Network, de Google, 2017 y 2021) cambia los productos punto por capas que construyen cruces de varias features a la vez.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 320" role="img" aria-labelledby="f469t f469d">
+<title id="f469t">DLRM por bloques</title>
+<desc id="f469d">Las features numéricas pasan por un MLP de abajo y salen como un vector. Cada feature categórica (el id del ítem, el de la persona, la categoría, el vendedor) busca su vector en su tabla de embeddings. Todos los vectores se cruzan de a pares con productos punto; los productos y el vector denso entran al MLP de arriba, que da la probabilidad.</desc>
+<defs><marker id="f469a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="250" width="150" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="95.0" y="271.0" text-anchor="middle">Numéricas</text>
+<text class="dg-tiny" x="95.0" y="287.0" text-anchor="middle">precio, edad, CTR</text>
+<rect class="dg-layer" x="20" y="170" width="150" height="50" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="95.0" y="199.0" text-anchor="middle">MLP de abajo</text>
+<path class="dg-edge" d="M95 248 V224" marker-end="url(#f469a)"/>
+<rect class="dg-layer" x="200" y="250" width="124" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="262.0" y="279.0" text-anchor="middle">id del ítem</text>
+<rect class="dg-layer" x="200" y="170" width="124" height="50" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="262.0" y="191.0" text-anchor="middle">tabla</text>
+<text class="dg-tiny" x="262.0" y="207.0" text-anchor="middle">un vector por valor</text>
+<path class="dg-edge" d="M262 248 V224" marker-end="url(#f469a)"/>
+<path class="dg-edge" d="M262 168 V132" marker-end="url(#f469a)"/>
+<rect class="dg-layer" x="340" y="250" width="124" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="402.0" y="279.0" text-anchor="middle">id de la persona</text>
+<rect class="dg-layer" x="340" y="170" width="124" height="50" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="402.0" y="191.0" text-anchor="middle">tabla</text>
+<text class="dg-tiny" x="402.0" y="207.0" text-anchor="middle">un vector por valor</text>
+<path class="dg-edge" d="M402 248 V224" marker-end="url(#f469a)"/>
+<path class="dg-edge" d="M402 168 V132" marker-end="url(#f469a)"/>
+<rect class="dg-layer" x="480" y="250" width="124" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="542.0" y="279.0" text-anchor="middle">categoría</text>
+<rect class="dg-layer" x="480" y="170" width="124" height="50" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="542.0" y="191.0" text-anchor="middle">tabla</text>
+<text class="dg-tiny" x="542.0" y="207.0" text-anchor="middle">un vector por valor</text>
+<path class="dg-edge" d="M542 248 V224" marker-end="url(#f469a)"/>
+<path class="dg-edge" d="M542 168 V132" marker-end="url(#f469a)"/>
+<rect class="dg-layer" x="620" y="250" width="124" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="682.0" y="279.0" text-anchor="middle">vendedor</text>
+<rect class="dg-layer" x="620" y="170" width="124" height="50" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="682.0" y="191.0" text-anchor="middle">tabla</text>
+<text class="dg-tiny" x="682.0" y="207.0" text-anchor="middle">un vector por valor</text>
+<path class="dg-edge" d="M682 248 V224" marker-end="url(#f469a)"/>
+<path class="dg-edge" d="M682 168 V132" marker-end="url(#f469a)"/>
+<path class="dg-edge" d="M95 168 V132" marker-end="url(#f469a)"/>
+<rect class="dg-layer" x="20" y="86" width="730" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="385.0" y="112.0" text-anchor="middle">Interacción: el producto punto de cada par de vectores (5 vectores, 10 productos)</text>
+<rect class="dg-box dg-box--em" x="240" y="20" width="290" height="44" rx="8"/>
+<text class="dg-small" x="385.0" y="46.0" text-anchor="middle">MLP de arriba → p(clic)</text>
+<path class="dg-edge" d="M385 84 V68" marker-end="url(#f469a)"/>
+<text class="dg-tiny" x="560" y="40" text-anchor="start">tablas: en varias máquinas</text>
+<text class="dg-tiny" x="560" y="56" text-anchor="start">MLP: copiado en todas</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.9.</b> DLRM, el modelo de referencia que publicó Facebook: las features categóricas se vuelven vectores y se cruzan de a pares, como en la factorización de M44 pero entre todas las features. Las tablas se reparten entre máquinas (paralelismo de modelo) y los MLP se copian (paralelismo de datos). <span class="badge badge--doc">Documentado</span> (Naumov et al., 2019)</figcaption>
+</figure>
+
+<pre data-lang="python"><code>import torch
+from torch import nn
+
+class MiniDLRM(nn.Module):
+    """Numéricas por un MLP, categóricas por tablas, todos los pares de vectores cruzados."""
+    def __init__(self, tamanos_tablas, n_numericas, d=64, n_tareas=4):
+        super().__init__()
+        self.tablas = nn.ModuleList(nn.EmbeddingBag(n, d, mode="sum") for n in tamanos_tablas)
+        self.abajo = nn.Sequential(nn.Linear(n_numericas, 256), nn.ReLU(), nn.Linear(256, d))
+        k = len(tamanos_tablas) + 1                      # vectores que se cruzan
+        self.arriba = nn.Sequential(nn.Linear(d + k * (k - 1) // 2, 512), nn.ReLU(), nn.Linear(512, 256), nn.ReLU())
+        self.cabezas = nn.ModuleList(nn.Linear(256, 1) for _ in range(n_tareas))
+
+    def forward(self, numericas, ids):
+        denso = self.abajo(numericas)                                # (lote, d)
+        vecs = [denso] + [t(i) for t, i in zip(self.tablas, ids)]   # k vectores de (lote, d)
+        V = torch.stack(vecs, dim=1)                                 # (lote, k, d)
+        cruces = V @ V.transpose(1, 2)                               # productos punto: (lote, k, k)
+        a, b = torch.triu_indices(V.shape[1], V.shape[1], offset=1)
+        z = self.arriba(torch.cat([denso, cruces[:, a, b]], dim=1))
+        return [torch.sigmoid(c(z)).squeeze(1) for c in self.cabezas]   # una probabilidad por tarea
+</code></pre>
+
+<h3 id="profundo-tablas">Las tablas pesan más que la red</h3>
+
+<p>La sorpresa de los rankers profundos está en la memoria. Un embedding de 64 float32 por cada uno de los 100 millones de ítems de Mercado Barrio es 100 000 000 × 64 × 4 B = 25.6 GB, solo para el id del ítem. Con las personas activas por día, otros 20 000 000 × 64 × 4 B = 5.12 GB. Las capas densas, con 10 millones de parámetros (un supuesto generoso), son 40 MB. El modelo es casi todo tablas.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f46bt f46bd">
+<title id="f46bt">Dónde está la memoria de un ranker profundo</title>
+<desc id="f46bd">Barras en escala logarítmica. La tabla de embeddings de los ítems ocupa 25.6 GB; la de personas, 5.12 GB; la de vendedores, 512 MB; los MLP, 40 MB; la de categorías, 2.56 MB. Casi todo el modelo son tablas.</desc>
+
+<line class="sim-grid" x1="330.0" x2="330.0" y1="20" y2="210"/>
+<text class="dg-tiny" x="330.0" y="228" text-anchor="middle">1 MB</text>
+<line class="sim-grid" x1="410.0" x2="410.0" y1="20" y2="210"/>
+<text class="dg-tiny" x="410.0" y="228" text-anchor="middle">10 MB</text>
+<line class="sim-grid" x1="490.0" x2="490.0" y1="20" y2="210"/>
+<text class="dg-tiny" x="490.0" y="228" text-anchor="middle">100 MB</text>
+<line class="sim-grid" x1="570.0" x2="570.0" y1="20" y2="210"/>
+<text class="dg-tiny" x="570.0" y="228" text-anchor="middle">1 GB</text>
+<line class="sim-grid" x1="650.0" x2="650.0" y1="20" y2="210"/>
+<text class="dg-tiny" x="650.0" y="228" text-anchor="middle">10 GB</text>
+<line class="sim-grid" x1="730.0" x2="730.0" y1="20" y2="210"/>
+<text class="dg-tiny" x="730.0" y="228" text-anchor="middle">100 GB</text>
+<text class="dg-tiny" x="320" y="48" text-anchor="end">Tabla de ítems: 100 M × 64 × 4 B</text>
+<rect class="dg-layer" x="330" y="34" width="352.7" height="20" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="688.7" y="48" text-anchor="start">25.6 GB</text>
+<text class="dg-tiny" x="320" y="84" text-anchor="end">Tabla de personas: 20 M × 64 × 4 B</text>
+<rect class="dg-layer" x="330" y="70" width="296.7" height="20" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="632.7" y="84" text-anchor="start">5.12 GB</text>
+<text class="dg-tiny" x="320" y="120" text-anchor="end">Tabla de vendedores: 2 M × 64 × 4 B</text>
+<rect class="dg-layer" x="330" y="106" width="216.7" height="20" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="552.7" y="120" text-anchor="start">512 MB</text>
+<text class="dg-tiny" x="320" y="156" text-anchor="end">Los MLP: 10 M parámetros × 4 B</text>
+<rect class="dg-layer" x="330" y="142" width="128.2" height="20" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="464.2" y="156" text-anchor="start">40 MB</text>
+<text class="dg-tiny" x="320" y="192" text-anchor="end">Tabla de categorías: 10 000 × 64 × 4 B</text>
+<rect class="dg-layer" x="330" y="178" width="32.7" height="20" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="368.7" y="192" text-anchor="start">2.56 MB</text>
+<text class="dg-tiny" x="330" y="246" text-anchor="start">Escala logarítmica: cada línea es diez veces la anterior.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.10.</b> Las tablas de embeddings son el 99.9&#8239;% de los bytes del modelo. Los 20 millones de personas son las activas por día de M42; el resto de los tamaños, supuestos para el ejemplo. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<ul>
+  <li><b>Repartir las tablas.</b> No entran en una GPU, así que se reparten entre varias por filas (paralelismo de modelo), mientras las capas densas se copian en todas (paralelismo de datos). Es lo que describe el artículo de DLRM. <span class="badge badge--doc">Documentado</span></li>
+  <li><b>Achicar las tablas.</b> Un id que aparece poco no merece su propio vector. El truco de hashing manda 100 millones de ids a, por ejemplo, 10 millones de filas: varios ítems comparten vector (colisiones), y se pierde poco si los que chocan son ítems raros. También se cuantizan las tablas a 8 bits, con la idea de <a href="m14-cuantizacion.html">M14</a>.</li>
+  <li><b>Una sola tabla para dos modelos.</b> Los vectores de ítems de las dos torres de <a href="m45-recuperacion.html#two-tower">M45</a> pueden servir de feature del ranker, en lugar de aprender otra tabla de cero.</li>
+</ul>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> los rankers profundos aprenden un embedding por id y los cruzan (Wide &amp; Deep, DLRM, DCN); casi toda su memoria son tablas de embeddings, que se reparten, se hashean o se cuantizan.</p>
+
+<h2 id="multitarea"><span class="sec-num">46.6</span>Multi-tarea</h2>
+
+<p>Mercado Barrio quiere predecir cuatro acciones. Cuatro modelos separados cuestan cuatro veces la inferencia y desaprovechan algo: lo que se aprende sobre clics (qué le interesa a cada persona) también sirve para compras, que son cien veces más raras y tienen muchos menos ejemplos. Un modelo <dfn data-term="multi-tarea">multi-tarea</dfn> comparte la parte de abajo y tiene una cabeza por acción, y se entrena con la suma pesada de las log loss de cada tarea.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es como un médico de cabecera contra cuatro especialistas que no hablan entre sí. El de cabecera aprendió tu historia una vez y la usa para todo; pero si un tema lo absorbe (siempre le hablas de tu rodilla), puede descuidar lo demás. Los especialistas no se pisan, pero cada uno empieza de cero.</p>
+</aside>
+
+<p>El riesgo es la transferencia negativa: si una tarea tiene muchos más ejemplos o gradientes más grandes, las capas compartidas se acomodan a ella y la otra empeora. <dfn data-term="mmoe">MMoE</dfn> (Multi-gate Mixture-of-Experts), de Google, lo resuelve con varios expertos (redes chicas en paralelo) y una compuerta por tarea, que mira la entrada y decide cuánto toma de cada experto. Si las tareas se parecen, las compuertas eligen los mismos expertos; si no, cada una se queda con los suyos.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 310" role="img" aria-labelledby="f46ct f46cd">
+<title id="f46ct">Fondo compartido contra MMoE</title>
+<desc id="f46cd">A la izquierda, el fondo compartido: todas las tareas usan las mismas capas y solo se separan en la cabeza. A la derecha, MMoE: tres expertos y una compuerta por tarea que decide cuánto toma de cada uno; en el ejemplo, la tarea de clic toma 0.6, 0.3 y 0.1, y la de compra 0.1, 0.3 y 0.6.</desc>
+<defs><marker id="f46ca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="20" y="26" text-anchor="start">Fondo compartido</text>
+<rect class="dg-layer" x="40" y="250" width="260" height="40" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="170.0" y="274.0" text-anchor="middle">Features</text>
+<rect class="dg-layer" x="40" y="160" width="260" height="50" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="170.0" y="189.0" text-anchor="middle">Capas compartidas</text>
+<rect class="dg-box" x="40" y="50" width="120" height="44" rx="8"/>
+<text class="dg-tiny" x="100.0" y="76.0" text-anchor="middle">Cabeza: clic</text>
+<rect class="dg-box" x="180" y="50" width="120" height="44" rx="8"/>
+<text class="dg-tiny" x="240.0" y="76.0" text-anchor="middle">Cabeza: compra</text>
+<path class="dg-edge" d="M170 248 V214" marker-end="url(#f46ca)"/>
+<path class="dg-edge" d="M70 158 V98" marker-end="url(#f46ca)"/>
+<path class="dg-edge" d="M270 158 V98" marker-end="url(#f46ca)"/>
+<text class="dg-tiny" x="170" y="118" text-anchor="middle">Si una tarea domina el</text>
+<text class="dg-tiny" x="170" y="133" text-anchor="middle">gradiente, la otra pierde:</text>
+<text class="dg-tiny" x="170" y="148" text-anchor="middle">transferencia negativa</text>
+<text class="dg-group" x="380" y="26" text-anchor="start">MMoE: expertos y compuertas</text>
+<rect class="dg-layer" x="380" y="250" width="370" height="40" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="565.0" y="274.0" text-anchor="middle">Features</text>
+<rect class="dg-layer" x="380" y="170" width="110" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="435.0" y="196.0" text-anchor="middle">Experto 1</text>
+<path class="dg-edge" d="M435 248 V218" marker-end="url(#f46ca)"/>
+<rect class="dg-layer" x="510" y="170" width="110" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="565.0" y="196.0" text-anchor="middle">Experto 2</text>
+<path class="dg-edge" d="M565 248 V218" marker-end="url(#f46ca)"/>
+<rect class="dg-layer" x="640" y="170" width="110" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="695.0" y="196.0" text-anchor="middle">Experto 3</text>
+<path class="dg-edge" d="M695 248 V218" marker-end="url(#f46ca)"/>
+<rect class="dg-layer" x="390" y="100" width="150" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="465.0" y="124.0" text-anchor="middle">Compuerta de clic</text>
+<rect class="dg-layer" x="590" y="100" width="150" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="665.0" y="124.0" text-anchor="middle">Compuerta de compra</text>
+<text class="dg-tiny dg-mono" x="458" y="160" text-anchor="end">0.6 · 0.3 · 0.1</text>
+<text class="dg-tiny dg-mono" x="658" y="160" text-anchor="end">0.1 · 0.3 · 0.6</text>
+<path class="dg-feedback" d="M465 166 V144" marker-end="url(#f46ca)"/>
+<path class="dg-feedback" d="M665 166 V144" marker-end="url(#f46ca)"/>
+<rect class="dg-box" x="390" y="30" width="150" height="40" rx="8"/>
+<text class="dg-tiny" x="465.0" y="54.0" text-anchor="middle">Cabeza: clic</text>
+<rect class="dg-box" x="590" y="30" width="150" height="40" rx="8"/>
+<text class="dg-tiny" x="665.0" y="54.0" text-anchor="middle">Cabeza: compra</text>
+<path class="dg-edge" d="M465 98 V74" marker-end="url(#f46ca)"/>
+<path class="dg-edge" d="M665 98 V74" marker-end="url(#f46ca)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.11.</b> En MMoE cada tarea arma su propia mezcla de expertos. Si clic y compra se parecen, las compuertas convergen a los mismos expertos; si no, cada una se queda con los suyos y no se pisan. Los pesos de las compuertas son un ejemplo; el modelo los calcula por cada impresión. <span class="badge badge--doc">Documentado</span> (Ma et al., KDD 2018)</figcaption>
+</figure>
+
+<pre data-lang="python"><code>import torch
+from torch import nn
+
+class MMoE(nn.Module):
+    def __init__(self, d_in, n_expertos=3, d_exp=128, n_tareas=2):
+        super().__init__()
+        self.expertos = nn.ModuleList(
+            nn.Sequential(nn.Linear(d_in, d_exp), nn.ReLU()) for _ in range(n_expertos))
+        self.compuertas = nn.ModuleList(nn.Linear(d_in, n_expertos) for _ in range(n_tareas))
+        self.torres = nn.ModuleList(nn.Linear(d_exp, 1) for _ in range(n_tareas))
+
+    def forward(self, x):
+        E = torch.stack([e(x) for e in self.expertos], dim=1)        # (lote, expertos, d_exp)
+        salidas = []
+        for compuerta, torre in zip(self.compuertas, self.torres):
+            w = torch.softmax(compuerta(x), dim=1).unsqueeze(2)      # (lote, expertos, 1)
+            salidas.append(torch.sigmoid(torre((w * E).sum(dim=1))).squeeze(1))
+        return salidas
+
+# Pérdida total: suma pesada de la log loss de cada tarea.
+# perdida = 1.0 * bce(p_clic, y_clic) + 5.0 * bce(p_compra, y_compra)
+</code></pre>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>YouTube describió en 2019 el ranker de "qué ver después": un modelo multi-tarea con MMoE que predice objetivos de engagement (clics, tiempo de visualización) y de satisfacción (me gusta, descartes), y que trata el sesgo de selección con una parte aparte al estilo de Wide &amp; Deep. <span class="badge badge--doc">Documentado</span> (Zhao et al., RecSys 2019). Twitter tenía un heavy ranker de unos 48 millones de parámetros que predecía la probabilidad de cada acción, como se vio en <a href="m30-twitter.html#ranking">M30</a>. <span class="badge badge--doc">Documentado</span></p>
+</aside>
+
+<h3 id="multitarea-cadena">Tareas encadenadas</h3>
+
+<p>Algunas tareas son eslabones de un embudo: para comprar, primero hay que hacer clic. Entrenar la probabilidad de compra solo con los clics tiene un problema: el modelo nunca vio los ítems que nadie tocó, y en producción tiene que puntuarlos a todos. La salida es aprender, sobre todas las impresiones, la probabilidad de clic y la de clic y compra, y obtener la de compra dado clic como cociente.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f46dt f46dd">
+<title id="f46dt">Clic y compra encadenados</title>
+<desc id="f46dd">De 1 000 impresiones salen 30 clics y de esos, 3 compras. p(clic) = 0.03 se aprende sobre las 1 000 impresiones; p(compra dado clic) = 0.1, solo sobre los 30 clics. Pero el ranker tiene que puntuar las 1 000. Multiplicar las dos da p(compra) = 0.003 sobre todas.</desc>
+<defs><marker id="f46da" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="40" width="190" height="60" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="115.0" y="66.0" text-anchor="middle">1 000</text>
+<text class="dg-tiny" x="115.0" y="82.0" text-anchor="middle">impresiones</text>
+<rect class="dg-layer" x="290" y="40" width="190" height="60" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="385.0" y="66.0" text-anchor="middle">30</text>
+<text class="dg-tiny" x="385.0" y="82.0" text-anchor="middle">clics</text>
+<rect class="dg-layer" x="560" y="40" width="190" height="60" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="655.0" y="66.0" text-anchor="middle">3</text>
+<text class="dg-tiny" x="655.0" y="82.0" text-anchor="middle">compras</text>
+<path class="dg-edge" d="M212 70 H286" marker-end="url(#f46da)"/>
+<path class="dg-edge" d="M482 70 H556" marker-end="url(#f46da)"/>
+<text class="dg-tiny" x="249" y="60" text-anchor="middle">p(clic)</text>
+<text class="dg-tiny dg-mono" x="249" y="92" text-anchor="middle">0.03</text>
+<text class="dg-tiny" x="519" y="60" text-anchor="middle">p(compra | clic)</text>
+<text class="dg-tiny dg-mono" x="519" y="92" text-anchor="middle">0.1</text>
+<rect class="dg-warnbox" x="20" y="130" width="730" height="46" rx="8"/>
+<text class="dg-tiny" x="36" y="150" text-anchor="start">El problema: el modelo de compra se entrena solo con los 30 clics y se usa sobre las 1 000 impresiones.</text>
+<text class="dg-tiny" x="36" y="167" text-anchor="start">Nunca vio cómo son los 970 ítems que nadie tocó (sesgo de selección de la muestra).</text>
+<rect class="dg-box" x="20" y="190" width="730" height="46" rx="8"/>
+<text class="dg-tiny" x="36" y="210" text-anchor="start">La salida: aprender p(clic) y p(clic y compra) sobre las 1 000, que comparten la parte de abajo del modelo,</text>
+<text class="dg-tiny" x="36" y="227" text-anchor="start">y obtener p(compra | clic) como su cociente: 0.003 / 0.03 = 0.1.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.12.</b> Las tareas de un embudo de compra están encadenadas. La idea de entrenarlas sobre todas las impresiones con una cabeza por eslabón es la de ESMM, de Alibaba. <span class="badge badge--doc">Documentado</span> (Ma et al., SIGIR 2018). Los conteos son un ejemplo.</figcaption>
+</figure>
+
+<p>Las etiquetas lentas complican el entrenamiento: una compra puede llegar días después de la impresión, y una devolución, semanas. Como se vio en <a href="m43-datos-recomendacion.html#log">M43</a>, la tarea rápida se entrena con lo que ya llegó y la lenta queda para su propia cabeza, con una ventana de espera antes de dar por negativa a una impresión.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> un modelo multi-tarea comparte la parte de abajo y tiene una cabeza por acción; MMoE evita que una tarea se coma a otra con expertos y compuertas; las tareas encadenadas se entrenan sobre todas las impresiones.</p>
+
+<h2 id="secuencias"><span class="sec-num">46.7</span>La historia del usuario como secuencia</h2>
+
+<p>La feature más informativa de una persona es lo que hizo hace un rato. La forma ingenua de usarla es promediar los embeddings de sus últimos 100 ítems: un solo vector que resume "lo que le gusta". Pierde dos cosas. El orden (lo de hace cinco minutos pesa igual que lo de hace un mes) y, sobre todo, cuál de esos ítems importa para el candidato que se está puntuando: para unas zapatillas de running importa la remera de running que miró, no el libro de cocina.</p>
+
+<p>La respuesta es la atención de <a href="m121-prefill-decode-a-fondo.html#atencion">M12.1</a>, con el candidato como consulta: cada ítem de la historia recibe un puntaje de parecido con el candidato, un <span data-term="softmax">softmax</span> los vuelve pesos y la historia se resume como la suma pesada. DIN (Deep Interest Network), de Alibaba, lo propuso en 2018 para anuncios. <span class="badge badge--doc">Documentado</span></p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f46et f46ed">
+<title id="f46et">Atención sobre la historia</title>
+<desc id="f46ed">El candidato son unas zapatillas de running. Cada uno de los últimos seis ítems de la persona tiene un puntaje de parecido con el candidato; el softmax los vuelve pesos: remera de running 0.416, zapatillas de fútbol 0.252, medias 0.187, auriculares 0.069, cargador 0.056 y libro de cocina 0.021. El promedio simple le daría 0.167 a cada uno.</desc>
+
+<rect class="dg-box dg-box--em" x="20" y="20" width="250" height="44" rx="8"/>
+<text class="dg-small" x="145.0" y="46.0" text-anchor="middle">Candidato: zapatillas de running</text>
+<text class="dg-tiny" x="300" y="46" text-anchor="start">puntaje = (vector del candidato) · (vector del ítem visto)</text>
+<text class="dg-group" x="20" y="94" text-anchor="start">Últimos seis ítems</text>
+<text class="dg-group" x="300" y="94" text-anchor="start">Puntaje</text>
+<text class="dg-group" x="390" y="94" text-anchor="start">Peso de atención (softmax)</text>
+<rect class="dg-layer" x="20" y="104" width="250" height="24" rx="5" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="32" y="121" text-anchor="start">Remera de running</text>
+<text class="dg-tiny dg-mono" x="330" y="121" text-anchor="end">2.0</text>
+<rect class="dg-layer" x="390" y="107" width="249.3" height="18" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="645.3" y="121" text-anchor="start">0.416</text>
+<rect class="dg-layer" x="20" y="134" width="250" height="24" rx="5" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="32" y="151" text-anchor="start">Auriculares</text>
+<text class="dg-tiny dg-mono" x="330" y="151" text-anchor="end">0.2</text>
+<rect class="dg-layer" x="390" y="137" width="41.2" height="18" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="437.2" y="151" text-anchor="start">0.069</text>
+<rect class="dg-layer" x="20" y="164" width="250" height="24" rx="5" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="32" y="181" text-anchor="start">Zapatillas de fútbol</text>
+<text class="dg-tiny dg-mono" x="330" y="181" text-anchor="end">1.5</text>
+<rect class="dg-layer" x="390" y="167" width="151.2" height="18" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="547.2" y="181" text-anchor="start">0.252</text>
+<rect class="dg-layer" x="20" y="194" width="250" height="24" rx="5" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="32" y="211" text-anchor="start">Libro de cocina</text>
+<text class="dg-tiny dg-mono" x="330" y="211" text-anchor="end">−1.0</text>
+<rect class="dg-layer" x="390" y="197" width="12.4" height="18" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="408.4" y="211" text-anchor="start">0.021</text>
+<rect class="dg-layer" x="20" y="224" width="250" height="24" rx="5" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="32" y="241" text-anchor="start">Medias deportivas</text>
+<text class="dg-tiny dg-mono" x="330" y="241" text-anchor="end">1.2</text>
+<rect class="dg-layer" x="390" y="227" width="112.0" height="18" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="508.0" y="241" text-anchor="start">0.187</text>
+<rect class="dg-layer" x="20" y="254" width="250" height="24" rx="5" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="32" y="271" text-anchor="start">Cargador</text>
+<text class="dg-tiny dg-mono" x="330" y="271" text-anchor="end">0.0</text>
+<rect class="dg-layer" x="390" y="257" width="33.7" height="18" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="429.7" y="271" text-anchor="start">0.056</text>
+<line x1="490.0" x2="490.0" y1="100" y2="286" style="stroke: var(--label-3); stroke-dasharray: 4 3"/>
+<text class="dg-tiny" x="494.0" y="294" text-anchor="start">promedio simple: 0.167</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.13.</b> La misma historia pesa distinto según el candidato. Con unos auriculares como candidato, el peso grande sería de otro ítem. Los puntajes son de juguete; los pesos salen de su softmax. Es la idea de DIN, de Alibaba. <span class="badge badge--doc">Documentado</span> (Zhou et al., KDD 2018)</figcaption>
+</figure>
+
+<p>Un paso más es tratar la historia como un texto: SASRec (2018) usa self-attention con máscara causal, como un <span data-term="transformer">transformer</span> que lee los ítems en orden y predice el siguiente. <span class="badge badge--doc">Documentado</span> (Kang y McAuley, ICDM 2018). Desde 2024, Meta publicó modelos que llevan esa idea a la escala de un LLM, con las acciones de la persona como secuencia de tokens. <span class="badge badge--doc">Documentado</span> (Zhai et al., ICML 2024)</p>
+
+<p>El costo se cuenta igual que en M12. Con 100 ítems de historia, vectores de 64 y 500 candidatos, la atención con el candidato como consulta son 500 × 100 × 64 = 3.2 millones de multiplicaciones por request, más el softmax: barato. Lo caro es traer la historia: 100 ids por persona, leídos en cada request de un almacén de baja latencia (el feature store de <a href="m43-datos-recomendacion.html#feature-store">M43</a>), y mantenerla al día con cada clic.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> promediar la historia pierde el orden y lo que importa para cada candidato; la atención con el candidato como consulta (DIN) o un transformer sobre la secuencia (SASRec) pesan cada ítem visto según el candidato.</p>
+
+<h2 id="combinar"><span class="sec-num">46.8</span>Combinar objetivos en un puntaje</h2>
+
+<p>El ranker multi-tarea devuelve cuatro probabilidades por candidato, y la lista necesita un solo número. La forma más usada es una suma pesada: puntaje = Σ <i>w</i><sub>i</sub> · <i>p</i><sub>i</sub>. Cada peso dice cuánto vale esa acción en una unidad común. En la ficha de 46.1, una compra vale 40 clics, mirar 10 segundos vale 0.2 clics y ocultar resta 20 clics.</p>
+
+<p>Los pesos no los elige el modelo, ni se aprenden de los datos: los elige el producto. Responden a "qué conversación queremos", "cuánto vale una compra contra un rato de navegación" o "cuánto nos cuesta que alguien oculte algo", y por eso son la perilla más poderosa y más política del sistema. Cambiar un peso puede cambiar el feed de millones de personas sin tocar el modelo; lo que hace falta para hacerlo bien (<span class="no-autolink">guardrails</span>, métricas de largo plazo, quién decide) es tema de M51.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f46ft f46fd">
+<title id="f46ft">Los pesos del ranker de Twitter</title>
+<desc id="f46fd">Barras horizontales con el peso de cada acción, publicado por Twitter en abril de 2023, y su equivalente en me gusta: respuesta que el autor responde, 75 (150 me gusta); respuesta, 13.5 (27); clic bueno en el perfil, 12 (24); clic bueno en la conversación, 11 (22); retweet, 1 (2); me gusta, 0.5 (1); video hasta la mitad, 0.005; feedback negativo, −74 (−148); denuncia, −369 (−738).</desc>
+
+<line x1="520" x2="520" y1="16" y2="306" style="stroke: var(--label-2)"/>
+<text class="dg-tiny" x="20" y="36" text-anchor="start">Respuesta que el autor responde</text>
+<rect class="dg-layer" x="520" y="23" width="95.5" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="621.5" y="36" text-anchor="start">75  (150 me gusta)</text>
+<text class="dg-tiny" x="20" y="67" text-anchor="start">Respuesta</text>
+<rect class="dg-layer" x="520" y="54" width="17.2" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="543.2" y="67" text-anchor="start">13.5  (27 me gusta)</text>
+<text class="dg-tiny" x="20" y="98" text-anchor="start">Clic en el perfil (bueno)</text>
+<rect class="dg-layer" x="520" y="85" width="15.3" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="541.3" y="98" text-anchor="start">12  (24 me gusta)</text>
+<text class="dg-tiny" x="20" y="129" text-anchor="start">Clic en la conversación (bueno)</text>
+<rect class="dg-layer" x="520" y="116" width="14.0" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="540.0" y="129" text-anchor="start">11  (22 me gusta)</text>
+<text class="dg-tiny" x="20" y="160" text-anchor="start">Retweet</text>
+<rect class="dg-layer" x="520" y="147" width="1.3" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="527.3" y="160" text-anchor="start">1  (2 me gusta)</text>
+<text class="dg-tiny" x="20" y="191" text-anchor="start">Me gusta</text>
+<rect class="dg-layer" x="520" y="178" width="1" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="527" y="191" text-anchor="start">0.5  (1 me gusta)</text>
+<text class="dg-tiny" x="20" y="222" text-anchor="start">Video mirado hasta la mitad</text>
+<rect class="dg-layer" x="520" y="209" width="1" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="527" y="222" text-anchor="start">0.005  (0.01 me gusta)</text>
+<text class="dg-tiny" x="20" y="253" text-anchor="start">Feedback negativo</text>
+<rect class="dg-bad" x="425.7" y="240" width="94.3" height="18" rx="3"/>
+<text class="dg-tiny dg-mono" x="528" y="253" text-anchor="start">−74  (−148 me gusta)</text>
+<text class="dg-tiny" x="20" y="284" text-anchor="start">Denuncia</text>
+<rect class="dg-bad" x="250" y="271" width="16" height="18" rx="3"/>
+<rect class="dg-bad" x="276" y="271" width="244" height="18" rx="3"/>
+<path d="M266 292 L272 268 M272 292 L278 268" style="fill: none; stroke: var(--label-2); stroke-width: 1.5"/>
+<text class="dg-tiny dg-mono" x="528" y="284" text-anchor="start">−369  (−738 me gusta)</text>
+<text class="dg-tiny" x="20" y="322" text-anchor="start">La barra de la denuncia está cortada: a escala mediría 470 px, cinco veces la del feedback negativo.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.14.</b> Los pesos que Twitter publicó en el README de su heavy ranker el 5 de abril de 2023. <span class="badge badge--doc">Documentado</span> Una respuesta vale 27 me gusta y una denuncia borra 738: son decisiones de producto sobre qué conversación quieren, escritas como números.</figcaption>
+</figure>
+
+<p>Prueba los pesos de Twitter con cinco publicaciones inventadas. Con "solo me gusta", gana el meme. Con los pesos que dan mucho valor a las respuestas pero sin castigo negativo, gana la provocación política: genera respuestas. Con los pesos publicados, que restan 74 por cada feedback negativo y 369 por cada denuncia, la provocación cae al último lugar.</p>
+
+<div data-calc="multiobj"></div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Instagram explicó en 2023 que cada parte de la app (Feed, Stories, Explore, Reels, Search) tiene su propio algoritmo, y que en Feed las cinco interacciones que más mira son la probabilidad de que pases unos segundos en una publicación, la comentes, le des me gusta, la compartas o toques la foto del perfil. <span class="badge badge--doc">Documentado</span> (Mosseri, 31 de mayo de 2023)</p>
+</aside>
+
+<p>Dos advertencias para cerrar. La suma pesada solo tiene sentido si las probabilidades significan lo que dicen: si p(compra) está inflada al doble, el peso 40 en realidad vale 80, y nadie lo eligió así. Eso es la <span class="no-autolink">calibración</span> (46.9). Y la suma no es la única forma: algunos sistemas multiplican (puntaje = p(clic)<sup>a</sup> · p(compra)<sup>b</sup>), lo que hace que una probabilidad casi nula hunda al ítem aunque las otras sean altas.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el puntaje es una suma pesada de probabilidades; los pesos los decide el producto y cambian el feed sin reentrenar; solo funcionan si las probabilidades están <span class="no-autolink">calibradas</span>.</p>
+
+<h2 id="calibracion"><span class="sec-num">46.9</span>Calibración</h2>
+
+<p>Un modelo está <dfn data-term="calibracion-probabilidad">calibrado</dfn> cuando sus probabilidades coinciden con las frecuencias: de todas las impresiones a las que dio 0.1, alrededor del 10&#8239;% terminó en clic. No es lo mismo que ordenar bien. Un modelo puede poner arriba a los mejores y equivocarse en todos los números, y para ordenar una sola lista no importaría. Importa cuando los números se usan: al sumar objetivos con pesos (46.8), al cobrar un anuncio por la probabilidad de clic y al comparar candidatos de modelos distintos.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es el pronóstico del tiempo. Si el meteorólogo dice "70&#8239;% de lluvia" en cien días distintos y llueve en 70, está <span class="no-autolink">calibrado</span>. Si llueve en 40, sus porcentajes no sirven para decidir si llevas paraguas, aunque siga acertando qué días llueve más que otros.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 320" role="img" aria-labelledby="f46gt f46gd">
+<title id="f46gt">Diagrama de fiabilidad</title>
+<desc id="f46gd">En el eje horizontal, la probabilidad que predice el modelo; en el vertical, la fracción de veces que pasó. Un modelo calibrado sigue la diagonal. Uno entrenado con submuestreo de negativos queda por debajo: predice mucho más de lo que pasa. Uno sobreconfiado cruza la diagonal en forma de S: predice muy alto y muy bajo de más.</desc>
+
+<path d="M80 280 H420 M80 280 V30" style="fill: none; stroke: var(--label-3)"/>
+<text class="dg-tiny" x="80" y="298" text-anchor="middle">0</text>
+<text class="dg-tiny" x="70" y="284" text-anchor="end">0</text>
+<text class="dg-tiny" x="250.0" y="298" text-anchor="middle">0.5</text>
+<text class="dg-tiny" x="70" y="159.0" text-anchor="end">0.5</text>
+<text class="dg-tiny" x="420" y="298" text-anchor="middle">1</text>
+<text class="dg-tiny" x="70" y="34" text-anchor="end">1</text>
+<text class="dg-tiny" x="250" y="314" text-anchor="middle">predicho</text>
+<text class="dg-tiny" x="22" y="155" text-anchor="middle">pasó</text>
+<path class="" d="M80.0 280.0 L420.0 30.0" style="fill: none; stroke: var(--l-service); stroke-width: 2.5"/>
+<path class="" d="M80.0 280.0 L83.4 279.7 L86.8 279.5 L90.2 279.2 L93.6 279.0 L97.0 278.7 L100.4 278.4 L103.8 278.1 L107.2 277.8 L110.6 277.6 L114.0 277.3 L117.4 276.9 L120.8 276.6 L124.2 276.3 L127.6 276.0 L131.0 275.7 L134.4 275.3 L137.8 275.0 L141.2 274.6 L144.6 274.3 L148.0 273.9 L151.4 273.5 L154.8 273.1 L158.2 272.7 L161.6 272.3 L165.0 271.9 L168.4 271.5 L171.8 271.1 L175.2 270.6 L178.6 270.2 L182.0 269.7 L185.4 269.3 L188.8 268.8 L192.2 268.3 L195.6 267.8 L199.0 267.2 L202.4 266.7 L205.8 266.1 L209.2 265.6 L212.6 265.0 L216.0 264.4 L219.4 263.8 L222.8 263.1 L226.2 262.5 L229.6 261.8 L233.0 261.1 L236.4 260.4 L239.8 259.6 L243.2 258.9 L246.6 258.1 L250.0 257.3 L253.4 256.4 L256.8 255.6 L260.2 254.7 L263.6 253.7 L267.0 252.8 L270.4 251.8 L273.8 250.7 L277.2 249.7 L280.6 248.6 L284.0 247.4 L287.4 246.2 L290.8 244.9 L294.2 243.6 L297.6 242.3 L301.0 240.8 L304.4 239.4 L307.8 237.8 L311.2 236.2 L314.6 234.5 L318.0 232.7 L321.4 230.8 L324.8 228.9 L328.2 226.8 L331.6 224.6 L335.0 222.3 L338.4 219.9 L341.8 217.3 L345.2 214.6 L348.6 211.7 L352.0 208.6 L355.4 205.3 L358.8 201.8 L362.2 198.0 L365.6 193.9 L369.0 189.6 L372.4 184.9 L375.8 179.8 L379.2 174.2 L382.6 168.2 L386.0 161.6 L389.4 154.3 L392.8 146.3 L396.2 137.4 L399.6 127.4 L403.0 116.2 L406.4 103.5 L409.8 89.1 L413.2 72.4 L416.6 52.9 L420.0 30.0" style="fill: none; stroke: var(--l-edge); stroke-width: 2.5; stroke-dasharray: 6 4"/>
+<path class="" d="M83.4 259.6 L86.8 251.4 L90.2 245.4 L93.6 240.5 L97.0 236.2 L100.4 232.4 L103.8 229.0 L107.2 225.8 L110.6 222.9 L114.0 220.2 L117.4 217.6 L120.8 215.1 L124.2 212.8 L127.6 210.6 L131.0 208.4 L134.4 206.3 L137.8 204.3 L141.2 202.4 L144.6 200.5 L148.0 198.7 L151.4 196.9 L154.8 195.2 L158.2 193.5 L161.6 191.8 L165.0 190.2 L168.4 188.6 L171.8 187.0 L175.2 185.4 L178.6 183.9 L182.0 182.4 L185.4 180.9 L188.8 179.5 L192.2 178.0 L195.6 176.6 L199.0 175.2 L202.4 173.8 L205.8 172.4 L209.2 171.0 L212.6 169.6 L216.0 168.3 L219.4 166.9 L222.8 165.6 L226.2 164.3 L229.6 162.9 L233.0 161.6 L236.4 160.3 L239.8 159.0 L243.2 157.6 L246.6 156.3 L250.0 155.0 L253.4 153.7 L256.8 152.4 L260.2 151.0 L263.6 149.7 L267.0 148.4 L270.4 147.1 L273.8 145.7 L277.2 144.4 L280.6 143.1 L284.0 141.7 L287.4 140.4 L290.8 139.0 L294.2 137.6 L297.6 136.2 L301.0 134.8 L304.4 133.4 L307.8 132.0 L311.2 130.5 L314.6 129.1 L318.0 127.6 L321.4 126.1 L324.8 124.6 L328.2 123.0 L331.6 121.4 L335.0 119.8 L338.4 118.2 L341.8 116.5 L345.2 114.8 L348.6 113.1 L352.0 111.3 L355.4 109.5 L358.8 107.6 L362.2 105.7 L365.6 103.7 L369.0 101.6 L372.4 99.4 L375.8 97.2 L379.2 94.9 L382.6 92.4 L386.0 89.8 L389.4 87.1 L392.8 84.2 L396.2 81.0 L399.6 77.6 L403.0 73.8 L406.4 69.5 L409.8 64.6 L413.2 58.6 L416.6 50.4" style="fill: none; stroke: var(--l-gpu); stroke-width: 2.5; stroke-dasharray: 2 4"/>
+<line x1="470" x2="510" y1="70" y2="70" style="stroke: var(--l-service); stroke-width: 2.5"/>
+<text class="dg-tiny" x="520" y="74" text-anchor="start">Calibrado: la diagonal</text>
+<line x1="470" x2="510" y1="96" y2="96" style="stroke: var(--l-edge); stroke-width: 2.5; stroke-dasharray: 6 4"/>
+<text class="dg-tiny" x="520" y="100" text-anchor="start">Entrenado con 1 de cada 10 negativos</text>
+<line x1="470" x2="510" y1="122" y2="122" style="stroke: var(--l-gpu); stroke-width: 2.5; stroke-dasharray: 2 4"/>
+<text class="dg-tiny" x="520" y="126" text-anchor="start">Sobreconfiado: una S</text>
+<text class="dg-tiny" x="470" y="170" text-anchor="start">Lo que mide el gráfico: en cada tramo de lo</text>
+<text class="dg-tiny" x="470" y="186" text-anchor="start">predicho, qué fracción terminó en clic.</text>
+<text class="dg-tiny" x="470" y="216" text-anchor="start">Las tres curvas tienen el mismo AUC:</text>
+<text class="dg-tiny" x="470" y="232" text-anchor="start">ordenan igual, dicen números distintos.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.15.</b> Tres modelos que ordenan igual y prometen distinto. Las curvas son la forma ideal de cada caso; con datos reales, son puntos con ruido, como en el simulador de abajo.</figcaption>
+</figure>
+
+<p>La causa más común de descalibración la provoca el propio equipo: el submuestreo de negativos de <a href="m43-datos-recomendacion.html#negativos">M43</a>. Si se guarda 1 de cada 100 impresiones sin clic para entrenar, el modelo cree que los clics son cien veces más comunes de lo que son. La corrección tiene fórmula: con <i>p</i> la predicción del modelo y <i>w</i> la fracción de negativos que se conservó, la probabilidad real es <i>q</i> = <i>p</i> / (<i>p</i> + (1 − <i>p</i>) / <i>w</i>). <span class="badge badge--doc">Documentado</span> (He et al., 2014)</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: deshacer el submuestreo</p>
+  <p>Un CTR real de 0.1&#8239;%: en 1 000 impresiones, 1 clic y 999 sin clic. Con <i>w</i> = 0.01 se conservan 9.99 negativos, y el modelo ve 1 clic cada 10.99 impresiones: aprende <i>p</i> = 1 / 10.99 = 0.091.</p>
+  <p><i>q</i> = 0.091 / (0.091 + 0.909 / 0.01) = 0.091 / 90.99 = 0.001, el 0.1&#8239;% de verdad.</p>
+</aside>
+
+<p>Las otras causas (un modelo que se sobreconfía, una población que cambió) se corrigen aprendiendo una función que lleva la predicción a la frecuencia, con datos que el modelo no vio:</p>
+
+<ul>
+  <li><b>Platt:</b> una regresión logística de una sola feature, el logit de la predicción. Dos parámetros; corrige formas suaves como la S del sobreconfiado.</li>
+  <li><b>Isotónica:</b> una función en escalones que solo puede subir. Corrige cualquier forma, pero necesita más datos y puede sobreajustar en los extremos.</li>
+</ul>
+
+<p>Las tres correcciones son funciones crecientes: no cambian el orden, así que no cambian el AUC. Arreglan los números, no el ranking. En producción se mide como lo hacía Facebook: la razón entre los clics que el modelo esperaba (la suma de las probabilidades) y los que ocurrieron, por segmento y por hora. Un 1.0 es perfecto; un 1.3 sostenido en un país es una alerta. <span class="badge badge--doc">Documentado</span></p>
+
+<div data-sim="calib"></div>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> <span class="no-autolink">calibrado</span> quiere decir que un 0.1 pasa el 10&#8239;% de las veces; el submuestreo de negativos descalibra y tiene una fórmula exacta para deshacerlo; Platt e isotónica corrigen el resto sin cambiar el orden.</p>
+
+<h2 id="metricas-rank"><span class="sec-num">46.10</span>Medir un ranking</h2>
+
+<p>Antes de un experimento con personas (el <span data-term="ab-test">A/B test</span> que retoma M49), un ranker nuevo se mide offline sobre el log de impresiones guardado, partido por tiempo. Hay dos preguntas distintas: si las probabilidades son buenas y si el orden es bueno.</p>
+
+<h3 id="metricas-auc">AUC: ordenar positivos sobre negativos</h3>
+
+<p>El <dfn data-term="auc">AUC</dfn> (área bajo la curva ROC) es la probabilidad de que un positivo elegido al azar tenga un puntaje más alto que un negativo elegido al azar. 0.5 es tirar una moneda; 1.0 es separar perfecto. Se entiende mejor como una rejilla de pares:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f46ht f46hd">
+<title id="f46ht">El AUC como una rejilla de pares</title>
+<desc id="f46hd">Filas: tres impresiones con clic, con puntajes 0.9, 0.6 y 0.3. Columnas: cuatro sin clic, con 0.8, 0.5, 0.2 y 0.1. Cada celda dice si el positivo quedó arriba del negativo: 9 de 12 pares bien ordenados, AUC = 0.75.</desc>
+
+<text class="dg-tiny" x="185.0" y="40" text-anchor="middle">N1 · 0.8</text>
+<text class="dg-tiny" x="275.0" y="40" text-anchor="middle">N2 · 0.5</text>
+<text class="dg-tiny" x="365.0" y="40" text-anchor="middle">N3 · 0.2</text>
+<text class="dg-tiny" x="455.0" y="40" text-anchor="middle">N4 · 0.1</text>
+<text class="dg-group" x="320" y="20" text-anchor="middle">Sin clic</text>
+<text class="dg-group" x="20" y="120" text-anchor="start">Con clic</text>
+<text class="dg-tiny" x="130" y="73" text-anchor="end">P1 · 0.9</text>
+<rect class="dg-ok" x="142" y="52" width="86" height="32" rx="6"/>
+<text class="dg-tiny" x="185.0" y="73" text-anchor="middle">✓ bien</text>
+<rect class="dg-ok" x="232" y="52" width="86" height="32" rx="6"/>
+<text class="dg-tiny" x="275.0" y="73" text-anchor="middle">✓ bien</text>
+<rect class="dg-ok" x="322" y="52" width="86" height="32" rx="6"/>
+<text class="dg-tiny" x="365.0" y="73" text-anchor="middle">✓ bien</text>
+<rect class="dg-ok" x="412" y="52" width="86" height="32" rx="6"/>
+<text class="dg-tiny" x="455.0" y="73" text-anchor="middle">✓ bien</text>
+<text class="dg-tiny" x="130" y="109" text-anchor="end">P2 · 0.6</text>
+<rect class="dg-bad" x="142" y="88" width="86" height="32" rx="6"/>
+<text class="dg-tiny" x="185.0" y="109" text-anchor="middle">✗ al revés</text>
+<rect class="dg-ok" x="232" y="88" width="86" height="32" rx="6"/>
+<text class="dg-tiny" x="275.0" y="109" text-anchor="middle">✓ bien</text>
+<rect class="dg-ok" x="322" y="88" width="86" height="32" rx="6"/>
+<text class="dg-tiny" x="365.0" y="109" text-anchor="middle">✓ bien</text>
+<rect class="dg-ok" x="412" y="88" width="86" height="32" rx="6"/>
+<text class="dg-tiny" x="455.0" y="109" text-anchor="middle">✓ bien</text>
+<text class="dg-tiny" x="130" y="145" text-anchor="end">P3 · 0.3</text>
+<rect class="dg-bad" x="142" y="124" width="86" height="32" rx="6"/>
+<text class="dg-tiny" x="185.0" y="145" text-anchor="middle">✗ al revés</text>
+<rect class="dg-bad" x="232" y="124" width="86" height="32" rx="6"/>
+<text class="dg-tiny" x="275.0" y="145" text-anchor="middle">✗ al revés</text>
+<rect class="dg-ok" x="322" y="124" width="86" height="32" rx="6"/>
+<text class="dg-tiny" x="365.0" y="145" text-anchor="middle">✓ bien</text>
+<rect class="dg-ok" x="412" y="124" width="86" height="32" rx="6"/>
+<text class="dg-tiny" x="455.0" y="145" text-anchor="middle">✓ bien</text>
+<text class="dg-small dg-mono" x="140" y="188" text-anchor="start">AUC = pares bien ordenados / pares = 9 / 12 = 0.75</text>
+<text class="dg-group" x="520" y="70" text-anchor="start">Lo que el AUC no ve:</text>
+<text class="dg-tiny" x="520" y="92" text-anchor="start">si los puntajes son 0.9 o 0.09,</text>
+<text class="dg-tiny" x="520" y="109" text-anchor="start">si el error está arriba o al fondo,</text>
+<text class="dg-tiny" x="520" y="126" text-anchor="start">si la lista es de la misma persona.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.16.</b> El AUC es la probabilidad de que un positivo al azar quede arriba de un negativo al azar. Con millones de impresiones se calcula ordenando, no con la rejilla, pero es lo mismo.</figcaption>
+</figure>
+
+<p>Tiene dos defectos para un recomendador. No ve dónde está el error: un par invertido al fondo pesa lo mismo que uno arriba. Y mezcla personas: un modelo puede ganar AUC aprendiendo que unas personas hacen más clics que otras, sin ordenar mejor la lista de nadie. Por eso se usa también el AUC por persona, promediado.</p>
+
+<h3 id="metricas-logloss">Log loss: probabilidades buenas</h3>
+
+<p>La log loss de 46.2 mide las probabilidades: premia ordenar bien y estar <span class="no-autolink">calibrado</span>. Su valor depende del CTR de base (con un CTR de 1&#8239;%, predecir siempre 0.01 ya da una log loss baja), así que se <span class="no-autolink">normaliza</span> dividiendo por la log loss de ese predictor constante. Es la entropía <span class="no-autolink">normalizada</span> que usaba Facebook en 2014: debajo de 1 significa que el modelo sabe algo más que el promedio. <span class="badge badge--doc">Documentado</span></p>
+
+<h3 id="metricas-k">Precisión, recall y NDCG en las primeras k</h3>
+
+<p>Las métricas de orden miran solo las primeras <i>k</i> posiciones, las que la persona ve. Con la lista ordenada por puntaje de la rejilla (P1, N1, P2, N2, P3, N3, N4):</p>
+
+<ul>
+  <li><b><dfn data-term="precision-at-k">Precisión@k</dfn>:</b> qué fracción de las primeras k es relevante. Con k = 3: P1 y P2 de tres, 0.667.</li>
+  <li><b><dfn data-term="recall-at-k">Recall@k</dfn>:</b> qué fracción de todos los relevantes quedó en las primeras k. 2 de 3, 0.667. Es la métrica de la recuperación en M45.</li>
+  <li><b>MAP:</b> el promedio de la precisión en cada posición donde aparece un relevante: (1 + 2/3 + 3/5) / 3 = 0.756. Premia que los relevantes estén arriba.</li>
+</ul>
+
+<p>Ninguna de las tres distingue un ítem muy relevante de uno apenas relevante, y precisión y recall no ven el orden dentro de las k. <dfn data-term="ndcg">NDCG</dfn> (Normalized Discounted Cumulative Gain) resuelve las dos cosas. A cada ítem le da una ganancia que crece rápido con su relevancia (2<sup>rel</sup> − 1) y la divide por un descuento que crece con la posición (log₂(posición + 1)). La suma es el DCG. Se divide por el DCG del orden ideal (el IDCG), para que quede entre 0 y 1 y se pueda promediar entre personas.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: NDCG@3 resuelto</p>
+  <p>El modelo devolvió tres ítems con relevancias 0, 3 y 2 (de 0 a 3). Ganancias: 0, 7 y 3. Descuentos: log₂ 2 = 1, log₂ 3 = 1.585 y log₂ 4 = 2.</p>
+  <ul>
+    <li>DCG = 0 / 1 + 7 / 1.585 + 3 / 2 = 0 + 4.417 + 1.5 = 5.917</li>
+    <li>Orden ideal 3, 2, 0: IDCG = 7 / 1 + 3 / 1.585 + 0 = 7 + 1.893 = 8.893</li>
+    <li>NDCG@3 = 5.917 / 8.893 = 0.665</li>
+  </ul>
+  <p>Subir el ítem de relevancia 3 al primer lugar lleva el NDCG a 1; la precisión@3 no cambia.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f46it f46id">
+<title id="f46it">NDCG resuelto</title>
+<desc id="f46id">A la izquierda, el orden del modelo, con relevancias 0, 3 y 2: ganancias 0, 7 y 3, descuentos 1, 0.631 y 0.5, aportes 0, 4.417 y 1.5, DCG 5.917. A la derecha, el orden ideal 3, 2 y 0: aportes 7, 1.893 y 0, IDCG 8.893. NDCG@3 = 5.917 / 8.893 = 0.665.</desc>
+
+<text class="dg-group" x="30" y="24" text-anchor="start">Orden del modelo</text>
+<text class="dg-tiny dg-mono" x="30" y="48" style="white-space: pre">pos  rel  ganancia  descuento  aporte</text>
+<rect class="dg-layer" x="24" y="58" width="330" height="28" rx="5" style="--c: var(--l-external)"/>
+<text class="dg-tiny dg-mono" x="30" y="76" style="white-space: pre"> 1    0    0         1.000      0.000</text>
+<rect class="dg-layer" x="24" y="92" width="330" height="28" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="30" y="110" style="white-space: pre"> 2    3    7         0.631      4.417</text>
+<rect class="dg-layer" x="24" y="126" width="330" height="28" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="30" y="144" style="white-space: pre"> 3    2    3         0.500      1.500</text>
+<text class="dg-small dg-mono" x="30" y="196" text-anchor="start">DCG = 5.917</text>
+<text class="dg-group" x="420" y="24" text-anchor="start">Orden ideal</text>
+<text class="dg-tiny dg-mono" x="420" y="48" style="white-space: pre">pos  rel  ganancia  descuento  aporte</text>
+<rect class="dg-layer" x="414" y="58" width="330" height="28" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="420" y="76" style="white-space: pre"> 1    3    7         1.000      7.000</text>
+<rect class="dg-layer" x="414" y="92" width="330" height="28" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="420" y="110" style="white-space: pre"> 2    2    3         0.631      1.893</text>
+<rect class="dg-layer" x="414" y="126" width="330" height="28" rx="5" style="--c: var(--l-external)"/>
+<text class="dg-tiny dg-mono" x="420" y="144" style="white-space: pre"> 3    0    0         0.500      0.000</text>
+<text class="dg-small dg-mono" x="420" y="196" text-anchor="start">IDCG = 8.893</text>
+<text class="dg-small dg-mono" x="385" y="236" text-anchor="middle">NDCG@3 = 5.917 / 8.893 = 0.665</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.17.</b> La ganancia crece rápido con la relevancia (2<sup>rel</sup> − 1) y el descuento baja con la posición (1 / log₂(posición + 1)). Dividir por el orden ideal deja un número entre 0 y 1 que se puede promediar entre personas con listas distintas.</figcaption>
+</figure>
+
+<div data-sim="ndcg"></div>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un ranker nuevo mejora el NDCG offline un 2&#8239;% y en el A/B baja las compras. Pasa seguido, por tres causas conocidas: el log solo tiene etiquetas de lo que el modelo viejo mostró (el sesgo de exposición de <a href="m43-datos-recomendacion.html#sesgos">M43</a>, que M47 retoma); la métrica offline es un proxy de la del negocio (<a href="m42-ml-system-design.html#metricas">M42</a>); y el modelo nuevo cambia lo que la gente ve, y con eso lo que hace. La métrica offline decide qué vale la pena probar; el A/B decide qué se queda.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> AUC mide si los positivos quedan arriba de los negativos, log loss mide las probabilidades, y precisión@k, recall@k y NDCG miden el orden de las primeras posiciones; NDCG pesa la relevancia y la posición.</p>
+
+<h2 id="cascada"><span class="sec-num">46.11</span>Liviano y pesado en cascada</h2>
+
+<p>Todo lo anterior describe el ranking pesado. Puntuar con él los 9 000 candidatos que dejan los filtros, a 0.1 ms por ítem (el supuesto de <a href="m42-ml-system-design.html#numeros">M42</a>), serían 900 ms: cuatro veces y media el presupuesto entero de la request. Por eso hay dos rankers en fila. El liviano (una regresión logística, un GBDT chico o unas dos torres con más features) puntúa los 9 000 a 0.002 ms cada uno, 18 ms, y deja 500; el pesado puntúa esos 500 en 50 ms.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f46jt f46jd">
+<title id="f46jt">Liviano y pesado en cascada</title>
+<desc id="f46jd">Arriba, el tiempo de cada opción en una barra. Con cascada: el ranking liviano puntúa 9 000 candidatos a 0.002 ms cada uno, 18 ms, y el pesado 500 a 0.1 ms, 50 ms: 68 ms. Sin liviano: el pesado puntúa los 9 000, 900 ms. Abajo, la destilación: el pesado puntúa una muestra de candidatos y esos puntajes son las etiquetas del liviano.</desc>
+<defs><marker id="f46ja" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="20" y="28" text-anchor="start">Con cascada: 68 ms</text>
+<rect class="dg-layer" x="150" y="40" width="60.0" height="30" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="220.0" y="60" text-anchor="start">liviano: 9 000 × 0.002 ms = 18 ms</text>
+<rect class="dg-layer" x="212.0" y="76" width="166.7" height="30" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="388.7" y="96" text-anchor="start">pesado: 500 × 0.1 ms = 50 ms</text>
+<text class="dg-group" x="20" y="132" text-anchor="start">Sin liviano: 900 ms</text>
+<rect class="dg-bad" x="150" y="142" width="600" height="30" rx="4"/>
+<text class="dg-tiny" x="156" y="162" text-anchor="start">pesado: 9 000 × 0.1 ms = 900 ms (escala: un quinto de la de arriba)</text>
+<rect class="dg-layer" x="20" y="210" width="200" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="120.0" y="234.0" text-anchor="middle">Ranking pesado</text>
+<text class="dg-tiny" x="120.0" y="250.0" text-anchor="middle">puntúa una muestra</text>
+<rect class="dg-box" x="300" y="210" width="200" height="56" rx="8"/>
+<text class="dg-small" x="400.0" y="234.0" text-anchor="middle">Sus puntajes</text>
+<text class="dg-tiny" x="400.0" y="250.0" text-anchor="middle">son las etiquetas</text>
+<rect class="dg-layer" x="560" y="210" width="190" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="655.0" y="234.0" text-anchor="middle">Ranking liviano</text>
+<text class="dg-tiny" x="655.0" y="250.0" text-anchor="middle">aprende a imitarlo</text>
+<path class="dg-edge" d="M222 238 H296" marker-end="url(#f46ja)"/>
+<path class="dg-edge" d="M502 238 H556" marker-end="url(#f46ja)"/>
+<text class="dg-tiny" x="20" y="292" text-anchor="start">Medir: de los 50 mejores del pesado sobre los 9 000, cuántos sobreviven al corte del liviano.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.18.</b> La cascada paga el modelo caro sobre pocos y el barato sobre muchos. Los milisegundos por ítem son los supuestos de Mercado Barrio en M42. La barra de 900 ms está a otra escala: a la de arriba mediría 3 000 px. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>El riesgo de la cascada es que el liviano descarte lo que el pesado habría puesto primero. Se mide directamente: sobre una muestra de requests, el pesado puntúa los 9 000 (offline, sin apuro), y se cuenta cuántos de sus 50 mejores sobreviven al corte del liviano. Si sobreviven 45 de 50, el liviano pierde un 10&#8239;% de lo que el pesado quería mostrar.</p>
+
+<p>La forma de achicar esa pérdida es la <dfn data-term="destilacion">destilación</dfn>: entrenar el liviano para que imite los puntajes del pesado, en lugar de entrenarlo solo con clics. El pesado hace de profesor y el liviano aprende a ordenar como él, con un modelo cien veces más barato. Así las dos etapas quieren lo mismo; si cada una se entrena por su lado, el liviano puede optimizar otra cosa y la cascada se pelea consigo misma.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Más candidatos al pesado (800 en lugar de 500) suben el recall de la cascada y cuestan 30 ms más; un pesado más grande ordena mejor los 500 pero puede no llegar. El simulador del embudo de <a href="m42-ml-system-design.html#numeros">M42</a> tiene el preset "Pesado 3 veces más caro" para ver dónde se rompe el presupuesto.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> dos rankers en fila pagan el modelo caro sobre pocos; el riesgo es que el liviano corte lo que el pesado quería, y se mide y se reduce con destilación.</p>
+
+<p>Para cerrar, el embudo con los dos rankings resaltados:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f46zt f46zd">
+<title id="f46zt">El embudo con los rankings resaltados</title>
+<desc id="f46zd">El embudo de Mercado Barrio: catálogo, recuperación, filtros, ranking liviano, ranking pesado y re-ranking, con el bucle de impresiones, log y entrenamiento. Resaltados, el ranking liviano y el pesado, que son este módulo.</desc>
+<defs><marker id="f46za" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="540" y="26" text-anchor="start">Cuántos quedan y la latencia acumulada</text>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="160.0" y="40" width="340" height="32" rx="6"/>
+<text class="dg-small" x="330" y="61" text-anchor="middle">Catálogo</text>
+<text class="dg-small" x="540" y="53" text-anchor="start">100 000 000 ítems</text>
+<text class="dg-tiny" x="540" y="69" text-anchor="start">productos y videos de reseña</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="200.0" y="88" width="260" height="32" rx="6"/>
+<text class="dg-small" x="330" y="109" text-anchor="middle">Recuperación</text>
+<text class="dg-small" x="540" y="101" text-anchor="start">10 000 candidatos  ·  25 ms</text>
+<text class="dg-tiny" x="540" y="117" text-anchor="start">varias fuentes en paralelo</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="210.0" y="136" width="240" height="32" rx="6"/>
+<text class="dg-small" x="330" y="157" text-anchor="middle">Filtros</text>
+<text class="dg-small" x="540" y="149" text-anchor="start">unos 9 000  ·  30 ms</text>
+<text class="dg-tiny" x="540" y="165" text-anchor="start">ya visto, bloqueado, sin stock</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="245.0" y="184" width="170" height="32" rx="6"/>
+<text class="dg-small" x="330" y="205" text-anchor="middle">Ranking liviano</text>
+<text class="dg-small" x="540" y="197" text-anchor="start">500  ·  63 ms</text>
+<text class="dg-tiny" x="540" y="213" text-anchor="start">features y un modelo barato</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="270.0" y="232" width="120" height="32" rx="6"/>
+<text class="dg-small" x="330" y="253" text-anchor="middle">Ranking pesado</text>
+<text class="dg-small" x="540" y="245" text-anchor="start">50  ·  113 ms</text>
+<text class="dg-tiny" x="540" y="261" text-anchor="start">un modelo grande, multi-tarea</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="288.0" y="280" width="84" height="32" rx="6"/>
+<text class="dg-small" x="330" y="301" text-anchor="middle">Re-ranking</text>
+<text class="dg-small" x="540" y="293" text-anchor="start">10 en pantalla  ·  118 ms</text>
+<text class="dg-tiny" x="540" y="309" text-anchor="start">diversidad, frescura, reglas</text>
+</g>
+<g><rect class="dg-box dg-box--em" x="230" y="336" width="200" height="40" rx="8"/>
+<text class="dg-small" x="330.0" y="360.0" text-anchor="middle">Registro de impresiones</text></g>
+<g style="opacity: 0.45"><rect class="dg-box" x="20" y="336" width="130" height="40" rx="8"/>
+<text class="dg-small" x="85.0" y="360.0" text-anchor="middle">Log de eventos</text></g>
+<g><rect class="dg-box dg-box--em" x="20" y="150" width="120" height="44" rx="8"/>
+<text class="dg-small" x="80.0" y="176.0" text-anchor="middle">Entrenamiento</text></g>
+<path class="dg-edge" d="M330 312 V334" marker-end="url(#f46za)"/>
+<path class="dg-edge" d="M230 356 H152" marker-end="url(#f46za)"/>
+<text class="dg-tiny" x="191" y="389" text-anchor="middle">con clics y compras</text>
+<path class="dg-edge" d="M80 336 V196" marker-end="url(#f46za)"/>
+<path class="dg-feedback" d="M140 166 H176 V104 H198" marker-end="url(#f46za)"/>
+<path class="dg-feedback" d="M140 178 H200 V200 H243" marker-end="url(#f46za)"/>
+<path class="dg-feedback" d="M140 188 H186 V248 H268" marker-end="url(#f46za)"/>
+<text class="dg-tiny" x="88" y="230">modelos nuevos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 46.19.</b> Dónde estás. De unos 9 000 candidatos a 500 con el liviano y a 50 con el pesado, en 68 ms. Lo que se muestra vuelve como impresiones y entrena los dos. Falta el re-ranking: M47.</figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Lo que viene</p>
+  <p>El ranking deja 50 ítems ordenados por puntaje, cada uno evaluado solo. M47 los mira juntos: que no sean diez variantes del mismo producto, que lo nuevo tenga una oportunidad (exploración con bandits) y que el sistema no se alimente solo de lo que ya mostraba.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m46"></div>
+
+<div data-exercise="m46-pesos"></div>
+
+<div data-checkpoint="m46"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m46.data.js"></script>
+<script src="../assets/js/data/exercises/m46.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-rank.js"></script>
+</body>
+</html>

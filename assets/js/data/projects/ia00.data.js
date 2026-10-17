@@ -103,3 +103,148 @@ SD.defineExercise('ia00-laboratorio', {
   ],
   solution: '<ul><li>Versiones exactas con <code>==</code> en <code>pyproject.toml</code>.</li><li>La acción se detiene en el código: la arista manda a <code>aprobar</code> y <code>Reponer</code> no tiene función que la ejecute.</li><li>La memoria está en el checkpoint, no en el modelo.</li><li>Los errores de las herramientas vuelven como resultados.</li><li>La clave sale del hilo y del id de la llamada.</li><li>Nada con efectos antes del <code>interrupt</code>.</li><li>Las pruebas miden el grafo; los evals, el modelo.</li><li>Para un agente que actúa solo, pass^k.</li></ul>'
 });
+
+/* «Predice la salida» de cada paso (kind: 'predict'). Se responden antes de correr el comando del paso. */
+
+SD.defineExercise('ia00-p-caos', {
+  kind: 'predict', title: 'los escenarios',
+  scenario: '<p>Ya corriste <code>uv run python caos.py agotar</code>. Ahora corres <code>uv run python caos.py estado</code>.</p>',
+  steps: [{
+    id: 'taza', type: 'single',
+    prompt: '¿Qué línea aparece para la taza?',
+    options: ['<code>producto taza 3 10</code>', '<code>producto taza 40 10</code>', '<code>producto taza 0 10</code>', '<code>reposición taza 7</code>'],
+    answer: 0,
+    explain: '<code>agotar</code> corre primero <code>normal</code> (la taza vuelve a 40) y después deja la taza en 3 y el termo en 0. El 10 es el mínimo de la taza, que viene del <code>INSERT</code> de <code>init.sql</code>. <code>estado</code> imprime nombre, stock y mínimo; no hay reposiciones, porque <code>normal</code> las borró.'
+  }]
+});
+
+SD.defineExercise('ia00-p-config', {
+  kind: 'predict', title: 'la configuración',
+  scenario: '<p>Corres <code>LAB_MAX_PASOS=3 uv run python -c "from lab.config import CFG; print(CFG)"</code> y ves <code>max_pasos=3</code>. En la misma terminal, sin nada delante, corres <code>uv run python -c "from lab.config import CFG; print(CFG.max_pasos)"</code>.</p>',
+  steps: [{
+    id: 'prefijo', type: 'single',
+    prompt: '¿Qué imprime el segundo comando?',
+    options: [
+      '8: la variable delante de un comando vale solo para ese comando',
+      '3: la variable quedó guardada en la terminal desde el comando anterior',
+      '3: <code>CFG</code> se guardó en disco la primera vez que se creó',
+      'Nada: falla porque <code>LAB_MAX_PASOS</code> ya no existe'
+    ],
+    answer: 0,
+    explain: '<code>VAR=valor comando</code> pone la variable solo en el entorno de ese proceso. El segundo comando no la tiene, así que <code>os.environ.get("LAB_MAX_PASOS", "8")</code> usa el valor por defecto. Para que dure, usa <code>export LAB_MAX_PASOS=3</code> o ponla en <code>.env</code>. <code>CFG</code> se arma cada vez que arranca un proceso; no se guarda en ningún lado.'
+  }]
+});
+
+SD.defineExercise('ia00-p-modelos', {
+  kind: 'predict', title: 'los dos modelos',
+  scenario: '<p>Ollama está cerrado: no corre la app ni <code>ollama serve</code>. Corres el comando del paso, con <code>modelo_chat("ollama").invoke(…)</code>.</p>',
+  steps: [{
+    id: 'cerrado', type: 'single',
+    prompt: '¿Qué pasa?',
+    options: [
+      'Falla con un error de conexión: nadie escucha en el 11434 local',
+      'Contesta Claude en su lugar, porque <code>init_chat_model</code> tiene un respaldo',
+      'Imprime una respuesta vacía, porque el modelo no alcanzó a cargarse',
+      'Ollama se abre solo cuando alguien llama a su puerto'
+    ],
+    answer: 0,
+    explain: 'La conexión se abre al llamar a <code>invoke()</code>. Con Ollama cerrado no hay nada en <code>localhost:11434</code> y la llamada falla con un error de conexión. No hay respaldo automático: el proveedor sale de <code>LAB_MODELO</code> o del argumento, y cambiarlo es una decisión tuya. Abre Ollama y vuelve a correrlo.'
+  }]
+});
+
+SD.defineExercise('ia00-p-herr', {
+  kind: 'predict', title: 'las herramientas de lectura',
+  scenario: '<p>Corres <code>uv run python caos.py normal</code> y después <code>uv run python -c "from lab.herramientas import bajo_minimo; print(bajo_minimo.invoke({}))"</code>.</p>',
+  steps: [{
+    id: 'vacio', type: 'single',
+    prompt: '¿Qué imprime?',
+    options: [
+      'El texto «Ningún producto está por debajo del mínimo.»',
+      'Una lista vacía, <code>[]</code>, porque el <code>SELECT</code> no devolvió filas',
+      'Las cinco filas, cada una con su stock, su mínimo y lo que falta',
+      '<code>None</code>, porque la función no encontró nada que devolver'
+    ],
+    answer: 0,
+    explain: 'Con <code>normal</code>, todos los productos están sobre su mínimo: el <code>SELECT … WHERE stock &lt; minimo</code> no devuelve filas y la función contesta con su aviso. Una herramienta siempre devuelve un texto que el modelo pueda leer: una lista vacía o <code>None</code> no le dicen qué pasó.'
+  }]
+});
+
+SD.defineExercise('ia00-p-bucle', {
+  kind: 'predict', title: 'el bucle',
+  scenario: '<p>Corres <code>uv run lab preguntar "¿Cuánto stock hay de sombrero?"</code>. El modelo pide <code>consultar_stock({"nombre": "sombrero"})</code>.</p>',
+  steps: [{
+    id: 'inexistente', type: 'single',
+    prompt: '¿Qué recibe el modelo en el <code>ToolMessage</code>?',
+    options: [
+      'El aviso «No existe el producto sombrero» y la lista de productos',
+      'Un texto <code>ERROR: KeyError</code>, porque sombrero no está en la tabla',
+      'Nada: el bucle se corta y te muestra el error en la terminal',
+      'Un stock de 0, que es lo que devuelve la base cuando no hay filas'
+    ],
+    answer: 0,
+    explain: '<code>consultar_stock</code> no lanza una excepción: si el <code>SELECT</code> no devuelve filas, contesta con un texto que trae los cinco productos. El modelo lo lee y puede corregirse. El <code>try</code>/<code>except</code> del bucle es para los errores de verdad, como un nombre de herramienta inventado o la base caída.'
+  }]
+});
+
+SD.defineExercise('ia00-p-acciones', {
+  kind: 'predict', title: 'la acción',
+  scenario: '<p>Llamas a <code>aplicar({"producto": "taza", "cantidad": 500, "motivo": "prueba"}, "a-mano:2", "yo")</code>.</p>',
+  steps: [{
+    id: 'tope', type: 'single',
+    prompt: '¿Qué pasa?',
+    options: [
+      'Falla con un <code>ValidationError</code> de Pydantic, sin abrir la conexión',
+      'La base rechaza el <code>UPDATE</code>: <code>lab_actor</code> no puede sumar tanto stock',
+      'Se suman 500: el tope de 100 solo lo ve el modelo, no tu código',
+      'Se suman 100, el máximo, y la respuesta avisa del recorte'
+    ],
+    answer: 0,
+    explain: '<code>aplicar</code> valida con <code>Reponer.model_validate(args)</code> antes del <code>with</code>. <code>Field(le=100)</code> rechaza 500 con un <code>ValidationError</code> que nombra el campo <code>cantidad</code>. La regla la impone tu código, no el modelo, y la base ni se toca. Pydantic no recorta valores: rechaza.'
+  }]
+});
+
+SD.defineExercise('ia00-p-grafo', {
+  kind: 'predict', title: 'las aristas del grafo',
+  scenario: '<p>El último mensaje del estado es un <code>AIMessage</code> con dos <code>tool_calls</code>: <code>bajo_minimo</code> y <code>Reponer</code>. <code>pasos</code> vale 2 y el tope es 8.</p>',
+  steps: [{
+    id: 'arista', type: 'single',
+    prompt: '¿Qué devuelve <code>despues_del_modelo</code>?',
+    options: ['<code>"aprobar"</code>', '<code>"herramientas"</code>', '<code>"sin_pasos"</code>', '<code>END</code>'],
+    answer: 0,
+    explain: 'Hay llamadas, así que no es <code>END</code>; 2 es menor que 8, así que no es <code>sin_pasos</code>; y una de las llamadas es <code>Reponer</code>, así que va a <code>aprobar</code>. La lectura no se pierde: <code>actuar</code> corre también las llamadas de lectura que vinieron junto con la acción.'
+  }]
+});
+
+SD.defineExercise('ia00-p-cli', {
+  kind: 'predict', title: 'los comandos',
+  scenario: '<p>El hilo <code>hilo-1</code> se detuvo en <code>aprobar</code>. Sin decidir, corres <code>uv run lab agente "¿Cuánto stock hay de gorra?"</code>, que usa <code>hilo-1</code> por defecto.</p>',
+  steps: [{
+    id: 'pendiente', type: 'single',
+    prompt: '¿Qué pasa?',
+    options: [
+      'Avisa que <code>hilo-1</code> espera tu decisión y no corre la pregunta',
+      'Descarta la propuesta pendiente y empieza la pregunta nueva de cero',
+      'Corre la pregunta nueva y la propuesta sigue esperando debajo',
+      'Aprueba la propuesta pendiente, porque seguir equivale a aprobar'
+    ],
+    answer: 0,
+    explain: '<code>main()</code> mira <code>grafo.get_state(config).next</code>: si no está vacío, el hilo está detenido, y el comando imprime «El hilo hilo-1 espera tu decisión. Corre: lab aprobar hilo-1». Mezclar una pregunta nueva con una propuesta pendiente dejaría llamadas sin responder en el historial. Para otra conversación, usa <code>--hilo</code> con otro nombre.'
+  }]
+});
+
+SD.defineExercise('ia00-p-evals', {
+  kind: 'predict', title: 'un intento del eval',
+  scenario: '<p>En el caso <code>reponer</code>, el modelo propone taza 7 y termo 6, y después del rechazo no propone nada más. Lo esperado es taza 7 y termo 5.</p>',
+  steps: [{
+    id: 'regla', type: 'single',
+    prompt: '¿Cómo termina el intento?',
+    options: [
+      'FALLA en reposiciones: la regla rechaza y lo propuesto no coincide',
+      'ok: el termo quedó por encima de su mínimo, que es lo que se pide',
+      'ok en reposiciones, porque la taza sí coincide con lo que se esperaba',
+      'FALLA en respuesta, porque el texto final menciona el rechazo'
+    ],
+    answer: 0,
+    explain: 'La regla de <code>intento()</code> aprueba solo si cada acción propuesta coincide con lo esperado; termo 6 no coincide, así que rechaza. Al final, <code>{taza: 7, termo: 6}</code> no es igual a <code>{taza: 7, termo: 5}</code> y el check <code>reposiciones</code> da falso. Un eval revisa lo que el agente hizo, no si su texto suena bien.'
+  }]
+});

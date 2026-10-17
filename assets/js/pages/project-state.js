@@ -1,8 +1,9 @@
 /* Estado de los mini-proyectos: el enlace a tu repositorio y la lista de comprobación de cada guía.
    Lo usan proyectos.html (índice) y cada guía de proyectos/.
    Se guarda en localStorage dentro de try/catch: en modo privado el estado vive en memoria.
-   Un proyecto está terminado cuando tiene enlace a su repositorio y todas las comprobaciones marcadas.
-   El campo repo de projects.data.js, si está, cuenta como el enlace publicado. */
+   Un proyecto está terminado cuando tiene todas las comprobaciones marcadas o cuando lo marcas a mano
+   con el botón "Marcar como terminado". El enlace al repositorio es opcional; el campo repo de
+   projects.data.js, si está, es el repositorio oficial de la guía. */
 (function () {
   'use strict';
 
@@ -23,12 +24,13 @@
 
   function entry(id) {
     var all = load();
-    return all[id] || (all[id] = { repo: '', checks: {}, total: 0 });
+    return all[id] || (all[id] = { repo: '', checks: {}, total: 0, done: false });
   }
 
   /* ---------- Modelo: proyectos y sistemas completos en orden ---------- */
 
-  /* series: 'a' para los proyectos en Java y los sistemas completos; 'ia' para los tutoriales de AI Engineering. */
+  /* series: 'a' para los proyectos en Java y los sistemas completos; 'ia' para los tutoriales de AI Engineering;
+     'ml' para las guías de ML System Design. */
   SD.projectItems = function () {
     var d = SD.data.projects, out = [];
     if (!d) return out;
@@ -38,6 +40,9 @@
     d.capstones.forEach(function (c) { out.push(Object.assign({ track: null, capstone: true, series: 'a' }, c)); });
     (d.aiTracks || []).forEach(function (t) {
       t.items.forEach(function (p) { out.push(Object.assign({ track: t, series: 'ia' }, p)); });
+    });
+    (d.mlTracks || []).forEach(function (t) {
+      t.items.forEach(function (p) { out.push(Object.assign({ track: t, series: 'ml' }, p)); });
     });
     return out;
   };
@@ -59,7 +64,7 @@
   SD.projectState = {
     get: function (id) {
       var s = load()[id] || {};
-      return { repo: s.repo || '', checks: s.checks || {}, total: s.total || 0 };
+      return { repo: s.repo || '', checks: s.checks || {}, total: s.total || 0, done: !!s.done };
     },
     /* El enlace que cuenta: el publicado en projects.data.js o el que guardaste en este navegador. */
     repoOf: function (id) {
@@ -73,6 +78,7 @@
       if (total) e.total = total;
       save();
     },
+    setDone: function (id, on) { entry(id).done = !!on; save(); },
     setTotal: function (id, total) {
       var e = entry(id);
       if (e.total !== total) { e.total = total; save(); }
@@ -81,10 +87,10 @@
     status: function (id) {
       var p = SD.projectItem(id);
       if (!p || p.status !== 'ready') return 'soon';
-      var s = this.get(id), repo = this.repoOf(id);
+      var s = this.get(id);
       var n = Object.keys(s.checks).length;
-      if (repo && s.total && n >= s.total) return 'done';
-      return repo || n ? 'started' : 'new';
+      if (s.done || (s.total && n >= s.total)) return 'done';
+      return s.repo || n ? 'started' : 'new';
     }
   };
 

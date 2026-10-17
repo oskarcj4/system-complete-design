@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CP-D. Checkpoint D: diseña un Slack</title>
+<meta name="description" content="Examen de 20 preguntas sobre los casos de estudio (M27 a M31) y diseño completo de un chat para equipos: cuentas, API, modelo de datos, entrega en vivo, reconexión, presencia, permisos, archivos, búsqueda y fallas.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="cpd">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Checkpoint D: diseña un Slack</h1>
+        <p class="lead">La Fase 2 termina aquí. El examen cruza los cinco casos de estudio, y el diseño te pide un Slack: canales de 150 000 personas, entregas en menos de 500 ms, búsqueda con permisos y nada perdido al reconectar.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>CP-D</dd></div>
+          <div><dt>Parte</dt><dd>III. Casos de estudio</dd></div>
+          <div><dt>Duración</dt><dd>90 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M27 a M31, y M09</dd></div>
+          <div><dt>Estado</dt><dd data-status="cpd">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Qué vas a demostrar</h2>
+  <ul>
+    <li>Reconocer en situaciones nuevas lo que viste en los cinco casos de estudio: idempotencia y ledger (M27), el borde (M28), conexiones largas (M29), fan-out y búsqueda (M30), y presencia y permisos (M31).</li>
+    <li>Dimensionar un chat para equipos con cuentas a mano: mensajes por segundo, conexiones, gateways, almacenamiento y presencia.</li>
+    <li>Diseñar el camino de un mensaje de punta a punta: quién lo guarda, quién es su dueño, cómo llega en vivo y cómo se recupera lo perdido.</li>
+    <li>Juntar piezas de módulos distintos (URLs firmadas, tuplas de permisos, cola de trabajos) en un solo diseño coherente.</li>
+  </ul>
+</section>
+
+<h2 id="examen"><span class="sec-num">D.1</span>El examen</h2>
+
+<p>Veinte preguntas sobre los casos de estudio, cuatro por módulo, de M27 a M31; se aprueba con el 70&#8239;%. Varias ponen el concepto en el contexto del diseño que viene después (un chat para equipos), así que el examen también sirve de calentamiento. Cada explicación dice qué sección repasar si fallaste, y puedes repetirlo las veces que quieras. Aprobarlo habilita el botón para marcar el checkpoint como completado, al final de la página.</p>
+
+<div data-quiz="cpd"></div>
+
+<h2 id="diseno"><span class="sec-num">D.2</span>Diseño: un chat para equipos</h2>
+
+<p>Vas a diseñar un Slack: un chat para equipos de trabajo, organizado en workspaces y canales. Se parece a WhatsApp (<a href="m29-whatsapp.html">M29</a>) en que hay conexiones abiertas y mensajes que llegan en menos de un segundo, pero cambia en tres cosas que mueven el diseño: un canal puede tener <b>150 000 miembros</b>, todo lo que se escribe se puede <b>buscar</b> durante años, y los permisos dependen de la empresa, del canal y de quién compartió qué. La figura D.1 resume el dominio y las cifras del enunciado.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 312" role="img" aria-labelledby="fd1t fd1d">
+<title id="fd1t">Qué hay dentro de un Slack</title>
+<desc id="fd1d">Un workspace tiene muchos canales, un canal muchos mensajes y un mensaje muchas respuestas en hilo. Los canales son públicos, privados, mensajes directos o compartidos con otra empresa. Las personas del workspace son miembros de canales. Un mensaje lleva reacciones, archivos y menciones. Abajo, las cifras del enunciado: 20 millones de personas activas al día, 6 millones conectadas en el pico, 40 mensajes por persona al día y 150 000 miembros en el canal más grande.</desc>
+<defs><marker id="fd1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="20" width="140" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="90.0" y="49.0" text-anchor="middle">Workspace</text>
+<rect class="dg-layer" x="240" y="20" width="170" height="50" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="325.0" y="49.0" text-anchor="middle">Canal</text>
+<rect class="dg-layer" x="460" y="20" width="130" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="525.0" y="49.0" text-anchor="middle">Mensaje</text>
+<rect class="dg-layer" x="640" y="20" width="110" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="695.0" y="41.0" text-anchor="middle">Respuesta</text>
+<text class="dg-small" x="695.0" y="57.0" text-anchor="middle">en hilo</text>
+<path class="dg-edge" d="M160 45 H236" marker-end="url(#fd1a)"/>
+<text class="dg-tiny" x="198.0" y="38" text-anchor="middle">1 a N</text>
+<path class="dg-edge" d="M410 45 H456" marker-end="url(#fd1a)"/>
+<text class="dg-tiny" x="433.0" y="38" text-anchor="middle">1 a N</text>
+<path class="dg-edge" d="M590 45 H636" marker-end="url(#fd1a)"/>
+<text class="dg-tiny" x="613.0" y="38" text-anchor="middle">1 a N</text>
+<rect class="dg-box" x="20" y="110" width="140" height="44" rx="8"/>
+<text class="dg-small" x="90.0" y="128.0" text-anchor="middle">Personas</text>
+<text class="dg-tiny" x="90.0" y="144.0" text-anchor="middle">miembros</text>
+<path class="dg-edge" d="M160 132 H236" marker-end="url(#fd1a)"/>
+<text class="dg-tiny" x="198" y="150" text-anchor="middle">miembro de</text>
+<path class="dg-edge" d="M90 70 V106" marker-end="url(#fd1a)"/>
+<rect class="dg-box" x="240" y="86" width="170" height="26" rx="6"/>
+<text class="dg-tiny" x="325" y="103" text-anchor="middle">público</text>
+<rect class="dg-box" x="240" y="120" width="170" height="26" rx="6"/>
+<text class="dg-tiny" x="325" y="137" text-anchor="middle">privado</text>
+<rect class="dg-box" x="240" y="154" width="170" height="26" rx="6"/>
+<text class="dg-tiny" x="325" y="171" text-anchor="middle">mensaje directo o grupo</text>
+<rect class="dg-box" x="240" y="188" width="170" height="26" rx="6"/>
+<text class="dg-tiny" x="325" y="205" text-anchor="middle">compartido (Slack Connect)</text>
+<rect class="dg-box" x="460" y="86" width="130" height="26" rx="6"/>
+<text class="dg-tiny" x="525" y="103" text-anchor="middle">reacciones</text>
+<rect class="dg-box" x="460" y="120" width="130" height="26" rx="6"/>
+<text class="dg-tiny" x="525" y="137" text-anchor="middle">archivos</text>
+<rect class="dg-box" x="460" y="154" width="130" height="26" rx="6"/>
+<text class="dg-tiny" x="525" y="171" text-anchor="middle">menciones</text>
+<text class="dg-group" x="20" y="238" text-anchor="start">Lo que pide el enunciado (supuestos del ejercicio)</text>
+<rect class="dg-box" x="20" y="248" width="176" height="52" rx="8"/>
+<text class="dg-label" x="34" y="270" text-anchor="start">20 M</text>
+<text class="dg-tiny" x="34" y="289" text-anchor="start">personas activas al día</text>
+<rect class="dg-box" x="204" y="248" width="176" height="52" rx="8"/>
+<text class="dg-label" x="218" y="270" text-anchor="start">6 M</text>
+<text class="dg-tiny" x="218" y="289" text-anchor="start">conectadas en el pico</text>
+<rect class="dg-box" x="388" y="248" width="176" height="52" rx="8"/>
+<text class="dg-label" x="402" y="270" text-anchor="start">40</text>
+<text class="dg-tiny" x="402" y="289" text-anchor="start">mensajes por persona al día</text>
+<rect class="dg-box" x="572" y="248" width="176" height="52" rx="8"/>
+<text class="dg-label" x="586" y="270" text-anchor="start">150 000</text>
+<text class="dg-tiny" x="586" y="289" text-anchor="start">en el canal más grande</text>
+</svg>
+  </div>
+  <figcaption><b>Figura D.1.</b> El dominio del ejercicio: workspaces, canales de cuatro tipos, mensajes con reacciones, archivos y menciones, y respuestas en hilo. Las cifras de abajo son supuestos del enunciado. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p><b>Requisitos.</b></p>
+<ol>
+<li><b>Mensajes</b> en canales públicos y privados, mensajes directos y grupos, con hilos, menciones, reacciones y edición. Dentro de un canal, todos ven el mismo orden.</li>
+<li><b>Entrega en vivo</b> a las personas conectadas en menos de 500 ms en el p99, en cualquier región. A quien no está conectado le llega una notificación push, y al abrir la app ve todo lo que se perdió.</li>
+<li><b>Nada se pierde ni se duplica:</b> un mensaje confirmado está guardado, y un reintento del cliente no lo publica dos veces.</li>
+<li><b>Presencia</b> (activo o ausente) e indicador de "está escribiendo".</li>
+<li><b>Búsqueda</b> en todo lo que la persona puede leer, incluidos los canales privados donde es miembro.</li>
+<li><b>Archivos</b> de hasta 1 GB, que ve quien puede ver el canal donde se compartieron.</li>
+<li><b>Canales compartidos</b> entre dos empresas (como Slack Connect): miembros de dos workspaces en el mismo canal.</li>
+<li><b>Retención</b> configurable por workspace: algunas empresas borran los mensajes a los 90 días.</li>
+</ol>
+
+<p><b>Entrega.</b> Un design doc corto con estas partes:</p>
+<ol>
+<li><b>Las cuentas:</b> mensajes por segundo en el pico, conexiones abiertas, gateways, almacenamiento por año y mensajes de presencia.</li>
+<li><b>La API:</b> enviar un mensaje y leer la historia de un canal, con su idempotencia y su paginación.</li>
+<li><b>El modelo de datos</b> y cómo se particiona.</li>
+<li><b>El camino en vivo:</b> cómo llega un mensaje de Ana a Beto, quién es el dueño de cada canal y por qué no es el fan-out de Twitter (<a href="m30-twitter.html#fanout">M30</a>).</li>
+<li><b>Reconexión:</b> qué hace el cliente al volver para no perder ni duplicar.</li>
+<li><b>Presencia, permisos, archivos y búsqueda.</b></li>
+<li><b>Fallas:</b> qué pasa cuando se cae un gateway, el dueño de un canal o una región.</li>
+</ol>
+<p>Lo que más importa no es coincidir con la solución de referencia, sino que cada pieza tenga una cuenta o un motivo detrás, y que digas qué pasa cuando esa pieza falla.</p>
+
+<h2 id="solucion"><span class="sec-num">D.3</span>Solución de referencia</h2>
+
+<p>Hay más de una buena respuesta. Esta toma como guía lo que Slack publicó de su arquitectura (lo documentado lleva su marca) y completa lo demás con lo que viste en los casos de estudio. Compárala con la tuya parte por parte.</p>
+
+<details class="solution" data-toc="skip">
+  <summary>Ver la solución de referencia</summary>
+  <div class="solution-body">
+
+<h3 id="sol-numeros">Las cuentas</h3>
+
+<p>Todas salen de los supuestos de la figura D.1, más tres que se dicen en la tabla. Son órdenes de magnitud para decidir, no un presupuesto.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Qué</th><th>Cuenta</th><th>Resultado</th></tr></thead>
+    <tbody>
+<tr><td>Mensajes por día</td><td>20 000 000 × 40</td><td class="r">800 millones</td></tr>
+<tr><td>Mensajes por segundo, promedio</td><td>800 000 000 / 86 400</td><td class="r">9 259</td></tr>
+<tr><td>Mensajes por segundo, pico (supuesto: 3 veces el promedio)</td><td>9 259 × 3</td><td class="r">unos 27 800</td></tr>
+<tr><td>Entregas en vivo en el pico (supuesto: 25 conectados por mensaje)</td><td>27 800 × 25</td><td class="r">unos 695 000 por segundo</td></tr>
+<tr><td>Memoria de las conexiones (30 KB cada una, como en <a href="m29-whatsapp.html#conexion">M29</a>)</td><td>6 000 000 × 30 KB</td><td class="r">180 GB</td></tr>
+<tr><td>Gateways sin margen (32 GB, 60&#8239;% para conexiones)</td><td>6 000 000 / 640 000</td><td class="r">10</td></tr>
+<tr><td>Gateways con un 50&#8239;% de margen</td><td>6 000 000 / 320 000</td><td class="r">19, repartidos por región</td></tr>
+<tr><td>Almacenamiento de mensajes (supuesto: 1 KB con metadatos e índices)</td><td>800 000 000 × 1 KB × 365</td><td class="r">292 TB por año; 876 TB con 3 réplicas</td></tr>
+<tr><td>Presencia, a todos (workspace de 100 000 conectados, 10 cambios al día)</td><td>100 000 × 10 / 86 400 × 100 000</td><td class="r">unos 1 160 000 por segundo</td></tr>
+<tr><td>Presencia, solo a quien mira (50 suscriptores)</td><td>11.6 × 50</td><td class="r">unos 580 por segundo</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Dos conclusiones salen de la tabla antes de dibujar nada. Las escrituras son pocas (27 800 por segundo entran en una base particionada sin esfuerzo), pero las <b>entregas</b> son 25 veces más y viajan por conexiones abiertas: el problema es el camino en vivo, no la base. Y la presencia, mandada a todos, sería el tráfico más grande del sistema, más que los mensajes: hay que acotarla desde el diseño.</p>
+
+<h3 id="sol-arquitectura">La arquitectura</h3>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 470" role="img" aria-labelledby="fd2t fd2d">
+<title id="fd2t">Arquitectura de referencia del chat</title>
+<desc id="fd2d">Los clientes arrancan contra Flannel, una caché en el borde, mandan mensajes por HTTPS a la API web y reciben eventos por WebSocket desde los Gateway Servers de su región. La API escribe en Vitess, particionado por canal, y avisa a un Admin Server, que busca en el anillo de hash consistente el Channel Server dueño del canal. El Channel Server manda el mensaje a cada gateway suscrito. Los Presence Servers llevan quién está conectado. La API también encola trabajos (Kafka y Redis) que los workers ejecutan: push a APNs y FCM e indexado para la búsqueda. Los archivos van directo al almacén de objetos con URLs firmadas y los permisos viven en un servicio de tuplas.</desc>
+<defs><marker id="fd2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="16" y="190" width="100" height="60" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="66.0" y="216.0" text-anchor="middle">Clientes</text>
+<text class="dg-tiny" x="66.0" y="232.0" text-anchor="middle">web, móvil</text>
+<rect class="dg-layer" x="156" y="35" width="136" height="50" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="224.0" y="56.0" text-anchor="middle">Flannel</text>
+<text class="dg-tiny" x="224.0" y="72.0" text-anchor="middle">caché en el borde</text>
+<rect class="dg-layer" x="156" y="190" width="136" height="60" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="224.0" y="216.0" text-anchor="middle">Gateway Servers</text>
+<text class="dg-tiny" x="224.0" y="232.0" text-anchor="middle">WebSocket, por región</text>
+<rect class="dg-layer" x="336" y="35" width="136" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="404.0" y="56.0" text-anchor="middle">API web</text>
+<text class="dg-tiny" x="404.0" y="72.0" text-anchor="middle">HTTP, sin estado</text>
+<rect class="dg-layer" x="336" y="115" width="136" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="404.0" y="136.0" text-anchor="middle">Admin Servers</text>
+<text class="dg-tiny" x="404.0" y="152.0" text-anchor="middle">sin estado</text>
+<rect class="dg-layer" x="336" y="195" width="136" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="404.0" y="216.0" text-anchor="middle">Channel Servers</text>
+<text class="dg-tiny" x="404.0" y="232.0" text-anchor="middle">dueño de cada canal</text>
+<rect class="dg-layer" x="336" y="275" width="136" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="404.0" y="293.0" text-anchor="middle">CHARM</text>
+<text class="dg-tiny" x="404.0" y="309.0" text-anchor="middle">administra el anillo</text>
+<rect class="dg-layer" x="336" y="345" width="136" height="50" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="404.0" y="366.0" text-anchor="middle">Presence Servers</text>
+<text class="dg-tiny" x="404.0" y="382.0" text-anchor="middle">quién está conectado</text>
+<rect class="dg-layer" x="516" y="35" width="104" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="568.0" y="56.0" text-anchor="middle">Vitess</text>
+<text class="dg-tiny" x="568.0" y="72.0" text-anchor="middle">MySQL por canal</text>
+<rect class="dg-layer" x="516" y="115" width="104" height="50" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="568.0" y="136.0" text-anchor="middle">Cola de jobs</text>
+<text class="dg-tiny" x="568.0" y="152.0" text-anchor="middle">Kafka y Redis</text>
+<rect class="dg-layer" x="516" y="195" width="104" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="568.0" y="216.0" text-anchor="middle">Workers</text>
+<text class="dg-tiny" x="568.0" y="232.0" text-anchor="middle">push, índice</text>
+<rect class="dg-layer" x="656" y="115" width="100" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="706.0" y="136.0" text-anchor="middle">Búsqueda</text>
+<text class="dg-tiny" x="706.0" y="152.0" text-anchor="middle">índice</text>
+<rect class="dg-layer" x="656" y="195" width="100" height="50" rx="8" style="--c: var(--l-external)"/>
+<text class="dg-small" x="706.0" y="216.0" text-anchor="middle">APNs, FCM</text>
+<text class="dg-tiny" x="706.0" y="232.0" text-anchor="middle">al teléfono</text>
+<rect class="dg-layer" x="656" y="270" width="100" height="64" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="706.0" y="290.0" text-anchor="middle">Permisos</text>
+<text class="dg-tiny" x="706.0" y="306.0" text-anchor="middle">tuplas; los usan</text>
+<text class="dg-tiny" x="706.0" y="322.0" text-anchor="middle">API y búsqueda</text>
+<rect class="dg-layer" x="656" y="345" width="100" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="706.0" y="366.0" text-anchor="middle">Objetos</text>
+<text class="dg-tiny" x="706.0" y="382.0" text-anchor="middle">archivos</text>
+<path class="dg-edge" d="M116 205 H134 V108 H318 V60 H332" marker-end="url(#fd2a)"/>
+<text class="dg-tiny" x="226" y="102" text-anchor="middle">HTTPS: enviar, historia</text>
+<path class="dg-edge" d="M120 220 H152" marker-start="url(#fd2a)" marker-end="url(#fd2a)"/>
+<path class="dg-edge" d="M66 190 V60 H152" marker-end="url(#fd2a)"/>
+<text class="dg-tiny" x="70" y="52" text-anchor="start">arranque</text>
+<path class="dg-edge" d="M472 60 H512" marker-end="url(#fd2a)"/>
+<path class="dg-edge" d="M404 85 V111" marker-end="url(#fd2a)"/>
+<path class="dg-edge" d="M404 165 V191" marker-end="url(#fd2a)"/>
+<path class="dg-edge" d="M336 220 H296" marker-end="url(#fd2a)"/>
+<path class="dg-edge" d="M404 275 V249" marker-end="url(#fd2a)"/>
+<path class="dg-edge" d="M336 370 H224 V254" marker-end="url(#fd2a)"/>
+<path class="dg-edge" d="M472 75 H494 V140 H512" marker-end="url(#fd2a)"/>
+<path class="dg-edge" d="M568 165 V191" marker-end="url(#fd2a)"/>
+<path class="dg-edge" d="M620 210 H636 V140 H652" marker-end="url(#fd2a)"/>
+<path class="dg-edge" d="M620 225 H652" marker-end="url(#fd2a)"/>
+<path class="dg-edge" d="M50 250 V440 H706 V399" marker-end="url(#fd2a)"/>
+<text class="dg-tiny" x="380" y="456" text-anchor="middle">archivos: subida y descarga directas con URL firmada (M09)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura D.2.</b> Arquitectura de referencia. Las piezas del camino en vivo (Gateway, Admin, Channel y Presence Servers, el CHARM), Flannel, Vitess y la cola de jobs son las que Slack documentó; la búsqueda, los permisos y los archivos completan el diseño. <span class="badge badge--doc">Documentado</span> <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>Slack describió su sistema de mensajes en tiempo real en abril de 2023 <span class="badge badge--doc">Documentado</span> con cuatro tipos de servidor, escritos en Java:</p>
+<ul>
+<li><b>Channel Servers:</b> con estado y en memoria; cada uno es dueño de un subconjunto de canales, elegido con <a href="m05-bases-de-datos.html#sharding">hash consistente</a> sobre el id del canal. En el pico, cada uno atiende unos 16 millones de canales. Los CHARM (consistent hash ring managers) administran el anillo.</li>
+<li><b>Gateway Servers:</b> con estado; mantienen los WebSockets de los clientes y a qué canales está suscrito cada uno. Son los únicos que se despliegan en varias regiones, cerca de la gente.</li>
+<li><b>Admin Servers:</b> sin estado; son la interfaz entre la API web y los Channel Servers.</li>
+<li><b>Presence Servers:</b> en memoria; llevan quién está conectado.</li>
+</ul>
+<p>Con esa arquitectura, Slack dice entregar los mensajes en todo el mundo en 500 ms. Fíjate en la separación: la API web <b>guarda</b> (HTTP, sin estado, contra la base) y los servidores en memoria <b>reparten</b>. Si el reparto falla, el mensaje ya está guardado y el cliente lo recupera al reconectar; si el guardado falla, el cliente recibe un error y reintenta. Es la misma regla que en WhatsApp, donde el primer tilde sale cuando el mensaje está en el buzón (<a href="m29-whatsapp.html#recibos">M29</a>).</p>
+
+<h3 id="sol-viaje">El viaje de un mensaje</h3>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 444" role="img" aria-labelledby="fd3t fd3d">
+<title id="fd3t">El viaje de un mensaje</title>
+<desc id="fd3d">Ana manda el mensaje por HTTP a la API web, que lo guarda en Vitess con su ts y le responde. Después lo publica: un Admin Server busca el Channel Server dueño del canal en el anillo de hash consistente, el Channel Server lo manda a cada gateway suscrito al canal y el gateway lo empuja por WebSocket al cliente de Beto. La API encola además el push, el indexado y la previsualización de enlaces.</desc>
+<defs><marker id="fd3-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fd3-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fd3-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fd3-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="21.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Cliente de Ana</text>
+<path class="dg-frame" d="M70.0 40 V434"/>
+<rect class="dg-box" x="126.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="175.0" y="29" text-anchor="middle" style="font-size:13.5px">API web</text>
+<path class="dg-frame" d="M175.0 40 V434"/>
+<rect class="dg-box" x="231.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Vitess</text>
+<path class="dg-frame" d="M280.0 40 V434"/>
+<rect class="dg-box" x="336.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Admin Server</text>
+<path class="dg-frame" d="M385.0 40 V434"/>
+<rect class="dg-box" x="441.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">Channel Server</text>
+<path class="dg-frame" d="M490.0 40 V434"/>
+<rect class="dg-box" x="546.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="595.0" y="29" text-anchor="middle" style="font-size:13.5px">Gateway</text>
+<path class="dg-frame" d="M595.0 40 V434"/>
+<rect class="dg-box" x="651.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Cliente de Beto</text>
+<path class="dg-frame" d="M700.0 40 V434"/>
+<path class="dg-edge" d="M73.0 72 L170.0 72" marker-end="url(#fd3-a)"/>
+<rect x="47.2" y="55" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="122.5" y="66" text-anchor="middle">POST chat.postMessage</text>
+<path class="dg-edge" d="M178.0 106 L275.0 106" marker-end="url(#fd3-a)"/>
+<rect x="145.60000000000002" y="89" width="163.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="100" text-anchor="middle">INSERT (channel_id, ts)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 140 L180.0 140" marker-end="url(#fd3-r)"/>
+<rect x="214.9" y="123" width="25.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="134" text-anchor="middle">ok</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M172.0 174 L75.0 174" marker-end="url(#fd3-r)"/>
+<rect x="73.6" y="157" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="122.5" y="168" text-anchor="middle">200 con el ts</text>
+<rect x="185.0" y="194" width="286" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="195.0" y="210">encola: push, índice, previsualización</text>
+<path class="dg-edge" d="M178.0 242 L380.0 242" marker-end="url(#fd3-a)"/>
+<rect x="231.1" y="225" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="236" text-anchor="middle">publicar en C</text>
+<path class="dg-edge" d="M388.0 276 L485.0 276" marker-end="url(#fd3-a)"/>
+<rect x="378.7" y="259" width="117.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="437.5" y="270" text-anchor="middle">dueño de hash(C)</text>
+<path class="dg-edge" d="M493.0 310 L590.0 310" marker-end="url(#fd3-a)"/>
+<rect x="460.6" y="293" width="163.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="304" text-anchor="middle">a cada gateway suscrito</text>
+<path class="dg-edge" d="M598.0 344 L695.0 344" marker-end="url(#fd3-a)"/>
+<rect x="595.3" y="327" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="647.5" y="338" text-anchor="middle">evento message</text>
+<rect x="327.0" y="364" width="258" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="337.0" y="380">Slack: menos de 500 ms en el mundo</text>
+</svg>
+  </div>
+  <figcaption><b>Figura D.3.</b> Ana manda un mensaje y Beto lo recibe. El orden de los servidores es el que Slack documentó; la respuesta con el ts antes de publicar es parte de este diseño. <span class="badge badge--doc">Documentado</span> <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>El envío es una llamada HTTP, no un mensaje por el WebSocket: así pasa por la autenticación, los límites de tasa y la validación de la API como cualquier otra escritura, y el WebSocket queda para bajar eventos. La API real de Slack funciona así: <span class="badge badge--doc">Documentado</span> <code>chat.postMessage</code> crea el mensaje y devuelve su <code>ts</code>, el identificador que es único dentro del canal.</p>
+
+<div class="endpoint">
+  <div class="ep-head">
+    <span class="ep-method" data-m="POST">POST</span>
+    <code class="ep-path">/api/chat.postMessage</code>
+    <span class="badge badge--doc">Documentado</span>
+  </div>
+  <p class="ep-desc">Publica un mensaje en un canal. El campo <code>client_msg_id</code> de este diseño lo genera el cliente una vez y lo repite en cada reintento.</p>
+  <div class="ep-body">
+    <p class="ep-sec">Request</p>
+<pre data-lang="http"><code>POST /api/chat.postMessage HTTP/1.1
+Host: slack.com
+Authorization: Bearer xoxb-...
+Content-Type: application/json
+
+{"channel": "C024BE91L", "text": "Desplegamos a las 15:00", "client_msg_id": "4c1f0e2a-7a1b-4e4b-9d6a-1f3c2b9e8d10"}</code></pre>
+
+    <p class="ep-sec">Respuesta 200</p>
+<pre data-lang="json"><code>{
+  "ok": true,
+  "channel": "C024BE91L",
+  "ts": "1760627400.000200",
+  "message": {"type": "message", "user": "U0ANA", "text": "Desplegamos a las 15:00", "ts": "1760627400.000200"}
+}</code></pre>
+
+    <p class="ep-sec">Códigos de respuesta</p>
+    <ul class="ep-responses">
+      <li><span class="st st--2xx">200</span><span>Guardado. Si el <code>client_msg_id</code> ya existía en el canal, devuelve el mensaje que ya estaba, con el mismo <code>ts</code>.</span></li>
+      <li><span class="st st--4xx">429</span><span>Límite de tasa; el cliente reintenta con backoff y el mismo <code>client_msg_id</code>.</span></li>
+      <li><span class="st st--5xx">503</span><span>La base no confirmó; el cliente reintenta sin riesgo de duplicar.</span></li>
+    </ul>
+  </div>
+</div>
+
+<p>Tres decisiones vienen de los casos de estudio:</p>
+<ul>
+<li><b>Idempotencia por el cliente.</b> El <code>client_msg_id</code> es el <code>msg_id</code> de WhatsApp (<a href="m29-whatsapp.html#mensaje">M29</a>) y la clave de idempotencia de Stripe (<a href="m27-pagos-stripe.html#idempotencia">M27</a>): una restricción única <code>(channel_id, client_msg_id)</code> convierte el reintento en una lectura del mensaje que ya estaba. <span class="badge badge--ref">Diseño de referencia</span></li>
+<li><b>Un dueño por canal para el orden.</b> Si el <code>ts</code> lo generara cualquier servidor de la API, dos mensajes del mismo milisegundo quedarían ordenados por número de nodo, no por llegada (<a href="m30-twitter.html#snowflake">M30</a>). Con un solo escritor por canal (el shard del canal en la base, o su Channel Server) el orden es uno solo, y un <code>ts</code> repetido se resuelve sumando un microsegundo. <span class="badge badge--ref">Diseño de referencia</span></li>
+<li><b>Lo lento, a la cola.</b> El push a los desconectados, el indexado y la previsualización de enlaces no bloquean la respuesta: van a la cola de jobs (ver más abajo).</li>
+</ul>
+
+<h3 id="sol-datos">El modelo de datos</h3>
+
+<pre data-lang="sql"><code>-- Particionado por channel_id: todo lo de un canal vive en el mismo shard.
+CREATE TABLE messages (
+  channel_id     BIGINT       NOT NULL,
+  ts             BIGINT       NOT NULL,   -- microsegundos; único dentro del canal
+  user_id        BIGINT       NOT NULL,
+  client_msg_id  UUID         NOT NULL,   -- lo genera el cliente; idempotencia
+  thread_ts      BIGINT,                  -- NULL si no es respuesta en hilo
+  body           TEXT         NOT NULL,
+  edited_at      TIMESTAMPTZ,
+  deleted        BOOLEAN      NOT NULL DEFAULT false,
+  PRIMARY KEY (channel_id, ts),
+  UNIQUE (channel_id, client_msg_id)
+);
+
+CREATE TABLE channel_members (            -- quién está en cada canal (shard por canal)
+  channel_id   BIGINT NOT NULL,
+  user_id      BIGINT NOT NULL,
+  last_read_ts BIGINT NOT NULL DEFAULT 0,  -- para los no leídos
+  PRIMARY KEY (channel_id, user_id)
+);
+
+CREATE TABLE user_channels (              -- la misma relación al revés (shard por persona)
+  user_id    BIGINT NOT NULL,
+  channel_id BIGINT NOT NULL,
+  PRIMARY KEY (user_id, channel_id)
+);</code></pre>
+
+<p>La partición es la decisión más importante. Slack empezó particionando por workspace, y en 2020 contó por qué migró a Vitess y a una partición por id de canal para los mensajes <span class="badge badge--doc">Documentado</span>: con la partición por workspace, un cliente enorme llenaba su shard y no había forma de repartirlo, y los canales compartidos entre dos empresas no tenían un único workspace donde vivir. Particionado por canal, todo lo que se lee junto (la historia de un canal, sus miembros) está en el mismo shard, y un workspace grande se reparte solo entre muchos shards. En ese mismo texto, Slack informa 2.3 millones de consultas por segundo en el pico (2 millones de lecturas y 300 000 escrituras), con una mediana de 2 ms y un p99 de 11 ms, y el 99&#8239;% de su carga de consultas en Vitess. <span class="badge badge--doc">Documentado</span></p>
+
+<p>La membresía se guarda en las dos direcciones, como el grafo social de <a href="m30-twitter.html#grafo">M30</a>: <code>channel_members</code> responde "quién está en este canal" desde el shard del canal, y <code>user_channels</code> responde "en qué canales estoy" desde el shard de la persona. Las dos se escriben juntas con un outbox (<a href="m07-mensajeria.html#outbox">M07</a>) porque viven en shards distintos. La retención por workspace es un job que borra por <code>(channel_id, ts)</code> menores a la fecha de corte, canal por canal, sin bloquear el shard.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Particionar por canal hace barato leer un canal y caro todo lo que cruza canales: "todos mis mensajes no leídos" o "todo lo que escribió Ana" tocan muchos shards. Por eso esas vistas se derivan aparte (la lista de no leídos con <code>last_read_ts</code> por canal, y lo de Ana en el índice de búsqueda) en lugar de consultarse sobre los mensajes.</p>
+</aside>
+
+<h3 id="sol-fanout">Fan-out: por qué no es Twitter</h3>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="fd4t fd4d">
+<title id="fd4t">Fan-out de Twitter contra fan-out de un canal</title>
+<desc id="fd4d">A la izquierda, la timeline de Twitter: una publicación se copia a la timeline de cada seguidor, así que escribir cuesta una escritura por seguidor y leer cuesta una lectura. A la derecha, un canal de chat: el mensaje se guarda una vez en el canal, y en vivo el Channel Server manda una copia por gateway suscrito, y cada gateway una por conexión. Leer el canal es leer una sola lista que todos comparten. Con 150 000 miembros, la izquierda son 150 000 escrituras y la derecha una escritura más unas 20 copias a gateways.</desc>
+<defs><marker id="fd4a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-frame" x="16" y="12" width="362" height="276" rx="10"/>
+<rect class="dg-frame" x="392" y="12" width="362" height="276" rx="10"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Timeline (M30): una copia por seguidor</text>
+<text class="dg-group" x="408" y="36" text-anchor="start">Canal: una copia, empujada a los conectados</text>
+<rect class="dg-layer" x="32" y="120" width="96" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="80.0" y="146.0" text-anchor="middle">Publicación</text>
+<rect class="dg-layer" x="230" y="56" width="130" height="26" rx="6" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="295" y="73" text-anchor="middle">timeline 1</text>
+<path class="dg-edge" d="M128 142 L226 69" marker-end="url(#fd4a)"/>
+<rect class="dg-layer" x="230" y="92" width="130" height="26" rx="6" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="295" y="109" text-anchor="middle">timeline 2</text>
+<path class="dg-edge" d="M128 142 L226 105" marker-end="url(#fd4a)"/>
+<rect class="dg-layer" x="230" y="128" width="130" height="26" rx="6" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="295" y="145" text-anchor="middle">timeline 3</text>
+<path class="dg-edge" d="M128 142 L226 141" marker-end="url(#fd4a)"/>
+<rect class="dg-layer" x="230" y="164" width="130" height="26" rx="6" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="295" y="181" text-anchor="middle">timeline 4</text>
+<path class="dg-edge" d="M128 142 L226 177" marker-end="url(#fd4a)"/>
+<rect class="dg-layer" x="230" y="200" width="130" height="26" rx="6" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="295" y="217" text-anchor="middle">…</text>
+<path class="dg-edge" d="M128 142 L226 213" marker-end="url(#fd4a)"/>
+<text class="dg-small" x="32" y="252" text-anchor="start">150 000 miembros: 150 000 escrituras</text>
+<text class="dg-tiny" x="32" y="272" text-anchor="start">leer: una lista propia por persona</text>
+<rect class="dg-layer" x="408" y="56" width="96" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="456.0" y="82.0" text-anchor="middle">Mensaje</text>
+<rect class="dg-layer" x="560" y="56" width="176" height="44" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="648.0" y="74.0" text-anchor="middle">Canal C en Vitess</text>
+<text class="dg-tiny" x="648.0" y="90.0" text-anchor="middle">una fila por mensaje</text>
+<path class="dg-edge" d="M504 78 H556" marker-end="url(#fd4a)"/>
+<rect class="dg-layer" x="408" y="130" width="96" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="456.0" y="148.0" text-anchor="middle">Channel</text>
+<text class="dg-small" x="456.0" y="164.0" text-anchor="middle">Server</text>
+<path class="dg-edge" d="M456 100 V126" marker-end="url(#fd4a)"/>
+<rect class="dg-layer" x="560" y="116" width="80" height="22" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-tiny" x="600" y="131" text-anchor="middle">gateway 1</text>
+<path class="dg-edge" d="M504 152 L556 127" marker-end="url(#fd4a)"/>
+<circle cx="672" cy="127" r="5" class="dg-box"/>
+<circle cx="694" cy="127" r="5" class="dg-box"/>
+<circle cx="716" cy="127" r="5" class="dg-box"/>
+<path class="dg-edge" d="M640 127 H662" marker-end="url(#fd4a)"/>
+<rect class="dg-layer" x="560" y="146" width="80" height="22" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-tiny" x="600" y="161" text-anchor="middle">gateway 2</text>
+<path class="dg-edge" d="M504 152 L556 157" marker-end="url(#fd4a)"/>
+<circle cx="672" cy="157" r="5" class="dg-box"/>
+<circle cx="694" cy="157" r="5" class="dg-box"/>
+<circle cx="716" cy="157" r="5" class="dg-box"/>
+<path class="dg-edge" d="M640 157 H662" marker-end="url(#fd4a)"/>
+<rect class="dg-layer" x="560" y="176" width="80" height="22" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-tiny" x="600" y="191" text-anchor="middle">gateway 3</text>
+<path class="dg-edge" d="M504 152 L556 187" marker-end="url(#fd4a)"/>
+<circle cx="672" cy="187" r="5" class="dg-box"/>
+<circle cx="694" cy="187" r="5" class="dg-box"/>
+<circle cx="716" cy="187" r="5" class="dg-box"/>
+<path class="dg-edge" d="M640 187 H662" marker-end="url(#fd4a)"/>
+<text class="dg-small" x="408" y="252" text-anchor="start">150 000 miembros: 1 escritura + unos 20 gateways</text>
+<text class="dg-tiny" x="408" y="272" text-anchor="start">leer: la misma lista del canal para todos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura D.4.</b> En Twitter cada persona lee una timeline distinta, así que se paga una copia por seguidor al escribir. En un canal todos leen la misma lista: se guarda una vez y en vivo se empuja una copia por gateway suscrito, que la reparte entre sus conexiones. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>En <a href="m30-twitter.html#fanout">M30</a> el fan-out en escritura tenía sentido porque cada timeline es una mezcla única de cientos de cuentas, y armarla al leer era caro. Un canal no se mezcla con nada: los 150 000 miembros leen exactamente la misma lista. Copiarla 150 000 veces sería pagar el problema de las cuentas enormes de Twitter (<a href="m30-twitter.html#hibrido">M30</a>) con cada mensaje. El fan-out que queda es solo el de la entrega en vivo, y está en dos niveles: el Channel Server manda una copia a cada gateway suscrito al canal (unos 20, no 150 000), y cada gateway la escribe en las conexiones de su región. Quien no está conectado no cuesta nada en vivo: lee el canal cuando abre la app.</p>
+
+<p>Lo que sí se parece a Twitter es la lista "qué canales tienen algo nuevo para mí", que sí es distinta para cada persona. Se resuelve sin copiar mensajes: por cada canal, el último <code>ts</code> (en el Channel Server) contra el <code>last_read_ts</code> de la persona.</p>
+
+<h3 id="sol-reconexion">Reconectar sin perder ni duplicar</h3>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="fd5t fd5d">
+<title id="fd5t">Reconectar sin perder ni duplicar</title>
+<desc id="fd5d">Dos líneas de tiempo, el servidor arriba y el cliente de Beto abajo. Beto recibe los mensajes 101 y 102. La red se corta y los mensajes 103 a 114 quedan guardados en el canal. Beto reconecta con backoff y jitter, pide la historia desde el ts 102 y recibe del 103 al 114. El 114 también llega por el WebSocket recién abierto y se descarta porque ya tiene ese ts. El 115 llega en vivo.</desc>
+<defs><marker id="fd5a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-label" x="16" y="64" text-anchor="start">Servidor</text>
+<text class="dg-label" x="16" y="164" text-anchor="start">Beto</text>
+<path class="dg-frame" d="M90 60 H756"/>
+<path class="dg-frame" d="M90 160 H756"/>
+<rect class="dg-warnbox" x="196" y="46" width="230" height="128" rx="8"/>
+<text class="dg-small" x="311" y="100" text-anchor="middle">sin red: 103 a 114</text>
+<text class="dg-tiny" x="311" y="118" text-anchor="middle">quedan en el canal</text>
+<circle cx="212" cy="60" r="3.5" class="dg-box"/>
+<circle cx="230" cy="60" r="3.5" class="dg-box"/>
+<circle cx="248" cy="60" r="3.5" class="dg-box"/>
+<circle cx="266" cy="60" r="3.5" class="dg-box"/>
+<circle cx="284" cy="60" r="3.5" class="dg-box"/>
+<circle cx="302" cy="60" r="3.5" class="dg-box"/>
+<circle cx="320" cy="60" r="3.5" class="dg-box"/>
+<circle cx="338" cy="60" r="3.5" class="dg-box"/>
+<circle cx="356" cy="60" r="3.5" class="dg-box"/>
+<circle cx="374" cy="60" r="3.5" class="dg-box"/>
+<circle cx="392" cy="60" r="3.5" class="dg-box"/>
+<circle cx="410" cy="60" r="3.5" class="dg-box"/>
+<path class="dg-edge" d="M112 64 V154" marker-end="url(#fd5a)"/>
+<text class="dg-tiny dg-mono" x="112" y="182" text-anchor="middle">101</text>
+<path class="dg-edge" d="M152 64 V154" marker-end="url(#fd5a)"/>
+<text class="dg-tiny dg-mono" x="152" y="182" text-anchor="middle">102</text>
+<path class="dg-edge" d="M456 156 V66" marker-end="url(#fd5a)"/>
+<text class="dg-tiny" x="456" y="182" text-anchor="middle">reconecta</text>
+<text class="dg-tiny" x="456" y="197" text-anchor="middle">con jitter</text>
+<path class="dg-edge" d="M536 156 V66" marker-end="url(#fd5a)"/>
+<text class="dg-tiny dg-mono" x="536" y="182" text-anchor="middle">history</text>
+<text class="dg-tiny dg-mono" x="536" y="197" text-anchor="middle">oldest=102</text>
+<path class="dg-edge" d="M592 64 V154" marker-end="url(#fd5a)"/>
+<text class="dg-tiny" x="592" y="214" text-anchor="middle">103 a 114</text>
+<path class="dg-feedback" d="M592 200 V160"/>
+<path class="dg-edge" d="M652 64 V154" stroke-dasharray="4 4"/>
+<text class="dg-tiny" x="652" y="182" text-anchor="middle">114 otra vez:</text>
+<text class="dg-tiny" x="652" y="197" text-anchor="middle">se descarta</text>
+<path class="dg-edge" d="M720 64 V154" marker-end="url(#fd5a)"/>
+<text class="dg-tiny dg-mono" x="720" y="182" text-anchor="middle">115</text>
+<text class="dg-tiny" x="720" y="197" text-anchor="middle">en vivo</text>
+<text class="dg-tiny" x="90" y="240" text-anchor="start">El cliente guarda el último ts de cada canal; el ts es único por canal, así que un repetido se reconoce y se descarta.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura D.5.</b> El cliente guarda el último <code>ts</code> de cada canal. Al volver, pide la historia desde ahí y descarta lo que ya tiene; el <code>ts</code> único por canal hace que el repetido se reconozca. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>El WebSocket no garantiza nada entre una conexión y la siguiente, igual que en <a href="m29-whatsapp.html#offline">M29</a>: la garantía es que el mensaje está guardado y que el cliente sabe desde dónde pedir. Al reconectar (con backoff y jitter, <a href="m29-whatsapp.html#tormenta">M29</a>), el cliente abre el socket nuevo <b>primero</b> y después pide la historia de cada canal visible desde su último <code>ts</code>; así no queda un hueco entre la consulta y la suscripción, y lo que llegue por las dos vías se descarta por <code>ts</code>. La API de Slack trae ese parámetro: <span class="badge badge--doc">Documentado</span> <code>conversations.history</code> acepta <code>oldest</code> y pagina con cursor (como en <a href="m02-apis.html#paginacion-cursor">M02</a>).</p>
+
+<pre data-lang="http"><code>GET /api/conversations.history?channel=C024BE91L&amp;oldest=1760627400.000200&amp;limit=200 HTTP/1.1
+Authorization: Bearer xoxp-...</code></pre>
+
+<p>El <span class="no-autolink">arranque en frío</span> del cliente era el otro problema. El cliente original pedía al conectarse un snapshot de todo el workspace: canales, personas y bots. En equipos grandes eso se volvió lento y caro, y cada reconexión masiva lo multiplicaba. Slack lo resolvió con <b>Flannel</b>, una caché de aplicación desplegada en sus PoPs <span class="badge badge--doc">Documentado</span>: el cliente arranca con lo mínimo y pide personas y canales a medida que los necesita, y Flannel se adelanta empujando lo que va a hacer falta (el perfil de alguien mencionado, antes que el mensaje). Slack informó un arranque 7 veces más chico en un equipo de 1 500 personas y 44 veces más chico en uno de 32 000. Es la caché en el borde de <a href="m28-cloudflare.html#cache">M28</a> aplicada a datos de la aplicación, no a archivos.</p>
+
+<h3 id="sol-presencia">Presencia</h3>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 200" role="img" aria-labelledby="fd6t fd6d">
+<title id="fd6t">Presencia: a todos o solo a quien mira</title>
+<desc id="fd6d">Un workspace de 200 000 personas con 100 000 conectadas y 10 cambios de presencia por persona al día genera unos 11.6 cambios por segundo. Mandar cada cambio a los 100 000 conectados son unos 1 160 000 mensajes por segundo, una barra cortada porque no entra. Mandarlo solo a unas 50 personas que tienen a esa persona en pantalla son unos 580 por segundo, una barra casi invisible. La diferencia es de 2 000 veces.</desc>
+
+<text class="dg-group" x="16" y="30" text-anchor="start">Mensajes de presencia por segundo en un workspace de 100 000 conectados</text>
+<text class="dg-small" x="16" y="66" text-anchor="start">A todos los conectados</text>
+<rect class="dg-warnbox" x="220" y="50" width="300" height="26" rx="4"/>
+<path class="dg-frame" d="M524 82 L534 44 M534 82 L544 44"/>
+<rect class="dg-warnbox" x="548" y="50" width="60" height="26" rx="4"/>
+<text class="dg-label" x="618" y="68" text-anchor="start">unos 1 160 000</text>
+<text class="dg-small" x="16" y="116" text-anchor="start">Solo a quien la tiene en pantalla</text>
+<rect class="dg-ok" x="220" y="100" width="3" height="26" rx="1"/>
+<text class="dg-label" x="232" y="118" text-anchor="start">unos 580</text>
+<text class="dg-tiny" x="16" y="160" text-anchor="start">Cuenta: 100 000 × 10 / 86 400 = 11.6 cambios por segundo; × 100 000 destinatarios, o × 50 suscriptores.</text>
+<text class="dg-tiny" x="16" y="180" text-anchor="start">Las barras no están a escala: la de arriba está cortada. La diferencia es de 2 000 veces.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura D.6.</b> Mandar cada cambio de presencia a todos los conectados del workspace contra mandarlo solo a quien tiene a esa persona en pantalla. Supuestos de la tabla de cuentas. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>La presencia de Slack vive en servidores en memoria (los Presence Servers) <span class="badge badge--doc">Documentado</span>, y no en la base: es un dato que caduca solo, como el registro de sesiones con TTL de <a href="m29-whatsapp.html#registro">M29</a>. Lo que la mantiene barata es el mismo principio que los cursores de <a href="m31-google-docs.html#presencia">M31</a>: el cliente se suscribe solo a la presencia de las personas que tiene en pantalla (la lista de mensajes directos, los autores visibles del canal abierto) y cambia la suscripción cuando cambia la pantalla. Con unas 50 suscripciones por persona, la figura D.6 pasa de más de un millón de mensajes por segundo a unos 580. "Está escribiendo" es todavía más efímero: se manda por el canal con un límite de uno cada pocos segundos y nunca se guarda. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<h3 id="sol-permisos">Permisos</h3>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 320" role="img" aria-labelledby="fd7t fd7d">
+<title id="fd7t">Permisos de un canal y sus archivos con tuplas</title>
+<desc id="fd7d">Ana y Beto, de Acme, y Carla, de Globex por Slack Connect, son miembros del canal proyecto. Una tupla da a los miembros del canal el permiso de ver el archivo diseño.pdf, y otra la lectura de los mensajes del canal. Abajo, las cuatro tuplas. Sacar a Beto borra una sola tupla y el archivo deja de verse para él sin tocar el archivo.</desc>
+<defs><marker id="fd7a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="24" width="170" height="48" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small dg-mono" x="105.0" y="44.0" text-anchor="middle">user:ana</text>
+<text class="dg-tiny" x="105.0" y="60.0" text-anchor="middle">Acme</text>
+<path class="dg-edge" d="M190 48 L306 112" marker-end="url(#fd7a)"/>
+<rect class="dg-layer" x="20" y="86" width="170" height="48" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small dg-mono" x="105.0" y="106.0" text-anchor="middle">user:beto</text>
+<text class="dg-tiny" x="105.0" y="122.0" text-anchor="middle">Acme</text>
+<path class="dg-edge" d="M190 110 L306 112" marker-end="url(#fd7a)"/>
+<rect class="dg-layer" x="20" y="148" width="170" height="48" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small dg-mono" x="105.0" y="168.0" text-anchor="middle">user:carla</text>
+<text class="dg-tiny" x="105.0" y="184.0" text-anchor="middle">Globex, Slack Connect</text>
+<path class="dg-edge" d="M190 172 L306 112" marker-end="url(#fd7a)"/>
+<rect class="dg-layer" x="310" y="88" width="190" height="48" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small dg-mono" x="405.0" y="108.0" text-anchor="middle">channel:proyecto</text>
+<text class="dg-tiny" x="405.0" y="124.0" text-anchor="middle">#member</text>
+<rect class="dg-layer" x="580" y="34" width="170" height="48" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small dg-mono" x="665.0" y="54.0" text-anchor="middle">file:diseño.pdf</text>
+<text class="dg-tiny" x="665.0" y="70.0" text-anchor="middle">#viewer</text>
+<rect class="dg-layer" x="580" y="142" width="170" height="48" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small dg-mono" x="665.0" y="162.0" text-anchor="middle">channel:proyecto</text>
+<text class="dg-tiny" x="665.0" y="178.0" text-anchor="middle">#reader (mensajes)</text>
+<path class="dg-edge" d="M500 104 L576 62" marker-end="url(#fd7a)"/>
+<path class="dg-edge" d="M500 120 L576 162" marker-end="url(#fd7a)"/>
+<rect class="dg-box" x="20" y="214" width="730" height="94" rx="8"/>
+<text class="dg-tiny dg-mono" x="34" y="236" text-anchor="start" style="white-space:pre">channel:proyecto#member@user:ana</text>
+<text class="dg-tiny dg-mono" x="34" y="256" text-anchor="start" style="white-space:pre">channel:proyecto#member@user:beto        &lt;- sacar a Beto borra solo esta</text>
+<text class="dg-tiny dg-mono" x="34" y="276" text-anchor="start" style="white-space:pre">channel:proyecto#member@user:carla</text>
+<text class="dg-tiny dg-mono" x="34" y="296" text-anchor="start" style="white-space:pre">file:diseño.pdf#viewer@channel:proyecto#member</text>
+</svg>
+  </div>
+  <figcaption><b>Figura D.7.</b> Permisos con tuplas al estilo de Zanzibar: las personas son miembros del canal y el archivo delega su permiso en los miembros del canal. Una persona de otra empresa entra con la misma tupla. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>Los permisos de un chat para equipos son relaciones, no roles: "puede ver este archivo quien pueda ver el canal donde se compartió". Es el ReBAC de <a href="m31-google-docs.html#permisos-tuplas">M31</a>, y el modelo de tuplas lo expresa sin copiar listas: entrar o salir de un canal cambia una tupla, y todo lo que cuelga del canal (mensajes, archivos, resultados de búsqueda) se recalcula solo. Los canales compartidos entre empresas no necesitan un caso especial: Carla, de Globex, es miembro del canal con la misma tupla que Ana; lo que cambia son las políticas de cada empresa (retención, quién puede invitar) que se evalúan además.</p>
+
+<p>El caso difícil es el del "new enemy" (<a href="m31-google-docs.html#permisos-new-enemy">M31</a>): Ana saca a Beto de un canal privado y enseguida escribe algo delicado. Si la lectura de Beto consulta una réplica de permisos atrasada, lo ve. Se cierra igual que en Docs: cada mensaje guarda el token de consistencia de los permisos del momento en que se escribió, y leerlo exige permisos al menos así de nuevos. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<h3 id="sol-archivos">Archivos</h3>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 444" role="img" aria-labelledby="fd8t fd8d">
+<title id="fd8t">Un archivo compartido en un canal</title>
+<desc id="fd8d">Ana pide a la API permiso para subir 40 MB y recibe una URL firmada de PUT que vence en 5 minutos; sube los bytes directo al almacén de objetos. Después lo comparte en el canal C, y la API escribe la tupla que da viewer a los miembros del canal. Cuando Beto lo abre, la API pregunta al servicio de permisos, que responde que sí por ser miembro de C, y le da una URL firmada de GET de 60 segundos para descargarlo directo del almacén.</desc>
+<defs><marker id="fd8-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fd8-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fd8-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fd8-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Cliente de Ana</text>
+<path class="dg-frame" d="M70.0 40 V434"/>
+<rect class="dg-box" x="165.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="227.5" y="29" text-anchor="middle" style="font-size:13.5px">API web</text>
+<path class="dg-frame" d="M227.5 40 V434"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Permisos</text>
+<path class="dg-frame" d="M385.0 40 V434"/>
+<rect class="dg-box" x="480.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="542.5" y="29" text-anchor="middle" style="font-size:13.5px">Objetos</text>
+<path class="dg-frame" d="M542.5 40 V434"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Cliente de Beto</text>
+<path class="dg-frame" d="M700.0 40 V434"/>
+<path class="dg-edge" d="M73.0 72 L222.5 72" marker-end="url(#fd8-a)"/>
+<rect x="76.75" y="55" width="144.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="66" text-anchor="middle">pedir subida (40 MB)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M224.5 106 L75.0 106" marker-end="url(#fd8-r)"/>
+<rect x="70.15" y="89" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="100" text-anchor="middle">URL firmada PUT, 5 min</text>
+<path class="dg-edge" d="M73.0 140 L537.5 140" marker-end="url(#fd8-a)"/>
+<rect x="247.45" y="123" width="117.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="306.25" y="134" text-anchor="middle">PUT de los bytes</text>
+<path class="dg-edge" d="M73.0 174 L222.5 174" marker-end="url(#fd8-a)"/>
+<rect x="60.25" y="157" width="177.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="168" text-anchor="middle">compartir F en el canal C</text>
+<rect x="237.5" y="194" width="279" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="247.5" y="210">tupla: file:F#viewer@channel:C#member</text>
+<path class="dg-edge" d="M697.0 242 L232.5 242" marker-end="url(#fd8-a)"/>
+<rect x="434.65" y="225" width="58.199999999999996" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="463.75" y="236" text-anchor="middle">abrir F</text>
+<path class="dg-edge" d="M230.5 276 L380.0 276" marker-end="url(#fd8-a)"/>
+<rect x="230.95" y="259" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="306.25" y="270" text-anchor="middle">¿beto es viewer de F?</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 310 L232.5 310" marker-end="url(#fd8-r)"/>
+<rect x="240.85" y="293" width="130.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="306.25" y="304" text-anchor="middle">sí, por el canal C</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M230.5 344 L695.0 344" marker-end="url(#fd8-r)"/>
+<rect x="388.45" y="327" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="463.75" y="338" text-anchor="middle">URL firmada GET, 60 s</text>
+<path class="dg-edge" d="M697.0 378 L547.5 378" marker-end="url(#fd8-a)"/>
+<rect x="605.35" y="361" width="31.799999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="621.25" y="372" text-anchor="middle">GET</text>
+</svg>
+  </div>
+  <figcaption><b>Figura D.8.</b> Los bytes nunca pasan por la API: subida y descarga van directo al almacén de objetos con URLs firmadas de vida corta, y el permiso se decide al emitir cada URL. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>Un archivo de 1 GB por la conexión de mensajes ocuparía al gateway durante minutos, el mismo motivo por el que WhatsApp manda las fotos por otro camino (<a href="m29-whatsapp.html#medios">M29</a>). La API solo emite <a href="m09-objetos.html#signed-urls">URLs firmadas</a> (<a href="m09-objetos.html#signed-urls">M09</a>): una de <code>PUT</code> para subir, que vence en minutos, y una de <code>GET</code> de 60 segundos cada vez que alguien abre el archivo, después de preguntar a permisos. Así, sacar a alguien del canal le corta el acceso a la siguiente URL, sin tener que mover el archivo. Los archivos grandes suben en partes (multipart, <a href="m09-objetos.html#multipart">M09</a>), y la clave del objeto no contiene el nombre ni el canal, para que una URL filtrada no diga nada. La retención borra el objeto con una regla de ciclo de vida cuando se borra el último mensaje que lo compartía.</p>
+
+<h3 id="sol-busqueda">Búsqueda</h3>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="fd9t fd9d">
+<title id="fd9t">La búsqueda filtra por permisos en la consulta</title>
+<desc id="fd9d">Ana busca deploy. El servicio de búsqueda pide al servicio de membresías la lista de canales que Ana puede leer, unos 300, y consulta los shards del índice de su workspace con esa lista como filtro. Los resultados se ordenan por relevancia y recencia. Abajo, los workers indexan los mensajes nuevos desde la cola de jobs, con unos segundos de retraso.</desc>
+<defs><marker id="fd9a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="60" width="110" height="50" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="75.0" y="81.0" text-anchor="middle">Ana</text>
+<text class="dg-tiny" x="75.0" y="97.0" text-anchor="middle">busca "deploy"</text>
+<rect class="dg-layer" x="190" y="60" width="150" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="265.0" y="81.0" text-anchor="middle">Servicio de</text>
+<text class="dg-tiny" x="265.0" y="97.0" text-anchor="middle">búsqueda</text>
+<rect class="dg-layer" x="190" y="168" width="150" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="265.0" y="189.0" text-anchor="middle">Membresías</text>
+<text class="dg-tiny" x="265.0" y="205.0" text-anchor="middle">canales de Ana: 300</text>
+<rect class="dg-layer" x="420" y="30" width="150" height="34" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="495.0" y="51.0" text-anchor="middle">shard 1 del workspace</text>
+<path class="dg-edge" d="M340 85 L416 47" marker-end="url(#fd9a)"/>
+<rect class="dg-layer" x="420" y="74" width="150" height="34" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="495.0" y="95.0" text-anchor="middle">shard 2 del workspace</text>
+<path class="dg-edge" d="M340 85 L416 91" marker-end="url(#fd9a)"/>
+<rect class="dg-layer" x="420" y="118" width="150" height="34" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="495.0" y="139.0" text-anchor="middle">shard 3 del workspace</text>
+<path class="dg-edge" d="M340 85 L416 135" marker-end="url(#fd9a)"/>
+<rect class="dg-layer" x="630" y="60" width="120" height="50" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="690.0" y="81.0" text-anchor="middle">Resultados</text>
+<text class="dg-tiny" x="690.0" y="97.0" text-anchor="middle">relevancia y fecha</text>
+<path class="dg-edge" d="M130 85 H186" marker-end="url(#fd9a)"/>
+<path class="dg-edge" d="M265 114 V164" marker-start="url(#fd9a)" marker-end="url(#fd9a)"/>
+<text class="dg-tiny dg-mono" x="272" y="145" text-anchor="start">channel_id IN (…)</text>
+<path class="dg-edge" d="M570 85 H626" marker-end="url(#fd9a)"/>
+<rect class="dg-layer" x="420" y="190" width="150" height="40" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-tiny" x="495.0" y="206.0" text-anchor="middle">Workers</text>
+<text class="dg-tiny" x="495.0" y="222.0" text-anchor="middle">desde la cola de jobs</text>
+<path class="dg-edge" d="M495 190 V164" marker-end="url(#fd9a)"/>
+<text class="dg-tiny" x="580" y="214" text-anchor="start">indexa en segundos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura D.9.</b> La búsqueda arma primero la lista de canales que la persona puede leer y la usa como filtro de la consulta; los workers indexan los mensajes nuevos desde la cola. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>El índice es un <a href="m30-twitter.html#busqueda">índice invertido</a> como el de Earlybird en M30, con una diferencia: en Twitter casi todo es público, y aquí cada resultado tiene que pasar por permisos. Se aplica en el servidor y en la consulta: el servicio de búsqueda pide los canales de la persona (cientos, no millones) y filtra por <code>channel_id</code> dentro de los shards del índice de su workspace. Filtrar en el cliente no es una frontera de seguridad, y un índice por persona copiaría cada mensaje tantas veces como lectores. Los mensajes llegan al índice por la cola de jobs, así que un mensaje recién mandado tarda unos segundos en aparecer en la búsqueda, aunque ya esté en el canal. Una edición o un borrado es otro job que actualiza el índice, y la retención borra en los dos lugares.</p>
+
+<h3 id="sol-jobs">Trabajo en segundo plano</h3>
+
+<p>Todo lo que no cabe en el tiempo de una request va a una cola: el push a los teléfonos de quienes no están conectados, la previsualización de enlaces, el indexado y los recordatorios. Slack contó en 2017 que su cola de jobs procesaba más de 1 400 millones de trabajos por día, con picos de 33 000 por segundo <span class="badge badge--doc">Documentado</span>. La primera versión encolaba directo en Redis; un incidente en el que la base se puso lenta acumuló trabajos hasta llenar la memoria de Redis, y entonces ni se podía encolar ni desencolar. La solución fue poner Kafka delante de Redis: un servicio sin estado (Kafkagate) escribe en Kafka, y otro (JQRelay) pasa los trabajos de Kafka a Redis al ritmo que los workers aguantan <span class="badge badge--doc">Documentado</span>. Es el log de <a href="m07-mensajeria.html#kafka">M07</a> usado como amortiguador: Kafka guarda en disco lo que Redis no puede guardar en memoria.</p>
+
+<p>El push lleva su propia regla, la de <a href="m29-whatsapp.html#push">M29</a>: avisa, pero no es la garantía de entrega. El texto que muestra el teléfono respeta los permisos del momento (si Beto salió del canal, no recibe el aviso) y se agrupa cuando un canal tiene muchos mensajes seguidos.</p>
+
+<h3 id="sol-fallas">Cuando algo se cae</h3>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="fd10t fd10d">
+<title id="fd10t">Cuando cae un Channel Server</title>
+<desc id="fd10d">A la izquierda, un anillo de hash consistente con cuatro Channel Servers; el tercero cae y sus canales pasan al siguiente del anillo. A la derecha, los cuatro pasos: el Channel Server deja de responder; el CHARM lo saca del anillo y sus canales pasan al siguiente; los gateways se vuelven a suscribir con el dueño nuevo; los clientes piden la historia desde su último ts para cubrir el hueco.</desc>
+<defs><marker id="fd10a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<circle cx="120" cy="125" r="80" class="dg-frame" fill="none"/>
+<rect class="dg-box" x="90" y="31" width="60" height="28" rx="6"/>
+<rect class="dg-layer" x="90" y="31" width="60" height="28" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="120.0" y="50.0" text-anchor="middle">CS1</text>
+<rect class="dg-box" x="170" y="111" width="60" height="28" rx="6"/>
+<rect class="dg-layer" x="170" y="111" width="60" height="28" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="200.0" y="130.0" text-anchor="middle">CS2</text>
+<rect class="dg-box" x="90" y="191" width="60" height="28" rx="6"/>
+<rect class="dg-bad" x="90" y="191" width="60" height="28" rx="6"/>
+<text class="dg-tiny" x="120.0" y="210.0" text-anchor="middle">CS3</text>
+<rect class="dg-box" x="10" y="111" width="60" height="28" rx="6"/>
+<rect class="dg-layer" x="10" y="111" width="60" height="28" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="40.0" y="130.0" text-anchor="middle">CS4</text>
+<text class="dg-tiny" x="120" y="236" text-anchor="middle">CS3 cae: sus canales pasan a CS4</text>
+<path class="dg-edge" d="M88 201 Q50 189 36 141" marker-end="url(#fd10a)"/>
+<rect class="dg-warnbox" x="260" y="30" width="490" height="38" rx="8"/>
+<text class="dg-small" x="276" y="54" text-anchor="start">1. CS3 deja de responder a los chequeos de salud.</text>
+<rect class="dg-box" x="260" y="80" width="490" height="38" rx="8"/>
+<text class="dg-small" x="276" y="104" text-anchor="start">2. El CHARM lo saca del anillo: sus canales pasan al siguiente servidor.</text>
+<rect class="dg-box" x="260" y="130" width="490" height="38" rx="8"/>
+<text class="dg-small" x="276" y="154" text-anchor="start">3. Los gateways se vuelven a suscribir a esos canales con el dueño nuevo.</text>
+<rect class="dg-box" x="260" y="180" width="490" height="38" rx="8"/>
+<text class="dg-small" x="276" y="204" text-anchor="start">4. Los clientes piden la historia desde su último ts y cubren el hueco.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura D.10.</b> La caída de un Channel Server: el anillo pasa sus canales al siguiente, los gateways se vuelven a suscribir y los clientes cubren el hueco con la historia. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Qué falla</th><th>Qué se nota</th><th>Qué lo contiene</th></tr></thead>
+    <tbody>
+<tr><td>Un gateway</td><td>Sus conexiones se cortan</td><td>Backoff con jitter y control de admisión (<a href="m29-whatsapp.html#tormenta">M29</a>); al reconectar, la historia desde el último <code>ts</code>; para desplegar, draining (<a href="m29-whatsapp.html#drenaje">M29</a>)</td></tr>
+<tr><td>Un Channel Server</td><td>Unos segundos sin entregas en vivo en sus canales</td><td>El CHARM pasa sus canales al siguiente del anillo; nada se pierde porque la base ya tenía los mensajes</td></tr>
+<tr><td>Dos dueños del mismo canal</td><td>Riesgo de dos órdenes distintos</td><td>El escritor real es el shard del canal: la clave primaria <code>(channel_id, ts)</code> rechaza el duplicado, como <code>(doc_id, rev)</code> en <a href="m31-google-docs.html#servidor">M31</a></td></tr>
+<tr><td>Un shard de la base</td><td>No se puede escribir en sus canales</td><td>Réplica que asume como primaria; los clientes reciben 503 y reintentan con el mismo <code>client_msg_id</code></td></tr>
+<tr><td>La cola de jobs</td><td>Push y búsqueda atrasados</td><td>Kafka absorbe el atraso; los mensajes siguen entregándose en vivo porque ese camino no pasa por la cola</td></tr>
+<tr><td>Una región entera</td><td>Sus gateways caen</td><td>Los clientes reconectan a otra región por DNS o anycast (<a href="m28-cloudflare.html#anycast">M28</a>); la base y los Channel Servers no dependen de esa región</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>El patrón que se repite en la tabla es el de toda la solución: el camino en vivo puede fallar porque no es la fuente de verdad. Lo que se confirma está en la base, con un identificador único por canal, y el cliente sabe pedir lo que le falta.</p>
+
+  </div>
+</details>
+
+<h2 id="repaso"><span class="sec-num">D.4</span>Qué repasar según tus errores</h2>
+
+<p>Si fallaste varias de un bloque del examen, o una parte del diseño te costó, vuelve a su módulo antes de seguir.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Si fallaste en…</th><th>Repasa</th></tr></thead>
+    <tbody>
+<tr><td>Idempotency keys, ledger, webhooks perdidos o lentos</td><td><a href="m27-pagos-stripe.html">M27 · Pagos tipo Stripe</a></td></tr>
+<tr><td>Caché por niveles, caché en el borde, Durable Objects, zero trust</td><td><a href="m28-cloudflare.html">M28 · Cloudflare</a></td></tr>
+<tr><td>Conexiones y gateways, tormenta de reconexión, msg_id, mensajes pendientes</td><td><a href="m29-whatsapp.html">M29 · WhatsApp</a></td></tr>
+<tr><td>Fan-out, Snowflake, búsqueda, contadores</td><td><a href="m30-twitter.html">M30 · Twitter/X</a></td></tr>
+<tr><td>Presencia, new enemy, tuplas de Zanzibar, dueño único de un documento</td><td><a href="m31-google-docs.html">M31 · Google Docs</a></td></tr>
+<tr><td>URLs firmadas y subida en partes</td><td><a href="m09-objetos.html">M09 · Objetos y signed URLs</a></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Con esto cierras la Fase&nbsp;2 de los casos de estudio. Pagos, borde, mensajería, redes sociales y colaboración tienen el mismo esqueleto: una fuente de verdad con identificadores únicos, caminos rápidos que pueden fallar porque se reconstruyen desde ella, y cuentas a mano que dicen dónde está el problema antes de dibujar la primera caja.</p>
+
+<div data-checkpoint="cpd"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/cpd.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+</body>
+</html>

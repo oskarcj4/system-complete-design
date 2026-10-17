@@ -1,0 +1,1203 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M43. Datos, eventos y features</title>
+<meta name="description" content="Qué se registra y cómo viaja: impresiones e interacciones, la matriz usuario-ítem dispersa, los negativos, las features, el feature store, el training-serving skew, las fugas del futuro, los sesgos de los clics y la privacidad.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m43">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Datos, eventos y features</h1>
+        <p class="lead">Un recomendador es tan bueno como su registro de lo que la gente vio y no tocó. Este módulo abre las piezas de abajo del embudo: qué eventos se registran, cómo viajan, cómo se vuelven una matriz, negativos y features, y las trampas que hacen que un modelo brille offline y falle en producción.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M43</dd></div>
+          <div><dt>Parte</dt><dd>VI. ML System Design</dd></div>
+          <div><dt>Duración</dt><dd>120 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M42, M07</dd></div>
+          <div><dt>Estado</dt><dd data-status="m43">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Diseñar el registro de impresiones e interacciones de un recomendador, con las claves que permiten unirlos y deduplicarlos.</li>
+    <li>Calcular cuánto ocupa la matriz usuario-ítem y explicar por qué se guarda dispersa.</li>
+    <li>Decidir qué cuenta como negativo y cómo se muestrean negativos del catálogo.</li>
+    <li>Explicar qué es un feature store y cómo evita que el entrenamiento y el serving calculen distinto.</li>
+    <li>Detectar una fuga del futuro y armar un point-in-time join.</li>
+    <li>Reconocer el sesgo de posición, el de popularidad y el de selección en los datos de clics.</li>
+  </ul>
+</section>
+
+<p>El <a href="m42-ml-system-design.html#design-doc">design doc de M42</a> dejó una advertencia en el paso 3: los equipos descubren después de entrenar que no se registraban las impresiones, o que una compra no tiene el id de la recomendación que la produjo. Este módulo abre las piezas de abajo del embudo, el registro de impresiones y el log de eventos (piezas 7 y 8 de la <a href="m42-ml-system-design.html#recomendador">Lámina 42.A</a>), y sigue con lo que se construye encima: la matriz usuario-ítem, los negativos, las features y las trampas que hacen que un modelo funcione en el notebook y no en producción.</p>
+
+<h2 id="eventos"><span class="sec-num">43.1</span>Qué se registra: impresiones, clics, tiempo y compras</h2>
+
+<p>Un recomendador aprende de dos cosas: qué se mostró y qué pasó después. La segunda (clics, compras, tiempo visto) casi todos los productos ya la registran, porque la piden los tableros de negocio. La primera, la <dfn data-term="impresion">impresión</dfn>, se suele olvidar, y sin ella no hay manera de saber qué se mostró y no se tocó. Un clic sin su impresión es un positivo sin contexto: no sabes en qué posición estaba, qué otros ítems competían con él ni qué modelo lo puso ahí.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un vendedor que anota solo las ventas no sabe qué productos mostró y nadie quiso. Si anota también lo que puso en la vidriera, cada día, sabe qué atrajo y qué no, y en qué lugar de la vidriera estaba.</p>
+</aside>
+
+<p>Estas son las dos tablas, en el formato del curso. Lo que las une es el <code>request_id</code>: la API del feed genera uno por request, lo registra con cada impresión y lo manda a la app, que lo adjunta a cada clic y cada compra que salgan de esa lista.</p>
+
+<figure class="schema">
+  <figcaption class="schema-head">
+    <code class="schema-name">impressions</code>
+    <span class="schema-chip">Parquet en el data lake</span>
+    <span class="schema-chip">Partición: <b>fecha y hora</b></span>
+    <span class="badge badge--ref">Diseño de referencia</span>
+  </figcaption>
+  <div class="table-wrap">
+    <table class="t t--schema">
+      <thead><tr><th>Campo</th><th>Tipo</th><th>Restricciones</th><th>Para qué</th></tr></thead>
+      <tbody>
+        <tr><td><code>event_id</code><span class="key">PK</span></td><td>uuid</td><td>Lo genera quien registra; único</td><td>Descartar duplicados cuando la app reintenta</td></tr>
+        <tr><td><code>request_id</code></td><td>uuid</td><td>No nulo</td><td>Une la impresión con los clics y compras que produjo, y con las features que se usaron</td></tr>
+        <tr><td><code>user_id</code></td><td>bigint</td><td>No nulo</td><td>Quién la vio</td></tr>
+        <tr><td><code>item_id</code></td><td>bigint</td><td>No nulo</td><td>Qué se mostró</td></tr>
+        <tr><td><code>surface</code></td><td>text</td><td><code>feed</code>, <code>comprados_juntos</code>, <code>personas</code></td><td>Dónde se mostró: cada superficie tiene su CTR y su modelo</td></tr>
+        <tr><td><code>position</code></td><td>smallint</td><td>Desde 1</td><td>Corregir el sesgo de posición (43.9)</td></tr>
+        <tr><td><code>model_version</code></td><td>text</td><td>No nulo</td><td>Qué modelo decidió el orden</td></tr>
+        <tr><td><code>variant</code></td><td>text</td><td>Nulo si no hay experimento</td><td>Comparar las variantes de un A/B (M49)</td></tr>
+        <tr><td><code>served_at</code></td><td>timestamptz</td><td>Hora del servidor, en UTC</td><td>El instante de la impresión, para el point-in-time join (43.8)</td></tr>
+        <tr><td><code>viewed_ms</code></td><td>integer</td><td>Nulo si nunca estuvo en pantalla</td><td>Separar lo servido de lo visto (43.4)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</figure>
+
+<figure class="schema">
+  <figcaption class="schema-head">
+    <code class="schema-name">interactions</code>
+    <span class="schema-chip">Parquet en el data lake</span>
+    <span class="schema-chip">Partición: <b>fecha y hora</b></span>
+    <span class="badge badge--ref">Diseño de referencia</span>
+  </figcaption>
+  <div class="table-wrap">
+    <table class="t t--schema">
+      <thead><tr><th>Campo</th><th>Tipo</th><th>Restricciones</th><th>Para qué</th></tr></thead>
+      <tbody>
+        <tr><td><code>event_id</code><span class="key">PK</span></td><td>uuid</td><td>Lo genera la app; único</td><td>Descartar duplicados</td></tr>
+        <tr><td><code>request_id</code><span class="key key--fk">FK</span></td><td>uuid</td><td>Nulo si la acción no vino de una recomendación</td><td>Saber qué impresión la produjo</td></tr>
+        <tr><td><code>user_id</code>, <code>item_id</code></td><td>bigint</td><td>No nulos</td><td>Quién hizo qué con qué</td></tr>
+        <tr><td><code>type</code></td><td>text</td><td><code>click</code>, <code>cart</code>, <code>purchase</code>, <code>watch</code>, <code>hide</code></td><td>Las señales que pueden ser etiqueta (M42)</td></tr>
+        <tr><td><code>value</code></td><td>numeric</td><td>Segundos vistos, monto, cantidad</td><td>Etiquetas con peso: tiempo visto, monto comprado</td></tr>
+        <tr><td><code>occurred_at</code></td><td>timestamptz</td><td>Reloj de la app, corregido</td><td>Cuándo pasó, para la ventana de la etiqueta</td></tr>
+        <tr><td><code>received_at</code></td><td>timestamptz</td><td>Reloj del servidor</td><td>Detectar eventos que llegan tarde (la app estuvo sin red)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</figure>
+
+<p>Tres decisiones de esas tablas que se pagan caro si se toman mal:</p>
+
+<ul>
+  <li><b>El <code>event_id</code> lo genera quien registra, no el servidor que recibe.</b> Así un reintento de la app trae el mismo id y se puede descartar (43.2).</li>
+  <li><b>Servido no es visto.</b> La API sirve 10 ítems, pero quizás la persona cerró la app después de ver 3. <code>viewed_ms</code>, que manda la app, separa los dos (43.4).</li>
+  <li><b>Dos relojes.</b> <code>occurred_at</code> es cuándo pasó según la app, que puede estar mal o sin red horas; <code>received_at</code> es cuándo llegó. Un evento con 6 horas de diferencia no es un error: es un teléfono que estuvo en un avión.</li>
+</ul>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>"Visto" necesita una definición escrita. La industria publicitaria usa una: al menos el 50&#8239;% del anuncio en pantalla durante un segundo seguido, el estándar del <span class="no-autolink">Media Rating Council</span> para anuncios gráficos <span class="badge badge--doc">Documentado</span>. Un recomendador puede usar otra, pero tiene que ser una sola, aplicada igual en iOS, Android y la web; si cada cliente mide distinto, el modelo aprende las diferencias entre clientes.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> sin impresiones no hay negativos; el request_id une lo mostrado con lo que pasó, el event_id descarta duplicados y viewed_ms separa lo servido de lo visto.</p>
+
+<h2 id="log"><span class="sec-num">43.2</span>El viaje de un evento</h2>
+
+<p>Los eventos viajan por un camino que ya conoces del <a href="m07-mensajeria.html#kafka">M07</a>: una API que recibe, Kafka como log, y consumidores que procesan a su ritmo. La Lámina 43.A muestra las diez piezas.</p>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 356" role="img" aria-labelledby="f43at f43ad">
+<title id="f43at">Las 10 piezas del camino de un evento</title>
+<desc id="f43ad">Arriba, la app manda sus eventos a la API de eventos, que los publica en Kafka; un procesador de streams los deduplica, los valida y los enriquece. Debajo de la app, la API del feed publica en Kafka lo que sirvió. El registro de esquemas valida cada evento en la API de eventos. Del procesador salen el feature store online, para servir, y el data lake en Parquet; del data lake sale el feature store offline. El generador de ejemplos une las impresiones con lo que pasó después y con el valor de cada feature en ese instante, y produce los ejemplos de entrenamiento.</desc>
+<defs><marker id="f43aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="40" width="120" height="52" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="80.0" y="62.0" text-anchor="middle">App</text>
+<text class="dg-tiny" x="80.0" y="78.0" text-anchor="middle">SDK con buffer</text>
+<rect class="dg-layer" x="190" y="40" width="120" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="250.0" y="62.0" text-anchor="middle">API de eventos</text>
+<text class="dg-tiny" x="250.0" y="78.0" text-anchor="middle">POST /v1/events</text>
+<rect class="dg-layer" x="360" y="40" width="120" height="52" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="420.0" y="62.0" text-anchor="middle">Kafka</text>
+<text class="dg-tiny" x="420.0" y="78.0" text-anchor="middle">events.raw</text>
+<rect class="dg-layer" x="530" y="40" width="120" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="590.0" y="62.0" text-anchor="middle">Procesador</text>
+<text class="dg-tiny" x="590.0" y="78.0" text-anchor="middle">dedupe y validación</text>
+<rect class="dg-layer" x="20" y="150" width="120" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="80.0" y="172.0" text-anchor="middle">API del feed</text>
+<text class="dg-tiny" x="80.0" y="188.0" text-anchor="middle">lo que sirvió</text>
+<rect class="dg-box" x="190" y="150" width="120" height="52" rx="8"/>
+<text class="dg-small" x="250.0" y="172.0" text-anchor="middle">Registro de</text>
+<text class="dg-small" x="250.0" y="188.0" text-anchor="middle">esquemas</text>
+<rect class="dg-layer" x="530" y="150" width="120" height="52" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="590.0" y="172.0" text-anchor="middle">Feature store</text>
+<text class="dg-tiny" x="590.0" y="188.0" text-anchor="middle">online: Redis</text>
+<rect class="dg-layer" x="20" y="260" width="120" height="52" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="80.0" y="282.0" text-anchor="middle">Generador de</text>
+<text class="dg-tiny" x="80.0" y="298.0" text-anchor="middle">ejemplos</text>
+<rect class="dg-layer" x="360" y="260" width="120" height="52" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="420.0" y="282.0" text-anchor="middle">Data lake</text>
+<text class="dg-tiny" x="420.0" y="298.0" text-anchor="middle">Parquet por hora</text>
+<rect class="dg-layer" x="530" y="260" width="120" height="52" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="590.0" y="282.0" text-anchor="middle">Feature store</text>
+<text class="dg-tiny" x="590.0" y="298.0" text-anchor="middle">offline</text>
+<path class="dg-edge" d="M140 66 H188" marker-end="url(#f43aa)"/>
+<path class="dg-edge" d="M310 66 H358" marker-end="url(#f43aa)"/>
+<path class="dg-edge" d="M480 66 H528" marker-end="url(#f43aa)"/>
+<path class="dg-edge" d="M80 150 V118 H400 V94" marker-end="url(#f43aa)"/>
+<text class="dg-tiny" x="236" y="110" text-anchor="middle">impresiones servidas</text>
+<path class="dg-feedback" d="M250 150 V94"/>
+<text class="dg-tiny" x="256" y="132" text-anchor="start">valida</text>
+<path class="dg-edge" d="M610 92 V148" marker-end="url(#f43aa)"/>
+<path class="dg-edge" d="M560 92 V130 H440 V258" marker-end="url(#f43aa)"/>
+<path class="dg-edge" d="M480 286 H528" marker-end="url(#f43aa)"/>
+<path class="dg-edge" d="M360 286 H142" marker-end="url(#f43aa)"/>
+<text class="dg-tiny" x="250" y="279" text-anchor="middle">lo que pasó después</text>
+<path class="dg-edge" d="M590 312 V336 H80 V314" marker-end="url(#f43aa)"/>
+<text class="dg-tiny" x="335" y="330" text-anchor="middle">el valor de cada feature en el instante de cada impresión</text>
+<path class="dg-edge" d="M650 176 H690" marker-end="url(#f43aa)"/>
+<text class="dg-tiny" x="696" y="172" text-anchor="start">a los</text>
+<text class="dg-tiny" x="696" y="186" text-anchor="start">rankings</text>
+<path class="dg-feedback" d="M140 270 H160 V230 H690" marker-end="url(#f43aa)"/>
+<text class="dg-tiny" x="696" y="226" text-anchor="start">ejemplos a</text>
+<text class="dg-tiny" x="696" y="240" text-anchor="start">entrenar</text>
+<g class="pl-pin"><circle cx="140" cy="40" r="11"/><text x="140" y="44" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="140" cy="150" r="11"/><text x="140" y="154" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="310" cy="40" r="11"/><text x="310" y="44" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="310" cy="150" r="11"/><text x="310" y="154" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="480" cy="40" r="11"/><text x="480" y="44" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="650" cy="40" r="11"/><text x="650" y="44" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="650" cy="150" r="11"/><text x="650" y="154" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="480" cy="260" r="11"/><text x="480" y="264" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="650" cy="260" r="11"/><text x="650" y="264" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="140" cy="260" r="11"/><text x="140" y="264" text-anchor="middle">10</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 43.A.</b> El camino de un evento, desde que algo aparece en la pantalla hasta que se vuelve un ejemplo de entrenamiento. Las impresiones llegan por dos lados: lo que el servidor sirvió (pieza 2) y lo que la app vio en pantalla (pieza 1).</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>App con SDK de eventos</b><span>Registra lo que se vio en pantalla, los clics y las compras, con un id único por evento, y los manda en lotes. <a href="#log">43.2</a></span></li>
+  <li><b>API del feed</b><span>Registra lo que sirvió, con el <code>request_id</code>, la posición, el modelo y la variante. <a href="#eventos">43.1</a></span></li>
+  <li><b>API de eventos</b><span>Recibe los lotes de la app, valida el esquema y publica en Kafka. Responde rápido y no hace nada más. <a href="#log">43.2</a></span></li>
+  <li><b>Registro de esquemas</b><span>La forma acordada de cada tipo de evento y sus versiones, como en el <a href="m07-mensajeria.html#esquemas">M07</a>. Un evento que no cumple no entra.</span></li>
+  <li><b>Kafka</b><span>El log de eventos crudos, particionado por usuario para conservar el orden de cada persona. <a href="#log">43.2</a></span></li>
+  <li><b>Procesador de streams</b><span>Descarta duplicados por <code>event_id</code>, valida, agrega datos (el país, la categoría del ítem) y actualiza los contadores en tiempo real. <a href="#log">43.2</a></span></li>
+  <li><b>Feature store online</b><span>El último valor de cada feature, para leerlo en milisegundos al servir. <a href="#feature-store">43.6</a></span></li>
+  <li><b>Data lake</b><span>Todos los eventos limpios, en archivos Parquet por hora. Es la historia completa. <a href="#log">43.2</a></span></li>
+  <li><b>Feature store offline</b><span>La historia de cada feature con su fecha, para saber cuánto valía en cualquier instante. <a href="#feature-store">43.6</a></span></li>
+  <li><b>Generador de ejemplos</b><span>Une cada impresión con su etiqueta y con las features de ese instante, sin mirar el futuro. <a href="#fugas">43.8</a></span></li>
+</ol>
+
+<p>Las cuentas de Mercado Barrio dicen por qué esto es un sistema propio y no una tabla más. Solo el feed sirve 10 ítems por request:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Cuenta</th><th>Operación</th><th class="r">Resultado</th></tr></thead>
+    <tbody>
+      <tr><td>Impresiones servidas por día</td><td>400 000 000 requests × 10 ítems</td><td class="r">4 000 000 000</td></tr>
+      <tr><td>Por segundo, promedio</td><td>4 000 000 000 / 86 400 s</td><td class="r">46 296</td></tr>
+      <tr><td>Por segundo, pico</td><td>46 296 × 3</td><td class="r">138 889</td></tr>
+      <tr><td>Bytes por día, solo impresiones</td><td>4 000 000 000 × 200 B (supuesto)</td><td class="r">800 GB</td></tr>
+      <tr><td>Bytes por segundo en el pico</td><td>138 889 × 200 B</td><td class="r">27.8 MB/s</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Los 200 bytes por evento son un supuesto <span class="badge badge--ref">Diseño de referencia</span> para un formato binario como Avro o Protobuf (el <a href="m02-apis.html">M02</a> compara Protobuf con JSON byte por byte). Son cientos de terabytes por año solo de impresiones del feed, antes de clics, compras y las otras superficies. Por eso el data lake guarda Parquet, un formato por columnas que comprime bien y permite leer solo las columnas que hacen falta.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 546" role="img" aria-labelledby="f432t f432d">
+<title id="f432t">El viaje de un evento, con un reintento</title>
+<desc id="f432d">La app manda un lote de eventos a la API de eventos, que lo valida, lo publica en Kafka y responde 202, pero la respuesta se pierde. La app reintenta el mismo lote y Kafka recibe duplicados. El procesador de streams los descarta por event_id, actualiza los contadores del feature store online y escribe los eventos limpios en el data lake.</desc>
+<defs><marker id="f432-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f432-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f432-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f432-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="11.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">App</text>
+<path class="dg-frame" d="M70.0 40 V536"/>
+<rect class="dg-box" x="137.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="196.0" y="29" text-anchor="middle" style="font-size:13.5px">API de eventos</text>
+<path class="dg-frame" d="M196.0 40 V536"/>
+<rect class="dg-box" x="263.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="322.0" y="29" text-anchor="middle" style="font-size:13.5px">Kafka</text>
+<path class="dg-frame" d="M322.0 40 V536"/>
+<rect class="dg-box" x="389.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="448.0" y="29" text-anchor="middle" style="font-size:13.5px">Procesador</text>
+<path class="dg-frame" d="M448.0 40 V536"/>
+<rect class="dg-box" x="515.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="574.0" y="29" text-anchor="middle" style="font-size:13.5px">Feature store</text>
+<path class="dg-frame" d="M574.0 40 V536"/>
+<rect class="dg-box" x="641.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Data lake</text>
+<path class="dg-frame" d="M700.0 40 V536"/>
+<path class="dg-edge" d="M73.0 72 L191.0 72" marker-end="url(#f432-a)"/>
+<rect x="-38.0" y="55" width="342.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="133.0" y="66" text-anchor="middle">POST /v1/events: lote de 20, cada uno con event_id</text>
+<path class="dg-edge" d="M196.0 98 h40 v14 h-38" marker-end="url(#f432-a)"/>
+<text class="dg-tiny" x="242.0" y="109">valida el esquema</text>
+<path class="dg-edge" d="M199.0 140 L317.0 140" marker-end="url(#f432-a)"/>
+<rect x="180.4" y="123" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="259.0" y="134" text-anchor="middle">produce, clave user_id</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M319.0 174 L201.0 174" marker-end="url(#f432-r)"/>
+<rect x="243.1" y="157" width="31.799999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="259.0" y="168" text-anchor="middle">ack</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M193.0 208 L75.0 208" marker-end="url(#f432-r)"/>
+<rect x="1.6000000000000227" y="191" width="262.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="133.0" y="202" text-anchor="middle">202 Accepted: esta respuesta se pierde</text>
+<path d="M20 240 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="229" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="244" text-anchor="middle" style="fill:var(--fail)">se corta la red: la app no sabe si llegó y reintenta</text>
+<path class="dg-edge" d="M73.0 276 L191.0 276" marker-end="url(#f432-a)"/>
+<rect x="28.0" y="259" width="210.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="133.0" y="270" text-anchor="middle">POST /v1/events: el mismo lote</text>
+<path class="dg-edge" d="M199.0 310 L317.0 310" marker-end="url(#f432-a)"/>
+<rect x="180.4" y="293" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="259.0" y="304" text-anchor="middle">produce: 20 duplicados</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M325.0 344 L443.0 344" marker-end="url(#f432-q)"/>
+<rect x="332.8" y="327" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="338" text-anchor="middle">consume los 40</text>
+<path class="dg-edge" d="M448.0 370 h40 v14 h-38" marker-end="url(#f432-a)"/>
+<text class="dg-tiny" x="494.0" y="381">dedupe por event_id (ventana de 24 h)</text>
+<rect x="458.0" y="398" width="279" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="468.0" y="414">quedan 20; los repetidos se descartan</text>
+<path class="dg-edge" d="M451.0 446 L569.0 446" marker-end="url(#f432-a)"/>
+<rect x="412.6" y="429" width="196.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="511.0" y="440" text-anchor="middle">clics de la última hora += 1</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M451.0 480 L695.0 480" marker-end="url(#f432-q)"/>
+<rect x="508.6" y="463" width="130.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="574.0" y="474" text-anchor="middle">Parquet de la hora</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 43.1.</b> El viaje de un evento. La app reintenta porque no puede saber si su lote llegó, así que los duplicados no son un error raro: son el caso normal. El <code>event_id</code> que pone la app es lo que permite descartarlos, como la dedupe del <a href="m21-metering.html#dedupe">M21</a>.</figcaption>
+</figure>
+
+<p>La API de eventos responde 202 apenas Kafka confirma, y no hace nada más: no calcula features ni escribe en una base. Si hiciera más, una base lenta frenaría a la app. El procesador de streams es el que descarta duplicados, y lo hace con una ventana: guarda los <code>event_id</code> de las últimas 24 horas (en un almacén de estado, como RocksDB en Flink o Kafka Streams) y descarta los que ya vio. Es la misma idea que el <a href="m21-metering.html#dedupe">metering de M21</a>, donde un evento de uso duplicado era una factura de más; acá es un clic de más, que el modelo aprende como si fuera real.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Una ventana de dedupe más larga atrapa reintentos más tardíos (un teléfono que estuvo un día sin red) pero guarda más estado. Con 4 000 millones de impresiones por día y 16 bytes por id, un día de ids son 64 GB solo en el procesador. Lo habitual es una ventana corta en el stream y una dedupe completa en el lote nocturno, que lee el día entero.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> la app manda lotes con event_id, la API solo valida y publica, Kafka guarda el orden por usuario y el procesador descarta duplicados antes de alimentar el feature store y el data lake.</p>
+
+<h2 id="matriz"><span class="sec-num">43.3</span>La matriz usuario-ítem</h2>
+
+<p>Si juntas todas las interacciones, cada usuario con cada ítem, se forma una tabla: una fila por usuario, una columna por ítem y, en cada celda, cuánto interactuó esa persona con ese ítem. Es la <dfn data-term="matriz-dispersa">matriz usuario-ítem</dfn>, y casi todos los modelos clásicos de <a href="m44-modelos-clasicos.html#item-item">M44</a> trabajan sobre ella. Su rasgo principal es que está casi vacía.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: una matriz dispersa</p>
+  <p>Una matriz es una tabla de números con filas y columnas. Es <i>dispersa</i> cuando casi todas sus celdas valen cero. La <b>densidad</b> es la fracción de celdas con dato: celdas llenas dividido celdas totales. En Mercado Barrio, 50 000 000 usuarios registrados × 100 000 000 ítems son 5 × 10<sup>15</sup> celdas. Si en un año hay 10 000 millones de parejas usuario-ítem con alguna interacción fuerte (una compra, un carrito, un video visto más de la mitad; un supuesto <span class="badge badge--ref">Diseño de referencia</span>), la densidad es 10<sup>10</sup> / (5 × 10<sup>15</sup>) = 2 × 10<sup>−6</sup>, o 0.0002&#8239;%: una celda de cada 500 000. En Python: <code>densidad = interacciones / (usuarios * items)</code>.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f433t f433d">
+<title id="f433t">Una matriz dispersa y su forma CSR</title>
+<desc id="f433d">A la izquierda, una matriz de 12 usuarios por 12 ítems con 9 celdas llenas; las demás están vacías. A la derecha, la misma matriz en formato CSR: el arreglo data con los 9 valores, el arreglo indices con la columna de cada valor y el arreglo indptr con 13 posiciones, donde cada fila empieza y termina. La fila 3 ocupa las posiciones 3 y 4: columnas 0 y 11, valores 2 y 1.</desc>
+
+<text class="dg-tiny" x="34" y="26" text-anchor="start">ítems →</text>
+<text class="dg-tiny" x="14" y="142" text-anchor="middle" style="writing-mode: vertical-rl">usuarios</text>
+<rect class="dg-box" style="opacity: 0.35" x="34" y="40" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="51" y="40" width="15" height="15" rx="3"/>
+<rect class="dg-layer" x="68" y="40" width="15" height="15" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="75.5" y="52" text-anchor="middle">1</text>
+<rect class="dg-box" style="opacity: 0.35" x="85" y="40" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="102" y="40" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="119" y="40" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="136" y="40" width="15" height="15" rx="3"/>
+<rect class="dg-layer" x="153" y="40" width="15" height="15" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="160.5" y="52" text-anchor="middle">3</text>
+<rect class="dg-box" style="opacity: 0.35" x="170" y="40" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="187" y="40" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="204" y="40" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="221" y="40" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="34" y="57" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="51" y="57" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="68" y="57" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="85" y="57" width="15" height="15" rx="3"/>
+<rect class="dg-layer" x="102" y="57" width="15" height="15" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="109.5" y="69" text-anchor="middle">1</text>
+<rect class="dg-box" style="opacity: 0.35" x="119" y="57" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="136" y="57" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="153" y="57" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="170" y="57" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="187" y="57" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="204" y="57" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="221" y="57" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="34" y="74" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="51" y="74" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="68" y="74" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="85" y="74" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="102" y="74" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="119" y="74" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="136" y="74" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="153" y="74" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="170" y="74" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="187" y="74" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="204" y="74" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="221" y="74" width="15" height="15" rx="3"/>
+<rect class="dg-layer" x="34" y="91" width="15" height="15" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="41.5" y="103" text-anchor="middle">2</text>
+<rect class="dg-box" style="opacity: 0.35" x="51" y="91" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="68" y="91" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="85" y="91" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="102" y="91" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="119" y="91" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="136" y="91" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="153" y="91" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="170" y="91" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="187" y="91" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="204" y="91" width="15" height="15" rx="3"/>
+<rect class="dg-layer" x="221" y="91" width="15" height="15" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="228.5" y="103" text-anchor="middle">1</text>
+<rect class="dg-box" style="opacity: 0.35" x="34" y="108" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="51" y="108" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="68" y="108" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="85" y="108" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="102" y="108" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="119" y="108" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="136" y="108" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="153" y="108" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="170" y="108" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="187" y="108" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="204" y="108" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="221" y="108" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="34" y="125" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="51" y="125" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="68" y="125" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="85" y="125" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="102" y="125" width="15" height="15" rx="3"/>
+<rect class="dg-layer" x="119" y="125" width="15" height="15" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="126.5" y="137" text-anchor="middle">1</text>
+<rect class="dg-box" style="opacity: 0.35" x="136" y="125" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="153" y="125" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="170" y="125" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="187" y="125" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="204" y="125" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="221" y="125" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="34" y="142" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="51" y="142" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="68" y="142" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="85" y="142" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="102" y="142" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="119" y="142" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="136" y="142" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="153" y="142" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="170" y="142" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="187" y="142" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="204" y="142" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="221" y="142" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="34" y="159" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="51" y="159" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="68" y="159" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="85" y="159" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="102" y="159" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="119" y="159" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="136" y="159" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="153" y="159" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="170" y="159" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="187" y="159" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="204" y="159" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="221" y="159" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="34" y="176" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="51" y="176" width="15" height="15" rx="3"/>
+<rect class="dg-layer" x="68" y="176" width="15" height="15" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="75.5" y="188" text-anchor="middle">4</text>
+<rect class="dg-box" style="opacity: 0.35" x="85" y="176" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="102" y="176" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="119" y="176" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="136" y="176" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="153" y="176" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="170" y="176" width="15" height="15" rx="3"/>
+<rect class="dg-layer" x="187" y="176" width="15" height="15" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="194.5" y="188" text-anchor="middle">1</text>
+<rect class="dg-box" style="opacity: 0.35" x="204" y="176" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="221" y="176" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="34" y="193" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="51" y="193" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="68" y="193" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="85" y="193" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="102" y="193" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="119" y="193" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="136" y="193" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="153" y="193" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="170" y="193" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="187" y="193" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="204" y="193" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="221" y="193" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="34" y="210" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="51" y="210" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="68" y="210" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="85" y="210" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="102" y="210" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="119" y="210" width="15" height="15" rx="3"/>
+<rect class="dg-layer" x="136" y="210" width="15" height="15" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="143.5" y="222" text-anchor="middle">2</text>
+<rect class="dg-box" style="opacity: 0.35" x="153" y="210" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="170" y="210" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="187" y="210" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="204" y="210" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="221" y="210" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="34" y="227" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="51" y="227" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="68" y="227" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="85" y="227" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="102" y="227" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="119" y="227" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="136" y="227" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="153" y="227" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="170" y="227" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="187" y="227" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="204" y="227" width="15" height="15" rx="3"/>
+<rect class="dg-box" style="opacity: 0.35" x="221" y="227" width="15" height="15" rx="3"/>
+<text class="dg-tiny" x="136" y="264" text-anchor="middle">9 de 144 celdas tienen dato: 6.25 %</text>
+<text class="dg-tiny" x="28" y="103" text-anchor="end">3</text>
+<text class="dg-group" x="290" y="30" text-anchor="start">La misma matriz en CSR: solo lo que tiene dato</text>
+<text class="dg-small" x="290" y="72" text-anchor="start" style="font-family: var(--f-mono)">data</text>
+<rect class="dg-box" x="360" y="56" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="373.5" y="72" text-anchor="middle">1</text>
+<text class="dg-tiny" x="373.5" y="92" text-anchor="middle" style="opacity: 0.6">0</text>
+<rect class="dg-box" x="389" y="56" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="402.5" y="72" text-anchor="middle">3</text>
+<text class="dg-tiny" x="402.5" y="92" text-anchor="middle" style="opacity: 0.6">1</text>
+<rect class="dg-box" x="418" y="56" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="431.5" y="72" text-anchor="middle">1</text>
+<text class="dg-tiny" x="431.5" y="92" text-anchor="middle" style="opacity: 0.6">2</text>
+<rect class="dg-layer" x="447" y="56" width="27" height="24" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="460.5" y="72" text-anchor="middle">2</text>
+<text class="dg-tiny" x="460.5" y="92" text-anchor="middle" style="opacity: 0.6">3</text>
+<rect class="dg-layer" x="476" y="56" width="27" height="24" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="489.5" y="72" text-anchor="middle">1</text>
+<text class="dg-tiny" x="489.5" y="92" text-anchor="middle" style="opacity: 0.6">4</text>
+<rect class="dg-box" x="505" y="56" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="518.5" y="72" text-anchor="middle">1</text>
+<text class="dg-tiny" x="518.5" y="92" text-anchor="middle" style="opacity: 0.6">5</text>
+<rect class="dg-box" x="534" y="56" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="547.5" y="72" text-anchor="middle">4</text>
+<text class="dg-tiny" x="547.5" y="92" text-anchor="middle" style="opacity: 0.6">6</text>
+<rect class="dg-box" x="563" y="56" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="576.5" y="72" text-anchor="middle">1</text>
+<text class="dg-tiny" x="576.5" y="92" text-anchor="middle" style="opacity: 0.6">7</text>
+<rect class="dg-box" x="592" y="56" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="605.5" y="72" text-anchor="middle">2</text>
+<text class="dg-tiny" x="605.5" y="92" text-anchor="middle" style="opacity: 0.6">8</text>
+<text class="dg-small" x="290" y="132" text-anchor="start" style="font-family: var(--f-mono)">indices</text>
+<rect class="dg-box" x="360" y="116" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="373.5" y="132" text-anchor="middle">2</text>
+<text class="dg-tiny" x="373.5" y="152" text-anchor="middle" style="opacity: 0.6">0</text>
+<rect class="dg-box" x="389" y="116" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="402.5" y="132" text-anchor="middle">7</text>
+<text class="dg-tiny" x="402.5" y="152" text-anchor="middle" style="opacity: 0.6">1</text>
+<rect class="dg-box" x="418" y="116" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="431.5" y="132" text-anchor="middle">4</text>
+<text class="dg-tiny" x="431.5" y="152" text-anchor="middle" style="opacity: 0.6">2</text>
+<rect class="dg-layer" x="447" y="116" width="27" height="24" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="460.5" y="132" text-anchor="middle">0</text>
+<text class="dg-tiny" x="460.5" y="152" text-anchor="middle" style="opacity: 0.6">3</text>
+<rect class="dg-layer" x="476" y="116" width="27" height="24" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="489.5" y="132" text-anchor="middle">11</text>
+<text class="dg-tiny" x="489.5" y="152" text-anchor="middle" style="opacity: 0.6">4</text>
+<rect class="dg-box" x="505" y="116" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="518.5" y="132" text-anchor="middle">5</text>
+<text class="dg-tiny" x="518.5" y="152" text-anchor="middle" style="opacity: 0.6">5</text>
+<rect class="dg-box" x="534" y="116" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="547.5" y="132" text-anchor="middle">2</text>
+<text class="dg-tiny" x="547.5" y="152" text-anchor="middle" style="opacity: 0.6">6</text>
+<rect class="dg-box" x="563" y="116" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="576.5" y="132" text-anchor="middle">9</text>
+<text class="dg-tiny" x="576.5" y="152" text-anchor="middle" style="opacity: 0.6">7</text>
+<rect class="dg-box" x="592" y="116" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="605.5" y="132" text-anchor="middle">6</text>
+<text class="dg-tiny" x="605.5" y="152" text-anchor="middle" style="opacity: 0.6">8</text>
+<text class="dg-small" x="290" y="192" text-anchor="start" style="font-family: var(--f-mono)">indptr</text>
+<rect class="dg-box" x="360" y="176" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="373.5" y="192" text-anchor="middle">0</text>
+<text class="dg-tiny" x="373.5" y="212" text-anchor="middle" style="opacity: 0.6">0</text>
+<rect class="dg-box" x="389" y="176" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="402.5" y="192" text-anchor="middle">2</text>
+<text class="dg-tiny" x="402.5" y="212" text-anchor="middle" style="opacity: 0.6">1</text>
+<rect class="dg-box" x="418" y="176" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="431.5" y="192" text-anchor="middle">3</text>
+<text class="dg-tiny" x="431.5" y="212" text-anchor="middle" style="opacity: 0.6">2</text>
+<rect class="dg-layer" x="447" y="176" width="27" height="24" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="460.5" y="192" text-anchor="middle">3</text>
+<text class="dg-tiny" x="460.5" y="212" text-anchor="middle" style="opacity: 0.6">3</text>
+<rect class="dg-layer" x="476" y="176" width="27" height="24" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="489.5" y="192" text-anchor="middle">5</text>
+<text class="dg-tiny" x="489.5" y="212" text-anchor="middle" style="opacity: 0.6">4</text>
+<rect class="dg-box" x="505" y="176" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="518.5" y="192" text-anchor="middle">5</text>
+<text class="dg-tiny" x="518.5" y="212" text-anchor="middle" style="opacity: 0.6">5</text>
+<rect class="dg-box" x="534" y="176" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="547.5" y="192" text-anchor="middle">6</text>
+<text class="dg-tiny" x="547.5" y="212" text-anchor="middle" style="opacity: 0.6">6</text>
+<rect class="dg-box" x="563" y="176" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="576.5" y="192" text-anchor="middle">6</text>
+<text class="dg-tiny" x="576.5" y="212" text-anchor="middle" style="opacity: 0.6">7</text>
+<rect class="dg-box" x="592" y="176" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="605.5" y="192" text-anchor="middle">6</text>
+<text class="dg-tiny" x="605.5" y="212" text-anchor="middle" style="opacity: 0.6">8</text>
+<rect class="dg-box" x="621" y="176" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="634.5" y="192" text-anchor="middle">8</text>
+<text class="dg-tiny" x="634.5" y="212" text-anchor="middle" style="opacity: 0.6">9</text>
+<rect class="dg-box" x="650" y="176" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="663.5" y="192" text-anchor="middle">8</text>
+<text class="dg-tiny" x="663.5" y="212" text-anchor="middle" style="opacity: 0.6">10</text>
+<rect class="dg-box" x="679" y="176" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="692.5" y="192" text-anchor="middle">9</text>
+<text class="dg-tiny" x="692.5" y="212" text-anchor="middle" style="opacity: 0.6">11</text>
+<rect class="dg-box" x="708" y="176" width="27" height="24" rx="4"/>
+<text class="dg-tiny" x="721.5" y="192" text-anchor="middle">9</text>
+<text class="dg-tiny" x="721.5" y="212" text-anchor="middle" style="opacity: 0.6">12</text>
+<text class="dg-tiny" x="290" y="246" text-anchor="start">Fila 3: indptr[3] = 3 e indptr[4] = 5, así que sus valores están en las posiciones 3 y 4:</text>
+<text class="dg-tiny" x="290" y="262" text-anchor="start">columnas indices[3:5] = 0 y 11, valores data[3:5] = 2 y 1. Una fila vacía repite el número.</text>
+<text class="dg-tiny" x="290" y="284" text-anchor="start" style="font-weight: 600">Se guardan 9 + 9 + 13 = 31 números en lugar de 144.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 43.2.</b> Una matriz dispersa y su formato CSR (<i>compressed sparse row</i>). Los números de cada celda son cuántas veces el usuario interactuó con el ítem. En la escala de Mercado Barrio la diferencia no es de 144 a 31: es de 20 petabytes a unos 80 gigabytes.</figcaption>
+</figure>
+
+<p>Guardarla densa, con 4 bytes por celda, serían 5 × 10<sup>15</sup> × 4 B = 20 petabytes de casi puros ceros. En CSR, que guarda solo las celdas con dato, son 10<sup>10</sup> × (4 B del valor + 4 B de la columna) más 8 bytes por fila: unos 80 GB. Entra en la memoria de una máquina grande. Prueba la cuenta con otros tamaños:</p>
+
+<div data-calc="sparsity"></div>
+
+<pre data-lang="python"><code>import numpy as np
+from scipy.sparse import csr_matrix
+
+# Las 9 celdas de la figura 43.2: (usuario, ítem, interacciones)
+filas = np.array([0, 0, 1, 3, 3, 5, 8, 8, 10])
+cols = np.array([2, 7, 4, 0, 11, 5, 2, 9, 6])
+vals = np.array([1, 3, 1, 2, 1, 1, 4, 1, 2])
+
+m = csr_matrix((vals, (filas, cols)), shape=(12, 12))
+print(m.indptr)            # [0 2 3 3 5 5 6 6 6 8 8 9 9]
+print(m[3].indices)        # las columnas de la fila 3: [ 0 11]</code></pre>
+
+<p>Que esté tan vacía tiene una consecuencia más importante que el espacio: la mayoría de los usuarios tocó muy pocos ítems y la mayoría de los ítems fue tocada por muy pocos usuarios. El promedio son 200 interacciones por usuario y 100 por ítem, pero la distribución es muy desigual: unos pocos ítems populares concentran gran parte de las interacciones, y millones de ítems tienen una o ninguna. Esa cola larga es el problema del <span data-term="arranque-frio">arranque en frío</span> (<a href="m44-modelos-clasicos.html#frio">M44</a>) y el sesgo de popularidad (43.9).</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> la matriz usuario-ítem tiene una celda llena de cada medio millón; se guarda en CSR, que ocupa por celda llena y no por celda posible.</p>
+
+<h2 id="negativos"><span class="sec-num">43.4</span>Los negativos: lo que no se tocó</h2>
+
+<p>Un modelo que predice "¿lo va a tocar?" necesita ejemplos de las dos clases. Los positivos son fáciles: cada clic, cada compra. Los negativos son el problema, porque el feedback implícito (<a href="m42-ml-system-design.html#objetivo">M42</a>) no tiene un "no me gusta": tiene silencio, y el silencio es ambiguo.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Si nadie compra el pan de la estantería de abajo, puede ser que el pan no guste o que nadie se agache. Antes de sacarlo de la tienda, conviene saber cuántos lo vieron.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 366" role="img" aria-labelledby="f434t f434d">
+<title id="f434t">Negativo</title>
+<desc id="f434d">Ficha de Negativo. Qué entra: Las impresiones de una request, con cuánto tiempo estuvo cada ítem en pantalla, y lo que el usuario tocó. Qué hace: Marca como negativo lo que se vio y no se tocó. Lo servido que nunca llegó a la pantalla no es negativo: queda sin etiqueta. Qué sale: Ejemplos con etiqueta 0, uno por ítem visto y no tocado, más los negativos muestreados del catálogo si el modelo los necesita. Ejemplo: request r-9: la API sirve 10 ítems; la app ve 6 en pantalla el usuario toca el ítem de la posición 2 -&gt; 1 positivo, 5 negativos vistos, 4 sin etiqueta (nunca se vieron) muestreo: + 4 ítems al azar del catálogo, también con etiqueta 0 Qué falla sin él: Si todo lo no tocado es negativo, lo que estaba abajo y nadie vio enseña "esto no gusta", y el modelo castiga a los ítems por su posición. Dónde vive: En el generador de ejemplos (pieza 10 de la Lámina 43.A), que une impresiones, viewed_ms e interacciones por request_id.</desc>
+<defs><marker id="f434a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="118" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Las impresiones de una</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">request, con cuánto tiempo</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">estuvo cada ítem en pantalla,</text>
+<text class="dg-tiny" x="32" y="104" text-anchor="start">y lo que el usuario tocó.</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="118" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Marca como negativo lo que se</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">vio y no se tocó. Lo servido</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">que nunca llegó a la pantalla</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">no es negativo: queda sin</text>
+<text class="dg-tiny" x="291" y="120" text-anchor="start">etiqueta.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="118" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Ejemplos con etiqueta 0, uno</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">por ítem visto y no tocado,</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">más los negativos muestreados</text>
+<text class="dg-tiny" x="550" y="104" text-anchor="start">del catálogo si el modelo los</text>
+<text class="dg-tiny" x="550" y="120" text-anchor="start">necesita.</text>
+<path class="dg-edge" d="M234 75.0 H275" marker-end="url(#f434a)"/>
+<path class="dg-edge" d="M493 75.0 H534" marker-end="url(#f434a)"/>
+<rect class="dg-box" x="20" y="148" width="730" height="102" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="168" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="188" text-anchor="start" style="white-space:pre">request r-9: la API sirve 10 ítems; la app ve 6 en pantalla</text>
+<text class="dg-tiny dg-mono" x="32" y="204" text-anchor="start" style="white-space:pre">el usuario toca el ítem de la posición 2</text>
+<text class="dg-tiny dg-mono" x="32" y="220" text-anchor="start" style="white-space:pre">-&gt; 1 positivo, 5 negativos vistos, 4 sin etiqueta (nunca se vieron)</text>
+<text class="dg-tiny dg-mono" x="32" y="236" text-anchor="start" style="white-space:pre">muestreo: + 4 ítems al azar del catálogo, también con etiqueta 0</text>
+<rect class="dg-warnbox" x="20" y="264" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="284" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="304" text-anchor="start">Si todo lo no tocado es negativo, lo que estaba abajo</text>
+<text class="dg-tiny" x="32" y="320" text-anchor="start">y nadie vio enseña "esto no gusta", y el modelo</text>
+<text class="dg-tiny" x="32" y="336" text-anchor="start">castiga a los ítems por su posición.</text>
+<rect class="dg-box" x="393" y="264" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="284" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="304" text-anchor="start">En el generador de ejemplos (pieza 10 de la Lámina</text>
+<text class="dg-tiny" x="405" y="320" text-anchor="start">43.A), que une impresiones, viewed_ms e interacciones</text>
+<text class="dg-tiny" x="405" y="336" text-anchor="start">por request_id.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 43.3.</b> Qué cuenta como negativo. Mostrado y no tocado no prueba que no guste: puede que no lo haya visto o que ya lo tenga. El tiempo en pantalla separa lo visto de lo servido.</figcaption>
+</figure>
+
+<p>Una etiqueta con ventana trae otra trampa, que el <a href="m42-ml-system-design.html#objetivo">M42</a> dejó anotada. Si la etiqueta es "compró en los 7 días siguientes", una impresión de ayer todavía no tiene etiqueta: puede que compre mañana. Si el generador la toma como negativa, el modelo aprende negativos falsos, y siempre en los datos más recientes, que son los que mejor describen el presente.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f43vt f43vd">
+<title id="f43vt">La ventana de una etiqueta lenta</title>
+<desc id="f43vd">Una línea de tiempo de 14 días que termina hoy. La etiqueta es compró en los 7 días siguientes. Las impresiones de hace más de 7 días ya tienen su etiqueta, positiva o negativa. Las de los últimos 7 días todavía no: si se toman como negativas, son negativos falsos. Una línea marca hoy menos 7 días: solo lo anterior entra al entrenamiento.</desc>
+
+<line x1="40" x2="730" y1="120" y2="120" stroke="var(--label-2)" stroke-width="1.5"/>
+<line x1="40.0" x2="40.0" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="40.0" y="140" text-anchor="middle">−14</text>
+<line x1="89.3" x2="89.3" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="89.3" y="140" text-anchor="middle">−13</text>
+<line x1="138.6" x2="138.6" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="138.6" y="140" text-anchor="middle">−12</text>
+<line x1="187.9" x2="187.9" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="187.9" y="140" text-anchor="middle">−11</text>
+<line x1="237.1" x2="237.1" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="237.1" y="140" text-anchor="middle">−10</text>
+<line x1="286.4" x2="286.4" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="286.4" y="140" text-anchor="middle">−9</text>
+<line x1="335.7" x2="335.7" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="335.7" y="140" text-anchor="middle">−8</text>
+<line x1="385.0" x2="385.0" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<line x1="434.3" x2="434.3" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="434.3" y="140" text-anchor="middle">−6</text>
+<line x1="483.6" x2="483.6" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="483.6" y="140" text-anchor="middle">−5</text>
+<line x1="532.9" x2="532.9" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="532.9" y="140" text-anchor="middle">−4</text>
+<line x1="582.1" x2="582.1" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="582.1" y="140" text-anchor="middle">−3</text>
+<line x1="631.4" x2="631.4" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="631.4" y="140" text-anchor="middle">−2</text>
+<line x1="680.7" x2="680.7" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="680.7" y="140" text-anchor="middle">−1</text>
+<line x1="730.0" x2="730.0" y1="116" y2="124" stroke="var(--label-2)" stroke-width="1"/>
+<text class="dg-tiny" x="730.0" y="140" text-anchor="middle">hoy</text>
+<rect class="dg-layer" x="40" y="50" width="341.0" height="30" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="212.5" y="70" text-anchor="middle">la ventana ya cerró: etiqueta conocida</text>
+<rect class="dg-warnbox" x="389.0" y="50" width="341.0" height="30" rx="4"/>
+<text class="dg-tiny" x="557.5" y="70" text-anchor="middle">todavía puede comprar: sin etiqueta</text>
+<path d="M385.0 40 V170" stroke="var(--label)" stroke-width="2" stroke-dasharray="5 4"/>
+<text class="dg-small" x="385.0" y="186" text-anchor="middle" style="font-weight: 600">hoy − 7 días</text>
+<circle cx="113.9" cy="120" r="7" class="dg-ok"/>
+<circle cx="187.9" cy="120" r="7" class="dg-bad"/>
+<circle cx="261.8" cy="120" r="7" class="dg-bad"/>
+<circle cx="335.7" cy="120" r="7" class="dg-ok"/>
+<circle cx="458.9" cy="120" r="7" class="dg-box"/>
+<circle cx="532.9" cy="120" r="7" class="dg-box"/>
+<circle cx="606.8" cy="120" r="7" class="dg-box"/>
+<circle cx="680.7" cy="120" r="7" class="dg-box"/>
+<text class="dg-tiny" x="40" y="212" text-anchor="start">Verde: compró dentro de su ventana (positivo). Rojo: no compró en 7 días (negativo).</text>
+<text class="dg-tiny" x="40" y="230" text-anchor="start">Gris: impresiones recientes. Contarlas como "no compró" enseña negativos falsos justo en los datos más nuevos.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 43.4.</b> Una etiqueta que tarda 7 días en conocerse. La impresión del día −3 todavía puede terminar en compra; recién el día +4 se sabe. El generador de ejemplos solo usa impresiones cuya ventana ya cerró.</figcaption>
+</figure>
+
+<p>La regla es que una impresión entra al entrenamiento recién cuando su ventana cerró. Con 7 días, el modelo que se entrena hoy ve impresiones de hace una semana o más. Si hace falta algo más fresco, se entrena con una etiqueta rápida, como el clic o el carrito, y la lenta queda para otra cabeza del modelo (<a href="m46-ranking.html#multitarea-cadena">M46</a>). Lo mismo vale para la evaluación: medir un modelo con impresiones de ayer y la etiqueta a 7 días le cuenta como errores compras que todavía no pasaron.</p>
+
+<p>Además de los negativos vistos, muchos modelos (sobre todo los de recuperación, <a href="m45-recuperacion.html#entrenar-torres">M45</a>) necesitan negativos del resto del catálogo, que nadie vio. Se toman con <dfn data-term="muestreo-negativos">muestreo de negativos</dfn>, y la forma de muestrear cambia lo que aprende el modelo:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Muestreo</th><th>Cómo</th><th>Qué enseña</th><th>Qué falla</th></tr></thead>
+    <tbody>
+      <tr><td>Al azar</td><td>Ítems uniformes del catálogo</td><td>A separar lo relevante de lo absurdo</td><td>Es demasiado fácil: casi todo el catálogo es irrelevante, y el modelo no aprende a distinguir entre buenos candidatos</td></tr>
+      <tr><td>Por popularidad</td><td>Probabilidad proporcional a la popularidad elevada a 0.75</td><td>A no recomendar algo solo por popular</td><td>Si se exagera, castiga lo popular que sí era relevante</td></tr>
+      <tr><td>Difíciles</td><td>Mostrados y no tocados, o parecidos al positivo</td><td>A distinguir entre candidatos buenos, que es lo que hace el ranking</td><td>Algunos son positivos que la persona no llegó a tocar: ruido en la etiqueta</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>El exponente 0.75 viene de word2vec, que muestreaba las palabras negativas con su frecuencia elevada a 3/4 <span class="badge badge--doc">Documentado</span>: entre el azar puro (exponente 0) y la popularidad pura (exponente 1). En la práctica se mezclan los tres tipos y la mezcla se ajusta midiendo.</p>
+
+<pre data-lang="python"><code>import numpy as np
+
+rng = np.random.default_rng(7)
+popularidad = np.array([500, 120, 40, 8, 1])      # compras por ítem
+p = popularidad ** 0.75
+p = p / p.sum()                                    # probabilidades que suman 1
+negativos = rng.choice(len(popularidad), size=4, p=p)</code></pre>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> negativo es lo que se vio y no se tocó, no todo lo que no se tocó; los negativos del catálogo se muestrean, y la mezcla de fáciles y difíciles decide qué aprende el modelo.</p>
+
+<h2 id="features"><span class="sec-num">43.5</span>Features: qué sabe el modelo</h2>
+
+<p>Una <i>feature</i> es un número (o una categoría) que describe algo y que el modelo recibe como entrada: el precio del ítem, el país del usuario, cuántas veces miró esa categoría esta semana. El modelo no ve al usuario ni al ítem; ve sus features. Si una señal útil no está en las features, para el modelo no existe.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f435t f435d">
+<title id="f435t">Las familias de features</title>
+<desc id="f435d">Cuatro columnas: del usuario, del ítem, de la pareja usuario-ítem y del contexto. Cada una con tres ejemplos y con cada cuánto se actualiza: las del usuario y el ítem, en lote cada día y algunas en tiempo real; las de la pareja, al servir; las del contexto, en cada request.</desc>
+
+<rect class="dg-layer" x="20" y="16" width="172" height="268" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-group" x="34" y="42" text-anchor="start">Usuario</text>
+<rect class="dg-box" x="32" y="60" width="148" height="40" rx="6"/>
+<text class="dg-tiny" x="106" y="84" text-anchor="middle">país y edad de la cuenta</text>
+<rect class="dg-box" x="32" y="112" width="148" height="40" rx="6"/>
+<text class="dg-tiny" x="106" y="136" text-anchor="middle">categorías vistas en 7 días</text>
+<rect class="dg-box" x="32" y="164" width="148" height="40" rx="6"/>
+<text class="dg-tiny" x="106" y="188" text-anchor="middle">clics de la última hora</text>
+<text class="dg-tiny" x="34" y="234" text-anchor="start" style="font-weight: 600">Se actualiza:</text>
+<text class="dg-tiny" x="34" y="252" text-anchor="start">lote diario y streaming</text>
+<rect class="dg-layer" x="205" y="16" width="172" height="268" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-group" x="219" y="42" text-anchor="start">Ítem</text>
+<rect class="dg-box" x="217" y="60" width="148" height="40" rx="6"/>
+<text class="dg-tiny" x="291" y="84" text-anchor="middle">precio y categoría</text>
+<rect class="dg-box" x="217" y="112" width="148" height="40" rx="6"/>
+<text class="dg-tiny" x="291" y="136" text-anchor="middle">días desde que se publicó</text>
+<rect class="dg-box" x="217" y="164" width="148" height="40" rx="6"/>
+<text class="dg-tiny" x="291" y="188" text-anchor="middle">CTR de los últimos 7 días</text>
+<text class="dg-tiny" x="219" y="234" text-anchor="start" style="font-weight: 600">Se actualiza:</text>
+<text class="dg-tiny" x="219" y="252" text-anchor="start">lote diario y streaming</text>
+<rect class="dg-layer" x="390" y="16" width="172" height="268" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-group" x="404" y="42" text-anchor="start">Pareja usuario-ítem</text>
+<rect class="dg-box" x="402" y="60" width="148" height="40" rx="6"/>
+<text class="dg-tiny" x="476" y="84" text-anchor="middle">¿compró a este vendedor?</text>
+<rect class="dg-box" x="402" y="112" width="148" height="40" rx="6"/>
+<text class="dg-tiny" x="476" y="136" text-anchor="middle">similitud de embeddings</text>
+<rect class="dg-box" x="402" y="164" width="148" height="40" rx="6"/>
+<text class="dg-tiny" x="476" y="188" text-anchor="middle">veces que lo vio sin tocar</text>
+<text class="dg-tiny" x="404" y="234" text-anchor="start" style="font-weight: 600">Se actualiza:</text>
+<text class="dg-tiny" x="404" y="252" text-anchor="start">se calcula al servir</text>
+<rect class="dg-layer" x="575" y="16" width="172" height="268" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-group" x="589" y="42" text-anchor="start">Contexto</text>
+<rect class="dg-box" x="587" y="60" width="148" height="40" rx="6"/>
+<text class="dg-tiny" x="661" y="84" text-anchor="middle">hora local y día</text>
+<rect class="dg-box" x="587" y="112" width="148" height="40" rx="6"/>
+<text class="dg-tiny" x="661" y="136" text-anchor="middle">dispositivo y red</text>
+<rect class="dg-box" x="587" y="164" width="148" height="40" rx="6"/>
+<text class="dg-tiny" x="661" y="188" text-anchor="middle">superficie y posición</text>
+<text class="dg-tiny" x="589" y="234" text-anchor="start" style="font-weight: 600">Se actualiza:</text>
+<text class="dg-tiny" x="589" y="252" text-anchor="start">en cada request</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 43.5.</b> Cuatro familias de features. Las del usuario y del ítem se precalculan; las de la pareja dependen de los dos y se calculan al servir, para los 500 candidatos de cada request; las del contexto llegan con la request.</figcaption>
+</figure>
+
+<p>La familia de la pareja es la que más ayuda y la que más cuesta: no se puede precalcular para 5 × 10<sup>15</sup> parejas, así que se calcula al servir, solo para los candidatos de la request. El presupuesto de <a href="m42-ml-system-design.html#numeros">42.7</a> le dio 15 ms a leer features; con 500 candidatos, eso obliga a leer las del usuario una vez y las de los 500 ítems en una sola lectura en lote, no en 500 lecturas.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Si una feature deja de llegar (el job que la calcula falló anoche), el feature store devuelve el valor por defecto, el modelo recibe ceros y sigue respondiendo 200 con peores listas. Es el modo de falla silencioso del <a href="m22-operar-modelos.html#senales">M22</a>. Se vigila con la frescura de cada feature (¿cuándo se actualizó?) y con la fracción de valores por defecto en cada request, no solo con los errores.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el modelo solo ve features; las del usuario y el ítem se precalculan, las de la pareja se calculan al servir y las del contexto llegan con la request.</p>
+
+<h2 id="feature-store"><span class="sec-num">43.6</span>El feature store</h2>
+
+<p>Cada feature se usa dos veces: para entrenar, con millones de ejemplos del pasado, y para servir, con el valor de ahora en pocos milisegundos. Son dos accesos tan distintos que viven en almacenes distintos. El <dfn data-term="feature-store">feature store</dfn> es la pieza que los junta bajo una sola definición.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una receta escrita una sola vez, que usan la cocina del restaurante (rápida, un plato por vez) y la fábrica de congelados (lenta, miles por lote). Si cada una copia la receta a mano, tarde o temprano una le pone más sal.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f436t f436d">
+<title id="f436t">El feature store: una definición, dos almacenes</title>
+<desc id="f436d">En el medio, la definición de una feature, compras en 30 días, escrita una sola vez. A la izquierda, el almacén offline: Parquet con la historia completa y la fecha de cada valor, que lee el entrenamiento en minutos. A la derecha, el almacén online: un Redis con el último valor por usuario, que leen los rankings en 1 a 5 milisegundos. La definición se materializa en lote hacia el offline y en streaming hacia el online.</desc>
+<defs><marker id="f436a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="40" width="210" height="120" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="125.0" y="72.0" text-anchor="middle">Offline</text>
+<text class="dg-tiny" x="125.0" y="88.0" text-anchor="middle">Parquet en el data lake</text>
+<text class="dg-tiny" x="125.0" y="104.0" text-anchor="middle">toda la historia, con fecha</text>
+<text class="dg-tiny" x="125.0" y="120.0" text-anchor="middle">lo lee el entrenamiento</text>
+<text class="dg-tiny" x="125.0" y="136.0" text-anchor="middle">en minutos</text>
+<rect class="dg-box dg-box--em" x="280" y="40" width="210" height="120" rx="8"/>
+<text class="dg-group" x="385" y="62" text-anchor="middle">Una sola definición</text>
+<text class="dg-tiny" x="296" y="88" text-anchor="start" style="font-family: var(--f-mono)">compras_30d(usuario, t) =</text>
+<text class="dg-tiny" x="296" y="105" text-anchor="start" style="font-family: var(--f-mono)">  compras del usuario</text>
+<text class="dg-tiny" x="296" y="122" text-anchor="start" style="font-family: var(--f-mono)">  en [t − 30 días, t)</text>
+<text class="dg-tiny" x="296" y="139" text-anchor="start" style="font-family: var(--f-mono)">dueño, tipo y frescura</text>
+<rect class="dg-layer" x="540" y="40" width="210" height="120" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="645.0" y="72.0" text-anchor="middle">Online</text>
+<text class="dg-tiny" x="645.0" y="88.0" text-anchor="middle">Redis o un KV</text>
+<text class="dg-tiny" x="645.0" y="104.0" text-anchor="middle">solo el último valor</text>
+<text class="dg-tiny" x="645.0" y="120.0" text-anchor="middle">lo leen los rankings</text>
+<text class="dg-tiny" x="645.0" y="136.0" text-anchor="middle">en 1 a 5 ms</text>
+<path class="dg-edge" d="M280 100 H232" marker-end="url(#f436a)"/>
+<text class="dg-tiny" x="256" y="92" text-anchor="middle">lote</text>
+<path class="dg-edge" d="M490 100 H538" marker-end="url(#f436a)"/>
+<text class="dg-tiny" x="514" y="92" text-anchor="middle">stream</text>
+<rect class="dg-layer" x="20" y="210" width="210" height="48" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="125.0" y="238.0" text-anchor="middle">Entrenamiento</text>
+<rect class="dg-layer" x="540" y="210" width="210" height="48" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="645.0" y="238.0" text-anchor="middle">Rankings al servir</text>
+<path class="dg-edge" d="M125 160 V208" marker-end="url(#f436a)"/>
+<path class="dg-edge" d="M645 160 V208" marker-end="url(#f436a)"/>
+<text class="dg-tiny" x="385" y="230" text-anchor="middle">Si cada lado escribe su propio código,</text>
+<text class="dg-tiny" x="385" y="246" text-anchor="middle">tarde o temprano calculan distinto (43.7).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 43.6.</b> El feature store. Lo que importa no son los dos almacenes, que cualquier equipo ya tiene, sino la definición única en el medio: el entrenamiento y el serving leen el mismo cálculo.</figcaption>
+</figure>
+
+<p>Feast, un feature store de código abierto, tiene exactamente estas dos mitades: un almacén offline para generar datos de entrenamiento con valores correctos en cada instante, y uno online para servir el último valor con baja latencia <span class="badge badge--doc">Documentado</span>. Uber describió en 2017 su plataforma Michelangelo con un feature store compartido entre equipos, para que una feature calculada por un equipo la reutilizara otro <span class="badge badge--doc">Documentado</span>.</p>
+
+<pre data-lang="python"><code># Así se ve una definición en Feast (resumida): una vez, para los dos almacenes
+from datetime import timedelta
+from feast import Entity, FeatureView, Field
+from feast.types import Int64
+
+usuario = Entity(name="usuario", join_keys=["user_id"])
+
+compras_usuario = FeatureView(
+    name="compras_usuario",
+    entities=[usuario],
+    ttl=timedelta(days=30),
+    schema=[Field(name="compras_30d", dtype=Int64)],
+    source=fuente_compras,          # la tabla del data lake con event_timestamp
+)</code></pre>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el feature store es una definición con dos almacenes: offline con toda la historia para entrenar, online con el último valor para servir.</p>
+
+<h2 id="skew"><span class="sec-num">43.7</span>Training-serving skew</h2>
+
+<p>El <dfn data-term="training-serving-skew">training-serving skew</dfn> es la diferencia entre cómo se calcula una feature al entrenar y cómo se calcula al servir. El modelo aprendió una relación con los valores de un lado y la aplica a los valores del otro. No da errores: da peores predicciones, en silencio.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f437t f437d">
+<title id="f437t">Training-serving skew con una zona horaria</title>
+<desc id="f437d">Dos líneas de tiempo con los mismos instantes. Una usuaria de Buenos Aires, a UTC menos 3, compra el 31 de marzo a las 22:30 hora local, que es el 1 de abril a la 01:30 UTC. El 1 de abril a las 08:00 hora local se le muestra un ítem. El lote, que cuenta por fecha UTC, dice que compró hoy: 1. El servicio online, que cuenta por fecha local, dice 0. El modelo entrenó con 1 en esa situación y en producción ve 0.</desc>
+<defs><marker id="f437a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="20" y="38" text-anchor="start">Entrenamiento (lote)</text>
+<text class="dg-tiny" x="20" y="54" text-anchor="start">cuenta "compras de hoy" por fecha UTC</text>
+<line x1="20" x2="750" y1="84" y2="84" stroke="var(--label-2)" stroke-width="1.5"/>
+<rect class="dg-layer" x="240" y="68" width="510" height="32" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="246" y="116" text-anchor="start">el día empieza 31/3 21:00 local</text>
+<circle cx="300" cy="84" r="6" class="dg-ok"/>
+<circle cx="560" cy="84" r="6" class="dg-box"/>
+<rect class="dg-box dg-box--em" x="600" y="70" width="140" height="28" rx="6"/>
+<text class="dg-small" x="670" y="89" text-anchor="middle" style="font-family: var(--f-mono)">compras_hoy = 1</text>
+<text class="dg-group" x="20" y="148" text-anchor="start">Servicio (online)</text>
+<text class="dg-tiny" x="20" y="164" text-anchor="start">cuenta "compras de hoy" por fecha local</text>
+<line x1="20" x2="750" y1="194" y2="194" stroke="var(--label-2)" stroke-width="1.5"/>
+<rect class="dg-layer" x="330" y="178" width="420" height="32" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="336" y="226" text-anchor="start">el día empieza 1/4 00:00 local</text>
+<circle cx="300" cy="194" r="6" class="dg-ok"/>
+<circle cx="560" cy="194" r="6" class="dg-box"/>
+<rect class="dg-box dg-box--em" x="600" y="180" width="140" height="28" rx="6"/>
+<text class="dg-small" x="670" y="199" text-anchor="middle" style="font-family: var(--f-mono)">compras_hoy = 0</text>
+<text class="dg-tiny" x="300" y="252" text-anchor="middle">compra: 31/3 22:30 local = 1/4 01:30 UTC</text>
+<text class="dg-tiny" x="560" y="252" text-anchor="middle">impresión: 1/4 08:00 local</text>
+<path class="dg-feedback" d="M300 124 V186"/><path class="dg-feedback" d="M560 124 V186"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 43.7.</b> El mismo instante, dos valores. La banda marca qué cuenta cada lado como "hoy". Ninguno de los dos está mal por separado; el problema es que no son el mismo cálculo, y el modelo aprendió con uno y sirve con el otro.</figcaption>
+</figure>
+
+<p>El ejemplo de la figura parece rebuscado y es de los más comunes: un job en lote que corre en UTC y un servicio que usa la hora del usuario. Otras fuentes habituales: el lote limpia valores raros y el online no; el lote usa la versión corregida de un evento y el online la primera; una librería cambia de versión en un lado.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>La defensa más fuerte es no recalcular: registrar las features exactamente como se usaron al servir (un log de features, con el <code>request_id</code>) y entrenar con ese log. Las reglas de ML de Google lo dicen así: la mejor manera de entrenar como se sirve es guardar las features usadas al servir y llevarlas a un log para usarlas al entrenar <span class="badge badge--doc">Documentado</span>. Cuesta almacenamiento, y no sirve para una feature nueva, que todavía no tiene log; para esas queda el feature store con una sola definición.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> si el entrenamiento y el serving calculan una feature con código distinto, el modelo aprende con un valor y sirve con otro; se evita con una sola definición o con un log de las features servidas.</p>
+
+<h2 id="fugas"><span class="sec-num">43.8</span>Fugas del futuro</h2>
+
+<p>Una <dfn data-term="data-leakage">fuga del futuro</dfn> (<i>data leakage</i>) es usar al entrenar información que no existía en el momento de la predicción. Es la trampa más cara de los datos de recomendación, porque mejora la métrica offline: el modelo parece mejor cuanto más se equivoca.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un alumno que estudia con el examen corregido saca 10 en el simulacro. El día del examen real, sin las respuestas, saca menos que alguien que estudió normal, porque aprendió a confiar en algo que ya no tiene.</p>
+</aside>
+
+<p>La forma correcta de armar los ejemplos es el <dfn data-term="point-in-time-join">point-in-time join</dfn>: para cada impresión, el valor de cada feature en el instante de la impresión, el último anterior y nunca uno posterior.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f438t f438d">
+<title id="f438t">El point-in-time join</title>
+<desc id="f438d">Una línea de tiempo con los valores del CTR de un ítem: 2.0 % el 1 de marzo, 2.5 % el 8 y 3.1 % el 15. Una impresión ocurre el 10 de marzo. El valor correcto para esa impresión es 2.5 %, el último anterior. Usar 3.1 %, o el CTR del mes entero, es usar el futuro.</desc>
+<defs><marker id="f438a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<line x1="40" x2="740" y1="120" y2="120" stroke="var(--label-2)" stroke-width="1.5"/>
+<circle cx="80" cy="120" r="6" class="dg-box"/>
+<text class="dg-tiny" x="80" y="146" text-anchor="middle">1/3</text>
+<rect class="dg-box" x="36" y="60" width="88" height="30" rx="6"/>
+<text class="dg-small" x="80" y="80" text-anchor="middle">CTR 2.0 %</text>
+<path class="dg-feedback" d="M80 90 V114"/>
+<circle cx="300" cy="120" r="6" class="dg-ok"/>
+<text class="dg-tiny" x="300" y="146" text-anchor="middle">8/3</text>
+<rect class="dg-ok" x="256" y="60" width="88" height="30" rx="6"/>
+<text class="dg-small" x="300" y="80" text-anchor="middle">CTR 2.5 %</text>
+<path class="dg-feedback" d="M300 90 V114"/>
+<circle cx="560" cy="120" r="6" class="dg-bad"/>
+<text class="dg-tiny" x="560" y="146" text-anchor="middle">15/3</text>
+<rect class="dg-bad" x="516" y="60" width="88" height="30" rx="6"/>
+<text class="dg-small" x="560" y="80" text-anchor="middle">CTR 3.1 %</text>
+<path class="dg-feedback" d="M560 90 V114"/>
+<path d="M380 40 V200" stroke="var(--label)" stroke-width="2" stroke-dasharray="5 4"/>
+<text class="dg-small" x="380" y="30" text-anchor="middle" style="font-weight: 600">impresión: 10/3</text>
+<rect class="dg-layer" x="40" y="168" width="336" height="28" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="208" y="187" text-anchor="middle">se puede usar: lo anterior a la impresión</text>
+<rect class="dg-bad" x="384" y="168" width="356" height="28" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="562" y="187" text-anchor="middle">el futuro: no existía en ese instante</text>
+<text class="dg-small" x="380" y="230" text-anchor="middle">Valor correcto para la impresión: 2.5 %, el último antes del 10/3</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 43.8.</b> El point-in-time join: para cada impresión, el valor de cada feature en ese instante, nunca uno posterior. El error típico no es tomar el 3.1 % a propósito, sino calcular "el CTR del ítem" una vez con el mes entero y pegarlo en todas las impresiones del mes.</figcaption>
+</figure>
+
+<pre data-lang="python"><code>import pandas as pd
+
+# impresiones: item_id, ts.  ctr_items: item_id, ts, ctr (un valor por cada actualización)
+ejemplos = pd.merge_asof(
+    impresiones.sort_values("ts"),
+    ctr_items.sort_values("ts"),
+    on="ts", by="item_id",
+    direction="backward",          # el último valor anterior...
+    allow_exact_matches=False,     # ...y estrictamente anterior a la impresión
+)</code></pre>
+
+<p>El widget entrena el mismo modelo con dos pipelines sobre datos sintéticos: uno con el CTR del ítem calculado en el instante de cada impresión y otro con el CTR del mes entero, que incluye los clics posteriores y el de la propia impresión. Los dos se evalúan offline con su propia feature, y "en producción" con la única que existe al servir: la del pasado.</p>
+
+<div data-sim="leakage"></div>
+
+<p>Con una impresión por ítem y día, la fuga es enorme: cada ítem tiene pocas impresiones, así que su propio clic mueve mucho su CTR del mes, y el modelo aprende que esa feature casi adivina. Por eso le da el doble de peso que el pipeline honesto. En producción esa feature ya no adivina nada, y el modelo con fuga queda por debajo del honesto. Con 30 impresiones por día la fuga casi desaparece: pesa en los ítems con pocos datos, que son la mayoría del catálogo.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>La señal de una fuga es una métrica offline que mejora mucho con un cambio chico ("agregamos una feature y el AUC subió de 0.74 a 0.84") y un A/B que no mejora o empeora. Ante una mejora offline grande, la primera pregunta no es "qué bueno" sino "qué sabe este modelo que no debería saber".</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> cada feature de un ejemplo tiene que tener el valor de ese instante; una fuga infla la métrica offline y empeora el modelo en producción.</p>
+
+<h2 id="sesgos"><span class="sec-num">43.9</span>Los sesgos de los datos</h2>
+
+<p>Los clics no son una encuesta neutral: los produce el propio recomendador, que eligió qué mostrar y dónde. Eso deja cuatro sesgos en los datos.</p>
+
+<p>El más fuerte es el <dfn data-term="sesgo-posicion">sesgo de posición</dfn>: lo que está arriba recibe más clics por estar arriba. Joachims y sus colegas lo mostraron en 2005 con eye tracking sobre resultados de búsqueda: la gente hacía más clic en el primer resultado aun cuando los investigadores intercambiaban en secreto el primero y el segundo <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 210" role="img" aria-labelledby="f439t f439d">
+<title id="f439t">El clic como producto de mirar y de que atraiga</title>
+<desc id="f439d">Dos filas. El ítem A, en la posición 1, se mira siempre y atrae al 10 %: 1 por 10 % da un CTR de 10 %. El ítem B, en la posición 8, se mira el 27 % de las veces y atrae al 15 %: 0.27 por 15 % da 4.05 %. Mirando los clics, A parece mejor; dividiendo por la probabilidad de mirar, B atrae más.</desc>
+<defs><marker id="f439a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-tiny" x="20" y="30" text-anchor="start" style="font-weight: 600">Ítem y posición</text>
+<text class="dg-tiny" x="190" y="30" text-anchor="start" style="font-weight: 600">Probabilidad de mirar</text>
+<text class="dg-tiny" x="335" y="30" text-anchor="start" style="font-weight: 600">×</text>
+<text class="dg-tiny" x="360" y="30" text-anchor="start" style="font-weight: 600">Atractivo</text>
+<text class="dg-tiny" x="480" y="30" text-anchor="start" style="font-weight: 600">=</text>
+<text class="dg-tiny" x="505" y="30" text-anchor="start" style="font-weight: 600">CTR que ves</text>
+<text class="dg-tiny" x="640" y="30" text-anchor="start" style="font-weight: 600">CTR / mirar</text>
+<rect class="dg-layer" x="20" y="50" width="150" height="48" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="95.0" y="78.0" text-anchor="middle">A, posición 1</text>
+<rect class="dg-box" x="190" y="50" width="130" height="48" rx="8"/>
+<text class="dg-small" x="255.0" y="78.0" text-anchor="middle">1</text>
+<text class="dg-label" x="338" y="79" text-anchor="start">×</text>
+<rect class="dg-box" x="360" y="50" width="100" height="48" rx="8"/>
+<text class="dg-small" x="410.0" y="78.0" text-anchor="middle">10 %</text>
+<text class="dg-label" x="483" y="79" text-anchor="start">=</text>
+<rect class="dg-box dg-box--em" x="505" y="50" width="110" height="48" rx="8"/>
+<text class="dg-small" x="560.0" y="78.0" text-anchor="middle">10 %</text>
+<rect class="dg-ok" x="640" y="50" width="110" height="48" rx="8"/>
+<text class="dg-small" x="695.0" y="78.0" text-anchor="middle">10 %</text>
+<rect class="dg-layer" x="20" y="120" width="150" height="48" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="95.0" y="148.0" text-anchor="middle">B, posición 8</text>
+<rect class="dg-box" x="190" y="120" width="130" height="48" rx="8"/>
+<text class="dg-small" x="255.0" y="148.0" text-anchor="middle">0.27</text>
+<text class="dg-label" x="338" y="149" text-anchor="start">×</text>
+<rect class="dg-box" x="360" y="120" width="100" height="48" rx="8"/>
+<text class="dg-small" x="410.0" y="148.0" text-anchor="middle">15 %</text>
+<text class="dg-label" x="483" y="149" text-anchor="start">=</text>
+<rect class="dg-box dg-box--em" x="505" y="120" width="110" height="48" rx="8"/>
+<text class="dg-small" x="560.0" y="148.0" text-anchor="middle">4.05 %</text>
+<rect class="dg-ok" x="640" y="120" width="110" height="48" rx="8"/>
+<text class="dg-small" x="695.0" y="148.0" text-anchor="middle">15 %</text>
+<text class="dg-tiny" x="20" y="200" text-anchor="start">La probabilidad de mirar cada posición es un supuesto con la forma habitual, no una medición; se estima intercambiando posiciones.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 43.9.</b> El modelo de examen: hay clic si la persona mira la posición y además el ítem le atrae. Los clics que ves mezclan las dos cosas; para aprender el atractivo hay que separar la posición.</figcaption>
+</figure>
+
+<div data-sim="posbias"></div>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: la corrección por propensión</p>
+  <p>Si el clic es "mirar × que atraiga", el atractivo es el CTR dividido por la probabilidad de mirar la posición, que se llama la <i>propensión</i>. En palabras: un clic en la posición 8, donde casi nadie mira, vale más que uno en la posición 1. Con los números de la figura 43.9: 4.05&#8239;% / 0.27 = 15&#8239;%. En Python, al entrenar, cada ejemplo lleva un peso: <code>peso = 1 / propension[posicion]</code>. La curva se estima con experimentos que intercambian posiciones al azar en una fracción chica del tráfico; un error en la curva se multiplica en los pesos.</p>
+</aside>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Sesgo</th><th>Qué pasa</th><th>Cómo se ve en los datos</th><th>Qué se hace</th></tr></thead>
+    <tbody>
+      <tr><td>De posición</td><td>Lo de arriba se mira más</td><td>El CTR cae con la posición, aunque el ítem sea el mismo</td><td>Registrar la posición, pesar por propensión, o darla como feature y fijarla al servir</td></tr>
+      <tr><td>De popularidad</td><td>Lo popular se muestra más y junta más datos</td><td>Pocos ítems con millones de interacciones, millones con ninguna</td><td>Muestreo de negativos por popularidad, exploración (M47)</td></tr>
+      <tr><td>De selección</td><td>Solo hay reacciones a lo que se mostró</td><td>Lo que el modelo anterior nunca mostró no tiene datos</td><td>Una fracción chica de tráfico con exploración (M47)</td></tr>
+      <tr><td>De supervivencia</td><td>Solo quedan los usuarios que se quedaron</td><td>Los datos de los que se fueron el primer día son pocos</td><td>Mirar las cohortes nuevas por separado</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Medir la curva de posición cuesta: intercambiar posiciones al azar empeora la lista para los usuarios de ese tráfico. Se hace con una fracción chica (un 1&#8239;% es habitual como punto de partida) y con intercambios suaves, entre posiciones vecinas, que empeoran poco.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> los clics los produce el recomendador; la posición, la popularidad, lo que se eligió mostrar y quién se quedó dejan sesgos que hay que corregir o, al menos, conocer.</p>
+
+<h2 id="privacidad"><span class="sec-num">43.10</span>Privacidad y retención</h2>
+
+<p>Un log de todo lo que alguien miró es uno de los datos más sensibles de una empresa: dice qué busca, qué le preocupa y a qué hora no duerme. El <a href="m22-operar-modelos.html#datos">M22</a> ya planteó qué se guarda de las conversaciones con un modelo; acá las mismas preguntas se aplican a los eventos.</p>
+
+<ul>
+  <li><b>Qué no se guarda.</b> Algunas categorías no entran ni como feature: búsquedas de salud, de religión, de orientación sexual. Lo que no se guarda no se filtra, no se pide en un juicio y no lo aprende el modelo.</li>
+  <li><b>Retención por tipo.</b> Las impresiones crudas sirven unos meses (para entrenar y para auditar un A/B); los agregados, más. Cada tabla del data lake lleva su plazo, y un job borra las particiones vencidas.</li>
+  <li><b>Borrar a un usuario.</b> Borrar sus eventos y sus features es posible: el data lake está particionado por fecha, así que es caro pero se hace, y el feature store online se borra por clave. Lo que el modelo ya aprendió de él no se puede sacar de los pesos; se va cuando el modelo se reentrena sin sus datos. Por eso el plazo de reentrenamiento también es un plazo de privacidad.</li>
+  <li><b>Consentimiento.</b> Si alguien no aceptó la personalización, su request va por la línea base de <a href="m42-ml-system-design.html#sin-ml">42.6</a>: lo popular por país, sin features de su historia.</li>
+</ul>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Las leyes de protección de datos, como el RGPD en Europa, dan derecho a pedir el borrado y a no ser objeto de ciertas decisiones automatizadas <span class="badge badge--doc">Documentado</span>. Para un recomendador, eso se traduce en dos requisitos de diseño: poder encontrar todos los datos de un usuario por su id (en el data lake, el feature store, los logs de features y las copias de respaldo), y poder servirle una lista sin personalizar.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> lo sensible no se registra, cada tabla tiene su plazo, borrar a un usuario incluye esperar al próximo reentrenamiento y sin consentimiento se sirve la línea base.</p>
+
+<p>Para cerrar, el embudo con las piezas que abrió este módulo:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f43zt f43zd">
+<title id="f43zt">Dónde estás: el registro y el log</title>
+<desc id="f43zd">El embudo de la Lámina 42.A con el registro de impresiones, el log de eventos y el entrenamiento resaltados; las etapas de la request quedan tenues.</desc>
+<defs><marker id="f43za" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="540" y="26" text-anchor="start">Cuántos quedan y la latencia acumulada</text>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="160.0" y="40" width="340" height="32" rx="6"/>
+<text class="dg-small" x="330" y="61" text-anchor="middle">Catálogo</text>
+<text class="dg-small" x="540" y="53" text-anchor="start">100 000 000 ítems</text>
+<text class="dg-tiny" x="540" y="69" text-anchor="start">productos y videos de reseña</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="200.0" y="88" width="260" height="32" rx="6"/>
+<text class="dg-small" x="330" y="109" text-anchor="middle">Recuperación</text>
+<text class="dg-small" x="540" y="101" text-anchor="start">10 000 candidatos  ·  25 ms</text>
+<text class="dg-tiny" x="540" y="117" text-anchor="start">varias fuentes en paralelo</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="210.0" y="136" width="240" height="32" rx="6"/>
+<text class="dg-small" x="330" y="157" text-anchor="middle">Filtros</text>
+<text class="dg-small" x="540" y="149" text-anchor="start">unos 9 000  ·  30 ms</text>
+<text class="dg-tiny" x="540" y="165" text-anchor="start">ya visto, bloqueado, sin stock</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="245.0" y="184" width="170" height="32" rx="6"/>
+<text class="dg-small" x="330" y="205" text-anchor="middle">Ranking liviano</text>
+<text class="dg-small" x="540" y="197" text-anchor="start">500  ·  63 ms</text>
+<text class="dg-tiny" x="540" y="213" text-anchor="start">features y un modelo barato</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="270.0" y="232" width="120" height="32" rx="6"/>
+<text class="dg-small" x="330" y="253" text-anchor="middle">Ranking pesado</text>
+<text class="dg-small" x="540" y="245" text-anchor="start">50  ·  113 ms</text>
+<text class="dg-tiny" x="540" y="261" text-anchor="start">un modelo grande, multi-tarea</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="288.0" y="280" width="84" height="32" rx="6"/>
+<text class="dg-small" x="330" y="301" text-anchor="middle">Re-ranking</text>
+<text class="dg-small" x="540" y="293" text-anchor="start">10 en pantalla  ·  118 ms</text>
+<text class="dg-tiny" x="540" y="309" text-anchor="start">diversidad, frescura, reglas</text>
+</g>
+<g><rect class="dg-box dg-box--em" x="230" y="336" width="200" height="40" rx="8"/>
+<text class="dg-small" x="330.0" y="360.0" text-anchor="middle">Registro de impresiones</text></g>
+<g><rect class="dg-box dg-box--em" x="20" y="336" width="130" height="40" rx="8"/>
+<text class="dg-small" x="85.0" y="360.0" text-anchor="middle">Log de eventos</text></g>
+<g><rect class="dg-box dg-box--em" x="20" y="150" width="120" height="44" rx="8"/>
+<text class="dg-small" x="80.0" y="176.0" text-anchor="middle">Entrenamiento</text></g>
+<path class="dg-edge" d="M330 312 V334" marker-end="url(#f43za)"/>
+<path class="dg-edge" d="M230 356 H152" marker-end="url(#f43za)"/>
+<text class="dg-tiny" x="191" y="389" text-anchor="middle">con clics y compras</text>
+<path class="dg-edge" d="M80 336 V196" marker-end="url(#f43za)"/>
+<path class="dg-feedback" d="M140 166 H176 V104 H198" marker-end="url(#f43za)"/>
+<path class="dg-feedback" d="M140 178 H200 V200 H243" marker-end="url(#f43za)"/>
+<path class="dg-feedback" d="M140 188 H186 V248 H268" marker-end="url(#f43za)"/>
+<text class="dg-tiny" x="88" y="230">modelos nuevos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 43.10.</b> Dónde estás. M43 abrió las cajas de abajo del embudo: lo que se registra, cómo viaja y cómo se vuelve un ejemplo de entrenamiento. <a href="m44-modelos-clasicos.html">M44</a> y <a href="m45-recuperacion.html">M45</a> abren la recuperación, la primera etapa de la request.</figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Lo que viene</p>
+  <p>Con los datos limpios, la matriz usuario-ítem y los negativos, <a href="m44-modelos-clasicos.html">M44</a> construye los primeros modelos: lo popular bien hecho, el filtrado por contenido, el ítem a ítem que hizo famoso a Amazon y la factorización de matrices. Todos trabajan sobre la matriz de 43.3.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m43"></div>
+
+<div data-exercise="m43-eventos"></div>
+
+<div data-checkpoint="m43"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m43.data.js"></script>
+<script src="../assets/js/data/exercises/m43.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-recsys.js"></script>
+<script src="../assets/js/widgets/sim-events.js"></script>
+</body>
+</html>

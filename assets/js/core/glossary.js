@@ -21,7 +21,8 @@
     pagos: 'Pagos',
     edge: 'Edge y CDN',
     nube: 'Cómputo en la nube',
-    mensajeria: 'Mensajería en tiempo real'
+    mensajeria: 'Mensajería en tiempo real',
+    reco: 'Sistemas de recomendación'
   };
 
   var here = document.body.getAttribute('data-module');

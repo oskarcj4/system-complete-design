@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>A00. El laboratorio común</title>
-<meta name="description" content="Una API de notas en Java 25 y Spring Boot 4 sobre PostgreSQL 18 y PgBouncer: versiones fijas, Flyway, Testcontainers, GitHub Actions, Gatling y lo que rompe el modo transacción, medido.">
+<meta name="description" content="Una API de notas en capas con Java 21, Spring Boot 4 y JPA sobre PostgreSQL y PgBouncer: Flyway, pruebas con Testcontainers explicadas desde cero, GitHub Actions comprobado en verde y en rojo, Gatling y lo que rompe el modo transacción.">
 <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/tokens.css">
 <link rel="stylesheet" href="../assets/css/layout.css">
@@ -39,7 +39,7 @@
 
       <header class="title-block">
         <h1>El laboratorio común</h1>
-        <p class="lead">La API más chica posible, una de notas, para fijar lo que repiten todos los proyectos: versiones, PostgreSQL detrás de PgBouncer, migraciones, pruebas contra una base de verdad, CI y una prueba de carga con un número que no se puede pasar.</p>
+        <p class="lead">La API más chica posible, una de notas, para fijar lo que repiten todos los proyectos: una arquitectura en capas, PostgreSQL detrás de PgBouncer, migraciones, pruebas contra una base de verdad, CI y una prueba de carga con un número que no se puede pasar.</p>
         <dl class="tb-grid">
           <div><dt>Proyecto</dt><dd>A00</dd></div>
           <div><dt>Plan</dt><dd>Bloque 1</dd></div>
@@ -51,289 +51,453 @@
 <section class="objectives" data-toc="skip" aria-labelledby="obj">
         <h2 class="plain" id="obj">Al terminar podrás</h2>
         <ul>
-          <li>Levantar PostgreSQL 18 detrás de PgBouncer con Docker Compose y saber qué hace cada variable.</li>
-          <li>Explicar por qué las migraciones van directo a PostgreSQL y la aplicación pasa por PgBouncer.</li>
-          <li>Provocar los tres errores clásicos del modo transacción de PgBouncer y medir cuándo aparecen.</li>
-          <li>Probar contra un PostgreSQL real con Testcontainers, en tu máquina y en GitHub Actions.</li>
-          <li>Escribir una prueba de carga con Gatling que falla si el p99 pasa de 250&#8239;ms.</li>
+          <li>Levantar PostgreSQL detrás de PgBouncer con Docker Compose y saber qué hace cada variable.</li>
+          <li>Leer una API en capas (controlador, servicio, repositorio) y explicar por qué las migraciones van directo a PostgreSQL y la aplicación pasa por PgBouncer.</li>
+          <li>Leer, correr y romper a propósito pruebas de integración con JUnit 5, MockMvcTester y Testcontainers.</li>
+          <li>Explicar cada línea de un workflow de GitHub Actions y comprobar que corre, en verde y en rojo.</li>
+          <li>Provocar los tres errores clásicos del modo transacción de PgBouncer y explicar por qué cada uno rompe un sistema real.</li>
+          <li>Correr una prueba de carga con Gatling que falla si el p99 pasa de 250&#8239;ms.</li>
         </ul>
       </section>
 
       <h2 id="excusa">La excusa</h2>
 
-      <p>Una API de notas: crear una, leer una y listar las últimas. Es tan chica que no distrae, y por eso sirve para fijar lo que todos los proyectos siguientes repiten sin volver a explicarlo: las versiones, la base de datos con su pooler, las migraciones, las pruebas, la integración continua y la forma de medir.</p>
+      <p>Una API de notas: crear, leer, actualizar, borrar y listar las últimas. Es tan chica que no distrae, y por eso sirve para fijar lo que todos los proyectos siguientes repiten sin volver a explicarlo: la base de datos con su pooler, las migraciones, las pruebas, la integración continua y la forma de medir.</p>
 
-      <p>Esta guía no explica cómo crear un proyecto de Spring. Supone que sabes REST, SQL y Docker, y se concentra en las decisiones que no son obvias: dónde se conecta cada cosa, qué rompe un pooler en modo transacción y cómo se escribe una prueba de carga que diga algo.</p>
+      <p><b>No vas a escribir el código.</b> Está hecho en el <a href="https://github.com/oskarcj4/ia-system-proyect-a00" rel="noopener">repositorio oficial</a>: lo clonas, y la guía recorre cada archivo, copiado tal cual, para explicar qué hace y por qué. Los comandos sí los corres tú: son los que levantan la base, prueban y provocan las fallas.</p>
+
+      <p>La guía supone que conoces Spring (controladores, servicios, inyección de dependencias), REST, SQL y Docker. <b>No supone que sabes escribir pruebas ni configurar CI:</b> esas partes (pasos 9, 10 y 11) se explican desde cero, línea por línea.</p>
 
       <figure class="figure">
         <div class="figure-frame">
 <svg viewBox="0 0 770 320" role="img" aria-labelledby="fa00t fa00d">
 <title id="fa00t">Arquitectura del laboratorio</title>
-<desc id="fa00d">Gatling o curl llaman por HTTP a la aplicación de notas en el puerto 8080. La aplicación abre hasta 10 conexiones con PgBouncer, en el puerto 6432, que reparte hasta 20 conexiones reales con PostgreSQL 18. Flyway, al arrancar, va directo a PostgreSQL por el puerto 5433. En las pruebas, Testcontainers levanta un PostgreSQL desechable, y GitHub Actions corre las mismas pruebas en cada push.</desc>
+<desc id="fa00d">Gatling o curl llaman por HTTP a la aplicación de notas en el puerto 8080. La aplicación abre hasta 10 conexiones con PgBouncer, en el puerto 6432, que reparte hasta 20 conexiones reales con PostgreSQL 17. Flyway, al arrancar, va directo a PostgreSQL por el puerto 5433. En las pruebas, Testcontainers levanta un PostgreSQL desechable, y GitHub Actions corre las mismas pruebas en cada push.</desc>
 <defs><marker id="fa00a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
 <text class="dg-group" x="10" y="22">En tu máquina</text>
 <rect class="dg-frame" x="418" y="36" width="346" height="122" rx="10" fill="none"/>
 <text class="dg-small" x="430" y="56">docker compose</text>
 <rect class="dg-layer" style="--c: var(--l-client)" x="10" y="72" width="120" height="64" rx="6"/>
-<text class="dg-label" x="70" y="99" text-anchor="middle">Gatling, curl</text>
-<text class="dg-tiny" x="70" y="118" text-anchor="middle">la carga y tú</text>
+<text class="dg-label" x="70" y="101" text-anchor="middle">Gatling, curl</text>
+<text class="dg-tiny" x="70" y="119" text-anchor="middle">la carga y tú</text>
+
 <path class="dg-edge" d="M132 104 H186" marker-end="url(#fa00a)"/>
+
 <text class="dg-tiny" x="160" y="96" text-anchor="middle">HTTP</text>
+
 <rect class="dg-layer" style="--c: var(--l-service)" x="190" y="72" width="150" height="64" rx="6"/>
-<text class="dg-label" x="265" y="99" text-anchor="middle">notas</text>
-<text class="dg-tiny" x="265" y="118" text-anchor="middle">Spring Boot, :8080</text>
+<text class="dg-label" x="265" y="101" text-anchor="middle">notas</text>
+<text class="dg-tiny" x="265" y="119" text-anchor="middle">Spring Boot, :8080</text>
+
 <path class="dg-edge" d="M342 104 H426" marker-end="url(#fa00a)"/>
+
 <text class="dg-tiny" x="378" y="96" text-anchor="middle">Hikari: 10</text>
+
 <rect class="dg-layer" style="--c: var(--l-edge)" x="430" y="72" width="140" height="64" rx="6"/>
-<text class="dg-label" x="500" y="99" text-anchor="middle">PgBouncer</text>
-<text class="dg-tiny" x="500" y="118" text-anchor="middle">:6432, transacción</text>
+<text class="dg-label" x="500" y="101" text-anchor="middle">PgBouncer</text>
+<text class="dg-tiny" x="500" y="119" text-anchor="middle">:6432, transacción</text>
+
 <path class="dg-edge" d="M572 104 H626" marker-end="url(#fa00a)"/>
+
 <text class="dg-tiny" x="599" y="96" text-anchor="middle">hasta 20</text>
+
 <rect class="dg-layer" style="--c: var(--l-db)" x="630" y="72" width="124" height="64" rx="6"/>
-<text class="dg-label" x="692" y="99" text-anchor="middle">PostgreSQL 18</text>
-<text class="dg-tiny" x="692" y="118" text-anchor="middle">:5433 en tu máquina</text>
+<text class="dg-label" x="692" y="101" text-anchor="middle">PostgreSQL 17</text>
+<text class="dg-tiny" x="692" y="119" text-anchor="middle">:5433 en tu máquina</text>
+
 <path class="dg-feedback" d="M265 138 V180 H692 V140" marker-end="url(#fa00a)"/>
+
 <text class="dg-tiny" x="478" y="200" text-anchor="middle">Flyway, al arrancar: directo, sin PgBouncer</text>
+
 <text class="dg-group" x="10" y="246">En las pruebas y en CI</text>
 <rect class="dg-box" x="10" y="260" width="360" height="48" rx="6"/>
 <text class="dg-small" x="190" y="281" text-anchor="middle">Testcontainers levanta un postgres:18 desechable</text>
-<text class="dg-tiny" x="190" y="298" text-anchor="middle">las mismas migraciones, la misma versión</text>
+<text class="dg-tiny" x="190" y="299" text-anchor="middle">las mismas migraciones, sin PgBouncer</text>
+
 <rect class="dg-box" x="394" y="260" width="370" height="48" rx="6"/>
-<text class="dg-small" x="579" y="281" text-anchor="middle">GitHub Actions corre ./mvnw verify en cada push</text>
-<text class="dg-tiny" x="579" y="298" text-anchor="middle">el runner ya trae Docker</text>
+<text class="dg-small" x="579" y="281" text-anchor="middle">GitHub Actions corre ./mvnw -B verify en cada push</text>
+<text class="dg-tiny" x="579" y="299" text-anchor="middle">el runner ya trae Docker</text>
 </svg>
         </div>
         <figcaption><b>Figura A00.1.</b> La aplicación nunca habla directo con PostgreSQL: pasa por PgBouncer. La única excepción es Flyway, que corre una vez al arrancar.</figcaption>
       </figure>
 
+      <p>El código está ordenado en capas. Cada capa tiene un solo trabajo y solo conoce a la de abajo:</p>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 310" role="img" aria-labelledby="fa002t fa002d">
+<title id="fa002t">Las capas del código</title>
+<desc id="fa002d">Un cliente manda HTTP y JSON a NoteController. El controlador llama a la interfaz INoteService, que implementa NoteServiceImpl. El servicio llama a NoteRepository, que habla con PgBouncer y PostgreSQL. LabController, solo para los experimentos, llama directo al repositorio. Entre las capas viajan la entidad Note, el DTO NoteRequest, la proyección BackendSessionInfo y dos excepciones.</desc>
+<defs><marker id="fa002a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="58" y="30" text-anchor="middle">Quién llama</text>
+
+<text class="dg-group" x="220" y="30" text-anchor="middle">controllers</text>
+
+<text class="dg-group" x="400" y="30" text-anchor="middle">services</text>
+
+<text class="dg-group" x="585" y="30" text-anchor="middle">repository</text>
+
+<text class="dg-group" x="715" y="30" text-anchor="middle">Base</text>
+
+<rect class="dg-layer" style="--c: var(--l-client)" x="10" y="50" width="96" height="60" rx="6"/>
+<text class="dg-label" x="58" y="77" text-anchor="middle">Cliente</text>
+<text class="dg-tiny" x="58" y="95" text-anchor="middle">HTTP + JSON</text>
+
+<path class="dg-edge" d="M108 80 H146" marker-end="url(#fa002a)"/>
+
+<rect class="dg-layer" style="--c: var(--l-service)" x="150" y="50" width="140" height="60" rx="6"/>
+<text class="dg-small" x="220" y="77" text-anchor="middle">NoteController</text>
+<text class="dg-tiny" x="220" y="95" text-anchor="middle">valida y responde</text>
+
+<path class="dg-edge" d="M292 66 H326" marker-end="url(#fa002a)"/>
+
+<rect class="dg-box" x="330" y="44" width="140" height="34" rx="6"/>
+<text class="dg-small" x="400" y="66" text-anchor="middle">INoteService</text>
+
+<path class="dg-feedback" d="M400 80 V86"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="330" y="88" width="140" height="34" rx="6"/>
+<text class="dg-small" x="400" y="110" text-anchor="middle">NoteServiceImpl</text>
+
+<path class="dg-edge" d="M472 104 H526" marker-end="url(#fa002a)"/>
+
+<rect class="dg-layer" style="--c: var(--l-service)" x="530" y="50" width="110" height="60" rx="6"/>
+<text class="dg-small" x="585" y="77" text-anchor="middle">NoteRepository</text>
+<text class="dg-tiny" x="585" y="95" text-anchor="middle">CrudRepository</text>
+
+<path class="dg-edge" d="M642 80 H666" marker-end="url(#fa002a)"/>
+
+<rect class="dg-layer" style="--c: var(--l-db)" x="670" y="50" width="90" height="60" rx="6"/>
+<text class="dg-small" x="715" y="77" text-anchor="middle">PgBouncer</text>
+<text class="dg-tiny" x="715" y="95" text-anchor="middle">y PostgreSQL</text>
+
+<rect class="dg-layer" style="--c: var(--l-edge)" x="150" y="140" width="140" height="48" rx="6"/>
+<text class="dg-small" x="220" y="161" text-anchor="middle">LabController</text>
+<text class="dg-tiny" x="220" y="179" text-anchor="middle">solo experimentos</text>
+
+<path class="dg-edge" d="M292 164 H585 V114" marker-end="url(#fa002a)"/>
+
+<text class="dg-tiny" x="440" y="158" text-anchor="middle">getSessionInfo(), sin pasar por el servicio</text>
+
+<text class="dg-group" x="10" y="222">Lo que viaja entre capas</text>
+<rect class="dg-box" x="10" y="234" width="240" height="64" rx="6"/>
+<text class="dg-small" x="130" y="263" text-anchor="middle">entities/Note</text>
+<text class="dg-tiny" x="130" y="281" text-anchor="middle">@Entity: una fila de notes</text>
+
+<rect class="dg-box" x="265" y="234" width="240" height="64" rx="6"/>
+<text class="dg-small" x="385" y="263" text-anchor="middle">NoteRequest, BackendSessionInfo</text>
+<text class="dg-tiny" x="385" y="281" text-anchor="middle">el body de POST y PUT; la fila del lab</text>
+
+<rect class="dg-box" x="520" y="234" width="240" height="64" rx="6"/>
+<text class="dg-small" x="640" y="263" text-anchor="middle">exceptions/</text>
+<text class="dg-tiny" x="640" y="281" text-anchor="middle">nota no encontrada, nota inválida</text>
+</svg>
+        </div>
+        <figcaption><b>Figura A00.2.</b> La arquitectura en capas del repositorio oficial. El controlador conoce solo la interfaz del servicio, y solo el repositorio habla con la base. La línea punteada une la interfaz con su implementación.</figcaption>
+      </figure>
+
       <h2 id="endpoints">Los endpoints</h2>
 
-      <p>Antes de escribir código, el contrato. Los errores salen como Problem Details (RFC 9457), el formato que M02 explica: un JSON con <code>status</code>, <code>title</code> y <code>detail</code>.</p>
+      <p>Antes del código, el contrato. Los errores salen como Problem Details (RFC 9457), el formato que M02 explica: un JSON con <code>type</code>, <code>title</code>, <code>status</code> y, según el caso, <code>detail</code> e <code>instance</code>.</p>
 
       <div class="table-wrap">
         <table class="t pj-ep">
           <thead><tr><th>Método y ruta</th><th>Qué hace</th><th>Respuestas</th></tr></thead>
           <tbody>
-            <tr><td><span class="ep-method" data-m="POST">POST</span> <code>/api/notes</code></td><td>Crea una nota. El título es obligatorio, de 1 a 200 caracteres.</td><td>201 con <code>Location</code>, 400 si el body no valida</td></tr>
-            <tr><td><span class="ep-method" data-m="GET">GET</span> <code>/api/notes/{id}</code></td><td>Lee una nota por su id.</td><td>200, 404 si no existe</td></tr>
-            <tr><td><span class="ep-method" data-m="GET">GET</span> <code>/api/notes?limit=20</code></td><td>Las últimas notas, de la más nueva a la más vieja. <code>limit</code> va de 1 a 100.</td><td>200, 400 si <code>limit</code> se sale del rango</td></tr>
+            <tr><td><span class="ep-method" data-m="POST">POST</span> <code>/api/v1/notes</code></td><td>Crea una nota. <code>title</code> es obligatorio, de 1 a 150 caracteres; <code>body</code> también es obligatorio, aunque puede ser <code>""</code>.</td><td>201 con <code>Location</code>, 400 si el body no valida</td></tr>
+            <tr><td><span class="ep-method" data-m="GET">GET</span> <code>/api/v1/notes/{id}</code></td><td>Lee una nota por su id.</td><td>200, 404 si no existe</td></tr>
+            <tr><td><span class="ep-method" data-m="PUT">PUT</span> <code>/api/v1/notes/{id}</code></td><td>Cambia el título y el cuerpo.</td><td>200, 400 si el body no valida, 500 si no existe</td></tr>
+            <tr><td><span class="ep-method" data-m="DELETE">DELETE</span> <code>/api/v1/notes/{id}</code></td><td>Borra una nota.</td><td>204, 500 si no existe</td></tr>
+            <tr><td><span class="ep-method" data-m="GET">GET</span> <code>/api/v1/notes?limit=20</code></td><td>Las últimas notas, de la más nueva a la más vieja. <code>limit</code> va de 1 a 100.</td><td>200, 400 si <code>limit</code> se sale del rango</td></tr>
             <tr><td><span class="ep-method" data-m="GET">GET</span> <code>/api/lab/conexion</code></td><td>Solo para los experimentos: en qué conexión del servidor cayó la consulta y qué <code>statement_timeout</code> tiene.</td><td>200</td></tr>
             <tr><td><span class="ep-method" data-m="GET">GET</span> <code>/actuator/health</code></td><td>Si la aplicación está viva y llega a la base.</td><td>200, 503</td></tr>
           </tbody>
         </table>
       </div>
 
+      <p>PUT y DELETE sobre una nota que no existe responden 500 y no 404: lanzan <code>NoteNotFountException</code>, y en el repositorio todavía no hay un manejador que la traduzca a un código HTTP. Lo verás en el paso 6.</p>
+
       <div class="endpoint">
         <div class="ep-head">
           <span class="ep-method" data-m="POST">POST</span>
-          <code class="ep-path">/api/notes</code>
+          <code class="ep-path">/api/v1/notes</code>
         </div>
-        <p class="ep-desc">Crea una nota. PostgreSQL pone el id, un UUIDv7, y la fecha.</p>
+        <p class="ep-desc">Crea una nota. La aplicación pone el id, un UUIDv7, y la fecha.</p>
         <div class="ep-body">
           <p class="ep-sec">Request</p>
-<pre data-lang="http"><code>POST /api/notes HTTP/1.1
+<pre data-lang="http"><code>POST /api/v1/notes HTTP/1.1
 Content-Type: application/json
 
 {"title": "Primera", "body": "Hola"}</code></pre>
-          <p class="ep-sec">Respuesta 201</p>
+          <p class="ep-sec">Respuesta 201 (el id y la fecha serán otros)</p>
 <pre data-lang="http"><code>HTTP/1.1 201 Created
-Location: http://localhost:8080/api/notes/01a0ff11-26a5-7be7-b07a-dbe6a682e77f
+Location: /api/v1/notes/01a0ff11-26a5-7be7-b07a-dbe6a682e77f
 Content-Type: application/json
 
 {"id": "01a0ff11-26a5-7be7-b07a-dbe6a682e77f", "title": "Primera", "body": "Hola",
  "createdAt": "2026-10-02T18:01:49.221-06:00"}</code></pre>
           <p class="ep-sec">Respuesta 404</p>
 <pre data-lang="json"><code>{"type": "about:blank", "title": "Not Found", "status": 404,
- "detail": "No existe la nota 3f0c…", "instance": "/api/notes/3f0c…"}</code></pre>
+ "instance": "/api/v1/notes/3f0c…"}</code></pre>
           <p class="ep-sec">Códigos de respuesta</p>
           <ul class="ep-responses">
             <li><span class="st st--2xx">201</span><span>Creada; <code>Location</code> apunta a la nota nueva.</span></li>
-            <li><span class="st st--4xx">400</span><span>Título vacío o de más de 200 caracteres, o body de más de 10&#8239;000.</span></li>
-            <li><span class="st st--5xx">500</span><span>La base no respondió a tiempo: el pool esperó 3&#8239;s sin conseguir conexión.</span></li>
+            <li><span class="st st--4xx">400</span><span>Título vacío o de más de 150 caracteres, o sin <code>body</code>.</span></li>
+            <li><span class="st st--5xx">500</span><span>La base falló o el pool esperó 10&#8239;s sin conseguir conexión.</span></li>
           </ul>
         </div>
       </div>
 
       <h2 id="dependencias">Dependencias</h2>
 
-      <p>Solo las que el proyecto usa. El padre <code>spring-boot-starter-parent</code> 4.1.1 fija sus versiones, salvo las de Gatling.</p>
+      <p>Las del <code>pom.xml</code> del repositorio. El padre <code>spring-boot-starter-parent</code> 4.1.1 fija sus versiones, salvo las que llevan número propio.</p>
 
       <div class="table-wrap">
         <table class="t">
           <thead><tr><th>Dependencia</th><th>Para qué</th></tr></thead>
           <tbody>
             <tr><td><code>spring-boot-starter-webmvc</code></td><td>Spring MVC sobre Tomcat. En Spring Boot 4 el starter web se llama así. <span class="badge badge--doc">Documentado</span></td></tr>
-            <tr><td><code>spring-boot-starter-validation</code></td><td><code>@Valid</code>, <code>@NotBlank</code> y <code>@Size</code> en el body, y <code>@Min</code> y <code>@Max</code> en los parámetros.</td></tr>
-            <tr><td><code>spring-boot-starter-jdbc</code></td><td>HikariCP y <code>JdbcClient</code>: SQL a la vista, sin ORM.</td></tr>
-            <tr><td><code>spring-boot-starter-flyway</code> y <code>flyway-database-postgresql</code></td><td>Las migraciones. En Spring Boot 4 Flyway necesita su starter; el segundo artefacto es el soporte de PostgreSQL. <span class="badge badge--doc">Documentado</span></td></tr>
+            <tr><td><code>spring-boot-starter-validation</code></td><td><code>@Valid</code>, <code>@NotBlank</code>, <code>@NotNull</code> y <code>@Size</code> en el body, y <code>@Min</code> y <code>@Max</code> en los parámetros.</td></tr>
+            <tr><td><code>spring-boot-starter-data-jpa</code></td><td>Spring Data JPA con Hibernate: la entidad <code>Note</code> y el <code>CrudRepository</code>. Trae HikariCP, el pool de conexiones.</td></tr>
+            <tr><td><code>spring-boot-starter-flyway</code>, <code>flyway-core</code> y <code>flyway-database-postgresql</code></td><td>Las migraciones. En Spring Boot 4 Flyway necesita su starter, que ya trae <code>flyway-core</code>; el tercero es el soporte de PostgreSQL. <span class="badge badge--doc">Documentado</span></td></tr>
             <tr><td><code>postgresql</code> (runtime)</td><td>El driver JDBC.</td></tr>
+            <tr><td><code>java-uuid-generator</code> 5.1.0</td><td>Genera los UUIDv7 en Java, antes de insertar (paso 4).</td></tr>
             <tr><td><code>spring-boot-starter-actuator</code></td><td><code>/actuator/health</code> y las métricas de Hikari.</td></tr>
-            <tr><td><code>spring-boot-starter-webmvc-test</code> (test)</td><td>JUnit 5, AssertJ y <code>MockMvcTester</code>.</td></tr>
-            <tr><td><code>spring-boot-testcontainers</code> y <code>testcontainers-postgresql</code> (test)</td><td>Un PostgreSQL 18 de verdad por corrida, conectado con <code>@ServiceConnection</code>.</td></tr>
-            <tr><td><code>gatling-charts-highcharts</code> 3.16.0 (test) y el plugin <code>gatling-maven-plugin</code> 4.21.12</td><td>La prueba de carga, escrita en Java, y su reporte HTML.</td></tr>
+            <tr><td><code>spring-boot-starter-webmvc-test</code> y <code>spring-boot-starter-flyway-test</code> (test)</td><td>JUnit 5, AssertJ, <code>MockMvcTester</code> y el soporte de pruebas de Flyway.</td></tr>
+            <tr><td><code>spring-boot-testcontainers</code> y <code>testcontainers-postgresql</code> (test)</td><td>Un PostgreSQL de verdad por corrida, conectado con <code>@ServiceConnection</code>.</td></tr>
+            <tr><td><code>gatling-charts-highcharts</code> 3.10.5 (test) y el plugin <code>gatling-maven-plugin</code> 4.9.2</td><td>La prueba de carga, escrita en Java, y su reporte HTML.</td></tr>
           </tbody>
         </table>
       </div>
 
-      <details class="solution" data-toc="skip">
-        <summary>Ver el pom.xml completo</summary>
-        <div class="solution-body">
+      <details class="solution file-full" data-toc="skip">
+  <summary>Ver el pom.xml completo</summary>
+  <div class="solution-body">
 <pre data-lang="xml" data-file="pom.xml"><code>&lt;?xml version="1.0" encoding="UTF-8"?&gt;
-&lt;project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd"&gt;
-  &lt;modelVersion&gt;4.0.0&lt;/modelVersion&gt;
+&lt;project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd"&gt;
+	&lt;modelVersion&gt;4.0.0&lt;/modelVersion&gt;
+	&lt;parent&gt;
+		&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+		&lt;artifactId&gt;spring-boot-starter-parent&lt;/artifactId&gt;
+		&lt;version&gt;4.1.1&lt;/version&gt;
+		&lt;relativePath/&gt; &lt;!-- lookup parent from repository --&gt;
+	&lt;/parent&gt;
+	&lt;groupId&gt;com.a00.laboratorio.comun&lt;/groupId&gt;
+	&lt;artifactId&gt;notasv1&lt;/artifactId&gt;
+	&lt;version&gt;0.0.1-SNAPSHOT&lt;/version&gt;
+	&lt;name&gt;notasv1&lt;/name&gt;
+	&lt;description/&gt;
+	&lt;url/&gt;
+	&lt;licenses&gt;
+		&lt;license/&gt;
+	&lt;/licenses&gt;
+	&lt;developers&gt;
+		&lt;developer/&gt;
+	&lt;/developers&gt;
+	&lt;scm&gt;
+		&lt;connection/&gt;
+		&lt;developerConnection/&gt;
+		&lt;tag/&gt;
+		&lt;url/&gt;
+	&lt;/scm&gt;
+	&lt;properties&gt;
+		&lt;java.version&gt;21&lt;/java.version&gt;
+	&lt;/properties&gt;
+	&lt;dependencies&gt;
+		&lt;dependency&gt;
+			&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+			&lt;artifactId&gt;spring-boot-starter-flyway&lt;/artifactId&gt;
+		&lt;/dependency&gt;
 
-  &lt;parent&gt;
-    &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
-    &lt;artifactId&gt;spring-boot-starter-parent&lt;/artifactId&gt;
-    &lt;version&gt;4.1.1&lt;/version&gt;
-    &lt;relativePath/&gt;
-  &lt;/parent&gt;
+		&lt;dependency&gt;
+			&lt;groupId&gt;org.flywaydb&lt;/groupId&gt;
+			&lt;artifactId&gt;flyway-core&lt;/artifactId&gt;
+		&lt;/dependency&gt;
 
-  &lt;groupId&gt;lab&lt;/groupId&gt;
-  &lt;artifactId&gt;notas&lt;/artifactId&gt;
-  &lt;version&gt;0.1.0&lt;/version&gt;
+		&lt;dependency&gt;
+			&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+			&lt;artifactId&gt;spring-boot-starter-webmvc&lt;/artifactId&gt;
+		&lt;/dependency&gt;
+		&lt;dependency&gt;
+			&lt;groupId&gt;org.flywaydb&lt;/groupId&gt;
+			&lt;artifactId&gt;flyway-database-postgresql&lt;/artifactId&gt;
+		&lt;/dependency&gt;
 
-  &lt;properties&gt;
-    &lt;java.version&gt;25&lt;/java.version&gt;
-    &lt;gatling.version&gt;3.16.0&lt;/gatling.version&gt;
-    &lt;gatling-maven-plugin.version&gt;4.21.12&lt;/gatling-maven-plugin.version&gt;
-  &lt;/properties&gt;
+		&lt;dependency&gt;
+			&lt;groupId&gt;org.postgresql&lt;/groupId&gt;
+			&lt;artifactId&gt;postgresql&lt;/artifactId&gt;
+			&lt;scope&gt;runtime&lt;/scope&gt;
+		&lt;/dependency&gt;
+		&lt;dependency&gt;
+			&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+			&lt;artifactId&gt;spring-boot-starter-flyway-test&lt;/artifactId&gt;
+			&lt;scope&gt;test&lt;/scope&gt;
+		&lt;/dependency&gt;
+		&lt;dependency&gt;
+			&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+			&lt;artifactId&gt;spring-boot-starter-webmvc-test&lt;/artifactId&gt;
+			&lt;scope&gt;test&lt;/scope&gt;
+		&lt;/dependency&gt;
 
-  &lt;dependencies&gt;
-    &lt;!-- HTTP: Spring MVC sobre Tomcat --&gt;
-    &lt;dependency&gt;
-      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
-      &lt;artifactId&gt;spring-boot-starter-webmvc&lt;/artifactId&gt;
-    &lt;/dependency&gt;
-    &lt;!-- Validación de los bodies con @Valid --&gt;
-    &lt;dependency&gt;
-      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
-      &lt;artifactId&gt;spring-boot-starter-validation&lt;/artifactId&gt;
-    &lt;/dependency&gt;
-    &lt;!-- JDBC con HikariCP y JdbcClient: SQL a la vista --&gt;
-    &lt;dependency&gt;
-      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
-      &lt;artifactId&gt;spring-boot-starter-jdbc&lt;/artifactId&gt;
-    &lt;/dependency&gt;
-    &lt;!-- Migraciones: en Spring Boot 4 Flyway necesita su starter --&gt;
-    &lt;dependency&gt;
-      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
-      &lt;artifactId&gt;spring-boot-starter-flyway&lt;/artifactId&gt;
-    &lt;/dependency&gt;
-    &lt;dependency&gt;
-      &lt;groupId&gt;org.flywaydb&lt;/groupId&gt;
-      &lt;artifactId&gt;flyway-database-postgresql&lt;/artifactId&gt;
-    &lt;/dependency&gt;
-    &lt;dependency&gt;
-      &lt;groupId&gt;org.postgresql&lt;/groupId&gt;
-      &lt;artifactId&gt;postgresql&lt;/artifactId&gt;
-      &lt;scope&gt;runtime&lt;/scope&gt;
-    &lt;/dependency&gt;
-    &lt;!-- /actuator/health y métricas --&gt;
-    &lt;dependency&gt;
-      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
-      &lt;artifactId&gt;spring-boot-starter-actuator&lt;/artifactId&gt;
-    &lt;/dependency&gt;
+		&lt;dependency&gt;
+			&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+			&lt;artifactId&gt;spring-boot-starter-actuator&lt;/artifactId&gt;
+		&lt;/dependency&gt;
 
-    &lt;!-- Pruebas contra un PostgreSQL de verdad --&gt;
-    &lt;dependency&gt;
-      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
-      &lt;artifactId&gt;spring-boot-starter-webmvc-test&lt;/artifactId&gt;
-      &lt;scope&gt;test&lt;/scope&gt;
-    &lt;/dependency&gt;
-    &lt;dependency&gt;
-      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
-      &lt;artifactId&gt;spring-boot-testcontainers&lt;/artifactId&gt;
-      &lt;scope&gt;test&lt;/scope&gt;
-    &lt;/dependency&gt;
-    &lt;dependency&gt;
-      &lt;groupId&gt;org.testcontainers&lt;/groupId&gt;
-      &lt;artifactId&gt;testcontainers-postgresql&lt;/artifactId&gt;
-      &lt;scope&gt;test&lt;/scope&gt;
-    &lt;/dependency&gt;
-    &lt;!-- Carga: el DSL de Gatling en Java --&gt;
-    &lt;dependency&gt;
-      &lt;groupId&gt;io.gatling.highcharts&lt;/groupId&gt;
-      &lt;artifactId&gt;gatling-charts-highcharts&lt;/artifactId&gt;
-      &lt;version&gt;${gatling.version}&lt;/version&gt;
-      &lt;scope&gt;test&lt;/scope&gt;
-    &lt;/dependency&gt;
-  &lt;/dependencies&gt;
+		&lt;dependency&gt;
+			&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+			&lt;artifactId&gt;spring-boot-starter-data-jpa&lt;/artifactId&gt;
+		&lt;/dependency&gt;
 
-  &lt;build&gt;
-    &lt;plugins&gt;
-      &lt;plugin&gt;
-        &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
-        &lt;artifactId&gt;spring-boot-maven-plugin&lt;/artifactId&gt;
-      &lt;/plugin&gt;
-      &lt;plugin&gt;
-        &lt;groupId&gt;io.gatling&lt;/groupId&gt;
-        &lt;artifactId&gt;gatling-maven-plugin&lt;/artifactId&gt;
-        &lt;version&gt;${gatling-maven-plugin.version}&lt;/version&gt;
-      &lt;/plugin&gt;
-    &lt;/plugins&gt;
-  &lt;/build&gt;
+		&lt;dependency&gt;
+			&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+			&lt;artifactId&gt;spring-boot-starter-validation&lt;/artifactId&gt;
+		&lt;/dependency&gt;
+
+		&lt;dependency&gt;
+			&lt;groupId&gt;com.fasterxml.uuid&lt;/groupId&gt;
+			&lt;artifactId&gt;java-uuid-generator&lt;/artifactId&gt;
+			&lt;version&gt;5.1.0&lt;/version&gt;
+		&lt;/dependency&gt;
+		&lt;dependency&gt;
+			&lt;groupId&gt;org.testcontainers&lt;/groupId&gt;
+			&lt;artifactId&gt;testcontainers-postgresql&lt;/artifactId&gt;
+			&lt;scope&gt;test&lt;/scope&gt;
+		&lt;/dependency&gt;
+
+		&lt;dependency&gt;
+			&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+			&lt;artifactId&gt;spring-boot-testcontainers&lt;/artifactId&gt;
+			&lt;scope&gt;test&lt;/scope&gt;
+		&lt;/dependency&gt;
+
+		&lt;dependency&gt;
+			&lt;groupId&gt;io.gatling.highcharts&lt;/groupId&gt;
+			&lt;artifactId&gt;gatling-charts-highcharts&lt;/artifactId&gt;
+			&lt;version&gt;3.10.5&lt;/version&gt;
+			&lt;scope&gt;test&lt;/scope&gt;
+		&lt;/dependency&gt;
+	&lt;/dependencies&gt;
+
+	&lt;build&gt;
+		&lt;plugins&gt;
+			&lt;plugin&gt;
+				&lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+				&lt;artifactId&gt;spring-boot-maven-plugin&lt;/artifactId&gt;
+			&lt;/plugin&gt;
+
+			&lt;plugin&gt;
+				&lt;groupId&gt;io.gatling&lt;/groupId&gt;
+				&lt;artifactId&gt;gatling-maven-plugin&lt;/artifactId&gt;
+				&lt;version&gt;4.9.2&lt;/version&gt;
+			&lt;/plugin&gt;
+		&lt;/plugins&gt;
+	&lt;/build&gt;
+
 &lt;/project&gt;</code></pre>
-        </div>
-      </details>
+  </div>
+</details>
 
       <h2 id="infraestructura">La infraestructura</h2>
 
-      <p>Dos contenedores: PostgreSQL 18 y PgBouncer delante. Los comentarios explican cada línea que no es obvia.</p>
+      <p>Dos contenedores: PostgreSQL 17 y PgBouncer delante.</p>
 
-<pre data-lang="yaml" data-file="compose.yaml"><code>services:
+<pre data-lang="yaml" data-file="docker-compose.yaml"><code>services:
   postgres:
-    image: postgres:18
+    container_name: postgres_notas_v1
+    image: postgres:17
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
+
     ports:
-      - "5433:5432"                    # 5433 en tu máquina: el 5432 suele ser de un PostgreSQL instalado
+      - "5433:5432"
     volumes:
-      - pgdata:/var/lib/postgresql     # desde la 18 el volumen va aquí, no en .../data
+      - pgdata:/var/lib/postgresql/data
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d app"]
-      interval: 2s
-      retries: 30
+      interval: 15s
+      retries: 5
+
 
   pgbouncer:
-    image: edoburu/pgbouncer:v1.26.0-p0
-    environment:
-      DATABASE_URL: postgres://app:app@postgres:5432/app
-      AUTH_TYPE: scram-sha-256         # PostgreSQL 18 guarda las claves con SCRAM
-      POOL_MODE: transaction           # una conexión del servidor por transacción, no por cliente
-      DEFAULT_POOL_SIZE: 20            # conexiones reales a PostgreSQL por usuario y base
-      MAX_CLIENT_CONN: 500             # conexiones que acepta de las aplicaciones
-      ADMIN_USERS: app                 # para entrar a la consola y correr SHOW POOLS
-    ports:
-      - "6432:5432"
-    depends_on:
-      postgres:
-        condition: service_healthy
+      container_name: pgbouncer_notas_v1
+      image: edoburu/pgbouncer:v1.26.0-p0
+      ports:
+        - "6432:5432"
+      environment:
+        DATABASE_URL: postgres://app:app@postgres:5432/app
+        AUTH_TYPE: scram-sha-256
+        AUTH_USER: app
+        POOL_MODE: transaction
+        DEFAULT_POOL_SIZE: 20
+        MAX_CLIENT_CONN: 500
+        ADMIN_USERS: app
+      depends_on:
+        postgres:
+          condition: service_healthy
 
 volumes:
   pgdata:</code></pre>
 
       <dl class="pj-why">
         <div><dt>Puerto 5433</dt><dd><p>Si tienes un PostgreSQL instalado en tu sistema, ya ocupa el 5432. Con el contenedor en el 5432, Flyway se conecta al equivocado y falla con "la autentificación password falló para el usuario app". Publicarlo en el 5433 evita la confusión.</p></dd></div>
-        <div><dt>El volumen</dt><dd><p>Desde la imagen 18, los datos viven en <code>/var/lib/postgresql/18/docker</code>, así que el volumen se monta en <code>/var/lib/postgresql</code>. Si lo montas en <code>.../data</code>, como en las versiones anteriores, el contenedor no arranca. <span class="badge badge--doc">Documentado</span></p></dd></div>
-        <div><dt><code>POOL_MODE: transaction</code></dt><dd><p>PgBouncer le presta una conexión del servidor a un cliente solo mientras dura una transacción. Con 20 conexiones reales atiende a cientos de clientes, pero lo que vive en la sesión deja de ser tuyo: lo vas a medir en <a href="#comprueba">Cómo comprobar que funciona</a>.</p></dd></div>
-        <div><dt><code>DEFAULT_POOL_SIZE: 20</code></dt><dd><p>Las conexiones reales con PostgreSQL por cada par de usuario y base. Cada una es un proceso del servidor con su memoria; el límite protege a la base.</p></dd></div>
+        <div><dt><code>container_name</code></dt><dd><p>Nombres fijos (<code>postgres_notas_v1</code>, <code>pgbouncer_notas_v1</code>) para reconocerlos en <code>docker ps</code>. Los comandos de la guía usan el nombre del servicio (<code>postgres</code>, <code>pgbouncer</code>) con <code>docker compose exec</code>, que funciona igual.</p></dd></div>
+        <div><dt>El volumen</dt><dd><p>En la imagen 17, los datos viven en <code>/var/lib/postgresql/data</code>. Desde la 18 cambió a <code>/var/lib/postgresql</code>: si subes la imagen, cambia también el volumen o el contenedor no arranca. <span class="badge badge--doc">Documentado</span></p></dd></div>
+        <div><dt>El healthcheck</dt><dd><p><code>pg_isready</code> cada 15&#8239;s. PgBouncer espera a que postgres esté <code>healthy</code> (<code>depends_on</code> con <code>condition: service_healthy</code>), así que el primer arranque tarda hasta 15&#8239;s.</p></dd></div>
+        <div><dt><code>AUTH_TYPE</code> y <code>AUTH_USER</code></dt><dd><p>PostgreSQL guarda las claves con SCRAM, y PgBouncer tiene que hablar el mismo método. <code>AUTH_USER</code> es el usuario con el que PgBouncer consulta las claves en la base.</p></dd></div>
+        <div><dt><code>POOL_MODE: transaction</code></dt><dd><p>PgBouncer le presta una conexión del servidor a un cliente solo mientras dura una transacción. Con 20 conexiones reales atiende a cientos de clientes, pero lo que vive en la sesión deja de ser tuyo: lo vas a provocar en <a href="#comprueba-sesion">Cómo comprobar que funciona</a>.</p></dd></div>
+        <div><dt><code>DEFAULT_POOL_SIZE</code> y <code>MAX_CLIENT_CONN</code></dt><dd><p>20 conexiones reales con PostgreSQL por cada par de usuario y base (cada una es un proceso del servidor con su memoria; el límite protege a la base) y hasta 500 clientes conectados a PgBouncer.</p></dd></div>
+        <div><dt><code>ADMIN_USERS: app</code></dt><dd><p>Deja entrar a <code>app</code> a la consola de PgBouncer para correr <code>SHOW POOLS</code>.</p></dd></div>
       </dl>
 
       <h2 id="paso-a-paso">Paso a paso</h2>
 
-      <p>Cada paso dice qué decides, qué descartas y qué puede salir mal. El código completo de cada archivo está en el paso; si quieres escribirlo tú, lee la decisión y vuelve al código solo para comparar.</p>
+      <p>Cada paso muestra los archivos del repositorio, tal cual, y dice qué se decidió, qué se descartó y qué puede salir mal. Los comandos van en bash: en Windows, córrelos en Git Bash o en WSL.</p>
 
-      <h3 id="paso-versiones">Paso 1. Fija las versiones</h3>
+      <h3 id="paso-versiones">Paso 1. Clona el repositorio y mira las versiones</h3>
 
-      <p>Crea el proyecto con Spring Initializr o a mano, con Java 25 y Spring Boot 4.1.1, y deja en el pom solo las dependencias de la tabla anterior.</p>
+<pre data-lang="bash"><code>git clone https://github.com/oskarcj4/ia-system-proyect-a00.git
+cd ia-system-proyect-a00</code></pre>
+
+      <p>Si quieres comprobar el CI en el paso 11, haz primero un fork (el botón Fork en GitHub) y clona tu fork en lugar del oficial: al oficial no puedes hacer push. Todo lo demás es igual.</p>
+
+<pre data-lang="shell"><code>ia-system-proyect-a00
+├── .github/workflows/ci.yml          integración continua (paso 11)
+├── .gitattributes                    finales de línea de mvnw
+├── docker-compose.yaml               PostgreSQL 17 y PgBouncer (paso 2)
+├── mvnw, mvnw.cmd, .mvn/             Maven Wrapper: Maven sin instalarlo
+├── pom.xml                           dependencias
+└── src
+    ├── main
+    │   ├── java/com/a00/laboratorio/comun/notasv1
+    │   │   ├── Notasv1Application.java
+    │   │   ├── controllers/          NoteController, LabController (paso 7)
+    │   │   ├── services/             INoteService, NoteServiceImpl (paso 6)
+    │   │   ├── repository/           NoteRepository (paso 5)
+    │   │   ├── entities/             Note, BackendSessionInfo, dto/NoteRequest (paso 4)
+    │   │   └── exceptions/           NoteNotFountException, InvalidNoteException (paso 6)
+    │   └── resources
+    │       ├── application.yaml      conexiones, pool y JPA (paso 3)
+    │       └── db/migration/V1__create_notes_table.sql
+    └── test/java/com/a00/laboratorio/comun/notasv1
+        ├── TestcontainersConfig.java     (paso 9)
+        ├── NoteApiTest.java              (paso 9)
+        ├── Notasv1ApplicationTests.java  (paso 9)
+        └── NotasSimulation.java          Gatling (paso 10)</code></pre>
+
+      <p>El proyecto usa el <b>Maven Wrapper</b>: <code>./mvnw</code> baja la versión de Maven que fija <code>.mvn/wrapper/maven-wrapper.properties</code> y la usa, así que no necesitas Maven instalado, solo un JDK 21. El archivo <code>.gitattributes</code> lo protege:</p>
+
+<pre data-lang="shell" data-file=".gitattributes"><code>/mvnw text eol=lf
+*.cmd text eol=crlf</code></pre>
+
+      <p><code>mvnw</code> es un script de shell y tiene que tener finales de línea de Linux (LF), aunque lo clones en Windows. Con CRLF, el runner de GitHub falla al ejecutarlo con <code>/usr/bin/env: 'sh\r': No such file or directory</code>.</p>
 
       <dl class="pj-why">
-        <div><dt>La decisión</dt><dd>Versiones exactas en el pom (<code>4.1.1</code>, <code>3.16.0</code>) y en las imágenes (<code>postgres:18</code>, <code>edoburu/pgbouncer:v1.26.0-p0</code>).</dd></div>
+        <div><dt>La decisión</dt><dd>Versiones exactas: Java 21 (<code>java.version</code>), Spring Boot 4.1.1, Gatling 3.10.5, y en las imágenes <code>postgres:17</code> y <code>edoburu/pgbouncer:v1.26.0-p0</code>.</dd></div>
         <div><dt>Lo que descartas</dt><dd><code>latest</code> en las imágenes. Funciona hoy y se rompe el día que sale una versión mayor, sin que nadie haya tocado el repositorio.</dd></div>
         <div><dt>Qué puede salir mal</dt><dd>Mezclar guías viejas de Spring Boot 3 con este pom. Los nombres cambiaron: <code>spring-boot-starter-web</code> pasó a <code>spring-boot-starter-webmvc</code>, Flyway necesita su starter, y los paquetes de pruebas de MVC se movieron a <code>org.springframework.boot.webmvc.test</code>.</dd></div>
       </dl>
@@ -352,268 +516,914 @@ docker compose exec postgres psql -U app -d app -c "SELECT version()"</code></pr
 
       <h3 id="paso-migracion">Paso 3. La tabla, con Flyway directo a PostgreSQL</h3>
 
-<pre data-lang="sql" data-file="src/main/resources/db/migration/V1__notes.sql"><code>-- uuidv7() es nativa desde PostgreSQL 18: ids que no se adivinan y que crecen con el tiempo.
-CREATE TABLE notes (
-    id         uuid        PRIMARY KEY DEFAULT uuidv7(),
-    title      text        NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
-    body       text        NOT NULL DEFAULT '',
+      <p>Flyway corre las migraciones al arrancar la aplicación: busca los archivos <code>V&lt;n&gt;__&lt;nombre&gt;.sql</code> en <code>db/migration</code>, aplica los que faltan en orden y anota cada uno en la tabla <code>flyway_schema_history</code>. Esta es la única:</p>
+
+<pre data-lang="sql" data-file="src/main/resources/db/migration/V1__create_notes_table.sql"><code>CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE OR REPLACE FUNCTION uuid_generate_v7()
+RETURNS uuid AS $$
+DECLARE 
+    unix_time_ms bytea;
+    uuid_bytes bytea;
+BEGIN
+    -- 48 bits de epoch time en milisegundos
+    unix_time_ms = substring(int8send(floor(extract(epoch from clock_timestamp()) * 1000)::bigint) from 3 for 6);
+    
+    -- 10 bytes aleatorios (requiere pgcrypto)
+    uuid_bytes = unix_time_ms || gen_random_bytes(10);
+    
+    -- Ajustar versión (0111 -&gt; 7) en el byte 7
+    uuid_bytes = set_byte(uuid_bytes, 6, (get_byte(uuid_bytes, 6) &amp; 15) | 112);
+    -- Ajustar variante RFC 4122 (10xx) en el byte 9
+    uuid_bytes = set_byte(uuid_bytes, 8, (get_byte(uuid_bytes, 8) &amp; 63) | 128);
+
+    RETURN encode(uuid_bytes, 'hex')::uuid;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE TABLE IF NOT EXISTS notes (
+    id uuid PRIMARY KEY DEFAULT uuid_generate_v7(),
+    title text NOT NULL CHECK(length(title) BETWEEN 1 AND 150),
+    body text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now()
 );</code></pre>
+
+      <p>PostgreSQL 18 trae <code>uuidv7()</code> de fábrica; la 17 no, así que la migración define <code>uuid_generate_v7()</code> con <code>pgcrypto</code>. Arma los 16 bytes así:</p>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 190" role="img" aria-labelledby="fa003t fa003d">
+<title id="fa003t">Los 16 bytes de un UUIDv7</title>
+<desc id="fa003d">Los bytes 0 a 5 son los milisegundos desde 1970. Los bytes 6 a 15 son aleatorios, salvo los 4 bits altos del byte 6, que dicen la versión 7, y los 2 bits altos del byte 8, que dicen la variante.</desc>
+<defs><marker id="fa003a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-edge" d="M27 50 V42 H293 V50"/>
+<text class="dg-small" x="160" y="34" text-anchor="middle">48 bits: milisegundos desde 1970</text>
+
+<path class="dg-edge" d="M297 50 V42 H743 V50"/>
+<text class="dg-small" x="520" y="34" text-anchor="middle">80 bits: gen_random_bytes(10), con dos retoques</text>
+
+<rect class="dg-layer" style="--c: var(--l-db)" x="25" y="56" width="45" height="44"/>
+<text class="dg-small" x="47.5" y="83" text-anchor="middle">0</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="70" y="56" width="45" height="44"/>
+<text class="dg-small" x="92.5" y="83" text-anchor="middle">1</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="115" y="56" width="45" height="44"/>
+<text class="dg-small" x="137.5" y="83" text-anchor="middle">2</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="160" y="56" width="45" height="44"/>
+<text class="dg-small" x="182.5" y="83" text-anchor="middle">3</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="205" y="56" width="45" height="44"/>
+<text class="dg-small" x="227.5" y="83" text-anchor="middle">4</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="250" y="56" width="45" height="44"/>
+<text class="dg-small" x="272.5" y="83" text-anchor="middle">5</text>
+<rect class="dg-warnbox" x="295" y="56" width="45" height="44"/>
+<text class="dg-small" x="317.5" y="83" text-anchor="middle">6</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="340" y="56" width="45" height="44"/>
+<text class="dg-small" x="362.5" y="83" text-anchor="middle">7</text>
+<rect class="dg-warnbox" x="385" y="56" width="45" height="44"/>
+<text class="dg-small" x="407.5" y="83" text-anchor="middle">8</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="430" y="56" width="45" height="44"/>
+<text class="dg-small" x="452.5" y="83" text-anchor="middle">9</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="475" y="56" width="45" height="44"/>
+<text class="dg-small" x="497.5" y="83" text-anchor="middle">10</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="520" y="56" width="45" height="44"/>
+<text class="dg-small" x="542.5" y="83" text-anchor="middle">11</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="565" y="56" width="45" height="44"/>
+<text class="dg-small" x="587.5" y="83" text-anchor="middle">12</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="610" y="56" width="45" height="44"/>
+<text class="dg-small" x="632.5" y="83" text-anchor="middle">13</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="655" y="56" width="45" height="44"/>
+<text class="dg-small" x="677.5" y="83" text-anchor="middle">14</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="700" y="56" width="45" height="44"/>
+<text class="dg-small" x="722.5" y="83" text-anchor="middle">15</text>
+
+<path class="dg-feedback" d="M317 102 V128"/>
+<text class="dg-tiny" x="330" y="142" text-anchor="end">byte 6: versión, 0111xxxx (el 7)</text>
+
+<path class="dg-feedback" d="M407 102 V160"/>
+<text class="dg-tiny" x="395" y="176" text-anchor="start">byte 8: variante RFC, 10xxxxxx</text>
+</svg>
+        </div>
+        <figcaption><b>Figura A00.3.</b> Lo que arma <code>uuid_generate_v7()</code>. Como los primeros 6 bytes son la hora, un id posterior siempre es mayor: ordenar por <code>id</code> es ordenar por fecha de creación.</figcaption>
+      </figure>
+
+      <p>En el uso normal, el id lo pone la aplicación (paso 4) y el <code>DEFAULT</code> de la columna no se usa. Sirve para lo que se inserta por fuera, como un <code>INSERT</code> desde psql. Ordenar por un UUIDv7 es ordenar por fecha de creación, así que <code>ORDER BY id DESC</code> usa el índice de la clave primaria y no hace falta otro sobre <code>created_at</code>. M00 explica el formato y por qué un UUID aleatorio, en cambio, ensucia el índice B-tree.</p>
 
 <pre data-lang="yaml" data-file="src/main/resources/application.yaml"><code>spring:
   application:
     name: notas
+    
+
+
   datasource:
-    # La aplicación habla con PgBouncer (6432), nunca directo con PostgreSQL.
-    url: ${DB_URL:jdbc:postgresql://localhost:6432/app}
+    url: ${DB_URL:jdbc:postgresql://localhost:6432/app?sslmode=disable&amp;prepareThreshold=0&amp;preparedStatementCacheQueries=0}
     username: ${DB_USER:app}
     password: ${DB_PASSWORD:app}
+    driver-class-name: org.postgresql.Driver
+
     hikari:
       maximum-pool-size: 10
-      connection-timeout: 3000     # milisegundos: esperar más un pool lleno solo esconde el problema
+      connection-timeout: 10000   # ms
+      
   flyway:
-    # Las migraciones van directo a PostgreSQL (5433 en tu máquina): necesitan una sesión propia.
     url: ${FLYWAY_URL:jdbc:postgresql://localhost:5433/app}
     user: ${DB_USER:app}
     password: ${DB_PASSWORD:app}
+    mvc:
+      problemdetails:
+      enabled: true
+
+  jpa:
+    hibernate:
+      ddl-auto: validate  # Si es la primera vez ejecutando cambiar a: update
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    properties:
+      hibernate.dialect: org.hibernate.dialect.PostgreSQLDialect
   mvc:
     problemdetails:
       enabled: true
+
+
+server:
+  web:
+    error:
+      include-error: always
+      include-binding-errors: always
 
 management:
   endpoints:
     web:
       exposure:
-        include: health, info, metrics</code></pre>
+        include: health, info, metrics
+        </code></pre>
 
       <dl class="pj-why">
-        <div><dt>La decisión</dt><dd>Dos URLs: la aplicación usa PgBouncer (6432) y Flyway va directo a PostgreSQL (5433). Los ids son <code>uuidv7()</code>, nativa desde PostgreSQL 18. <span class="badge badge--doc">Documentado</span></dd></div>
-        <div><dt>Lo que descartas</dt><dd>Migrar a través de PgBouncer en modo transacción. Una migración suele hacer <code>SET lock_timeout</code> y después un <code>ALTER TABLE</code>; si van en transacciones separadas, cada una puede caer en una conexión distinta del servidor, y el <code>SET</code> queda en la conexión de otro cliente. Descartas también <code>bigserial</code>: un id secuencial se adivina y no se puede generar fuera de la base.</dd></div>
-        <div><dt>Qué puede salir mal</dt><dd>Olvidar que ahora hay dos URLs. En producción, la de Flyway apunta al primario, no a una réplica ni al pooler. Y si la red solo deja pasar el puerto del pooler, la migración se corre aparte, como un paso del despliegue.</dd></div>
+        <div><dt><code>datasource.url</code></dt><dd><p>La aplicación habla con PgBouncer (6432). Los tres parámetros de la URL importan: <code>sslmode=disable</code> porque el PgBouncer del compose no tiene TLS; <code>prepareThreshold=0</code> y <code>preparedStatementCacheQueries=0</code> le dicen al driver que nunca prepare consultas con nombre en el servidor. Es el arreglo clásico de la falla 3; ahí lo vas a quitar para ver qué pasa sin él.</p></dd></div>
+        <div><dt><code>flyway.url</code></dt><dd><p>Las migraciones van directo a PostgreSQL (5433), sin PgBouncer. El bloque <code>mvc</code> que quedó dentro de <code>flyway</code> no lo lee nadie: la propiedad que cuenta es <code>spring.mvc.problemdetails.enabled</code>, más abajo.</p></dd></div>
+        <div><dt><code>jpa.hibernate.ddl-auto: validate</code></dt><dd><p>Hibernate no crea ni cambia tablas: al arrancar, compara la entidad <code>Note</code> con la tabla y, si no coinciden, la aplicación no arranca. Flyway corre antes que Hibernate, así que la tabla ya existe desde el primer arranque. El esquema es de Flyway; Hibernate solo lo revisa.</p></dd></div>
+        <div><dt><code>mvc.problemdetails.enabled</code></dt><dd><p>Los errores de validación y los <code>ResponseStatusException</code> salen como Problem Details sin escribir un manejador.</p></dd></div>
+        <div><dt><code>server.web.error</code></dt><dd><p>Incluye el error y los errores de validación en las respuestas de error. Ayuda a aprender; en producción no se expone tanto detalle.</p></dd></div>
       </dl>
 
-      <p>Ordenar por un UUIDv7 es ordenar por fecha de creación, porque sus primeros 48 bits son los milisegundos desde 1970. Por eso <code>ORDER BY id DESC</code> usa el índice de la clave primaria y no necesitas otro sobre <code>created_at</code>. M00 explica el formato y por qué un UUID aleatorio, en cambio, ensucia el índice B-tree.</p>
+      <dl class="pj-why">
+        <div><dt>La decisión</dt><dd>Dos URLs: la aplicación usa PgBouncer (6432) y Flyway va directo a PostgreSQL (5433).</dd></div>
+        <div><dt>Lo que descartas</dt><dd>Migrar a través de PgBouncer en modo transacción. Flyway toma un advisory lock de sesión para que dos instancias no migren a la vez, y una migración suele hacer <code>SET lock_timeout</code> y después un <code>ALTER TABLE</code>. Detrás de PgBouncer, el lock no excluye y el <code>SET</code> cae en la conexión de otro cliente: son las fallas 1 y 2, que vas a provocar.</dd></div>
+        <div><dt>Qué puede salir mal</dt><dd>Olvidar que hay dos URLs. En producción, la de Flyway apunta al primario, no a una réplica ni al pooler. Y si la red solo deja pasar el puerto del pooler, la migración se corre aparte, como un paso del despliegue.</dd></div>
+      </dl>
 
-      <h3 id="paso-repositorio">Paso 4. El repositorio, con SQL a la vista</h3>
+      <h3 id="paso-entidad">Paso 4. La entidad y el DTO</h3>
 
-<pre data-lang="java" data-file="src/main/java/lab/notas/notes/NoteRepository.java"><code>package lab.notas.notes;
+<pre data-lang="java" data-file="src/main/java/com/a00/laboratorio/comun/notasv1/entities/Note.java"><code>package com.a00.laboratorio.comun.notasv1.entities;
+
+import com.fasterxml.uuid.Generators;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.Table;
+import java.time.OffsetDateTime;
+import java.util.UUID;
+
+@Entity
+@Table(name = "notes")
+public class Note {
+
+    @Id
+    @Column(name = "id", columnDefinition = "uuid", updatable = false, nullable = false)
+    private UUID id;
+
+    @Column(nullable = false, length = 150)
+    private String title;
+
+    @Column(nullable = false)
+    private String body;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private OffsetDateTime createdAt;
+
+    public Note() {
+    }
+
+    public Note(String title, String body) {
+        this.title = title;
+        this.body = body;
+    }
+
+    @PrePersist
+    protected void onPrePersist() {
+        if (this.id == null) {
+            this.id = Generators.timeBasedEpochGenerator().generate(); // UUIDv7
+        }
+        if (this.createdAt == null) {
+            this.createdAt = OffsetDateTime.now();
+        }
+    }
+
+    public UUID getId() {
+        return id;
+    }
+
+    public void setId(UUID id) {
+        this.id = id;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    public void setTitle(String title) {
+        this.title = title;
+    }
+
+    public String getBody() {
+        return body;
+    }
+
+    public void setBody(String body) {
+        this.body = body;
+    }
+
+    public OffsetDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(OffsetDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+}</code></pre>
+
+      <p><code>@PrePersist</code> corre justo antes del <code>INSERT</code>: pone el id con <code>Generators.timeBasedEpochGenerator()</code>, que genera UUIDv7 en Java, y la fecha. Como el id ya existe antes de insertar, Hibernate no necesita leerlo de vuelta de la base.</p>
+
+<pre data-lang="java" data-file="src/main/java/com/a00/laboratorio/comun/notasv1/entities/dto/NoteRequest.java"><code>package com.a00.laboratorio.comun.notasv1.entities.dto;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
+
+public class NoteRequest {
+    @NotBlank(message = "El título es obligatorio")
+    @Size(min = 1, max = 150)
+    private String title;
+
+    @NotNull(message = "El cuerpo no puede ser nulo")
+
+    private String body;
+
+    public NoteRequest() {}
+
+    public NoteRequest(String title, String body) {
+        this.title = title;
+        this.body = body;
+    }
+
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
+
+    public String getBody() { return body; }
+    public void setBody(String body) { this.body = body; }
+}</code></pre>
+
+      <dl class="pj-why">
+        <div><dt>La decisión</dt><dd>Separar lo que entra (<code>NoteRequest</code>, con las reglas de validación) de lo que se guarda (<code>Note</code>, con id y fecha). El cliente no puede mandar un id ni una fecha.</dd></div>
+        <div><dt>Lo que descartas</dt><dd>Recibir la entidad <code>Note</code> como body. Cualquier campo de la entidad pasaría a ser escribible desde afuera, incluido el id.</dd></div>
+        <div><dt>Qué puede salir mal</dt><dd>Que las reglas no coincidan: <code>@Size(max = 150)</code> en el DTO, <code>length = 150</code> en la entidad y <code>CHECK (length(title) BETWEEN 1 AND 150)</code> en la tabla dicen lo mismo. Si cambias una, cambia las tres, o el error sale de la base como un 500 en lugar de un 400.</dd></div>
+      </dl>
+
+      <h3 id="paso-repositorio">Paso 5. El repositorio</h3>
+
+<pre data-lang="java" data-file="src/main/java/com/a00/laboratorio/comun/notasv1/repository/NoteRepository.java"><code>package com.a00.laboratorio.comun.notasv1.repository;
+
+
+import java.util.List;
+import java.util.UUID;
+
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.CrudRepository;
+
+import com.a00.laboratorio.comun.notasv1.entities.BackendSessionInfo;
+import com.a00.laboratorio.comun.notasv1.entities.Note;
+
+
+public interface NoteRepository extends CrudRepository&lt;Note, UUID&gt; {
+
+    @Query ("SELECT n FROM Note n order BY id DESC LIMIT ?1")
+    public List&lt;Note&gt; findAllWithLimit(int limit);
+
+    @Query (value = "SELECT pg_backend_pid() AS backend_pid, current_setting('statement_timeout') AS statement_timeout", nativeQuery=true)
+    public BackendSessionInfo getSessionInfo();
+
+}</code></pre>
+
+<pre data-lang="java" data-file="src/main/java/com/a00/laboratorio/comun/notasv1/entities/BackendSessionInfo.java"><code>package com.a00.laboratorio.comun.notasv1.entities;
+
+public interface BackendSessionInfo {
+    Integer getBackendPid();
+    String getStatementTimeout();
+}</code></pre>
+
+      <p><code>CrudRepository&lt;Note, UUID&gt;</code> trae hecho <code>save</code>, <code>findById</code>, <code>existsById</code>, <code>deleteById</code> y <code>findAll</code>. Las dos consultas propias van con <code>@Query</code>: <code>findAllWithLimit</code> en JPQL (sobre la entidad <code>Note</code>, no sobre la tabla), y <code>getSessionInfo</code> en SQL nativo, porque <code>pg_backend_pid()</code> y <code>current_setting</code> son funciones de PostgreSQL. Su resultado se lee con <code>BackendSessionInfo</code>, una proyección: una interfaz con un getter por columna.</p>
+
+      <dl class="pj-why">
+        <div><dt>La decisión</dt><dd>Spring Data JPA con <code>@Query</code> para lo que no es CRUD: el SQL que importa para los experimentos queda a la vista.</dd></div>
+        <div><dt>Lo que descartas</dt><dd>Escribir todo el SQL a mano con <code>JdbcClient</code>. Ve cada consulta tal como llega a la base, pero repite lo que el CRUD ya trae.</dd></div>
+        <div><dt>Qué puede salir mal</dt><dd>Perder de vista cuántas consultas salen. JPA puede mandar más de las que esperas (por ejemplo, un <code>SELECT</code> antes de un <code>UPDATE</code>). Para verlas, agrega <code>spring.jpa.show-sql: true</code> mientras experimentas.</dd></div>
+      </dl>
+
+      <h3 id="paso-servicio">Paso 6. El servicio y sus excepciones</h3>
+
+<pre data-lang="java" data-file="src/main/java/com/a00/laboratorio/comun/notasv1/services/INoteService.java"><code>package com.a00.laboratorio.comun.notasv1.services;
 
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.stereotype.Repository;
+import com.a00.laboratorio.comun.notasv1.entities.Note;
+import com.a00.laboratorio.comun.notasv1.entities.dto.NoteRequest;
 
-@Repository
-public class NoteRepository {
-
-    private final JdbcClient jdbc;
-
-    public NoteRepository(JdbcClient jdbc) {
-        this.jdbc = jdbc;
-    }
-
-    public Note insert(NewNote note) {
-        // RETURNING devuelve la fila con el id y la fecha que puso PostgreSQL: un viaje, no dos.
-        return jdbc.sql("""
-                INSERT INTO notes (title, body)
-                VALUES (:title, :body)
-                RETURNING id, title, body, created_at
-                """)
-                .param("title", note.title())
-                .param("body", note.body() == null ? "" : note.body())
-                .query(Note.class)
-                .single();
-    }
-
-    public Optional&lt;Note&gt; findById(UUID id) {
-        return jdbc.sql("SELECT id, title, body, created_at FROM notes WHERE id = :id")
-                .param("id", id)
-                .query(Note.class)
-                .optional();
-    }
-
-    public List&lt;Note&gt; latest(int limit) {
-        // Los UUIDv7 empiezan con la hora: ordenar por id es ordenar por fecha de creación.
-        return jdbc.sql("SELECT id, title, body, created_at FROM notes ORDER BY id DESC LIMIT :limit")
-                .param("limit", limit)
-                .query(Note.class)
-                .list();
-    }
+public interface INoteService {
+    Optional&lt;Note&gt; findById(UUID id);
+    List&lt;Note&gt; findAllWithLimit(int limit);
+    List&lt;Note&gt; findAll();
+    Note create(NoteRequest noteRequest);
+    Note update(NoteRequest noteRequest, UUID id);
+    void delete(UUID id);
 }</code></pre>
 
-      <details class="solution" data-toc="skip">
-        <summary>Ver Note.java y NewNote.java</summary>
-        <div class="solution-body">
-<pre data-lang="java" data-file="src/main/java/lab/notas/notes/Note.java"><code>package lab.notas.notes;
-
-import java.time.OffsetDateTime;
-import java.util.UUID;
-
-/** Una fila de notes. JdbcClient la arma por nombre: created_at pasa a createdAt. */
-public record Note(UUID id, String title, String body, OffsetDateTime createdAt) {
-}</code></pre>
-<pre data-lang="java" data-file="src/main/java/lab/notas/notes/NewNote.java"><code>package lab.notas.notes;
-
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
-
-/** El body de POST /api/notes. Se valida antes de llegar al repositorio. */
-public record NewNote(
-        @NotBlank @Size(max = 200) String title,
-        @Size(max = 10_000) String body) {
-}</code></pre>
-        </div>
-      </details>
-
-      <dl class="pj-why">
-        <div><dt>La decisión</dt><dd><code>JdbcClient</code> con records. Cada consulta se lee en el código tal como llega a PostgreSQL, y eso es lo que necesitas cuando la lección es lo que pasa en la base.</dd></div>
-        <div><dt>Lo que descartas</dt><dd>JPA con Hibernate. Es útil en una aplicación con un modelo rico, pero esconde cuántas consultas salen y cuándo; aquí querrás contarlas.</dd></div>
-        <div><dt>Qué puede salir mal</dt><dd>Leer después de insertar para conocer el id: son dos viajes a la base y dos transacciones en el pooler. <code>RETURNING</code> trae la fila en el mismo viaje.</dd></div>
-      </dl>
-
-      <h3 id="paso-controlador">Paso 5. El controlador y sus errores</h3>
-
-<pre data-lang="java" data-file="src/main/java/lab/notas/notes/NoteController.java"><code>package lab.notas.notes;
+<pre data-lang="java" data-file="src/main/java/com/a00/laboratorio/comun/notasv1/services/NoteServiceImpl.java"><code>package com.a00.laboratorio.comun.notasv1.services;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.a00.laboratorio.comun.notasv1.entities.Note;
+import com.a00.laboratorio.comun.notasv1.entities.dto.NoteRequest;
+import com.a00.laboratorio.comun.notasv1.exceptions.InvalidNoteException;
+import com.a00.laboratorio.comun.notasv1.exceptions.NoteNotFountException;
+import com.a00.laboratorio.comun.notasv1.repository.NoteRepository;
+
+@Service 
+public class NoteServiceImpl implements INoteService {
+
+    private final NoteRepository repository;
+
+    public NoteServiceImpl(NoteRepository repository) {
+        this.repository = repository;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional&lt;Note&gt; findById(UUID id) {
+        return repository.findById(id);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List&lt;Note&gt; findAll() {
+        return (List&lt;Note&gt;) repository.findAll();
+    }
+
+    @Override
+    @Transactional 
+    public Note create(NoteRequest noteRequest) {
+        try{
+            String body = noteRequest.getBody() != null ? noteRequest.getBody() : "";
+            Note note = new Note(noteRequest.getTitle(), body);
+            return repository.save(note);
+        }
+        catch(RuntimeException e){
+            e.printStackTrace();
+            throw new InvalidNoteException("El formato de la nota es invalido");
+        }
+    }
+
+    @Override
+    @Transactional 
+    public Note update(NoteRequest noteRequest, UUID id) {
+    try
+        {        Note noteFind = repository.findById(id)
+                .orElseThrow(() -&gt; new NoteNotFountException(id));
+
+        noteFind.setTitle(noteRequest.getTitle());
+        noteFind.setBody(noteRequest.getBody() != null ? noteRequest.getBody() : "");
+        return noteFind; // Hibernate sincroniza los cambios automáticamente por dirty checking
+        }
+        catch(RuntimeException e){
+            throw new InvalidNoteException("El formato de la nota es invalido");
+        }
+    }
+
+    @Override
+    @Transactional 
+    public void delete(UUID id) {
+        if (!repository.existsById(id)) {
+            throw new NoteNotFountException(id);
+        }
+        repository.deleteById(id);
+    }
+
+    @Override
+    public List&lt;Note&gt; findAllWithLimit(int limit) {
+        if (limit&lt;= 0){
+            throw new RuntimeException("Debes ingresar un limite de notas valido.");
+        }
+        return repository.findAllWithLimit(limit);
+    }
+}</code></pre>
+
+      <p><code>@Transactional</code> abre una transacción al entrar al método y hace commit al salir; con una excepción, rollback. <code>readOnly = true</code> avisa que no se escribe, y Hibernate se ahorra revisar cambios. En <code>update</code> no hay <code>save</code>: la entidad que devolvió <code>findById</code> está "administrada", y Hibernate manda el <code>UPDATE</code> en el commit si algún campo cambió (dirty checking).</p>
+
+      <p>Cada <code>@Transactional</code> es una transacción en PgBouncer: mientras dura, la aplicación tiene una conexión real para ella sola; al terminar, la devuelve.</p>
+
+<pre data-lang="java" data-file="src/main/java/com/a00/laboratorio/comun/notasv1/exceptions/NoteNotFountException.java"><code>package com.a00.laboratorio.comun.notasv1.exceptions;
+
+import java.util.UUID;
+
+public class NoteNotFountException extends RuntimeException{
+    
+    private final UUID Id;
+    public NoteNotFountException(UUID Id){
+        super("Nota con ID: "+ Id  + " NO ENCONTRADA");
+
+        this.Id= Id;
+    }
+
+    public UUID noteId(){
+        return Id;
+    }
+}</code></pre>
+
+<pre data-lang="java" data-file="src/main/java/com/a00/laboratorio/comun/notasv1/exceptions/InvalidNoteException.java"><code>package com.a00.laboratorio.comun.notasv1.exceptions;
+
+
+public class InvalidNoteException extends RuntimeException{
+    
+    public InvalidNoteException(String message){
+        super(message);
+
+    }
+
+}</code></pre>
+
+      <dl class="pj-why">
+        <div><dt>La decisión</dt><dd>Una interfaz (<code>INoteService</code>) y su implementación. El controlador depende de la interfaz: se puede cambiar o simular la implementación sin tocarlo.</dd></div>
+        <div><dt>Lo que descartas</dt><dd>Poner la lógica en el controlador. Mezcla HTTP con reglas y transacciones, y no se puede reutilizar desde otro lugar (un job, otro controlador).</dd></div>
+        <div><dt>Qué puede salir mal</dt><dd>Las excepciones sin manejador. Ninguna de las dos tiene <code>@ResponseStatus</code> ni un <code>@ExceptionHandler</code> que las traduzca, así que Spring responde 500. Además, el <code>catch (RuntimeException e)</code> de <code>update</code> también atrapa <code>NoteNotFountException</code> y la convierte en <code>InvalidNoteException</code>. Por eso PUT y DELETE de una nota que no existe dan 500 (ver los endpoints).</dd></div>
+      </dl>
+
+      <h3 id="paso-controlador">Paso 7. Los controladores</h3>
+
+<pre data-lang="java" data-file="src/main/java/com/a00/laboratorio/comun/notasv1/controllers/NoteController.java"><code>package com.a00.laboratorio.comun.notasv1.controllers;
+
+import java.net.URI;
+import java.util.UUID;
+
+import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.a00.laboratorio.comun.notasv1.entities.Note;
+import com.a00.laboratorio.comun.notasv1.entities.dto.NoteRequest;
+import com.a00.laboratorio.comun.notasv1.services.INoteService;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
-import org.springframework.web.util.UriComponentsBuilder;
 
-@RestController
-@RequestMapping("/api/notes")
+
+@RestController 
+@RequestMapping("/api/v1/notes")
 public class NoteController {
 
-    private final NoteRepository notes;
+    private final INoteService service;
 
-    public NoteController(NoteRepository notes) {
-        this.notes = notes;
+    // Inyecta la interfaz, no la implementación concreta
+    public NoteController(INoteService service) {
+        this.service = service;
     }
+
+
+    
+    @GetMapping("/{id}")
+    public ResponseEntity&lt;?&gt; findById(@PathVariable UUID id) {
+        var note = service.findById(id);
+
+        if (note.isEmpty()) {
+            return ResponseEntity.status(404).body(ProblemDetail.forStatus(404));
+        }
+
+        return ResponseEntity.ok(note.get());
+    }
+
 
     @PostMapping
-    public ResponseEntity&lt;Note&gt; create(@Valid @RequestBody NewNote body, UriComponentsBuilder uri) {
-        Note note = notes.insert(body);
-        return ResponseEntity.created(uri.path("/api/notes/{id}").build(note.id())).body(note);
+    public ResponseEntity&lt;?&gt; create(@Valid @RequestBody NoteRequest note) {
+        Note created = service.create(note);
+        URI location = URI.create("/api/v1/notes/" + created.getId());
+        return ResponseEntity.created(location).body(created);
     }
 
-    @GetMapping("/{id}")
-    public Note get(@PathVariable UUID id) {
-        // ResponseStatusException se convierte en un ProblemDetail (RFC 9457) con status 404.
-        return notes.findById(id).orElseThrow(() -&gt;
-                new ResponseStatusException(HttpStatus.NOT_FOUND, "No existe la nota " + id));
+    @PutMapping("/{id}")
+    public ResponseEntity&lt;Note&gt; update(@Valid @RequestBody NoteRequest note, @PathVariable UUID id) {
+        Note noteUpdated = service.update(note, id);
+        return ResponseEntity.ok(noteUpdated);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity&lt;Void&gt; delete(@PathVariable UUID id) {
+        service.delete(id);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping
-    public List&lt;Note&gt; latest(@RequestParam(defaultValue = "20") @Min(1) @Max(100) int limit) {
-        return notes.latest(limit);
+    public ResponseEntity&lt;?&gt; latest(@RequestParam(defaultValue = "20") @Min(1) @Max(100) int limit) {
+        return ResponseEntity.ok(service.findAllWithLimit(limit));
     }
+    
 }</code></pre>
 
       <dl class="pj-why">
-        <div><dt>La decisión</dt><dd><code>spring.mvc.problemdetails.enabled: true</code> y <code>ResponseStatusException</code>: los 404 y los 400 salen como Problem Details sin escribir un manejador.</dd></div>
+        <div><dt>La decisión</dt><dd><code>ResponseEntity</code> en cada método: el código HTTP queda explícito (201 con <code>Location</code> al crear, 204 al borrar, 404 con <code>ProblemDetail.forStatus(404)</code>). La ruta lleva versión: <code>/api/v1</code>.</dd></div>
         <div><dt>Lo que descartas</dt><dd>Un formato de error propio, como <code>{"error": "..."}</code>. Cada cliente tendría que aprenderlo, y el estándar ya trae <code>status</code>, <code>title</code>, <code>detail</code> e <code>instance</code>.</dd></div>
         <div><dt>Qué puede salir mal</dt><dd>Un <code>limit</code> sin tope. <code>?limit=1000000</code> obliga a la base a mandar un millón de filas y a la aplicación a tenerlas en memoria. <code>@Max(100)</code> lo corta con un 400.</dd></div>
       </dl>
 
-      <p>Agrega el controlador de los experimentos. No va en una aplicación real: muestra en qué proceso del servidor cayó tu consulta, y con eso vas a ver al pooler compartir conexiones.</p>
+      <p>El controlador de los experimentos no va en una aplicación real: muestra en qué proceso del servidor cayó tu consulta, y con eso vas a ver al pooler compartir conexiones.</p>
 
-<pre data-lang="java" data-file="src/main/java/lab/notas/lab/LabController.java"><code>package lab.notas.lab;
+<pre data-lang="java" data-file="src/main/java/com/a00/laboratorio/comun/notasv1/controllers/LabController.java"><code>package com.a00.laboratorio.comun.notasv1.controllers;
 
-import java.util.Map;
-
-import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Solo para los experimentos: muestra en qué conexión del servidor cayó la consulta. */
-@RestController
+import com.a00.laboratorio.comun.notasv1.entities.BackendSessionInfo;
+import com.a00.laboratorio.comun.notasv1.repository.NoteRepository;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+
+
+@RestController 
 public class LabController {
-
-    private final JdbcClient jdbc;
-
-    public LabController(JdbcClient jdbc) {
-        this.jdbc = jdbc;
+    private final NoteRepository repository;
+    
+    public LabController(NoteRepository repository) {
+        this.repository = repository;
     }
 
     @GetMapping("/api/lab/conexion")
-    public Map&lt;String, Object&gt; conexion() {
-        return jdbc.sql("""
-                SELECT pg_backend_pid()                      AS backend_pid,
-                       current_setting('statement_timeout') AS statement_timeout
-                """)
-                .query()
-                .singleRow();
+    public ResponseEntity&lt;BackendSessionInfo&gt; conexion() {
+        return ResponseEntity.ok(repository.getSessionInfo());
     }
+    
 }</code></pre>
 
-      <h3 id="paso-pool">Paso 6. El tamaño del pool</h3>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver Notasv1Application.java</summary>
+  <div class="solution-body">
+<pre data-lang="java" data-file="src/main/java/com/a00/laboratorio/comun/notasv1/Notasv1Application.java"><code>package com.a00.laboratorio.comun.notasv1;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class Notasv1Application {
+
+	public static void main(String[] args) {
+		SpringApplication.run(Notasv1Application.class, args);
+	}
+
+}</code></pre>
+  </div>
+</details>
+
+      <h3 id="paso-pool">Paso 8. El tamaño del pool</h3>
 
       <p>Hay dos pools en fila: Hikari, en la aplicación, con 10 conexiones hacia PgBouncer, y PgBouncer, con hasta 20 hacia PostgreSQL. La configuración está en el <code>application.yaml</code> del paso 3.</p>
 
       <dl class="pj-why">
-        <div><dt>La decisión</dt><dd>Hikari con 10 conexiones y <code>connection-timeout</code> de 3&#8239;000&#8239;ms. Si el pool está lleno 3&#8239;s, la request falla con un 500 y el problema se ve.</dd></div>
+        <div><dt>La decisión</dt><dd>Hikari con 10 conexiones y <code>connection-timeout</code> de 10&#8239;000&#8239;ms. Si el pool está lleno 10&#8239;s, la request falla con un 500 y el problema se ve.</dd></div>
         <div><dt>Lo que descartas</dt><dd>Un pool de 100 "por si acaso" y el timeout por defecto de 30&#8239;s. Más conexiones no hacen más rápida a la base: compiten por los mismos núcleos y discos. Y 30&#8239;s de espera convierten una base lenta en hilos colgados en toda la aplicación.</dd></div>
         <div><dt>Qué puede salir mal</dt><dd>Escalar a 5 réplicas de la aplicación con 10 conexiones cada una: son 50 clientes para 20 conexiones reales. En modo transacción está bien, porque una conexión real solo se presta mientras dura una transacción; en modo sesión, 30 clientes esperarían.</dd></div>
       </dl>
 
-      <p>El <code>connection-timeout</code> de Hikari es un número en milisegundos. Si escribes <code>3s</code>, la aplicación no arranca: "Failed to convert from type [java.lang.String] to type [long] for value [3s]".</p>
+      <p>El <code>connection-timeout</code> de Hikari es un número en milisegundos. Si escribes <code>10s</code>, la aplicación no arranca: "Failed to convert from type [java.lang.String] to type [long] for value [10s]".</p>
 
-      <h3 id="paso-pruebas">Paso 7. Pruebas contra un PostgreSQL de verdad</h3>
+      <h3 id="paso-pruebas">Paso 9. Las pruebas, desde cero</h3>
 
-<pre data-lang="java" data-file="src/test/java/lab/notas/TestcontainersConfig.java"><code>package lab.notas;
+      <p>Una prueba automática es código que usa tu código y comprueba el resultado. Si el resultado no es el esperado, la prueba falla y te dice qué llegó. Las pruebas de este proyecto son <b>de integración</b>: arrancan la aplicación entera contra un PostgreSQL de verdad y le mandan requests, igual que un cliente.</p>
 
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+      <h4>Las piezas</h4>
+
+      <div class="table-wrap">
+        <table class="t">
+          <thead><tr><th>Pieza</th><th>Qué es</th><th>Dónde la ves</th></tr></thead>
+          <tbody>
+            <tr><td>JUnit 5</td><td>El motor de pruebas: encuentra los métodos con <code>@Test</code>, los corre y cuenta cuántos pasan.</td><td><code>@Test</code></td></tr>
+            <tr><td>AssertJ</td><td>Las comprobaciones: <code>assertThat(valor).esto().aquello()</code>. Si una no se cumple, lanza un error con lo esperado y lo que llegó.</td><td><code>assertThat</code>, <code>isEqualTo</code></td></tr>
+            <tr><td>Maven Surefire</td><td>El plugin de Maven que corre JUnit en la fase <code>test</code>. Corre las clases cuyo nombre termina en <code>Test</code> o <code>Tests</code>, o empieza con <code>Test</code>.</td><td><code>./mvnw verify</code></td></tr>
+            <tr><td>Contexto de Spring</td><td>La aplicación armada: todos los beans creados y conectados. Spring lo guarda y lo reutiliza entre clases con la misma configuración.</td><td><code>@SpringBootTest</code></td></tr>
+            <tr><td>MockMvcTester</td><td>Un cliente HTTP falso que le entrega la request directo a Spring MVC, sin red.</td><td><code>mvc.post()</code>, <code>mvc.get()</code></td></tr>
+            <tr><td>Testcontainers</td><td>Una biblioteca que arranca contenedores de Docker desde Java y los borra al terminar.</td><td><code>PostgreSQLContainer</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="fa004t fa004d">
+<title id="fa004t">Una corrida de ./mvnw verify</title>
+<desc id="fa004d">Maven recorre las fases compile, test-compile, test, package y verify. En la fase test, Surefire corre cada clase de prueba: arranca el contexto de Spring, Testcontainers levanta postgres:18, Flyway migra el contenedor, se ejecuta cada método con @Test y se reporta si pasa o falla.</desc>
+<defs><marker id="fa004a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="10" y="30">Las fases de Maven, en orden</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="10" y="50" width="130" height="50" rx="6"/>
+<text class="dg-small dg-mono" x="75" y="72" text-anchor="middle">compile</text>
+<text class="dg-tiny" x="75" y="90" text-anchor="middle">src/main</text>
+<path class="dg-edge" d="M142 75 H160" marker-end="url(#fa004a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="164" y="50" width="130" height="50" rx="6"/>
+<text class="dg-small dg-mono" x="229" y="72" text-anchor="middle">test-compile</text>
+<text class="dg-tiny" x="229" y="90" text-anchor="middle">src/test</text>
+<path class="dg-edge" d="M296 75 H314" marker-end="url(#fa004a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="318" y="50" width="130" height="50" rx="6"/>
+<text class="dg-small dg-mono" x="383" y="72" text-anchor="middle">test</text>
+<text class="dg-tiny" x="383" y="90" text-anchor="middle">Surefire: *Test, *Tests</text>
+<path class="dg-edge" d="M450 75 H468" marker-end="url(#fa004a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="472" y="50" width="130" height="50" rx="6"/>
+<text class="dg-small dg-mono" x="537" y="72" text-anchor="middle">package</text>
+<text class="dg-tiny" x="537" y="90" text-anchor="middle">el .jar</text>
+<path class="dg-edge" d="M604 75 H622" marker-end="url(#fa004a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="626" y="50" width="130" height="50" rx="6"/>
+<text class="dg-small dg-mono" x="691" y="72" text-anchor="middle">verify</text>
+<text class="dg-tiny" x="691" y="90" text-anchor="middle">BUILD SUCCESS</text>
+
+<path class="dg-feedback" d="M383 102 V128"/>
+<text class="dg-group" x="10" y="146">Dentro de la fase test, por cada clase de prueba</text>
+<rect class="dg-box" x="10" y="158" width="140" height="56" rx="6"/>
+<text class="dg-small" x="80" y="183" text-anchor="middle">Contexto de Spring</text>
+<text class="dg-tiny" x="80" y="201" text-anchor="middle">@SpringBootTest</text>
+<path class="dg-edge" d="M152 186 H159" marker-end="url(#fa004a)"/>
+<rect class="dg-box" x="163" y="158" width="140" height="56" rx="6"/>
+<text class="dg-small" x="233" y="183" text-anchor="middle">Testcontainers</text>
+<text class="dg-tiny" x="233" y="201" text-anchor="middle">postgres:18 en Docker</text>
+<path class="dg-edge" d="M305 186 H312" marker-end="url(#fa004a)"/>
+<rect class="dg-box" x="316" y="158" width="140" height="56" rx="6"/>
+<text class="dg-small" x="386" y="183" text-anchor="middle">Flyway</text>
+<text class="dg-tiny" x="386" y="201" text-anchor="middle">migra V1 en el contenedor</text>
+<path class="dg-edge" d="M458 186 H465" marker-end="url(#fa004a)"/>
+<rect class="dg-box" x="469" y="158" width="140" height="56" rx="6"/>
+<text class="dg-small" x="539" y="183" text-anchor="middle">Cada @Test</text>
+<text class="dg-tiny" x="539" y="201" text-anchor="middle">MockMvcTester + AssertJ</text>
+<path class="dg-edge" d="M611 186 H618" marker-end="url(#fa004a)"/>
+<rect class="dg-box" x="622" y="158" width="140" height="56" rx="6"/>
+<text class="dg-small" x="692" y="183" text-anchor="middle">Resultado</text>
+<text class="dg-tiny" x="692" y="201" text-anchor="middle">pasa o falla, y por qué</text>
+
+<text class="dg-tiny" x="10" y="248" text-anchor="start">Si Docker no está corriendo, se corta en el segundo cuadro: Could not find a valid Docker environment.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura A00.4.</b> Qué pasa cuando corres <code>./mvnw verify</code>. Si una fase falla, las siguientes no corren: con una prueba roja no hay <code>.jar</code> ni <code>BUILD SUCCESS</code>.</figcaption>
+      </figure>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="fa005t fa005d">
+<title id="fa005t">El camino de una prueba</title>
+<desc id="fa005d">NoteApiTest usa MockMvcTester, que arma la request en memoria y se la pasa a la aplicación en el mismo proceso. La request recorre el controlador, el servicio y el repositorio, y llega al PostgreSQL 18 que levantó Testcontainers, sin PgBouncer.</desc>
+<defs><marker id="fa005a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="270" y="40" width="340" height="96" rx="10" fill="none"/>
+<text class="dg-small" x="440" y="32" text-anchor="middle">tu aplicación, en el mismo proceso que la prueba</text>
+
+<rect class="dg-layer" style="--c: var(--l-client)" x="10" y="60" width="110" height="56" rx="6"/>
+<text class="dg-small" x="65" y="85" text-anchor="middle">NoteApiTest</text>
+<text class="dg-tiny" x="65" y="103" text-anchor="middle">@Test</text>
+
+<path class="dg-edge" d="M122 88 H136" marker-end="url(#fa005a)"/>
+
+<rect class="dg-layer" style="--c: var(--l-client)" x="140" y="60" width="120" height="56" rx="6"/>
+<text class="dg-small" x="200" y="85" text-anchor="middle">MockMvcTester</text>
+<text class="dg-tiny" x="200" y="103" text-anchor="middle">sin red</text>
+
+<path class="dg-edge" d="M262 88 H276" marker-end="url(#fa005a)"/>
+
+<rect class="dg-layer" style="--c: var(--l-service)" x="280" y="60" width="100" height="56" rx="6"/>
+<text class="dg-small" x="330" y="85" text-anchor="middle">controlador</text>
+<text class="dg-tiny" x="330" y="103" text-anchor="middle">NoteController</text>
+
+<path class="dg-edge" d="M382 88 H386" marker-end="url(#fa005a)"/>
+
+<rect class="dg-layer" style="--c: var(--l-service)" x="390" y="60" width="100" height="56" rx="6"/>
+<text class="dg-small" x="440" y="85" text-anchor="middle">servicio</text>
+<text class="dg-tiny" x="440" y="103" text-anchor="middle">NoteServiceImpl</text>
+
+<path class="dg-edge" d="M492 88 H496" marker-end="url(#fa005a)"/>
+
+<rect class="dg-layer" style="--c: var(--l-service)" x="500" y="60" width="100" height="56" rx="6"/>
+<text class="dg-small" x="550" y="85" text-anchor="middle">repositorio</text>
+<text class="dg-tiny" x="550" y="103" text-anchor="middle">NoteRepository</text>
+
+<path class="dg-edge" d="M602 88 H632" marker-end="url(#fa005a)"/>
+
+<rect class="dg-layer" style="--c: var(--l-db)" x="636" y="60" width="124" height="56" rx="6"/>
+<text class="dg-small" x="698" y="85" text-anchor="middle">postgres:18</text>
+<text class="dg-tiny" x="698" y="103" text-anchor="middle">Testcontainers</text>
+
+<path class="dg-feedback" d="M698 118 V146"/>
+<text class="dg-tiny" x="760" y="162" text-anchor="end">@ServiceConnection le pasa al DataSource la URL del contenedor</text>
+
+<text class="dg-tiny" x="760" y="182" text-anchor="end">DynamicPropertyRegistrar hace lo mismo con spring.flyway.url</text>
+
+<path class="dg-feedback" d="M200 118 V196"/>
+<text class="dg-tiny" x="10" y="212" text-anchor="start">MockMvcTester arma la request en memoria: no abre el puerto 8080</text>
+
+<text class="dg-tiny" x="10" y="236" text-anchor="start">En las pruebas no hay PgBouncer: la aplicación habla directo con el contenedor.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura A00.5.</b> Una prueba de <code>NoteApiTest</code> recorre las mismas capas que una request real, pero sin red y contra una base desechable.</figcaption>
+      </figure>
+
+      <h4>TestcontainersConfig: la base de las pruebas</h4>
+
+      <pre data-lang="java"><code>package com.a00.laboratorio.comun.notasv1;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.test.context.DynamicPropertyRegistrar;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.testcontainers.postgresql.PostgreSQLContainer;
+
+// (1)
+@TestConfiguration(proxyBeanMethods = false)
+public class TestcontainersConfig {
+    @Bean 
+    // (2)
+    @ServiceConnection 
+    PostgreSQLContainer postgres(){
+        // (3)
+        return new PostgreSQLContainer("postgres:18");
+    }</code></pre>
+
+<ol class="code-key">
+  <li><code>@TestConfiguration</code>: una clase de configuración que solo existe en las pruebas. Define beans (objetos que Spring crea y reparte) que la aplicación real no tiene. <code>proxyBeanMethods = false</code> le dice a Spring que no envuelva la clase en un proxy: arranca un poco más rápido y aquí no hace falta.</li>
+  <li><code>@ServiceConnection</code> es el puente entre Testcontainers y Spring Boot: cuando el contenedor arranca, Spring toma su URL, usuario y contraseña y se los pone al <code>DataSource</code>. Es como si cambiara <code>DB_URL</code> del <code>application.yaml</code> por la del contenedor, sin que lo escribas.</li>
+  <li>El contenedor: Testcontainers baja la imagen <code>postgres:18</code> (la primera vez tarda), la arranca en un puerto libre al azar y espera a que acepte conexiones. Al terminar las pruebas lo borra. Cada corrida empieza con una base vacía.</li>
+</ol>
+
+<pre data-lang="java"><code>    // (4)
+    @Bean 
+    DynamicPropertyRegistrar flywayEnElContenedor(PostgreSQLContainer container){
+        return registry -&gt; {
+            // (5)
+            registry.add("spring.flyway.url", container::getJdbcUrl);
+            registry.add("spring.flyway.user", container::getUsername);
+            registry.add("spring.flyway.password", container::getPassword);
+        };
+    }
+
+}</code></pre>
+
+<ol class="code-key" style="counter-reset: ck 3">
+  <li><code>@ServiceConnection</code> solo toca el <code>DataSource</code>. Flyway tiene su propia URL (<code>spring.flyway.url</code>, paso 3), que apunta al 5433 de tu compose. Este bean la cambia por la del contenedor; sin él, Flyway migraría otra base o fallaría al conectar.</li>
+  <li><code>registry.add</code> registra una propiedad cuyo valor se calcula tarde, cuando el contenedor ya tiene puerto. Por eso recibe <code>container::getJdbcUrl</code> (una función) y no el texto de la URL.</li>
+</ol>
+
+      <details class="solution file-full" data-toc="skip">
+  <summary>Ver TestcontainersConfig.java completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="java" data-file="src/test/java/com/a00/laboratorio/comun/notasv1/TestcontainersConfig.java"><code>package com.a00.laboratorio.comun.notasv1;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.test.context.DynamicPropertyRegistrar;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 @TestConfiguration(proxyBeanMethods = false)
 public class TestcontainersConfig {
-
-    /** Un PostgreSQL 18 real por corrida de pruebas. @ServiceConnection le pasa la URL al DataSource. */
-    @Bean
-    @ServiceConnection
-    PostgreSQLContainer postgres() {
+    @Bean 
+    @ServiceConnection 
+    PostgreSQLContainer postgres(){
         return new PostgreSQLContainer("postgres:18");
     }
 
-    /** Flyway tiene su propia URL (spring.flyway.url): en las pruebas apunta al mismo contenedor. */
-    @Bean
-    DynamicPropertyRegistrar flywayEnElContenedor(PostgreSQLContainer postgres) {
+    @Bean 
+    DynamicPropertyRegistrar flywayEnElContenedor(PostgreSQLContainer container){
         return registry -&gt; {
-            registry.add("spring.flyway.url", postgres::getJdbcUrl);
-            registry.add("spring.flyway.user", postgres::getUsername);
-            registry.add("spring.flyway.password", postgres::getPassword);
+            registry.add("spring.flyway.url", container::getJdbcUrl);
+            registry.add("spring.flyway.user", container::getUsername);
+            registry.add("spring.flyway.password", container::getPassword);
         };
     }
+
 }</code></pre>
+  </div>
+</details>
 
-<pre data-lang="java" data-file="src/test/java/lab/notas/notes/NoteApiTest.java"><code>package lab.notas.notes;
+      <h4>NoteApiTest: el contrato, probado</h4>
 
+      <p>Tres pruebas, una por fila importante de la tabla de endpoints: el caso que funciona, el 404 y el 400.</p>
+
+      <pre data-lang="java"><code>package com.a00.laboratorio.comun.notasv1;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.UUID;
 
-import lab.notas.TestcontainersConfig;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
+import org.springframework.test.web.servlet.assertj.MvcTestResult;
 
+// (6)
+@SpringBootTest
+// (7)
+@AutoConfigureMockMvc
+// (8)
+@Import(TestcontainersConfig.class)
+class NoteApiTest {
+
+    // (9)
+    @Autowired
+    MockMvcTester mvc;</code></pre>
+
+<ol class="code-key">
+  <li><code>@SpringBootTest</code> arranca la aplicación entera, con todos sus beans, como si corrieras <code>main</code>. Es lento (segundos), pero prueba lo que de verdad corre: validación, servicio, JPA y la base.</li>
+  <li><code>@AutoConfigureMockMvc</code> prepara <code>MockMvc</code>: un cliente HTTP de mentira que le entrega la request directo a Spring MVC, sin abrir el puerto 8080 (figura A00.5).</li>
+  <li><code>@Import(TestcontainersConfig.class)</code> suma la configuración de las pruebas: sin esta línea no hay contenedor y la aplicación intentaría conectarse a <code>localhost:6432</code>.</li>
+  <li><code>@Autowired</code> le pide a Spring el <code>MockMvcTester</code> ya armado. <code>MockMvcTester</code> es la versión de <code>MockMvc</code> que se usa con AssertJ: escribes <code>assertThat(...)</code> sobre la respuesta.</li>
+</ol>
+
+<pre data-lang="java"><code>    // (10)
+    @Test
+    void creaUnaNotaYLaLee() {
+        MvcTestResult created = mvc.post().uri("/api/v1/notes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"title": "Primera", "body": "Hola"}
+                        """)
+                .exchange();
+        // (11)
+        assertThat(created).hasStatus(HttpStatus.CREATED);
+
+        // (12)
+        String location = created.getResponse().getHeader("Location");
+        assertThat(mvc.get().uri(location))
+                .hasStatusOk()
+                // (13)
+                .bodyJson().extractingPath("$.title").isEqualTo("Primera");
+    }</code></pre>
+
+<ol class="code-key" style="counter-reset: ck 4">
+  <li><code>@Test</code> marca un método como prueba: JUnit 5 lo encuentra y lo corre. El nombre del método dice qué se prueba. Este sigue el patrón de tres tiempos: preparar, actuar y comprobar.</li>
+  <li>Actuar y comprobar: <code>mvc.post().uri(...).contentType(...).content(...)</code> arma la request; <code>.exchange()</code> la ejecuta y devuelve el resultado. <code>assertThat(created).hasStatus(HttpStatus.CREATED)</code> exige un 201; si llega otro código, la prueba falla y dice cuál llegó.</li>
+  <li>Lee el header <code>Location</code> que devolvió el controlador (<code>/api/v1/notes/&lt;id&gt;</code>) y hace un GET a esa ruta. Así la prueba comprueba también que el <code>Location</code> apunta a algo que existe.</li>
+  <li><code>.bodyJson().extractingPath("$.title")</code> lee el JSON de la respuesta con una expresión JSONPath: <code>$</code> es la raíz y <code>.title</code> el campo. <code>isEqualTo("Primera")</code> compara con lo que se creó.</li>
+</ol>
+
+<pre data-lang="java"><code>    // (14)
+    @Test
+    void unaNotaQueNoExisteDevuelveUnProblemDetail() {
+        assertThat(mvc.get().uri("/api/v1/notes/{id}", UUID.randomUUID()))
+                .hasStatus(HttpStatus.NOT_FOUND)
+                .bodyJson().extractingPath("$.status").isEqualTo(404);
+    }
+
+    // (15)
+    @Test
+    void unTituloVacioEsUn400() {
+        assertThat(mvc.post().uri("/api/v1/notes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"title": ""}
+                        """))
+                .hasStatus(HttpStatus.BAD_REQUEST);
+    }
+}</code></pre>
+
+<ol class="code-key" style="counter-reset: ck 8">
+  <li>Un id al azar (<code>UUID.randomUUID()</code>) que no está en la base: el contrato dice 404 con un Problem Details, así que la prueba exige el 404 y que el JSON traiga <code>"status": 404</code>.</li>
+  <li>Un título vacío viola <code>@NotBlank</code> de <code>NoteRequest</code> (y falta <code>body</code>, que es <code>@NotNull</code>): <code>@Valid</code> corta la request antes del servicio con un 400. Esta prueba no toca la base.</li>
+</ol>
+
+      <details class="solution file-full" data-toc="skip">
+  <summary>Ver NoteApiTest.java completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="java" data-file="src/test/java/com/a00/laboratorio/comun/notasv1/NoteApiTest.java"><code>package com.a00.laboratorio.comun.notasv1;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.UUID;
+
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -633,7 +1443,7 @@ class NoteApiTest {
 
     @Test
     void creaUnaNotaYLaLee() {
-        MvcTestResult created = mvc.post().uri("/api/notes")
+        MvcTestResult created = mvc.post().uri("/api/v1/notes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"title": "Primera", "body": "Hola"}
@@ -649,14 +1459,14 @@ class NoteApiTest {
 
     @Test
     void unaNotaQueNoExisteDevuelveUnProblemDetail() {
-        assertThat(mvc.get().uri("/api/notes/{id}", UUID.randomUUID()))
+        assertThat(mvc.get().uri("/api/v1/notes/{id}", UUID.randomUUID()))
                 .hasStatus(HttpStatus.NOT_FOUND)
                 .bodyJson().extractingPath("$.status").isEqualTo(404);
     }
 
     @Test
     void unTituloVacioEsUn400() {
-        assertThat(mvc.post().uri("/api/notes")
+        assertThat(mvc.post().uri("/api/v1/notes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"title": ""}
@@ -664,19 +1474,91 @@ class NoteApiTest {
                 .hasStatus(HttpStatus.BAD_REQUEST);
     }
 }</code></pre>
+  </div>
+</details>
+
+      <h4>Notasv1ApplicationTests: ¿arranca la aplicación?</h4>
+
+      <pre data-lang="java"><code>package com.a00.laboratorio.comun.notasv1;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+
+@SpringBootTest
+// (16)
+@Import(TestcontainersConfig.class)
+class Notasv1ApplicationTests {
+
+	// (17)
+	@Test
+	void contextLoads() {
+	}
+
+}</code></pre>
+
+<ol class="code-key" style="counter-reset: ck 15">
+  <li>La línea que importa en CI. Sin ella, esta prueba arranca la aplicación con la configuración normal, que busca la base en <code>localhost:5433</code> y <code>localhost:6432</code>. En tu máquina, con el compose levantado, pasa; en GitHub Actions no hay compose, y falla con <code>Connection to localhost:5433 refused</code>.</li>
+  <li>Una prueba vacía: si el contexto de Spring arranca, pasa. Detecta configuraciones rotas (un bean que falta, una propiedad mal escrita, una entidad que no coincide con la tabla, porque <code>ddl-auto: validate</code> la revisa al arrancar).</li>
+</ol>
+
+      <details class="solution file-full" data-toc="skip">
+  <summary>Ver Notasv1ApplicationTests.java completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="java" data-file="src/test/java/com/a00/laboratorio/comun/notasv1/Notasv1ApplicationTests.java"><code>package com.a00.laboratorio.comun.notasv1;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+
+@SpringBootTest
+@Import(TestcontainersConfig.class)
+class Notasv1ApplicationTests {
+
+	@Test
+	void contextLoads() {
+	}
+
+}</code></pre>
+  </div>
+</details>
+
+      <h4>Córrelas</h4>
+
+      <aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>./mvnw verify          # Docker tiene que estar corriendo: Testcontainers lo usa</code></pre>
+  <p>Primero baja las dependencias y, la primera vez, la imagen <code>postgres:18</code>. Vas a ver arrancar Spring dos veces (las dos clases tienen configuraciones distintas, así que son dos contextos y dos contenedores). Al final tiene que aparecer el resumen de Surefire, <code>Tests run: 4, Failures: 0, Errors: 0, Skipped: 0</code>, y <code>BUILD SUCCESS</code>. El detalle de cada clase queda en <code>target/surefire-reports/</code>.</p>
+</aside>
+
+<pre data-lang="bash"><code>./mvnw test -Dtest=NoteApiTest                          # solo una clase
+./mvnw test -Dtest=NoteApiTest#unTituloVacioEsUn400     # solo un método</code></pre>
+
+      <h4>Rómpela a propósito</h4>
+
+      <p>Una prueba que nunca viste fallar no sabes si prueba algo. En <code>NoteApiTest</code>, cambia <code>.isEqualTo("Primera")</code> por <code>.isEqualTo("Otra")</code> y corre <code>./mvnw test -Dtest=NoteApiTest</code>. Tiene que fallar <code>creaUnaNotaYLaLee</code>, con un mensaje de AssertJ que muestra lo esperado (<code>"Otra"</code>) y lo que llegó (<code>"Primera"</code>), y el resumen tiene que decir <code>Failures: 1</code> y <code>BUILD FAILURE</code>. Deja el valor como estaba y vuelve a correrla.</p>
+
+      <aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Could not find a valid Docker environment</code>: Docker no está corriendo. Abre Docker Desktop y espera a que diga que está listo.</li>
+    <li><code>Connection to localhost:5433 refused</code> en <code>contextLoads</code>: a <code>Notasv1ApplicationTests</code> le falta <code>@Import(TestcontainersConfig.class)</code> y busca la base del compose.</li>
+    <li><code>Schema-validation: missing table [notes]</code>: Hibernate validó antes de que Flyway migrara, normalmente porque Flyway no llegó a la base (revisa <code>spring.flyway.url</code> y el <code>DynamicPropertyRegistrar</code>).</li>
+    <li><code>Tests run: 0</code>: la clase no termina en <code>Test</code> o <code>Tests</code>, o el método no tiene <code>@Test</code>, y Surefire no la encuentra.</li>
+  </ul>
+</aside>
 
       <dl class="pj-why">
-        <div><dt>La decisión</dt><dd>Testcontainers con <code>postgres:18</code>: la misma versión, las mismas migraciones y la misma <code>uuidv7()</code> que en el compose.</dd></div>
-        <div><dt>Lo que descartas</dt><dd>H2 en memoria. No tiene <code>uuidv7()</code> ni <code>timestamptz</code> igual que PostgreSQL, y una prueba que pasa en H2 no dice nada de la base de verdad.</dd></div>
-        <div><dt>Qué puede salir mal</dt><dd><code>@ServiceConnection</code> solo cambia la URL del DataSource. Flyway tiene la suya (<code>spring.flyway.url</code>), y sin el <code>DynamicPropertyRegistrar</code> intentaría migrar el PostgreSQL del compose, o ninguno.</dd></div>
+        <div><dt>La decisión</dt><dd>Pruebas de integración con Testcontainers: un PostgreSQL de verdad, con las mismas migraciones que en el compose.</dd></div>
+        <div><dt>Lo que descartas</dt><dd>H2 en memoria. No tiene <code>pgcrypto</code> ni <code>plpgsql</code>, así que la migración ni siquiera correría, y una prueba que pasa en H2 no dice nada de PostgreSQL.</dd></div>
+        <div><dt>Qué puede salir mal</dt><dd>Que las versiones se separen: las pruebas usan <code>postgres:18</code> y el compose <code>postgres:17</code>. Hoy pasa en las dos porque la migración define su propia <code>uuid_generate_v7()</code>; si usaras la <code>uuidv7()</code> nativa de la 18, las pruebas pasarían y el compose fallaría.</dd></div>
       </dl>
 
-<pre data-lang="bash"><code>./mvnw verify          # Docker tiene que estar corriendo: Testcontainers lo usa</code></pre>
+      <h3 id="paso-carga">Paso 10. La prueba de carga, con un número que no se puede pasar</h3>
 
-      <h3 id="paso-carga">Paso 8. La prueba de carga, con un número que no se puede pasar</h3>
+      <p>Gatling simula muchos usuarios a la vez y mide cuánto tarda cada request. <code>NotasSimulation</code> vive en <code>src/test</code> pero no es una prueba de JUnit (no tiene <code>@Test</code>): Surefire la ignora, y solo corre cuando la pides con el plugin de Gatling.</p>
 
-<pre data-lang="java" data-file="src/test/java/lab/notas/NotasSimulation.java"><code>package lab.notas;
-
+      <pre data-lang="java"><code>package com.a00.laboratorio.comun.notasv1;
 import static io.gatling.javaapi.core.CoreDsl.StringBody;
 import static io.gatling.javaapi.core.CoreDsl.constantUsersPerSec;
 import static io.gatling.javaapi.core.CoreDsl.global;
@@ -689,7 +1571,67 @@ import io.gatling.javaapi.core.ScenarioBuilder;
 import io.gatling.javaapi.core.Simulation;
 import io.gatling.javaapi.http.HttpProtocolBuilder;
 
-/** ./mvnw gatling:test -Dgatling.simulationClass=lab.notas.NotasSimulation */
+
+public class NotasSimulation extends Simulation {
+
+    HttpProtocolBuilder protocolo = http
+            // (1)
+            .baseUrl(System.getProperty("baseUrl", "http://localhost:8080"))
+            .contentTypeHeader("application/json");
+
+    // (2)
+    ScenarioBuilder crearYLeer = scenario("Crear y leer una nota")
+            .exec(http("crear").post("/api/v1/notes")
+                    // (3)
+                    .body(StringBody("""</code></pre>
+
+<ol class="code-key">
+  <li>La URL base de todas las requests. Se puede cambiar sin tocar el código con <code>-DbaseUrl=http://otra:8080</code>.</li>
+  <li>Un escenario: lo que hace cada usuario virtual, en orden. Aquí, crear una nota y leerla.</li>
+  <li>El body del POST. <code>#{randomUuid()}</code> es una función del lenguaje de expresiones de Gatling: cada usuario manda un texto distinto.</li>
+  <li>Los checks: la request cuenta como error si el código no es 201. <code>saveAs("location")</code> guarda el header <code>Location</code> en la sesión de ese usuario virtual.</li>
+  <li>El GET usa lo que se guardó: <code>#{location}</code> se reemplaza por <code>/api/v1/notes/&lt;id&gt;</code> de la nota que acaba de crear ese mismo usuario.</li>
+</ol>
+
+<pre data-lang="java"><code>                            {"title": "carga", "body": "#{randomUuid()}"}
+                            """))
+                    // (4)
+                    .check(status().is(201), header("Location").saveAs("location")))
+            // (5)
+            .exec(http("leer").get("#{location}")
+                    .check(status().is(200)));
+
+    {
+        // (6)
+        setUp(crearYLeer.injectOpen(constantUsersPerSec(50).during(60)))
+                .protocols(protocolo)
+                // (7)
+                .assertions(global().responseTime().percentile(99.0).lt(250));
+    }
+}</code></pre>
+
+<ol class="code-key" style="counter-reset: ck 5">
+  <li>El perfil de carga: llegan 50 usuarios nuevos por segundo durante 60 segundos. Cada uno hace 2 requests, así que son 100 requests por segundo y 6&#8239;000 en total.</li>
+  <li>La assertion: si el p99 de todas las requests llega a 250&#8239;ms o más, Gatling termina con error y Maven imprime <code>BUILD FAILURE</code>. Así la prueba de carga tiene un número que no se puede pasar.</li>
+</ol>
+
+      <details class="solution file-full" data-toc="skip">
+  <summary>Ver NotasSimulation.java completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="java" data-file="src/test/java/com/a00/laboratorio/comun/notasv1/NotasSimulation.java"><code>package com.a00.laboratorio.comun.notasv1;
+import static io.gatling.javaapi.core.CoreDsl.StringBody;
+import static io.gatling.javaapi.core.CoreDsl.constantUsersPerSec;
+import static io.gatling.javaapi.core.CoreDsl.global;
+import static io.gatling.javaapi.core.CoreDsl.scenario;
+import static io.gatling.javaapi.http.HttpDsl.header;
+import static io.gatling.javaapi.http.HttpDsl.http;
+import static io.gatling.javaapi.http.HttpDsl.status;
+
+import io.gatling.javaapi.core.ScenarioBuilder;
+import io.gatling.javaapi.core.Simulation;
+import io.gatling.javaapi.http.HttpProtocolBuilder;
+
+
 public class NotasSimulation extends Simulation {
 
     HttpProtocolBuilder protocolo = http
@@ -697,7 +1639,7 @@ public class NotasSimulation extends Simulation {
             .contentTypeHeader("application/json");
 
     ScenarioBuilder crearYLeer = scenario("Crear y leer una nota")
-            .exec(http("crear").post("/api/notes")
+            .exec(http("crear").post("/api/v1/notes")
                     .body(StringBody("""
                             {"title": "carga", "body": "#{randomUuid()}"}
                             """))
@@ -711,24 +1653,119 @@ public class NotasSimulation extends Simulation {
                 .assertions(global().responseTime().percentile(99.0).lt(250));
     }
 }</code></pre>
+  </div>
+</details>
 
       <dl class="pj-why">
-        <div><dt>La decisión</dt><dd>Un modelo abierto: llegan 50 usuarios nuevos por segundo, cada uno crea y lee una nota, lo que da 100 requests por segundo, y la corrida falla si el p99 pasa de 250&#8239;ms.</dd></div>
+        <div><dt>La decisión</dt><dd>Un modelo abierto: llegan 50 usuarios nuevos por segundo, cada uno crea y lee una nota, y la corrida falla si el p99 pasa de 250&#8239;ms.</dd></div>
         <div><dt>Lo que descartas</dt><dd>Un modelo cerrado, con 50 usuarios que repiten en bucle. Si el servidor se pone lento, los usuarios esperan y mandan menos, y la prueba se vuelve amable justo cuando debería apretar. En producción la gente sigue llegando aunque tu servidor esté lento.</dd></div>
         <div><dt>Qué puede salir mal</dt><dd>Mirar el promedio. Con 7&#8239;ms de promedio puedes tener requests de 2&#8239;s. Los percentiles se explican en M00.</dd></div>
       </dl>
 
 <pre data-lang="bash"><code>./mvnw spring-boot:run &amp;     # la aplicación contra el compose
-./mvnw gatling:test -Dgatling.simulationClass=lab.notas.NotasSimulation
+./mvnw gatling:test -Dgatling.simulationClass=com.a00.laboratorio.comun.notasv1.NotasSimulation
 # el reporte queda en target/gatling/notassimulation-&lt;fecha&gt;/index.html</code></pre>
 
-      <h3 id="paso-ci">Paso 9. Integración continua</h3>
+      <p>En la consola, Gatling imprime una tabla con las requests por segundo y los percentiles de <code>crear</code> y <code>leer</code>, y una línea por assertion que dice si se cumplió. En el reporte HTML, la tabla de arriba trae los mismos números por request.</p>
 
+      <h3 id="paso-ci">Paso 11. Integración continua, desde cero</h3>
+
+      <p><b>Integración continua</b> (CI) es correr las pruebas automáticamente en cada cambio, en una máquina que no es la tuya. Responde una pregunta: ¿lo que está en el repositorio compila y pasa las pruebas, sin depender de lo que tengas instalado? GitHub Actions es el servicio de CI de GitHub: lee archivos YAML de la carpeta <code>.github/workflows/</code> (con punto al principio) y los ejecuta cuando pasa lo que dicen.</p>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="fa006t fa006d">
+<title id="fa006t">Qué hace GitHub Actions con cada push</title>
+<desc id="fa006d">Un git push llega a GitHub, que lee .github/workflows/ci.yml y crea un runner ubuntu-latest limpio. El runner baja el código, instala el JDK 21 con caché de Maven y corre ./mvnw -B verify. Si todo pasa, el commit queda con un check verde; si un paso falla, con una cruz roja.</desc>
+<defs><marker id="fa006a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="10" y="60" width="110" height="56" rx="6"/>
+<text class="dg-small dg-mono" x="65" y="85" text-anchor="middle">git push</text>
+<text class="dg-tiny" x="65" y="103" text-anchor="middle">o un pull request</text>
+
+<path class="dg-edge" d="M122 88 H146" marker-end="url(#fa006a)"/>
+
+<rect class="dg-layer" style="--c: var(--l-edge)" x="150" y="60" width="150" height="56" rx="6"/>
+<text class="dg-label" x="225" y="85" text-anchor="middle">GitHub</text>
+<text class="dg-tiny" x="225" y="103" text-anchor="middle">.github/workflows/ci.yml</text>
+
+<path class="dg-edge" d="M302 88 H326" marker-end="url(#fa006a)"/>
+
+<rect class="dg-frame" x="330" y="30" width="282" height="176" rx="10" fill="none"/>
+<text class="dg-small" x="344" y="52" text-anchor="start">runner ubuntu-latest: una máquina limpia</text>
+
+<rect class="dg-layer" style="--c: var(--l-service)" x="342" y="66" width="258" height="36" rx="6"/>
+<text class="dg-tiny" x="471" y="89" text-anchor="middle">actions/checkout@v7: baja el código</text>
+
+<rect class="dg-layer" style="--c: var(--l-service)" x="342" y="112" width="258" height="36" rx="6"/>
+<text class="dg-tiny" x="471" y="135" text-anchor="middle">actions/setup-java@v6: JDK 21 y caché</text>
+
+<rect class="dg-layer" style="--c: var(--l-service)" x="342" y="158" width="258" height="36" rx="6"/>
+<text class="dg-tiny" x="471" y="181" text-anchor="middle">./mvnw -B verify: pruebas con Docker</text>
+
+<path class="dg-edge" d="M614 118 H624 V83 H640" marker-end="url(#fa006a)"/>
+
+<path class="dg-edge" d="M624 118 V153 H640" marker-end="url(#fa006a)"/>
+
+<rect class="dg-ok" x="644" y="60" width="116" height="46" rx="6"/>
+<text class="dg-small" x="702" y="80" text-anchor="middle">✓ verde</text>
+<text class="dg-tiny" x="702" y="98" text-anchor="middle">todo pasó</text>
+
+<rect class="dg-bad" x="644" y="130" width="116" height="46" rx="6"/>
+<text class="dg-small" x="702" y="150" text-anchor="middle">✗ rojo</text>
+<text class="dg-tiny" x="702" y="168" text-anchor="middle">un paso falló</text>
+
+<text class="dg-tiny" x="10" y="240" text-anchor="start">Dónde lo ves: la pestaña Actions del repositorio, el ícono junto a cada commit y la sección de checks de cada pull request.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura A00.6.</b> El workflow del paso 11. Cada paso del runner corre solo si el anterior terminó bien.</figcaption>
+      </figure>
+
+      <pre data-lang="yaml"><code># (1)
+name: ci
+
+# (2)
+on:
+  push:
+  pull_request:
+
+
+jobs:
+  verify:
+    # (3)
+    runs-on: ubuntu-latest
+    steps:
+      # (4)
+      - uses: actions/checkout@v7
+      # (5)
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+          # (6)
+          cache: maven
+        
+      # (7)
+      - run: ./mvnw -B verify</code></pre>
+
+<ol class="code-key">
+  <li>El nombre del workflow. Es el que aparece en la pestaña Actions y en los checks de cada pull request.</li>
+  <li>Cuándo corre: en cada <code>push</code> a cualquier rama y en cada <code>pull_request</code>. Sin filtros de rama, una rama nueva también se prueba.</li>
+  <li>Un job llamado <code>verify</code> que corre en <code>ubuntu-latest</code>: una máquina virtual nueva, que GitHub crea para esta corrida y borra al terminar. No tiene nada tuyo, salvo lo que los pasos instalen. Trae Docker, y por eso Testcontainers funciona sin configurar nada. <span class="badge badge--doc">Documentado</span></li>
+  <li><code>uses</code> ejecuta una acción ya hecha. <code>actions/checkout</code> baja el código del commit que disparó el workflow. Sin este paso, la máquina está vacía y <code>./mvnw</code> no existe.</li>
+  <li><code>actions/setup-java</code> instala un JDK. <code>distribution: temurin</code> elige la distribución de Eclipse Adoptium, y <code>java-version: 21</code> tiene que coincidir con <code>java.version</code> del <code>pom.xml</code>. La versión de la acción se escribe con <code>v</code>: <code>@v6</code>.</li>
+  <li><code>cache: maven</code> guarda <code>~/.m2</code> entre corridas, con una clave calculada a partir del <code>pom.xml</code>. La primera corrida baja todas las dependencias; las siguientes, si el pom no cambió, las sacan de la caché.</li>
+  <li><code>run</code> ejecuta un comando en la terminal del runner. <code>-B</code> es el modo batch de Maven: sin colores ni barras de progreso, para que el log se lea bien. Es el mismo <code>verify</code> que corres en tu máquina (figura A00.4).</li>
+</ol>
+
+      <details class="solution file-full" data-toc="skip">
+  <summary>Ver ci.yml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
 <pre data-lang="yaml" data-file=".github/workflows/ci.yml"><code>name: ci
 
 on:
   push:
   pull_request:
+
 
 jobs:
   verify:
@@ -738,10 +1775,51 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: 21
           cache: maven
-      # Las pruebas levantan PostgreSQL con Testcontainers: el runner ya trae Docker.
+        
       - run: ./mvnw -B verify</code></pre>
+  </div>
+</details>
+
+      <h4>Comprueba que corre</h4>
+
+      <ol class="steps">
+        <li><span class="step-title">Habilita Actions en tu fork</span>En tu fork, abre la pestaña Actions. GitHub no corre los workflows de un fork hasta que lo autorizas: aparece un aviso con el botón "I understand my workflows, go ahead and enable them". Haz clic. <span class="badge badge--doc">Documentado</span></li>
+        <li><span class="step-title">Dispara una corrida</span>Un commit vacío alcanza: <code>git commit --allow-empty -m "probar ci"</code> y <code>git push</code>.</li>
+        <li><span class="step-title">Mira la corrida</span>En Actions aparece una corrida del workflow <code>ci</code> con tu mensaje de commit. Ábrela, entra al job <code>verify</code> y despliega el paso <code>Run ./mvnw -B verify</code>: tiene que mostrar el mismo resumen que en tu máquina, <code>Tests run: 4, Failures: 0, Errors: 0, Skipped: 0</code>, y <code>BUILD SUCCESS</code>.</li>
+        <li><span class="step-title">Mira el check</span>En la página principal del repositorio, junto al último commit, aparece un ✓ verde. Si pasas el mouse por encima, dice qué workflow corrió.</li>
+      </ol>
+
+      <p>Si tienes instalado el CLI de GitHub, puedes seguirla desde la terminal:</p>
+
+<pre data-lang="bash"><code>gh run list --workflow ci.yml     # las últimas corridas, con su estado
+gh run watch                      # elige una y sigue sus pasos en vivo</code></pre>
+
+      <h4>Rómpelo a propósito</h4>
+
+      <p>El CI sirve el día que algo se rompe. Comprueba que lo detecta:</p>
+
+<pre data-lang="bash"><code>git switch -c romper-ci
+# en NoteApiTest, cambia .isEqualTo("Primera") por .isEqualTo("Otra")
+git commit -am "prueba rota a propósito"
+git push -u origin romper-ci</code></pre>
+
+      <p>Abre un pull request de <code>romper-ci</code> hacia <code>main</code> en tu fork. En la sección de checks del pull request, <code>ci / verify</code> tiene que terminar con una ✗ roja; en el log del paso <code>Run ./mvnw -B verify</code> aparece <code>creaUnaNotaYLaLee</code> con lo esperado y lo que llegó, y <code>BUILD FAILURE</code>. Eso es lo que vería quien revisa tu pull request antes de aceptarlo. Cierra el pull request sin aceptarlo y borra la rama:</p>
+
+<pre data-lang="bash"><code>git switch main
+git branch -D romper-ci
+git push origin --delete romper-ci</code></pre>
+
+      <aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li>La pestaña Actions dice que no hay workflows: el archivo no está en <code>.github/workflows/</code> (falta el punto de <code>.github</code>, o la extensión no es <code>.yml</code> ni <code>.yaml</code>), o no habilitaste Actions en el fork.</li>
+    <li><code>Unable to resolve action actions/setup-java@6</code>: la versión de una acción se escribe con <code>v</code>, <code>@v6</code>.</li>
+    <li><code>./mvnw: Permission denied</code>: <code>mvnw</code> perdió el permiso de ejecución. Arréglalo con <code>git update-index --chmod=+x mvnw</code>, commit y push.</li>
+    <li><code>Connection to localhost:5433 refused</code> solo en CI: una prueba arranca Spring sin <code>TestcontainersConfig</code>. En tu máquina pasa porque el compose está levantado; en el runner no hay compose.</li>
+  </ul>
+</aside>
 
       <dl class="pj-why">
         <div><dt>La decisión</dt><dd>Un solo job que corre <code>./mvnw -B verify</code>: compila, prueba con Testcontainers y empaqueta. El runner <code>ubuntu-latest</code> ya trae Docker.</dd></div>
@@ -759,11 +1837,15 @@ jobs:
 
       <h3 id="comprueba-pruebas">Las pruebas</h3>
 
-      <p><code>./mvnw verify</code> corre las tres pruebas de <code>NoteApiTest</code>: crear y leer, un 404 con Problem Details y un 400 por título vacío. La mayor parte del tiempo se va en levantar el contenedor, una vez por corrida.</p>
+      <p><code>./mvnw verify</code> corre las cuatro pruebas: las tres de <code>NoteApiTest</code> (crear y leer, un 404 con Problem Details y un 400 por título vacío) y <code>contextLoads</code>. La mayor parte del tiempo se va en levantar los contenedores. Si no lo hiciste, rompe una a propósito como dice el <a href="#paso-pruebas">paso 9</a>.</p>
+
+      <h3 id="comprueba-ci">El CI</h3>
+
+      <p>Una corrida en verde con tu commit vacío y una en rojo con la prueba rota, las dos en la pestaña Actions de tu fork (<a href="#paso-ci">paso 11</a>).</p>
 
       <h3 id="comprueba-carga">La carga</h3>
 
-      <p>Con la aplicación y el compose corriendo, <code>NotasSimulation</code> manda 6&#8239;000 requests en 60&#8239;s. Estos son los números de una corrida en una laptop con Docker Desktop; los tuyos van a ser otros, y la idea es que anotes los tuyos.</p>
+      <p>Con la aplicación y el compose corriendo, <code>NotasSimulation</code> manda 6&#8239;000 requests en 60&#8239;s. Estos números son de una corrida en una laptop con Docker Desktop, con una versión anterior del laboratorio (SQL con <code>JdbcClient</code> en lugar de JPA). Los tuyos van a ser otros: la idea es que anotes los tuyos y los compares.</p>
 
       <div class="table-wrap">
         <table class="t">
@@ -776,30 +1858,109 @@ jobs:
         </table>
       </div>
 
-      <p>Cero errores, 100 requests por segundo y la assertion del p99 en OK. Crear cuesta tres veces más que leer: escribe en el WAL y espera el <code>fsync</code> del commit.</p>
+      <p>En esa corrida: cero errores, 100 requests por segundo y la assertion del p99 en OK. Crear cuesta más que leer: escribe en el WAL y espera el <code>fsync</code> del commit.</p>
+
+      <h3 id="comprueba-sesion">Antes de las fallas: qué es una sesión</h3>
+
+      <p>Cada conexión con PostgreSQL es un proceso del servidor, con un número (el <code>pid</code>), y todo lo que haces en esa conexión vive en su <b>sesión</b>: los parámetros que cambias con <code>SET</code>, los locks de sesión, los prepared statements con nombre, las tablas temporales. La sesión dura lo que dura la conexión.</p>
+
+      <p>El código que usa la base supone que su sesión es suya: si hizo un <code>SET</code>, lo ve; si tomó un lock, nadie más lo tiene. PgBouncer en modo transacción rompe ese supuesto, porque la misma conexión real pasa de un cliente a otro entre transacciones, sin limpiarla:</p>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="fa007t fa007d">
+<title id="fa007t">Una sesión en modo sesión y en modo transacción</title>
+<desc id="fa007d">En modo sesión, cada cliente se queda con su propia conexión real mientras está conectado, y PgBouncer la limpia al soltarla. En modo transacción, el cliente A y la aplicación usan por turnos la misma conexión real 179; el SET que deja A sigue en la conexión y lo hereda la consulta siguiente de la aplicación, que se cancela a los 50 ms.</desc>
+<defs><marker id="fa007a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="10" y="22">Modo sesión (pool_mode = session)</text>
+<text class="dg-small" x="10" y="63" text-anchor="start">conexión real 1</text>
+
+<text class="dg-small" x="10" y="103" text-anchor="start">conexión real 2</text>
+
+<rect class="hb-a" x="150" y="46" width="370" height="26" rx="6"/>
+<text class="dg-tiny" x="335" y="64" text-anchor="middle">cliente A conectado: lo suyo vive aquí</text>
+
+<text class="dg-tiny" x="528" y="64" text-anchor="start">al soltarla: DISCARD ALL</text>
+
+<rect class="hb-b" x="230" y="86" width="470" height="26" rx="6"/>
+<text class="dg-tiny" x="465" y="104" text-anchor="middle">aplicación: su propia conexión, limpia</text>
+
+<text class="dg-group" x="10" y="152">Modo transacción (pool_mode = transaction), el del laboratorio</text>
+<text class="dg-small" x="10" y="197" text-anchor="start">conexión real 179</text>
+
+<rect class="hb-a" x="150" y="180" width="130" height="26" rx="6"/>
+<text class="dg-tiny" x="215" y="198" text-anchor="middle">psql: SET 50ms</text>
+
+<rect class="hb-b" x="310" y="180" width="160" height="26" rx="6"/>
+<text class="dg-tiny" x="390" y="198" text-anchor="middle">app: /api/lab/conexion</text>
+
+<rect class="dg-bad" x="500" y="180" width="200" height="26" rx="6"/>
+<text class="dg-tiny" x="600" y="198" text-anchor="middle">app: consulta de 80 ms, cancelada</text>
+
+<rect class="dg-warnbox" x="215" y="214" width="545" height="22" rx="4"/>
+<text class="dg-tiny" x="488" y="229" text-anchor="middle">statement_timeout = 50ms se queda en la conexión 179 para el que venga</text>
+
+<text class="dg-tiny" x="10" y="266" text-anchor="start">En modo transacción, PgBouncer no limpia la conexión entre un cliente y otro: lo que dejó A lo recibe el siguiente.</text>
+
+<text class="dg-tiny" x="10" y="288" text-anchor="start">SET LOCAL vive solo dentro de una transacción y se borra en el commit: no se filtra.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura A00.7.</b> Arriba, cada cliente tiene su conexión real y su sesión. Abajo, varios clientes comparten la conexión 179 por turnos, y la sesión, con todo lo que guarda, pasa de uno a otro.</figcaption>
+      </figure>
+
+      <p>Las tres fallas que siguen son la misma idea con tres cosas distintas que viven en la sesión. Las tres pasan en sistemas reales y son difíciles de diagnosticar: el síntoma aparece en un cliente que no hizo nada malo, y solo a veces, según en qué conexión real cayó su transacción.</p>
 
       <h3 id="comprueba-set">Falla 1. Un SET que se filtra a otro cliente</h3>
 
-      <p>Mira primero qué conexión usa la aplicación, y después conéctate a PgBouncer con psql, cambia un parámetro de sesión y vuelve a mirar:</p>
+      <h4>Por qué importa</h4>
+
+      <p>Los parámetros de sesión deciden cómo se comporta cada consulta: <code>statement_timeout</code> (cuánto puede durar), <code>search_path</code> (en qué esquema busca las tablas), <code>TimeZone</code> (cómo se muestran las fechas) y los parámetros propios, como el tenant que lee la row-level security. Si uno se filtra, otro cliente consulta con reglas que no son las suyas. Con <code>statement_timeout</code>, la aplicación empieza a fallar con <code>canceling statement due to statement timeout</code> sin que nadie haya tocado su código. Con el tenant de RLS es peor: una request lee los datos de otro cliente. Por eso M05 pide <a href="../modules/m05-bases-de-datos.html#rls-set-local">SET LOCAL, no SET</a>.</p>
+
+      <h4>Hazlo</h4>
+
+      <p>Con el compose y la aplicación corriendo (<code>./mvnw spring-boot:run</code>), mira qué conexión usa la aplicación; después conéctate a PgBouncer con psql, cambia un parámetro de sesión y vuelve a mirar:</p>
 
 <pre data-lang="bash"><code>curl -s localhost:8080/api/lab/conexion
-# {"backend_pid":179,"statement_timeout":"0"}
+# {"backendPid":179,"statementTimeout":"0"}      (tu número será otro)
 
 docker compose exec postgres psql "postgres://app:app@pgbouncer:5432/app" \
   -c "SET statement_timeout = '50ms'" -c "SELECT pg_backend_pid()"
 # 179
 
 curl -s localhost:8080/api/lab/conexion
-# {"backend_pid":179,"statement_timeout":"50ms"}</code></pre>
+# {"backendPid":179,"statementTimeout":"50ms"}</code></pre>
 
-      <p>Tu <code>SET</code> quedó en el proceso 179 del servidor, y la siguiente request de la aplicación recibió ese mismo proceso. Desde ahora, cualquier consulta de la aplicación que tarde más de 50&#8239;ms se cancela, y nadie en la aplicación cambió nada. <code>RESET statement_timeout</code>, por el mismo camino, lo arregla.</p>
+      <h4>Qué significa cada salida</h4>
 
-      <aside class="callout callout--fail">
-        <p class="callout-label">Qué pasa si falla</p>
-        <p>En modo transacción, todo lo que vive en la sesión se comparte: <code>SET</code>, tablas temporales, <code>LISTEN</code> y advisory locks de sesión. Si necesitas un parámetro para una consulta, usa <code>SET LOCAL</code> dentro de una transacción: dura hasta el commit y no se filtra.</p>
+      <ol class="steps">
+        <li><span class="step-title">Primer curl</span><code>backendPid</code> es el proceso del servidor que atendió la consulta de la aplicación, y <code>statementTimeout</code> vale <code>"0"</code>: sin límite, el valor por defecto.</li>
+        <li><span class="step-title">psql</span>Otro cliente, que no es la aplicación, entra por PgBouncer, hace <code>SET</code> y se va. El <code>SELECT pg_backend_pid()</code> dice en qué proceso quedó su <code>SET</code>. Al desconectarse psql, PgBouncer no cierra ese proceso: lo devuelve al pool, tal como quedó.</li>
+        <li><span class="step-title">Segundo curl</span>La aplicación recibe ese mismo proceso y ve <code>"50ms"</code>, un valor que ella nunca puso. Desde ahora, cualquier consulta suya que caiga en esa conexión y tarde más de 50&#8239;ms se cancela.</li>
+      </ol>
+
+      <p>Si el segundo curl muestra otro <code>backendPid</code> y <code>"0"</code>, la consulta cayó en otra conexión real: repítelo unas veces. Las que caigan en el proceso que imprimió psql van a mostrar <code>"50ms"</code>; las demás, no. Ese "a veces sí, a veces no" es lo que hace difícil esta falla en producción.</p>
+
+      <h4>Deja todo como estaba</h4>
+
+<pre data-lang="bash"><code>docker compose restart pgbouncer     # cierra las conexiones reales: las sesiones empiezan limpias
+curl -s localhost:8080/api/lab/conexion     # statementTimeout vuelve a "0"</code></pre>
+
+      <p>Un <code>RESET statement_timeout</code> por el mismo camino también sirve, pero solo si cae en la misma conexión real; reiniciar PgBouncer las limpia todas.</p>
+
+      <aside class="callout callout--prod">
+        <p class="callout-label">Cómo se evita</p>
+        <p>En modo transacción, si una consulta necesita un parámetro, usa <code>SET LOCAL</code> dentro de su transacción: dura hasta el commit y no se filtra. Un valor que todos necesitan va en la configuración del rol o de la base (<code>ALTER ROLE app SET …</code>), no en un <code>SET</code> suelto. En modo sesión, PgBouncer corre <code>DISCARD ALL</code> al soltar cada conexión y este problema no existe, pero pierdes el reparto de conexiones.</p>
       </aside>
 
       <h3 id="comprueba-lock">Falla 2. Un advisory lock que no excluye</h3>
+
+      <h4>Por qué importa</h4>
+
+      <p>Un <b>advisory lock</b> es un lock sobre un número que eliges tú: PostgreSQL no sabe qué protege, solo garantiza que dos sesiones no lo tengan a la vez. Se usa para que una tarea corra en una sola instancia aunque haya varias: un job nocturno que cobra suscripciones con tres réplicas de la aplicación, la elección de un líder, o Flyway, que lo toma para que dos instancias no migren a la vez (por eso migra directo, paso 3). Si el lock no excluye, la tarea corre dos veces: cobros dobles, correos repetidos, migraciones pisándose. Y hay una segunda mitad: el lock queda tomado en una conexión real después de que su dueño se fue, y quien lo pida directo queda bloqueado sin saber por qué.</p>
+
+      <p>Hay dos versiones: <code>pg_advisory_lock</code> es de sesión (dura hasta <code>pg_advisory_unlock</code> o hasta que se cierra la conexión) y <code>pg_advisory_xact_lock</code> es de transacción (se suelta solo en el commit o el rollback).</p>
+
+      <h4>Hazlo</h4>
 
 <pre data-lang="bash"><code>P='docker compose exec -T postgres psql -At postgres://app:app@pgbouncer:5432/app'
 $P -c "SELECT pg_advisory_lock(42), pg_backend_pid()"       # cliente A: |179
@@ -808,24 +1969,122 @@ $P -c "SELECT pg_try_advisory_lock(42), pg_backend_pid()"   # cliente B: t|179
 docker compose exec -T postgres psql -At -U app -d app \
   -c "SELECT pg_try_advisory_lock(42), pg_backend_pid()"    # directo:   f|308</code></pre>
 
-      <p>A toma el lock 42 y se desconecta de PgBouncer, pero la conexión del servidor sigue viva y el lock sigue tomado en el proceso 179. B, otro cliente, recibe ese mismo proceso y obtiene el lock otra vez: <code>t</code>. Un lock de sesión es reentrante para su sesión, y para PostgreSQL A y B son la misma sesión. Directo a la base, en el proceso 308, la respuesta correcta es <code>f</code>.</p>
+      <p><code>P=…</code> guarda el comando en una variable de bash para no repetirlo; <code>$P</code> lo usa. <code>-At</code> le pide a psql la salida sin adornos: los valores separados por <code>|</code>, sin encabezados. <code>pg_try_advisory_lock</code> no espera: devuelve <code>t</code> si obtuvo el lock y <code>f</code> si otro lo tiene.</p>
 
-      <p>Si tu código usa <code>pg_advisory_lock</code> para que dos instancias no hagan lo mismo a la vez, detrás de PgBouncer en modo transacción no lo impide. La versión de transacción, <code>pg_advisory_xact_lock</code>, se libera en el commit y sí funciona.</p>
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 262" role="img" aria-labelledby="fa008t fa008d">
+<title id="fa008t">Un advisory lock de sesión detrás de PgBouncer</title>
+<desc id="fa008d">El cliente A toma el lock 42 en la conexión real 179 y se desconecta, pero la conexión sigue viva y el lock sigue tomado. El cliente B recibe la misma conexión 179 y obtiene el lock otra vez. Una conexión directa, el proceso 308, no lo obtiene.</desc>
+<defs><marker id="fa008a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="10" y="55" text-anchor="start">cliente A (psql)</text>
+
+<text class="dg-small" x="10" y="105" text-anchor="start">cliente B (psql)</text>
+
+<text class="dg-small" x="10" y="155" text-anchor="start">conexión real 179</text>
+
+<text class="dg-small" x="10" y="205" text-anchor="start">directo: proceso 308</text>
+
+<rect class="hb-a" x="200" y="38" width="160" height="26" rx="6"/>
+<text class="dg-tiny dg-mono" x="280" y="56" text-anchor="middle">pg_advisory_lock(42)</text>
+
+<text class="dg-tiny" x="368" y="56" text-anchor="start">se desconecta</text>
+
+<path class="dg-feedback" d="M275 66 V138"/>
+<rect class="dg-warnbox" x="230" y="140" width="530" height="24" rx="4"/>
+<text class="dg-tiny" x="495" y="156" text-anchor="middle">lock 42 tomado: dura lo que dure la conexión real, no el cliente</text>
+
+<rect class="hb-b" x="420" y="88" width="180" height="26" rx="6"/>
+<text class="dg-tiny dg-mono" x="510" y="106" text-anchor="middle">try_lock(42) → t</text>
+
+<text class="dg-tiny" x="608" y="106" text-anchor="start">también lo obtiene</text>
+
+<path class="dg-feedback" d="M505 116 V138"/>
+<rect class="dg-box" x="470" y="188" width="180" height="26" rx="6"/>
+<text class="dg-tiny dg-mono" x="560" y="206" text-anchor="middle">try_lock(42) → f</text>
+
+<text class="dg-tiny" x="658" y="206" text-anchor="start">bloqueado</text>
+
+<text class="dg-tiny" x="10" y="248" text-anchor="start">Para PostgreSQL, A y B son la misma sesión (el proceso 179), y un lock de sesión es reentrante para su sesión.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura A00.8.</b> El lock queda en la conexión real, no en el cliente que lo pidió. Por eso B lo obtiene aunque A nunca lo soltó, y un cliente directo queda bloqueado por un dueño que ya se fue.</figcaption>
+      </figure>
+
+      <h4>Qué significa cada salida</h4>
+
+      <ol class="steps">
+        <li><span class="step-title">Cliente A: <code>|179</code></span><code>pg_advisory_lock</code> no devuelve nada (por eso la columna vacía antes de <code>|</code>) y deja el lock 42 tomado en el proceso 179. psql termina y se desconecta de PgBouncer, pero la conexión real 179 sigue viva en el pool, con el lock.</li>
+        <li><span class="step-title">Cliente B: <code>t|179</code></span>Otro cliente pide el mismo lock, recibe el mismo proceso 179 y lo obtiene: <code>t</code>. Un lock de sesión es reentrante para su sesión, y para PostgreSQL A y B son la misma. Si A y B fueran dos instancias de tu job, las dos correrían.</li>
+        <li><span class="step-title">Directo: <code>f|308</code></span>Sin PgBouncer, en una conexión propia (el proceso 308), la respuesta es la correcta: <code>f</code>, el lock está tomado. Tomado por un cliente que ya no existe.</li>
+      </ol>
+
+      <h4>Deja todo como estaba</h4>
+
+<pre data-lang="bash"><code>docker compose restart pgbouncer     # al cerrarse la conexión 179, PostgreSQL suelta el lock
+docker compose exec -T postgres psql -At -U app -d app -c "SELECT pg_try_advisory_lock(42)"   # t</code></pre>
+
+      <aside class="callout callout--prod">
+        <p class="callout-label">Cómo se evita</p>
+        <p>Detrás de PgBouncer en modo transacción, usa la versión de transacción, <code>pg_try_advisory_xact_lock</code>, dentro de la transacción de la tarea: se suelta en el commit y no se filtra. Si la tarea dura más que una transacción, conéctala directo a PostgreSQL, como Flyway.</p>
+      </aside>
 
       <h3 id="comprueba-prepared">Falla 3. Prepared statements</h3>
 
-      <p>El driver de PostgreSQL prepara una consulta en el servidor después de usarla 5 veces y le pone un nombre, como <code>S_1</code>. Desde PgBouncer 1.21, el pooler sigue esos nombres en modo transacción con <code>max_prepared_statements</code>, y desde la 1.24 viene en 200. <span class="badge badge--doc">Documentado</span> Para ver qué pasaba antes, apágalo:</p>
+      <h4>Por qué importa</h4>
+
+      <p>Un <b>prepared statement</b> es una consulta que el servidor analiza y planifica una vez, guarda con un nombre (como <code>S_1</code>) y después ejecuta muchas veces con distintos parámetros. Ahorra CPU en consultas que se repiten, y el driver de PostgreSQL lo hace solo: después de usar la misma consulta 5 veces (<code>prepareThreshold</code>), la prepara con nombre. Pero el nombre vive en la sesión, igual que un <code>SET</code>:</p>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="fa009t fa009d">
+<title id="fa009t">Prepared statements con nombre detrás de PgBouncer</title>
+<desc id="fa009d">El driver prepara S_1 en la conexión real 179. En su siguiente transacción, PgBouncer le presta la conexión 180, donde S_1 no existe. Otra conexión de Hikari cae en la 179 e intenta preparar S_1, que ya existe.</desc>
+<defs><marker id="fa009a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="10" y="65" text-anchor="start">conexión real 179</text>
+
+<text class="dg-small" x="10" y="125" text-anchor="start">conexión real 180</text>
+
+<rect class="hb-a" x="170" y="48" width="220" height="26" rx="6"/>
+<text class="dg-tiny dg-mono" x="280" y="66" text-anchor="middle">Hikari n.º 1: PREPARE S_1</text>
+
+<rect class="dg-bad" x="430" y="48" width="330" height="26" rx="6"/>
+<text class="dg-tiny dg-mono" x="595" y="66" text-anchor="middle">Hikari n.º 2: PREPARE S_1 → already exists</text>
+
+<rect class="dg-bad" x="300" y="108" width="330" height="26" rx="6"/>
+<text class="dg-tiny dg-mono" x="465" y="126" text-anchor="middle">Hikari n.º 1: EXECUTE S_1 → does not exist</text>
+
+<text class="dg-tiny" x="10" y="176" text-anchor="start">El driver cree que S_1 vive en «su» conexión, pero en modo transacción PgBouncer le presta otra en cada transacción.</text>
+
+<text class="dg-tiny" x="10" y="200" text-anchor="start">Dos arreglos: no preparar con nombre (prepareThreshold=0, el del repositorio) o que PgBouncer siga los nombres</text>
+
+<text class="dg-tiny" x="10" y="220" text-anchor="start">(max_prepared_statements, desde la versión 1.21).</text>
+</svg>
+        </div>
+        <figcaption><b>Figura A00.9.</b> Los prepared statements con nombre son estado de la sesión, igual que un <code>SET</code>.</figcaption>
+      </figure>
+
+      <p>Es la falla más traicionera de las tres: no aparece con pocos clientes, solo con concurrencia de verdad, que es justo lo que hay en producción. El repositorio la evita con <code>prepareThreshold=0</code> en la URL (paso 3): el driver nunca prepara con nombre. Desde PgBouncer 1.21 hay otra salida: el pooler sigue los nombres en modo transacción con <code>max_prepared_statements</code>, y desde la 1.24 viene en 200. <span class="badge badge--doc">Documentado</span> Para ver la falla, hay que apagar las dos defensas.</p>
+
+      <h4>Hazlo</h4>
+
+      <p>Crea este archivo junto al <code>docker-compose.yaml</code>. Es un override: Compose lo combina con el original y solo cambia lo que dice.</p>
 
 <pre data-lang="yaml" data-file="override0.yaml"><code>services:
   pgbouncer:
     environment:
       MAX_PREPARED_STATEMENTS: 0</code></pre>
 
-<pre data-lang="bash"><code>docker compose -f compose.yaml -f override0.yaml up -d pgbouncer
-ID=$(curl -s -X POST localhost:8080/api/notes -H 'Content-Type: application/json' -d '{"title": "x"}'   | python -c "import sys, json; print(json.load(sys.stdin)['id'])")
-python carga.py "http://localhost:8080/api/notes/$ID" 3000 40    # 3 000 GET con 40 hilos</code></pre>
+<pre data-lang="bash"><code>docker compose -f docker-compose.yaml -f override0.yaml up -d pgbouncer
+DB_URL=jdbc:postgresql://localhost:6432/app?sslmode=disable ./mvnw spring-boot:run &amp;    # sin prepareThreshold=0
+ID=$(curl -s -X POST localhost:8080/api/v1/notes -H 'Content-Type: application/json' -d '{"title": "x", "body": ""}'   | python -c "import sys, json; print(json.load(sys.stdin)['id'])")
+python carga.py "http://localhost:8080/api/v1/notes/$ID" 3000 40    # 3 000 GET con 40 hilos</code></pre>
 
-      <p><code>carga.py</code> es un script de diez líneas que manda requests con un pool de hilos y cuenta los códigos de respuesta; está en la solución de abajo. Gatling también sirve, pero aquí interesa contar errores, no latencias.</p>
+      <p>La segunda línea arranca la aplicación con otra <code>DB_URL</code> (la variable de entorno gana sobre el valor por defecto del <code>application.yaml</code>), sin <code>prepareThreshold=0</code>: el driver vuelve a preparar con nombre. La tercera crea una nota y guarda su id; el <code>body</code> va aunque esté vacío, porque es obligatorio. La cuarta la lee 3&#8239;000 veces con 40 hilos y cuenta los códigos de respuesta. <code>carga.py</code> es un script de diez líneas; está en la solución de abajo. Gatling también sirve, pero aquí interesa contar errores, no latencias.</p>
+
+      <h4>Qué significa cada salida</h4>
+
+      <p>Estos números son de una corrida con la versión anterior del laboratorio (<code>JdbcClient</code>); con JPA el mecanismo es el mismo, porque Hibernate también usa <code>PreparedStatement</code>. Anota los tuyos.</p>
 
       <div class="table-wrap">
         <table class="t">
@@ -838,7 +2097,7 @@ python carga.py "http://localhost:8080/api/notes/$ID" 3000 40    # 3 000 GET con
         </table>
       </div>
 
-      <p>Cerca del 17&#8239;% de las requests falla. Con pocos clientes a la vez no lo ves: con curl en secuencia, o con 30 en paralelo, las 600 requests dieron 200, porque PgBouncer le devuelve a cada cliente la última conexión que se liberó y casi siempre es la misma. El error aparece cuando hay concurrencia de verdad, que es justo en producción.</p>
+      <p>Cerca del 17&#8239;% de las requests falla con 500, y el log de la aplicación dice por qué: un prepared statement que ya existe (o que no existe) en la conexión real que tocó. Con pocos clientes a la vez no lo ves: con curl en secuencia, o con 30 en paralelo, las 600 requests dieron 200, porque PgBouncer le devuelve a cada cliente la última conexión que se liberó y casi siempre es la misma.</p>
 
       <p>Después de la carga, <code>SHOW POOLS</code> muestra <code>cl_active 10</code>, las 10 conexiones de Hikari, y <code>sv_idle 10</code>: con 40 requests HTTP a la vez, PgBouncer no necesitó más de 10 conexiones reales.</p>
 
@@ -863,16 +2122,27 @@ print(dict(codigos), round(time.time() - inicio, 1), "s")</code></pre>
         </div>
       </details>
 
+      <h4>Deja todo como estaba</h4>
+
+<pre data-lang="bash"><code>docker compose up -d pgbouncer     # sin el override: max_prepared_statements vuelve a 200
+# detén la aplicación (Ctrl+C o kill %1) y vuelve a arrancarla sin DB_URL: ./mvnw spring-boot:run</code></pre>
+
+      <aside class="callout callout--prod">
+        <p class="callout-label">Cómo se evita</p>
+        <p>Con PgBouncer 1.21 o más nuevo, deja <code>max_prepared_statements</code> encendido y conservas lo que ahorran los prepared statements. Con uno más viejo, o con otro pooler que no los siga, apágalos en el driver con <code>prepareThreshold=0</code>, como hace el repositorio: cada consulta se analiza otra vez, un costo chico de CPU a cambio de que no falle.</p>
+      </aside>
+
       <h2 id="repositorio">Tu repositorio</h2>
 
       <div class="pj-repo" data-repo="a00">
-        <p class="pj-repo-head">Sube el proyecto a un repositorio propio, por ejemplo <code>a00-laboratorio</code>, y pega aquí el enlace. Sin el enlace y sin la lista completa, el proyecto no se marca como terminado.</p>
+        <p class="pj-repo-head">No subes un repositorio propio: el código está en el repositorio oficial. Marca cada comprobación cuando la veas en tu máquina (y en tu fork, la del CI). Al marcarlas todas, el proyecto queda terminado; también puedes marcarlo a mano.</p>
         <ul class="pj-checks">
-          <li data-check="verify"><code>./mvnw verify</code> pasa en tu máquina y en GitHub Actions.</li>
-          <li data-check="gatling">La simulación de Gatling pasa la assertion del p99, y anotaste tus percentiles en el README.</li>
-          <li data-check="set">Reprodujiste el <code>SET</code> que se filtra y lo arreglaste con <code>RESET</code>.</li>
+          <li data-check="verify"><code>./mvnw verify</code> pasa en tu máquina con <code>Tests run: 4</code>, y viste fallar una prueba rota a propósito.</li>
+          <li data-check="ci">Viste el workflow <code>ci</code> en verde en tu fork y en rojo con la prueba rota.</li>
+          <li data-check="gatling">La simulación de Gatling pasa la assertion del p99, y anotaste tus percentiles.</li>
+          <li data-check="set">Reprodujiste el <code>SET</code> que se filtra y lo limpiaste.</li>
           <li data-check="lock">Viste <code>t</code> en el segundo advisory lock a través de PgBouncer y <code>f</code> directo a PostgreSQL.</li>
-          <li data-check="prepared">Contaste los errores de prepared statements con <code>max_prepared_statements</code> en 0 y en 200.</li>
+          <li data-check="prepared">Contaste los errores de prepared statements sin <code>prepareThreshold=0</code> y con <code>max_prepared_statements</code> en 0, y los viste desaparecer en 200.</li>
         </ul>
       </div>
 
@@ -883,15 +2153,15 @@ print(dict(codigos), round(time.time() - inicio, 1), "s")</code></pre>
       <ul class="pj-connect">
         <li>
           <p class="pj-connect-title">Percentiles y presupuestos de latencia</p>
-          <p>Por qué la assertion es sobre el p99 y no sobre el promedio, y cómo se suma la latencia de cola cuando una request llama a varias: <a href="../modules/m00-metodo.html">M00. El método</a>.</p>
+          <p>Por qué la assertion es sobre el p99 y no sobre el promedio, y cómo se suma la latencia de cola cuando una request llama a varias: <a href="../modules/m00-metodo.html#percentiles">M00. El método</a>.</p>
         </li>
         <li>
           <p class="pj-connect-title">Pools de conexiones, WAL y UUIDv7</p>
-          <p>Por qué crear cuesta más que leer, qué hace el pooler con cada conexión y por qué un UUIDv7 es amable con el B-tree: <a href="../modules/m05-bases-de-datos.html">M05. Bases de datos</a>.</p>
+          <p>Por qué crear cuesta más que leer, qué hace el pooler con cada conexión y por qué un UUIDv7 es amable con el B-tree: <a href="../modules/m05-bases-de-datos.html#pool">M05. Bases de datos</a>.</p>
         </li>
         <li>
           <p class="pj-connect-title">Problem Details y validación</p>
-          <p>El formato de los errores y cómo diseñar un contrato antes del código: <a href="../modules/m02-apis.html">M02. APIs</a>.</p>
+          <p>El formato de los errores y cómo diseñar un contrato antes del código: <a href="../modules/m02-apis.html#errores">M02. APIs</a>.</p>
         </li>
       </ul>
 

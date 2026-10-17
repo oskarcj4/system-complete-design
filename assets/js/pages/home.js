@@ -71,8 +71,9 @@
     var rows = [
       items.filter(function (it) { return it.part.id === 'p1'; }),
       items.filter(function (it) { return it.part.id === 'p2'; }),
-      items.filter(function (it) { return it.part.id !== 'p1' && it.part.id !== 'p2'; })
-    ];
+      items.filter(function (it) { return ['p1', 'p2', 'p6'].indexOf(it.part.id) < 0; }),
+      items.filter(function (it) { return it.part.id === 'p6'; })
+    ].filter(function (row) { return row.length > 1; });
     var padX = 96, top = 78, rowGap = 176;
     var H = top + rowGap * (rows.length - 1) + 84;
     var pts = [];

@@ -24,10 +24,10 @@ SD.data.projects = {
       id: 'base', label: 'Base', title: 'El laboratorio', line: '--label-3',
       intro: 'Las piezas y convenciones que repite cada proyecto. No explica cómo crear un proyecto de Spring: fija las versiones, la base de datos y la forma de medir.',
       items: [
-        { id: 'a00', num: 'A00', title: 'El laboratorio común', tier: 'core', status: 'ready', href: 'proyectos/a00-laboratorio.html', repo: '', repoName: 'a00-laboratorio', mods: ['m00', 'm05'], front: false,
+        { id: 'a00', num: 'A00', title: 'El laboratorio común', tier: 'core', status: 'ready', href: 'proyectos/a00-laboratorio.html', repo: 'https://github.com/oskarcj4/ia-system-proyect-a00', repoName: 'a00-laboratorio', mods: ['m00', 'm05'], front: false,
           excuse: 'Una API de notas, la más chica posible, para fijar lo que repiten todos los proyectos.',
-          learn: 'Versiones fijas de Java 25 y Spring Boot 4; PostgreSQL 18 detrás de PgBouncer en un compose; qué rompe el modo transacción de PgBouncer (SET que se filtran, advisory locks de sesión y prepared statements), medido; Flyway directo a PostgreSQL; pruebas con Testcontainers; un workflow de GitHub Actions; y Gatling con una assertion sobre el p99.',
-          stack: ['Docker Compose', 'PostgreSQL 18', 'PgBouncer', 'Testcontainers', 'GitHub Actions', 'Gatling'] }
+          learn: 'Una API en capas (controlador, servicio, repositorio) con Java 21, Spring Boot 4 y JPA; PostgreSQL 17 detrás de PgBouncer en un compose; qué rompe el modo transacción de PgBouncer (SET que se filtran, advisory locks de sesión y prepared statements), medido; Flyway directo a PostgreSQL; pruebas con Testcontainers; un workflow de GitHub Actions; y Gatling con una assertion sobre el p99.',
+          stack: ['Docker Compose', 'PostgreSQL 17', 'PgBouncer', 'Spring Data JPA', 'Testcontainers', 'GitHub Actions', 'Gatling'] }
       ]
     },
     {
@@ -208,6 +208,57 @@ SD.data.projects = {
           excuse: 'Una línea que agenda citas por teléfono.',
           learn: 'STT, modelo y TTS en streaming, fin de turno, interrupciones con truncado, herramientas con aprobación y el presupuesto de latencia medido de punta a punta.',
           stack: ['WebRTC', 'STT y TTS', 'LangGraph'] }
+      ]
+    }
+  ],
+
+  /* Guías de ML System Design (sección #ml-system-design de proyectos.html): otra serie, en Python, que acompaña
+     a la Parte VI. Misma forma que aiTracks. Todas están propuestas; el plan está en PLAN_ML_GUIAS.md. */
+  mlTracks: [
+    {
+      id: 'ml', label: 'ML System Design', title: 'Sistemas de recomendación, construidos', line: '--line-p6',
+      intro: 'Una guía por idea de la Parte VI, en Python y con datos públicos: la línea base, dos algoritmos para recomendar productos, la recuperación vectorial, un ranker, amigos con un grafo, exploración, experimentos y un feed completo. Cada una se mide contra lo más popular. Publicadas ML00 y ML01; las demás, próximamente.',
+      items: [
+        { id: 'ml00', num: 'ML00', title: 'El laboratorio de recomendación', tier: 'core', status: 'ready', href: 'proyectos/ml00-laboratorio.html', repo: '', repoName: 'ml00-laboratorio', mods: ['m42', 'm43'], front: false,
+          excuse: 'Antes del primer algoritmo, el lugar donde vas a medir todos.',
+          learn: 'uv desde cero, MovieLens descargado con su checksum y pasado a Parquet, DuckDB para mirarlo con SQL, una partición por tiempo de dos maneras con las fugas contadas, la matriz usuario-ítem dispersa en CSR y las métricas recall@k, NDCG@k y cobertura, probadas con ejemplos resueltos a mano; el azar medido con cinco semillas como piso, y tres fallas provocadas.',
+          stack: ['Python 3.13', 'uv', 'pandas', 'scipy', 'DuckDB'] },
+        { id: 'ml01', num: 'ML01', title: 'La línea base: lo popular, bien medido', tier: 'core', status: 'ready', href: 'proyectos/ml01-linea-base.html', repo: '', repoName: 'ml01-linea-base', mods: ['m42', 'm44', 'm49'], front: false,
+          excuse: 'Si tu modelo no le gana a esto, no lo lances.',
+          learn: 'Lo popular de cuatro maneras (conteo, por género, con decaimiento y con promedio bayesiano), probado con los ejemplos de M44; un informe que las compara con el azar con recall@10, NDCG@10 y cobertura, cada media con su intervalo por bootstrap y la diferencia pareada contra el conteo; una API con FastAPI y caché en Redis que sigue respondiendo si Redis cae; y la fuga del futuro, provocada a propósito.',
+          stack: ['Python 3.13', 'uv', 'pandas', 'FastAPI', 'Redis'] },
+        { id: 'ml02', num: 'ML02', title: '«Comprados juntos» con filtrado colaborativo', tier: 'core', status: 'proposed', repo: '', mods: ['m44', 'm53'], front: false,
+          excuse: 'La página de producto de una tienda real.',
+          learn: 'Próximamente. Co-ocurrencia ítem a ítem sobre las facturas de Online Retail II con scipy, coseno, Jaccard y lift comparados, soporte mínimo, el top-k precalculado en Redis y su API; el trade-off entre lo obvio y lo sorprendente, medido.',
+          stack: ['Python 3.13', 'scipy', 'Redis', 'FastAPI'] },
+        { id: 'ml03', num: 'ML03', title: '«Para ti» con factorización implícita', tier: 'core', status: 'proposed', repo: '', mods: ['m44', 'm53'], front: false,
+          excuse: 'El inicio personalizado de la misma tienda.',
+          learn: 'Próximamente. ALS implícito con confianza y BPR, búsqueda de factores y regularización, por qué te recomienda lo que te recomienda, reranking por diversidad y margen, y la tabla de qué modelo usar según tus datos.',
+          stack: ['Python 3.13', 'implicit', 'scipy', 'FastAPI'] },
+        { id: 'ml04', num: 'ML04', title: 'Recuperación con two-tower y búsqueda vectorial', tier: 'core', status: 'proposed', repo: '', mods: ['m45'], front: false,
+          excuse: 'De un catálogo entero a cien candidatos en milisegundos.',
+          learn: 'Próximamente. Dos torres en PyTorch con negativos del lote, los vectores de los ítems en FAISS (HNSW e IVF-PQ) y en pgvector, recall contra búsqueda exacta, latencia p99, filtros por stock y un índice que se queda viejo.',
+          stack: ['PyTorch', 'FAISS', 'PostgreSQL + pgvector', 'Ollama (opcional)'] },
+        { id: 'ml05', num: 'ML05', title: 'Un ranker con LightGBM y features sin fugas', tier: 'core', status: 'proposed', repo: '', mods: ['m43', 'm46'], front: false,
+          excuse: 'Ordenar los candidatos con lo que sabías en ese momento, y nada más.',
+          learn: 'Próximamente. Features con point-in-time join en DuckDB sobre RetailRocket, LightGBM binario y LambdaMART, calibración isotónica, NDCG contra la línea base, y dos fallas provocadas: una feature con fuga y el training-serving skew.',
+          stack: ['LightGBM', 'DuckDB', 'pandas', 'FastAPI'] },
+        { id: 'ml06', num: 'ML06', title: 'Personas que quizás conozcas, con Neo4j', tier: 'core', status: 'proposed', repo: '', mods: ['m48'], front: false,
+          excuse: 'Amigos de amigos, sin revelar lo que no debes.',
+          learn: 'Próximamente. Un grafo social en Neo4j, Cypher para vecinos comunes y Adamic-Adar, PageRank personalizado con Graph Data Science, tope del segundo salto, evaluación ocultando aristas, la misma consulta con listas en Redis y filtros de privacidad probados.',
+          stack: ['Neo4j', 'Cypher', 'Graph Data Science', 'Redis'] },
+        { id: 'ml07', num: 'ML07', title: 'Explorar con bandits', tier: 'core', status: 'proposed', repo: '', mods: ['m47'], front: false,
+          excuse: 'Cien videos nuevos y pocas impresiones para probarlos.',
+          learn: 'Próximamente. Un simulador de clics con epsilon-greedy, UCB y Thompson, el regret con varias semillas, un bandit contextual y el bucle de retroalimentación reproducido con y sin exploración.',
+          stack: ['Python 3.13', 'numpy'] },
+        { id: 'ml08', num: 'ML08', title: 'Un A/B y una evaluación contrafactual', tier: 'extra', status: 'proposed', repo: '', mods: ['m49'], front: false,
+          excuse: '¿Lo lanzas? Antes, cuántos usuarios necesitas y qué dicen los logs.',
+          learn: 'Próximamente. Potencia y tamaño de muestra, un A/B simulado con efecto novedad y SRM, CUPED, y la evaluación IPS y SNIPS con la propensión registrada del Open Bandit Dataset.',
+          stack: ['Python 3.13', 'numpy', 'scipy'] },
+        { id: 'ml09', num: 'ML09', title: 'Un feed de punta a punta en 200 ms', tier: 'extra', status: 'proposed', repo: '', mods: ['m50', 'm52'], front: false,
+          excuse: 'Todo junto, bajo carga y con piezas que se caen.',
+          learn: 'Próximamente. Eventos en Redpanda, features en Redis, candidatos de tres fuentes, filtros, ranker y re-ranking con un timeout por etapa, degradación a lo popular, traces con OpenTelemetry y carga con k6 contra el p99.',
+          stack: ['Redpanda', 'Redis', 'LightGBM', 'FastAPI', 'OpenTelemetry', 'k6'] }
       ]
     }
   ]

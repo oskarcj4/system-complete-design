@@ -133,9 +133,42 @@ window.SD.course = {
           summary: 'Fan-out on write vs on read, timelines híbridos, IDs Snowflake, contadores y trending.' },
         { id: 'm31', num: 'M31', title: 'Google Docs', short: 'Google Docs', mins: 180, href: 'modules/m31-google-docs.html', status: 'ready',
           summary: 'OT vs CRDT, sesión por documento, cursores y presencia, historial y permisos.' },
-        { id: 'cpd', num: 'CP-D', kind: 'checkpoint', title: 'Checkpoint D: diseña un Slack', short: 'Checkpoint D', mins: 90, href: 'modules/checkpoint-d.html', status: 'soon',
+        { id: 'cpd', num: 'CP-D', kind: 'checkpoint', title: 'Checkpoint D: diseña un Slack', short: 'Checkpoint D', mins: 90, href: 'modules/checkpoint-d.html', status: 'ready',
           summary: 'Examen y diseño completo de una plataforma de chat para equipos.' }
       ]
+    },
+    {
+      id: 'p6', label: 'Parte VI', title: 'ML System Design: sistemas de recomendación', line: '--line-p6',
+      intro: 'Cómo se diseña lo que decide qué ves: del objetivo de negocio a la métrica, los datos y sus sesgos, los modelos clásicos, la recuperación con embeddings, el ranking, la exploración, los grafos de amigos, los experimentos, el serving en 200 ms y por qué un feed engancha. Dos casos de estudio con mapa y guías prácticas en Python.',
+      items: [
+        { id: 'm42', num: 'M42', title: 'El método de ML System Design', short: 'Método de ML', mins: 90, href: 'modules/m42-ml-system-design.html', status: 'ready',
+          summary: 'Del objetivo a la etiqueta, la métrica norte, las proxies y las de protección, la ley de Goodhart, el embudo de un recomendador, cuándo no hace falta ML y el design doc.' },
+        { id: 'm43', num: 'M43', title: 'Datos, eventos y features', short: 'Datos y features', mins: 120, href: 'modules/m43-datos-recomendacion.html', status: 'ready',
+          summary: 'Impresiones y clics, el viaje de un evento, la matriz usuario-ítem, negativos, feature store, training-serving skew, fugas del futuro y sesgo de posición.' },
+        { id: 'm44', num: 'M44', title: 'Modelos clásicos: popularidad, contenido y filtrado colaborativo', short: 'Modelos clásicos', mins: 150, href: 'modules/m44-modelos-clasicos.html', status: 'ready',
+          summary: 'Popularidad con decaimiento y bayesiana, basado en contenido, coseno y Jaccard, ítem a ítem, factorización de matrices, ALS implícito, BPR y arranque en frío.' },
+        { id: 'm45', num: 'M45', title: 'Recuperación a escala: dos torres y búsqueda vectorial', short: 'Recuperación', mins: 120, href: 'modules/m45-recuperacion.html', status: 'ready',
+          summary: 'De 100 millones a 10 000 en 20 ms: dos torres, negativos del lote, varias fuentes de candidatos, HNSW, IVF-PQ, filtros y un índice que cambia.' },
+        { id: 'm46', num: 'M46', title: 'Ranking: del modelo lineal al multi-tarea', short: 'Ranking', mins: 150, href: 'modules/m46-ranking.html', status: 'ready',
+          summary: 'Regresión logística, GBDT, learning to rank, DLRM, multi-tarea, la historia como secuencia, combinar objetivos, calibración, AUC y NDCG.' },
+        { id: 'm47', num: 'M47', title: 'Re-ranking, exploración y bucles de retroalimentación', short: 'Re-ranking y exploración', mins: 120, href: 'modules/m47-reranking-exploracion.html', status: 'soon',
+          summary: 'Diversidad con MMR, reglas y frescura, bandits (epsilon-greedy, UCB y Thompson), el bucle que se alimenta solo, sesgo de posición y exposición justa.' },
+        { id: 'm48', num: 'M48', title: 'Grafos y recomendación de amigos', short: 'Grafos y amigos', mins: 150, href: 'modules/m48-grafos-amigos.html', status: 'soon',
+          summary: 'Personas que quizás conozcas: cierre triádico, vecinos comunes y Adamic-Adar, la explosión del segundo salto, PageRank personalizado, GNN, Neo4j contra TAO y partir un grafo.' },
+        { id: 'm49', num: 'M49', title: 'Evaluar y experimentar', short: 'Experimentos', mins: 120, href: 'modules/m49-experimentos.html', status: 'soon',
+          summary: 'Evaluación offline por tiempo, el A/B de un recomendador, potencia, CUPED, interleaving, efectos de red, evaluación contrafactual con IPS y métricas de largo plazo.' },
+        { id: 'm50', num: 'M50', title: 'Servir y operar un recomendador', short: 'Serving de recomendación', mins: 150, href: 'modules/m50-serving-recomendacion.html', status: 'soon',
+          summary: 'Una request del feed en 200 ms, precalcular o armar al leer, features en tiempo real, la flota del ranker, entrenamiento continuo, deriva, degradación y costo.' },
+        { id: 'm51', num: 'M51', title: 'Algoritmos de engagement: por qué enganchan y cómo diseñarlos con responsabilidad', short: 'Engagement responsable', mins: 120, href: 'modules/m51-engagement.html', status: 'soon',
+          summary: 'Refuerzo variable, scroll infinito y notificaciones, lo que el modelo aprende solo, cómo se mide el daño, objetivos alternativos, control del usuario, menores y la DSA.' },
+        { id: 'm52', num: 'M52', title: 'Caso de estudio: un feed de video corto', short: 'Feed de video corto', mins: 180, href: 'modules/m52-feed-video.html', status: 'soon',
+          summary: 'Un For You de punta a punta, con mapa: señales, la primera tanda de un video nuevo, candidatos, ranking multi-tarea, tiempo real, integridad, fallas y tu clon en AWS.' },
+        { id: 'm53', num: 'M53', title: 'Caso de estudio: recomendar productos', short: 'Recomendar productos', mins: 150, href: 'modules/m53-recomendar-productos.html', status: 'soon',
+          summary: 'Comprados juntos, más como esto y tu inicio: co-ocurrencia y lift, ALS implícito, sesiones anónimas, stock y margen, qué modelo según los datos, con mapa.' },
+        { id: 'cpf', num: 'CP-F', kind: 'checkpoint', title: 'Checkpoint F: el recomendador de Mercado Barrio', short: 'Checkpoint F', mins: 120, href: 'modules/checkpoint-f.html', status: 'soon',
+          summary: 'Examen de la Parte VI y diseño del feed, de comprados juntos y de personas que quizás conozcas de un marketplace con red social.' }
+      ]
     }
+
   ]
 };

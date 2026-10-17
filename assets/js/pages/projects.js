@@ -119,6 +119,41 @@
     });
   }
 
+  /* Índice de las tres series, arriba de la página: las guías publicadas con enlace y estado,
+     y las que faltan como enlaces a su ficha. */
+  function renderSeries(host, data) {
+    var series = [
+      { label: 'Python', title: 'Tutoriales de AI Engineering', tracks: data.aiTracks, line: '--line-p2', anchor: '#ia-engineering', more: 'Ver la serie de AI Engineering' },
+      { label: 'Python', title: 'Guías de ML System Design', tracks: data.mlTracks, line: '--line-p6', anchor: '#ml-system-design', more: 'Ver la serie de ML System Design' },
+      { label: 'Java y Spring Boot', title: 'Guías de implementación', tracks: data.tracks, line: '--line-p1', anchor: '#indice', more: 'Ver el índice completo', wide: true }
+    ];
+    series.forEach(function (s, i) {
+      if (!s.tracks) return;
+      var items = [];
+      s.tracks.forEach(function (t) { items = items.concat(t.items); });
+      var ready = items.filter(function (p) { return p.status === 'ready' && p.href; });
+      var soon = items.filter(function (p) { return !(p.status === 'ready' && p.href); });
+      var card = h('section', { class: 'pj-serie' + (s.wide ? ' pj-serie--wide' : ''), style: '--line: var(' + s.line + ')', 'aria-labelledby': 'serie-' + i });
+      card.appendChild(h('p', { class: 'part-label', text: s.label }));
+      card.appendChild(h('h3', { class: 'pj-serie-title', id: 'serie-' + i, text: s.title }));
+      card.appendChild(h('p', { class: 'pj-serie-count', text: ready.length + ' de ' + items.length + (ready.length === 1 ? ' guía publicada' : ' guías publicadas') }));
+      if (ready.length) {
+        card.appendChild(h('ol', { class: 'pj-serie-list' }, ready.map(function (p) {
+          return h('li', {}, [
+            h('a', { href: p.href }, [h('span', { class: 'pj-serie-num', text: p.num }), h('span', { text: p.title })]),
+            stateChip(p)
+          ]);
+        })));
+      }
+      if (soon.length) {
+        card.appendChild(h('p', { class: 'pj-serie-soon' }, [h('span', { class: 'pj-meta-label', text: 'Próximamente' })].concat(
+          soon.map(function (p) { return h('a', { class: 'pj-chip', href: '#' + p.id, title: p.title, text: p.num }); }))));
+      }
+      card.appendChild(h('a', { class: 'pj-serie-more', href: s.anchor, text: s.more }));
+      host.appendChild(card);
+    });
+  }
+
   SD.ready(function () {
     var data = SD.data.projects;
     if (!data) return;
@@ -127,8 +162,12 @@
     var count = document.querySelector('[data-projects-count]');
     var blocks = document.querySelector('[data-project-blocks]');
     var aiTracks = document.querySelector('[data-ai-tracks]');
+    var series = document.querySelector('[data-series-index]');
+    if (series) renderSeries(series, data);
     if (tracks) renderTracks(tracks, data.tracks);
     if (aiTracks && data.aiTracks) renderTracks(aiTracks, data.aiTracks);
+    var mlTracks = document.querySelector('[data-ml-tracks]');
+    if (mlTracks && data.mlTracks) renderTracks(mlTracks, data.mlTracks);
     if (caps) renderCapstones(caps, data);
     if (count) renderCount(count, data);
     if (blocks) renderBlocks(blocks, data);

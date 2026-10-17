@@ -185,6 +185,26 @@ Numerada después de la Parte IV (M39 en adelante). **Cuenta para el progreso.**
 | M40 (propuesto) | **Suscripciones y cobro recurrente** | Ciclos de facturación, prorrateo, reintentos de cobro (dunning), cambios de plan a mitad de ciclo, periodos de prueba, facturas como documentos inmutables, webhooks de suscripción, relojes y zonas horarias en la fecha de cobro | Línea de tiempo de un ciclo con un cambio de plan; simulador de dunning |
 | M41 (propuesto) | **Marketplaces, payouts y disputas del lado del comercio** | Cobrar en nombre de terceros, comisiones y split de pagos, payouts y su calendario, saldos retenidos, contracargos y evidencia, fraude del lado del comercio (reglas, revisión manual), conciliación de tres partes | Flujo de dinero de un marketplace con el ledger; simulador de una disputa |
 
+### Parte VI — ML System Design: sistemas de recomendación
+
+Va al final de la ruta, después de la Fase 2. **Cuenta para el progreso.** Plan detallado en `PLAN_ML_SYSTEM_DESIGN.md`; guías prácticas (ML00–ML09) en `PLAN_ML_GUIAS.md`. Hoy todo está como `soon` y `proposed` en el sitio.
+
+| # | Módulo | Contenido clave |
+|---|---|---|
+| M42 | **El método de ML System Design** | Objetivo, etiqueta y métricas (norte, proxies, protección), Goodhart, el embudo, cuándo no usar ML, design doc |
+| M43 | **Datos, eventos y features** | Impresiones, el viaje de un evento, matriz dispersa, negativos, feature store, skew, fugas, sesgos |
+| M44 | **Modelos clásicos** | Popularidad, contenido, coseno y Jaccard, ítem a ítem, factorización, ALS implícito, BPR, arranque en frío |
+| M45 | **Recuperación a escala** | Two-tower, negativos del lote, varias fuentes, HNSW, IVF-PQ, filtros, índices que cambian |
+| M46 | **Ranking** | Logística, GBDT, learning to rank, DLRM, multi-tarea, secuencias, combinar objetivos, calibración, AUC y NDCG |
+| M47 | **Re-ranking y exploración** | MMR, reglas, frescura, bandits, bucles de retroalimentación, sesgo de posición, exposición justa |
+| M48 | **Grafos y amigos** | PYMK, cierre triádico, Adamic-Adar, segundo salto, PPR, GNN, Neo4j contra TAO, particionar grafos |
+| M49 | **Evaluar y experimentar** | Offline por tiempo, A/B, potencia, CUPED, interleaving, efectos de red, IPS, largo plazo |
+| M50 | **Servir y operar** | Presupuesto de 200 ms, precalcular o armar, features en tiempo real, flota, entrenamiento continuo, deriva, degradación, costo |
+| M51 | **Engagement responsable** | Refuerzo variable, mecanismos de producto, lo que el modelo aprende solo, medir el daño, control del usuario, menores, DSA |
+| M52 | **Caso: feed de video corto** | For You de punta a punta con mapa |
+| M53 | **Caso: recomendar productos** | Comprados juntos, más como esto, inicio, sesiones, stock y margen, con mapa |
+| **CP-F** | **Checkpoint F** | Examen y diseño del recomendador de un marketplace con red social |
+
 ---
 
 ## 3. Checkpoints de construcción

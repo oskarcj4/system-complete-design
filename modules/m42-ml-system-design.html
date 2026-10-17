@@ -1,0 +1,1061 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M42. El método de ML System Design</title>
+<meta name="description" content="Del objetivo de negocio a la etiqueta y la métrica: la métrica norte, las proxies y las de protección, la ley de Goodhart, el embudo de un recomendador con sus números, cuándo no hace falta ML y el design doc.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m42">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>El método de ML System Design</h1>
+        <p class="lead">Antes del primer modelo: qué quieres que pase, cómo lo vas a medir y por qué la métrica que elijas te cambia el producto. Este módulo arma el método de toda la parte: la etiqueta que aprende el modelo, las métricas que mira el equipo, el embudo con sus números y el orden en que se piensa un recomendador.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M42</dd></div>
+          <div><dt>Parte</dt><dd>VI. ML System Design</dd></div>
+          <div><dt>Duración</dt><dd>90 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M00, M22</dd></div>
+          <div><dt>Estado</dt><dd data-status="m42">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Convertir un objetivo de negocio en una etiqueta que un modelo puede aprender, y decir cuánto atraso trae.</li>
+    <li>Distinguir la métrica norte, las proxies y las de protección, y explicar con un ejemplo por qué optimizar una proxy puede romperla.</li>
+    <li>Dibujar el embudo de un recomendador y estimar cuántos ítems pasan y cuántas puntuaciones por segundo hacen falta en cada etapa.</li>
+    <li>Decidir cuándo no hace falta ML y medir siempre una línea base antes del primer modelo.</li>
+    <li>Escribir el design doc de un recomendador y razonar su diseño en voz alta, en orden.</li>
+  </ul>
+</section>
+
+<p>Esta parte del curso diseña lo que decide qué ves: el feed de una app, los "comprados juntos" de una tienda, las "personas que quizás conozcas". Lo hace como el resto del curso, con números y piezas que se pueden dibujar, pero con una diferencia que cambia todo: el comportamiento del sistema no está escrito en el código, sale de los datos. Este módulo no tiene ningún modelo. Arma el método: qué quieres que pase, cómo se mide, qué se aprende y en qué orden se piensa. Los módulos siguientes abren cada pieza.</p>
+
+<p>Todos los módulos de la parte usan la misma empresa ficticia, <b>Mercado Barrio</b>: un marketplace con red social, con 20 millones de usuarios activos por día, 100 millones de ítems (80 millones de productos y 20 millones de videos cortos de reseña) y tres superficies: el feed de inicio, "comprados juntos" en la página de un producto y "personas que quizás conozcas". Sus cuentas están en <a href="#numeros">42.7</a>.</p>
+
+<h2 id="distinto"><span class="sec-num">42.1</span>Qué tiene de distinto diseñar con ML</h2>
+
+<p>En el resto del curso, cuando un sistema falla, falla el código o la infraestructura: una excepción, un timeout, un disco lleno. Un recomendador puede tener todo el código correcto, todos los tableros en verde y aun así empeorar el producto, porque lo que hace no está en las reglas que escribiste sino en lo que aprendió de los datos. Ya lo viste con los modelos de lenguaje en el <a href="m22-operar-modelos.html#senales">M22</a>: un modelo puede responder con un 200 y estar peor.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un programa clásico es una receta escrita: quien cocina sigue los pasos y el plato sale igual cada vez. Un sistema con ML es un aprendiz de cocina que prueba platos, mira qué dejan los comensales y ajusta. Aprende rápido, pero solo de los platos que él mismo sirvió: si nunca sirve pescado, nunca va a saber si al comedor le gusta el pescado.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f421t f421d">
+<title id="f421t">Software clásico contra un sistema con ML</title>
+<desc id="f421d">Arriba, el software clásico: una persona escribe reglas, el programa las aplica y sale un resultado; el resultado no cambia las reglas. Abajo, un sistema con ML: los datos de lo que pasó y un objetivo entran al entrenamiento, que produce un modelo; el modelo decide lo que ve el usuario, la reacción del usuario se registra y vuelve como datos nuevos. El sistema aprende de lo que él mismo mostró.</desc>
+<defs><marker id="f421a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="20" y="26" text-anchor="start">Software clásico</text>
+<rect class="dg-box" x="20" y="38" width="200" height="48" rx="8"/>
+<text class="dg-small" x="120.0" y="58.0" text-anchor="middle">Reglas que escribe</text>
+<text class="dg-small" x="120.0" y="74.0" text-anchor="middle">una persona</text>
+<rect class="dg-box" x="270" y="38" width="150" height="48" rx="8"/>
+<text class="dg-small" x="345.0" y="66.0" text-anchor="middle">Programa</text>
+<rect class="dg-box" x="470" y="38" width="150" height="48" rx="8"/>
+<text class="dg-small" x="545.0" y="66.0" text-anchor="middle">Salida</text>
+<path class="dg-edge" d="M220 62 H268" marker-end="url(#f421a)"/>
+<path class="dg-edge" d="M420 62 H468" marker-end="url(#f421a)"/>
+<text class="dg-tiny" x="640" y="58" text-anchor="start">La salida no cambia</text>
+<text class="dg-tiny" x="640" y="74" text-anchor="start">las reglas.</text>
+<text class="dg-group" x="20" y="128" text-anchor="start">Con ML</text>
+<rect class="dg-box" x="20" y="140" width="140" height="56" rx="8"/>
+<text class="dg-small" x="90.0" y="164.0" text-anchor="middle">Datos de lo</text>
+<text class="dg-small" x="90.0" y="180.0" text-anchor="middle">que pasó</text>
+<rect class="dg-layer" x="196" y="140" width="140" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="266.0" y="164.0" text-anchor="middle">Entrenamiento</text>
+<text class="dg-tiny" x="266.0" y="180.0" text-anchor="middle">datos + objetivo</text>
+<rect class="dg-layer" x="372" y="140" width="110" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="427.0" y="172.0" text-anchor="middle">Modelo</text>
+<rect class="dg-layer" x="518" y="140" width="110" height="56" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="573.0" y="172.0" text-anchor="middle">Lo que ves</text>
+<rect class="dg-box" x="664" y="140" width="96" height="56" rx="8"/>
+<text class="dg-small" x="712.0" y="164.0" text-anchor="middle">Tu reacción</text>
+<text class="dg-tiny" x="712.0" y="180.0" text-anchor="middle">clic, compra</text>
+<path class="dg-edge" d="M160 168 H194" marker-end="url(#f421a)"/>
+<path class="dg-edge" d="M336 168 H370" marker-end="url(#f421a)"/>
+<path class="dg-edge" d="M482 168 H516" marker-end="url(#f421a)"/>
+<path class="dg-edge" d="M628 168 H662" marker-end="url(#f421a)"/>
+<path class="dg-feedback" d="M712 196 V230 H90 V198" marker-end="url(#f421a)"/>
+<text class="dg-tiny" x="400" y="250" text-anchor="middle">Datos nuevos: el sistema aprende de lo que él mismo mostró, y no de lo que no mostró.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 42.1.</b> En el software clásico, las reglas no cambian con lo que pasa. Con ML, lo que el sistema muestra cambia los datos con los que se entrena la próxima versión: el bucle de abajo es la diferencia.</figcaption>
+</figure>
+
+<p>La flecha de vuelta de la figura 42.1 es el problema central de esta parte. El recomendador elige qué mostrar, la gente reacciona a lo que se mostró y esas reacciones son los datos con los que se entrena la próxima versión. Eso trae tres consecuencias que no existen en el software clásico:</p>
+
+<ul>
+  <li><b>Los datos tienen sesgo de origen.</b> Solo sabes qué opinó la gente de lo que mostraste. Lo que nunca mostraste no tiene datos, ni buenos ni malos (<a href="m43-datos-recomendacion.html#sesgos">M43</a>).</li>
+  <li><b>El sistema se alimenta a sí mismo.</b> Lo que hoy se muestra más, mañana tiene más clics, y pasado mañana se muestra todavía más. Sin cuidado, el catálogo se reduce a lo que ya era popular (M47).</li>
+  <li><b>Correcto es una distribución, no un sí o un no.</b> No hay un test que diga "esta lista es la correcta". Hay métricas que suben o bajan, y hay que decidir cuáles importan antes de mirar los resultados (<a href="#metricas">42.5</a>).</li>
+</ul>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> un sistema con ML aprende de lo que él mismo mostró, así que diseñarlo empieza por decidir qué contar como bueno, no por elegir el modelo.</p>
+
+<h2 id="recomendador"><span class="sec-num">42.2</span>Qué es un recomendador</h2>
+
+<p>Un <dfn data-term="recomendador">recomendador</dfn> resuelve un problema de ordenar: dado un usuario, un contexto (la hora, el dispositivo, la página en la que está) y un catálogo de millones de ítems, devuelve unos pocos ítems ordenados de más a menos probable de servirle. No hay una respuesta correcta; hay órdenes mejores y peores según lo que quieras conseguir.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Superficie</th><th>Qué entra</th><th>Qué sale</th><th>Ejemplo en Mercado Barrio</th></tr></thead>
+    <tbody>
+      <tr><td>Feed de inicio</td><td>El usuario y su contexto</td><td>Una lista mezclada que se renueva al deslizar</td><td>Videos de reseña y productos</td></tr>
+      <tr><td>Más como esto</td><td>Un ítem</td><td>Ítems parecidos</td><td>Otras zapatillas como las que miras</td></tr>
+      <tr><td>Comprados juntos</td><td>Un ítem o un carrito</td><td>Complementos, no sustitutos</td><td>Medias para las zapatillas</td></tr>
+      <tr><td>Personas</td><td>Un usuario y su red</td><td>Usuarios a seguir</td><td>Personas que quizás conozcas</td></tr>
+      <tr><td>Búsqueda personalizada</td><td>Una consulta y el usuario</td><td>Resultados reordenados para esa persona</td><td>"zapatillas" ordenado por tus marcas</td></tr>
+      <tr><td>Notificaciones</td><td>Un usuario y un momento</td><td>Si mandar algo, y qué</td><td>"Bajó el precio de algo que miraste"</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Ordenar 100 millones de ítems para cada request con el mejor modelo posible es imposible: en <a href="#numeros">42.7</a> vas a ver que tardaría horas. Por eso todos los recomendadores grandes tienen la misma forma, un <dfn data-term="embudo-recomendacion">embudo</dfn>: etapas en las que cada una ve menos ítems que la anterior y puede gastar más en cada uno. YouTube lo describió en 2016 con dos redes, una que reduce millones de videos a cientos y otra que ordena esos cientos <span class="badge badge--doc">Documentado</span>, y la misma forma con más etapas aparece en casi todos los sistemas que se publicaron después.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una búsqueda de personal. Llegan 10 000 currículums; un filtro rápido por palabras clave deja 500; una entrevista telefónica de 15 minutos deja 50; una entrevista larga deja 10; y la decisión final mira cómo queda el equipo, no solo a cada candidato. Nadie hace la entrevista larga a 10 000 personas.</p>
+</aside>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f42at f42ad">
+<title id="f42at">El embudo de un recomendador</title>
+<desc id="f42ad">De arriba hacia abajo, cuántos ítems quedan en cada etapa de Mercado Barrio: 100 millones en el catálogo, 10 000 candidatos después de la recuperación, unos 9 000 después de los filtros, 500 después del ranking liviano, 50 después del ranking pesado y 10 en pantalla después del re-ranking. A la derecha, la latencia acumulada: 25, 30, 63, 113 y 118 milisegundos. Abajo, lo que se mostró va al registro de impresiones y al log de eventos, el entrenamiento lo usa y los modelos nuevos vuelven a la recuperación y a los dos rankings.</desc>
+<defs><marker id="f42aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="540" y="26" text-anchor="start">Cuántos quedan y la latencia acumulada</text>
+<g>
+<rect class="dg-layer" x="160.0" y="40" width="340" height="32" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="330" y="61" text-anchor="middle">Catálogo</text>
+<text class="dg-small" x="540" y="53" text-anchor="start">100 000 000 ítems</text>
+<text class="dg-tiny" x="540" y="69" text-anchor="start">productos y videos de reseña</text>
+</g>
+<g class="pl-pin"><circle cx="514.0" cy="56" r="11"/><text x="514.0" y="60" text-anchor="middle">1</text></g>
+<g>
+<rect class="dg-layer" x="200.0" y="88" width="260" height="32" rx="6" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="330" y="109" text-anchor="middle">Recuperación</text>
+<text class="dg-small" x="540" y="101" text-anchor="start">10 000 candidatos  ·  25 ms</text>
+<text class="dg-tiny" x="540" y="117" text-anchor="start">varias fuentes en paralelo</text>
+</g>
+<g class="pl-pin"><circle cx="474.0" cy="104" r="11"/><text x="474.0" y="108" text-anchor="middle">2</text></g>
+<g>
+<rect class="dg-layer" x="210.0" y="136" width="240" height="32" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="330" y="157" text-anchor="middle">Filtros</text>
+<text class="dg-small" x="540" y="149" text-anchor="start">unos 9 000  ·  30 ms</text>
+<text class="dg-tiny" x="540" y="165" text-anchor="start">ya visto, bloqueado, sin stock</text>
+</g>
+<g class="pl-pin"><circle cx="464.0" cy="152" r="11"/><text x="464.0" y="156" text-anchor="middle">3</text></g>
+<g>
+<rect class="dg-layer" x="245.0" y="184" width="170" height="32" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="330" y="205" text-anchor="middle">Ranking liviano</text>
+<text class="dg-small" x="540" y="197" text-anchor="start">500  ·  63 ms</text>
+<text class="dg-tiny" x="540" y="213" text-anchor="start">features y un modelo barato</text>
+</g>
+<g class="pl-pin"><circle cx="429.0" cy="200" r="11"/><text x="429.0" y="204" text-anchor="middle">4</text></g>
+<g>
+<rect class="dg-layer" x="270.0" y="232" width="120" height="32" rx="6" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="330" y="253" text-anchor="middle">Ranking pesado</text>
+<text class="dg-small" x="540" y="245" text-anchor="start">50  ·  113 ms</text>
+<text class="dg-tiny" x="540" y="261" text-anchor="start">un modelo grande, multi-tarea</text>
+</g>
+<g class="pl-pin"><circle cx="404.0" cy="248" r="11"/><text x="404.0" y="252" text-anchor="middle">5</text></g>
+<g>
+<rect class="dg-layer" x="288.0" y="280" width="84" height="32" rx="6" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="330" y="301" text-anchor="middle">Re-ranking</text>
+<text class="dg-small" x="540" y="293" text-anchor="start">10 en pantalla  ·  118 ms</text>
+<text class="dg-tiny" x="540" y="309" text-anchor="start">diversidad, frescura, reglas</text>
+</g>
+<g class="pl-pin"><circle cx="386.0" cy="296" r="11"/><text x="386.0" y="300" text-anchor="middle">6</text></g>
+<g><rect class="dg-box" x="230" y="336" width="200" height="40" rx="8"/>
+<text class="dg-small" x="330.0" y="360.0" text-anchor="middle">Registro de impresiones</text></g>
+<g><rect class="dg-box" x="20" y="336" width="130" height="40" rx="8"/>
+<text class="dg-small" x="85.0" y="360.0" text-anchor="middle">Log de eventos</text></g>
+<g><rect class="dg-box" x="20" y="150" width="120" height="44" rx="8"/>
+<text class="dg-small" x="80.0" y="176.0" text-anchor="middle">Entrenamiento</text></g>
+<path class="dg-edge" d="M330 312 V334" marker-end="url(#f42aa)"/>
+<path class="dg-edge" d="M230 356 H152" marker-end="url(#f42aa)"/>
+<text class="dg-tiny" x="191" y="389" text-anchor="middle">con clics y compras</text>
+<path class="dg-edge" d="M80 336 V196" marker-end="url(#f42aa)"/>
+<path class="dg-feedback" d="M140 166 H176 V104 H198" marker-end="url(#f42aa)"/>
+<path class="dg-feedback" d="M140 178 H200 V200 H243" marker-end="url(#f42aa)"/>
+<path class="dg-feedback" d="M140 188 H186 V248 H268" marker-end="url(#f42aa)"/>
+<text class="dg-tiny" x="88" y="230">modelos nuevos</text>
+<g class="pl-pin"><circle cx="430" cy="336" r="11"/><text x="430" y="340" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="150" cy="336" r="11"/><text x="150" y="340" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="140" cy="150" r="11"/><text x="140" y="154" text-anchor="middle">9</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 42.A.</b> El embudo de Mercado Barrio. Cada etapa ve menos ítems y gasta más por ítem. Los anchos son un dibujo y los milisegundos son supuestos de diseño (42.7); los 20 ms de red y armado llevan el total a 138 ms.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Catálogo</b><span>Todo lo que se puede recomendar: 100 millones de productos y videos. Nadie lo recorre entero en una request. <a href="#numeros">42.7</a></span></li>
+  <li><b>Recuperación</b><span>Varias fuentes baratas (lo popular, lo parecido a lo que compraste, lo de tus amigos) juntan unos miles de candidatos. Va en <a href="m45-recuperacion.html#fuentes">M45</a>.</span></li>
+  <li><b>Filtros</b><span>Reglas que sacan lo que no se puede mostrar: lo ya comprado, lo bloqueado, lo sin stock. <a href="#lamina">42.3</a></span></li>
+  <li><b>Ranking liviano</b><span>Un modelo barato que puntúa miles de candidatos y deja pasar unos cientos. Va en <a href="m46-ranking.html#cascada">M46</a>.</span></li>
+  <li><b>Ranking pesado</b><span>El modelo caro: muchas features y varias predicciones por ítem, solo para unos cientos. Va en <a href="m46-ranking.html#multitarea">M46</a>.</span></li>
+  <li><b>Re-ranking</b><span>Ajusta la lista final: diversidad, frescura, reglas del negocio y un poco de exploración. Va en M47.</span></li>
+  <li><b>Registro de impresiones</b><span>Qué se mostró, a quién, en qué posición y con qué modelo. Sin él no hay negativos. Va en <a href="m43-datos-recomendacion.html#eventos">M43</a>.</span></li>
+  <li><b>Log de eventos</b><span>Las impresiones, los clics, el tiempo visto y las compras, en orden y sin duplicados. Va en <a href="m43-datos-recomendacion.html#log">M43</a>.</span></li>
+  <li><b>Entrenamiento</b><span>Junta las impresiones con lo que pasó después y produce los modelos nuevos. <a href="#objetivo">42.4</a></span></li>
+</ol>
+
+<p>Lee la lámina de arriba hacia abajo. Las etapas de arriba son baratas por ítem y miran mucho; las de abajo son caras por ítem y miran poco. La recuperación tiene que ser buena encontrando (que lo bueno esté entre los 10 000), y el ranking tiene que ser bueno ordenando (que lo mejor quede arriba). Son dos problemas distintos y se miden distinto: el primero con recall, el segundo con métricas de orden (<a href="m46-ranking.html#metricas-rank">M46</a>).</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> un recomendador ordena; como no puede ordenar todo con el mejor modelo, lo hace en un embudo de etapas cada vez más caras por ítem.</p>
+
+<h2 id="lamina"><span class="sec-num">42.3</span>La lámina: las piezas de un recomendador</h2>
+
+<p>El embudo es el camino de una request. Alrededor hay piezas que no deciden qué ves pero sin las que no se puede medir ni mejorar. La Lámina 42.B las junta todas; cada una tiene su módulo.</p>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 372" role="img" aria-labelledby="f42bt f42bd">
+<title id="f42bt">Las 14 piezas de un recomendador</title>
+<desc id="f42bd">Arriba, el camino de una request: el cliente llama a la API del feed, que pide candidatos a las fuentes, los filtra, los puntúa con el ranking liviano y el pesado, y el re-ranking arma la lista que vuelve a la API. Debajo de la API, el servicio de experimentos dice qué variante ve el usuario. Debajo de las fuentes, el índice vectorial. Debajo de los rankings, el feature store. Abajo, el camino de los datos: la API registra las impresiones, van al log de eventos, el entrenamiento produce modelos y embeddings, el registro de modelos despliega los rankings y el entrenamiento renueva el índice.</desc>
+<defs><marker id="f42ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="60" width="88" height="52" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="64.0" y="90.0" text-anchor="middle">Cliente</text>
+<rect class="dg-layer" x="128" y="60" width="96" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="176.0" y="90.0" text-anchor="middle">API del feed</text>
+<rect class="dg-layer" x="244" y="60" width="104" height="52" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="296.0" y="82.0" text-anchor="middle">Fuentes de</text>
+<text class="dg-small" x="296.0" y="98.0" text-anchor="middle">candidatos</text>
+<rect class="dg-layer" x="368" y="60" width="80" height="52" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="408.0" y="90.0" text-anchor="middle">Filtros</text>
+<rect class="dg-layer" x="468" y="60" width="86" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="511.0" y="82.0" text-anchor="middle">Ranking</text>
+<text class="dg-small" x="511.0" y="98.0" text-anchor="middle">liviano</text>
+<rect class="dg-layer" x="574" y="60" width="86" height="52" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="617.0" y="82.0" text-anchor="middle">Ranking</text>
+<text class="dg-small" x="617.0" y="98.0" text-anchor="middle">pesado</text>
+<rect class="dg-layer" x="680" y="60" width="78" height="52" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="719.0" y="90.0" text-anchor="middle">Re-ranking</text>
+<path class="dg-edge" d="M110 86 H126" marker-end="url(#f42ba)" marker-start="url(#f42ba)"/>
+<path class="dg-edge" d="M224 86 H242" marker-end="url(#f42ba)"/>
+<path class="dg-edge" d="M348 86 H366" marker-end="url(#f42ba)"/>
+<path class="dg-edge" d="M448 86 H466" marker-end="url(#f42ba)"/>
+<path class="dg-edge" d="M554 86 H572" marker-end="url(#f42ba)"/>
+<path class="dg-edge" d="M660 86 H678" marker-end="url(#f42ba)"/>
+<path class="dg-edge" d="M719 60 V34 H176 V58" marker-end="url(#f42ba)"/>
+<text class="dg-tiny" x="448" y="28" text-anchor="middle">la lista final, de 10 ítems</text>
+<rect class="dg-box" x="20" y="170" width="88" height="48" rx="8"/>
+<text class="dg-tiny" x="64.0" y="198.0" text-anchor="middle">Experimentos</text>
+<rect class="dg-layer" x="244" y="170" width="104" height="48" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="296.0" y="190.0" text-anchor="middle">Índice</text>
+<text class="dg-small" x="296.0" y="206.0" text-anchor="middle">vectorial</text>
+<rect class="dg-layer" x="420" y="170" width="240" height="48" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="540.0" y="190.0" text-anchor="middle">Feature store</text>
+<text class="dg-tiny" x="540.0" y="206.0" text-anchor="middle">lo que se sabe del usuario y del ítem</text>
+<path class="dg-edge" d="M150 112 V140 H64 V168" marker-end="url(#f42ba)"/>
+<text class="dg-tiny" x="70" y="134" text-anchor="start">qué variante</text>
+<path class="dg-edge" d="M296 114 V168" marker-end="url(#f42ba)" marker-start="url(#f42ba)"/>
+<text class="dg-tiny" x="302" y="145" text-anchor="start">vecinos</text>
+<path class="dg-edge" d="M490 170 V114" marker-end="url(#f42ba)"/>
+<path class="dg-edge" d="M600 170 V114" marker-end="url(#f42ba)"/>
+<rect class="dg-box" x="128" y="296" width="96" height="52" rx="8"/>
+<text class="dg-tiny" x="176.0" y="318.0" text-anchor="middle">Registro de</text>
+<text class="dg-tiny" x="176.0" y="334.0" text-anchor="middle">impresiones</text>
+<rect class="dg-layer" x="244" y="296" width="104" height="52" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="296.0" y="318.0" text-anchor="middle">Log de</text>
+<text class="dg-small" x="296.0" y="334.0" text-anchor="middle">eventos</text>
+<rect class="dg-layer" x="400" y="296" width="104" height="52" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="452.0" y="326.0" text-anchor="middle">Entrenamiento</text>
+<rect class="dg-box" x="680" y="170" width="78" height="48" rx="8"/>
+<text class="dg-tiny" x="719.0" y="190.0" text-anchor="middle">Registro de</text>
+<text class="dg-tiny" x="719.0" y="206.0" text-anchor="middle">modelos</text>
+<path class="dg-edge" d="M176 112 V294" marker-end="url(#f42ba)"/>
+<text class="dg-tiny" x="182" y="258" text-anchor="start">qué se</text>
+<text class="dg-tiny" x="182" y="272" text-anchor="start">mostró</text>
+<path class="dg-edge" d="M224 322 H242" marker-end="url(#f42ba)"/>
+<path class="dg-edge" d="M348 322 H398" marker-end="url(#f42ba)"/>
+<path class="dg-edge" d="M504 322 H719 V220" marker-end="url(#f42ba)"/>
+<text class="dg-tiny" x="600" y="314" text-anchor="middle">modelos</text>
+<path class="dg-edge" d="M700 170 V140 H640 V114" marker-end="url(#f42ba)"/>
+<text class="dg-tiny" x="706" y="152" text-anchor="start">despliega</text>
+<path class="dg-feedback" d="M452 296 V260 H296 V220" marker-end="url(#f42ba)"/>
+<text class="dg-tiny" x="380" y="254" text-anchor="middle">embeddings</text>
+<g class="pl-pin"><circle cx="108" cy="60" r="11"/><text x="108" y="64" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="224" cy="60" r="11"/><text x="224" y="64" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="348" cy="60" r="11"/><text x="348" y="64" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="448" cy="60" r="11"/><text x="448" y="64" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="660" cy="170" r="11"/><text x="660" y="174" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="554" cy="60" r="11"/><text x="554" y="64" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="660" cy="60" r="11"/><text x="660" y="64" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="758" cy="60" r="11"/><text x="758" y="64" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="224" cy="296" r="11"/><text x="224" y="300" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="348" cy="296" r="11"/><text x="348" y="300" text-anchor="middle">10</text></g>
+<g class="pl-pin"><circle cx="504" cy="296" r="11"/><text x="504" y="300" text-anchor="middle">11</text></g>
+<g class="pl-pin"><circle cx="758" cy="170" r="11"/><text x="758" y="174" text-anchor="middle">12</text></g>
+<g class="pl-pin"><circle cx="348" cy="170" r="11"/><text x="348" y="174" text-anchor="middle">13</text></g>
+<g class="pl-pin"><circle cx="108" cy="170" r="11"/><text x="108" y="174" text-anchor="middle">14</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 42.B.</b> Las piezas de un recomendador. Arriba, el camino de una request, de izquierda a derecha, y la lista que vuelve. Abajo, el camino de los datos, que cierra el bucle de la figura 42.1. Las piezas grises no deciden qué ves, pero sin ellas no se puede medir ni mejorar.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Cliente</b><span>La app o la web. Pide el feed, lo muestra y avisa qué vio y qué tocó. <a href="#objetivo">42.4</a></span></li>
+  <li><b>API del feed</b><span>Orquesta la request: pregunta la variante, junta candidatos, llama a los rankings y registra lo que mostró. <a href="#numeros">42.7</a></span></li>
+  <li><b>Fuentes de candidatos</b><span>Varias recuperaciones baratas en paralelo: popular, ítem a ítem, embeddings, grafo, seguidos. Van en <a href="m44-modelos-clasicos.html#comparar">M44</a> y <a href="m45-recuperacion.html#fuentes">M45</a>.</span></li>
+  <li><b>Filtros</b><span>Sacan lo que no se puede mostrar. Son reglas, no modelos, y se auditan como reglas. <a href="#restricciones">42.8</a></span></li>
+  <li><b>Feature store</b><span>Guarda lo que se sabe del usuario y del ítem, con la misma definición para entrenar y para servir. Va en <a href="m43-datos-recomendacion.html#feature-store">M43</a>.</span></li>
+  <li><b>Ranking liviano</b><span>Un modelo barato por ítem que reduce miles a cientos. Va en <a href="m46-ranking.html#cascada">M46</a>.</span></li>
+  <li><b>Ranking pesado</b><span>El modelo que decide el orden, con muchas features y varias predicciones. Va en <a href="m46-ranking.html#que-predice">M46</a>.</span></li>
+  <li><b>Re-ranking</b><span>Diversidad, frescura, reglas y exploración sobre la lista final. Va en M47.</span></li>
+  <li><b>Registro de impresiones</b><span>Lo que se mostró, con su posición, el modelo y la variante. Es la mitad de cada ejemplo de entrenamiento. Va en <a href="m43-datos-recomendacion.html#eventos">M43</a>.</span></li>
+  <li><b>Log de eventos</b><span>El flujo ordenado de impresiones, clics y compras, sobre Kafka. Va en <a href="m43-datos-recomendacion.html#log">M43</a>.</span></li>
+  <li><b>Entrenamiento</b><span>Une cada impresión con su etiqueta y produce los modelos y los embeddings nuevos. <a href="#objetivo">42.4</a></span></li>
+  <li><b>Registro de modelos</b><span>Las versiones de cada modelo y cuál está en producción; desplegar o volver atrás es mover un puntero, como en el <a href="m22-operar-modelos.html#canary">M22</a>.</span></li>
+  <li><b>Índice vectorial</b><span>Busca los vecinos más cercanos de un embedding entre millones. Va en <a href="m45-recuperacion.html#ann">M45</a>.</span></li>
+  <li><b>Experimentos</b><span>Asigna cada usuario a una variante y guarda la asignación para medir. Va en M49.</span></li>
+</ol>
+
+<p>Tres cosas para notar en la lámina:</p>
+
+<ul>
+  <li><b>Las piezas de abajo valen tanto como las de arriba.</b> Un ranking excelente con un registro de impresiones roto aprende de datos equivocados. En la práctica, la mayoría de los problemas de un recomendador están en los datos, no en el modelo.</li>
+  <li><b>Los filtros son reglas, no modelos.</b> "No mostrar lo que ya compró" o "no mostrar lo que no tiene stock" no se aprende: se escribe, se prueba y se audita como cualquier regla de negocio.</li>
+  <li><b>Experimentos va pegado a la API.</b> Cada request sabe en qué variante está, y lo registra junto con la impresión. Sin eso, después no se puede comparar nada (M49).</li>
+</ul>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> un recomendador son catorce piezas; seis deciden la lista y ocho existen para registrar, aprender, desplegar y medir.</p>
+
+<h2 id="objetivo"><span class="sec-num">42.4</span>Del objetivo a la etiqueta</h2>
+
+<p>"Que la gente compre más" es un objetivo del negocio, pero un modelo no puede aprenderlo así. Un modelo aprende a predecir algo que se puede observar en cada ejemplo, y ese algo es la <dfn data-term="etiqueta-ml">etiqueta</dfn>: para cada impresión, ¿hizo clic?, ¿miró más de 10 segundos?, ¿compró en los 7 días siguientes? Elegir la etiqueta es la decisión de diseño más importante del recomendador, porque es literalmente lo que el modelo va a intentar conseguir.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un examen solo puede medir lo que se puede corregir. "Que el alumno entienda historia" no se corrige; "que conteste estas diez preguntas" sí. Si el examen mide memoria de fechas, los alumnos van a memorizar fechas, entiendan o no. La etiqueta es el examen que le pones al modelo.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 382" role="img" aria-labelledby="f422t f422d">
+<title id="f422t">Etiqueta de entrenamiento</title>
+<desc id="f422d">Ficha de Etiqueta de entrenamiento. Qué entra: Un objetivo del negocio, como "que compren más", y el registro de lo que se mostró a cada usuario. Qué hace: Elige un comportamiento que se puede observar, fija una ventana de tiempo y lo une con cada impresión: ¿pasó o no pasó? Qué sale: Un 0 o un 1 por cada impresión. El modelo aprende a predecir la probabilidad de que ese 1 aparezca. Ejemplo: impresión 81f3  usuario 42  ítem p-777  mostrado 2026-03-01 10:00 compra de p-777 por el usuario 42 el 2026-03-04 10:12 ventana: 7 días  -&gt;  etiqueta = 1 se puede calcular recién el 2026-03-08 10:00, al cerrar la ventana Qué falla sin él: Sin una etiqueta clara se entrena lo que es fácil de contar, casi siempre el clic, y el modelo aprende a conseguir clics aunque el negocio quiera otra cosa. Dónde vive: En el entrenamiento, que une el registro de impresiones con el log de eventos (pieza 11 de la Lámina 42.B). La ventana decide cuánto atraso tienen los datos.</desc>
+<defs><marker id="f422a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="118" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Un objetivo del negocio, como</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">"que compren más", y el</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">registro de lo que se mostró a</text>
+<text class="dg-tiny" x="32" y="104" text-anchor="start">cada usuario.</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="118" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Elige un comportamiento que se</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">puede observar, fija una</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">ventana de tiempo y lo une con</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">cada impresión: ¿pasó o no</text>
+<text class="dg-tiny" x="291" y="120" text-anchor="start">pasó?</text>
+<rect class="dg-box" x="538" y="16" width="212" height="118" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Un 0 o un 1 por cada</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">impresión. El modelo aprende a</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">predecir la probabilidad de</text>
+<text class="dg-tiny" x="550" y="104" text-anchor="start">que ese 1 aparezca.</text>
+<path class="dg-edge" d="M234 75.0 H275" marker-end="url(#f422a)"/>
+<path class="dg-edge" d="M493 75.0 H534" marker-end="url(#f422a)"/>
+<rect class="dg-box" x="20" y="148" width="730" height="102" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="168" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="188" text-anchor="start" style="white-space:pre">impresión 81f3  usuario 42  ítem p-777  mostrado 2026-03-01 10:00</text>
+<text class="dg-tiny dg-mono" x="32" y="204" text-anchor="start" style="white-space:pre">compra de p-777 por el usuario 42 el 2026-03-04 10:12</text>
+<text class="dg-tiny dg-mono" x="32" y="220" text-anchor="start" style="white-space:pre">ventana: 7 días  -&gt;  etiqueta = 1</text>
+<text class="dg-tiny dg-mono" x="32" y="236" text-anchor="start" style="white-space:pre">se puede calcular recién el 2026-03-08 10:00, al cerrar la ventana</text>
+<rect class="dg-warnbox" x="20" y="264" width="357" height="102" rx="8"/>
+<text class="dg-group" x="32" y="284" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="304" text-anchor="start">Sin una etiqueta clara se entrena lo que es fácil de</text>
+<text class="dg-tiny" x="32" y="320" text-anchor="start">contar, casi siempre el clic, y el modelo aprende a</text>
+<text class="dg-tiny" x="32" y="336" text-anchor="start">conseguir clics aunque el negocio quiera otra cosa.</text>
+<rect class="dg-box" x="393" y="264" width="357" height="102" rx="8"/>
+<text class="dg-group" x="405" y="284" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="304" text-anchor="start">En el entrenamiento, que une el registro de</text>
+<text class="dg-tiny" x="405" y="320" text-anchor="start">impresiones con el log de eventos (pieza 11 de la</text>
+<text class="dg-tiny" x="405" y="336" text-anchor="start">Lámina 42.B). La ventana decide cuánto atraso tienen</text>
+<text class="dg-tiny" x="405" y="352" text-anchor="start">los datos.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 42.2.</b> Del objetivo a la etiqueta. La etiqueta "compró en 7 días" es fiel al negocio, pero llega una semana tarde: una impresión de hoy no se puede usar para entrenar hasta dentro de 7 días.</figcaption>
+</figure>
+
+<p>Cada etiqueta tiene tres propiedades que hay que decir en voz alta, porque se contradicen:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Etiqueta</th><th>Qué tan cerca del negocio</th><th>Cuántos positivos</th><th>Cuánto tarda</th></tr></thead>
+    <tbody>
+      <tr><td>Hizo clic</td><td>Lejos: un clic no es una venta</td><td>Muchos</td><td>Segundos</td></tr>
+      <tr><td>Miró más de 10 s</td><td>Más cerca: descarta el clic por error</td><td>Bastantes</td><td>Segundos</td></tr>
+      <tr><td>Agregó al carrito</td><td>Cerca</td><td>Pocos</td><td>Minutos</td></tr>
+      <tr><td>Compró en 7 días</td><td>Muy cerca</td><td>Muy pocos</td><td>Una semana</td></tr>
+      <tr><td>Compró y no devolvió en 30 días</td><td>Lo más cerca</td><td>Todavía menos</td><td>Más de un mes</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>No hay una fila correcta. Lo habitual es predecir varias a la vez, una por cabeza del modelo (eso es el ranking multi-tarea de <a href="m46-ranking.html#multitarea">M46</a>), y combinarlas en un puntaje. Lo que no se puede es elegir la de arriba por comodidad y esperar que el negocio mejore. La etiqueta que tarda una semana trae un problema propio: las impresiones de los últimos 7 días todavía no tienen etiqueta, y si el entrenamiento las toma como "no compró", aprende negativos falsos (<a href="m43-datos-recomendacion.html#negativos">M43</a>).</p>
+
+<p>De dónde sale la señal también cambia. El <dfn data-term="feedback-explicito">feedback explícito</dfn> es lo que la persona dice: estrellas, un me gusta, "no me interesa". El <dfn data-term="feedback-implicito">feedback implícito</dfn> es lo que hace: clics, tiempo visto, compras, volver a mirar.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f423t f423d">
+<title id="f423t">Feedback explícito contra feedback implícito</title>
+<desc id="f423d">Dos tarjetas. A la izquierda, el feedback explícito: lo que la persona dice, como estrellas o me gusta; de 50 puntos que representan usuarios, solo dos están llenos. A la derecha, el feedback implícito: lo que la persona hace, como clics, tiempo visto y compras; los 50 puntos están llenos. Debajo de cada tarjeta, qué dice y cómo miente.</desc>
+
+<rect class="dg-box" x="20" y="16" width="355" height="300" rx="8"/>
+<text class="dg-group" x="34" y="40" text-anchor="start">Explícito: lo que dice</text>
+<circle class="dg-ok" cx="44" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="57" cy="58" r="4.5"/>
+<circle class="dg-box" cx="70" cy="58" r="4.5"/>
+<circle class="dg-box" cx="83" cy="58" r="4.5"/>
+<circle class="dg-box" cx="96" cy="58" r="4.5"/>
+<circle class="dg-box" cx="109" cy="58" r="4.5"/>
+<circle class="dg-box" cx="122" cy="58" r="4.5"/>
+<circle class="dg-box" cx="135" cy="58" r="4.5"/>
+<circle class="dg-box" cx="148" cy="58" r="4.5"/>
+<circle class="dg-box" cx="161" cy="58" r="4.5"/>
+<circle class="dg-box" cx="174" cy="58" r="4.5"/>
+<circle class="dg-box" cx="187" cy="58" r="4.5"/>
+<circle class="dg-box" cx="200" cy="58" r="4.5"/>
+<circle class="dg-box" cx="213" cy="58" r="4.5"/>
+<circle class="dg-box" cx="226" cy="58" r="4.5"/>
+<circle class="dg-box" cx="239" cy="58" r="4.5"/>
+<circle class="dg-box" cx="252" cy="58" r="4.5"/>
+<circle class="dg-box" cx="265" cy="58" r="4.5"/>
+<circle class="dg-box" cx="278" cy="58" r="4.5"/>
+<circle class="dg-box" cx="291" cy="58" r="4.5"/>
+<circle class="dg-box" cx="304" cy="58" r="4.5"/>
+<circle class="dg-box" cx="317" cy="58" r="4.5"/>
+<circle class="dg-box" cx="330" cy="58" r="4.5"/>
+<circle class="dg-box" cx="343" cy="58" r="4.5"/>
+<circle class="dg-box" cx="356" cy="58" r="4.5"/>
+<circle class="dg-box" cx="44" cy="72" r="4.5"/>
+<circle class="dg-box" cx="57" cy="72" r="4.5"/>
+<circle class="dg-box" cx="70" cy="72" r="4.5"/>
+<circle class="dg-box" cx="83" cy="72" r="4.5"/>
+<circle class="dg-box" cx="96" cy="72" r="4.5"/>
+<circle class="dg-box" cx="109" cy="72" r="4.5"/>
+<circle class="dg-box" cx="122" cy="72" r="4.5"/>
+<circle class="dg-box" cx="135" cy="72" r="4.5"/>
+<circle class="dg-box" cx="148" cy="72" r="4.5"/>
+<circle class="dg-box" cx="161" cy="72" r="4.5"/>
+<circle class="dg-box" cx="174" cy="72" r="4.5"/>
+<circle class="dg-box" cx="187" cy="72" r="4.5"/>
+<circle class="dg-box" cx="200" cy="72" r="4.5"/>
+<circle class="dg-box" cx="213" cy="72" r="4.5"/>
+<circle class="dg-box" cx="226" cy="72" r="4.5"/>
+<circle class="dg-box" cx="239" cy="72" r="4.5"/>
+<circle class="dg-box" cx="252" cy="72" r="4.5"/>
+<circle class="dg-box" cx="265" cy="72" r="4.5"/>
+<circle class="dg-box" cx="278" cy="72" r="4.5"/>
+<circle class="dg-box" cx="291" cy="72" r="4.5"/>
+<circle class="dg-box" cx="304" cy="72" r="4.5"/>
+<circle class="dg-box" cx="317" cy="72" r="4.5"/>
+<circle class="dg-box" cx="330" cy="72" r="4.5"/>
+<circle class="dg-box" cx="343" cy="72" r="4.5"/>
+<circle class="dg-box" cx="356" cy="72" r="4.5"/>
+<text class="dg-tiny" x="34" y="98" text-anchor="start">2 de 50 usuarios dejan esta señal (dibujo, no medición)</text>
+<text class="dg-small" x="34" y="122" text-anchor="start" style="font-weight:600">Ejemplos</text>
+<text class="dg-tiny" x="130" y="122" text-anchor="start">Estrellas, me gusta, "no me</text>
+<text class="dg-tiny" x="130" y="138" text-anchor="start">interesa", una reseña.</text>
+<text class="dg-small" x="34" y="172" text-anchor="start" style="font-weight:600">Cuánto hay</text>
+<text class="dg-tiny" x="130" y="172" text-anchor="start">Poco: la mayoría nunca califica.</text>
+<text class="dg-small" x="34" y="206" text-anchor="start" style="font-weight:600">Qué dice</text>
+<text class="dg-tiny" x="130" y="206" text-anchor="start">Si le gustó, con una escala.</text>
+<text class="dg-small" x="34" y="240" text-anchor="start" style="font-weight:600">Cómo miente</text>
+<text class="dg-tiny" x="130" y="240" text-anchor="start">Califica una minoría que no se parece</text>
+<text class="dg-tiny" x="130" y="256" text-anchor="start">al resto, y cada persona usa la</text>
+<text class="dg-tiny" x="130" y="272" text-anchor="start">escala a su manera.</text>
+<rect class="dg-box" x="395" y="16" width="355" height="300" rx="8"/>
+<text class="dg-group" x="409" y="40" text-anchor="start">Implícito: lo que hace</text>
+<circle class="dg-ok" cx="419" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="432" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="445" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="458" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="471" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="484" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="497" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="510" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="523" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="536" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="549" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="562" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="575" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="588" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="601" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="614" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="627" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="640" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="653" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="666" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="679" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="692" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="705" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="718" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="731" cy="58" r="4.5"/>
+<circle class="dg-ok" cx="419" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="432" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="445" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="458" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="471" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="484" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="497" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="510" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="523" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="536" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="549" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="562" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="575" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="588" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="601" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="614" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="627" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="640" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="653" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="666" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="679" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="692" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="705" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="718" cy="72" r="4.5"/>
+<circle class="dg-ok" cx="731" cy="72" r="4.5"/>
+<text class="dg-tiny" x="409" y="98" text-anchor="start">50 de 50 usuarios dejan esta señal (dibujo, no medición)</text>
+<text class="dg-small" x="409" y="122" text-anchor="start" style="font-weight:600">Ejemplos</text>
+<text class="dg-tiny" x="505" y="122" text-anchor="start">Clic, tiempo visto, agregar al</text>
+<text class="dg-tiny" x="505" y="138" text-anchor="start">carrito, compra, volver a mirar.</text>
+<text class="dg-small" x="409" y="172" text-anchor="start" style="font-weight:600">Cuánto hay</text>
+<text class="dg-tiny" x="505" y="172" text-anchor="start">Mucho: cada visita deja rastro.</text>
+<text class="dg-small" x="409" y="206" text-anchor="start" style="font-weight:600">Qué dice</text>
+<text class="dg-tiny" x="505" y="206" text-anchor="start">Que algo le llamó la atención, no que</text>
+<text class="dg-tiny" x="505" y="222" text-anchor="start">le gustó.</text>
+<text class="dg-small" x="409" y="256" text-anchor="start" style="font-weight:600">Cómo miente</text>
+<text class="dg-tiny" x="505" y="256" text-anchor="start">Un clic puede ser curiosidad o un</text>
+<text class="dg-tiny" x="505" y="272" text-anchor="start">título engañoso, y no tocar algo no</text>
+<text class="dg-tiny" x="505" y="288" text-anchor="start">prueba que no le guste.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 42.3.</b> Feedback explícito contra implícito. El explícito es claro pero escaso; el implícito abunda pero es ambiguo. Casi todos los recomendadores grandes entrenan con implícito y usan el explícito como señal de corrección, por ejemplo el "no me interesa".</figcaption>
+</figure>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> la etiqueta es lo que el modelo aprende a conseguir; se elige mirando qué tan cerca está del negocio, cuántos positivos hay y cuánto tarda en conocerse.</p>
+
+<h2 id="metricas"><span class="sec-num">42.5</span>La métrica norte, las proxies y las de protección</h2>
+
+<p>La etiqueta es lo que aprende el modelo; las métricas son lo que mira el equipo para decidir si un cambio sale. Se ordenan en tres niveles:</p>
+
+<ul>
+  <li><b>La <dfn data-term="north-star">métrica norte</dfn></b> (<i>north star</i>): la que dice si el producto va bien. En Mercado Barrio, compras por usuario en 28 días. Es la que importa, pero se mueve lento y con mucho ruido: un experimento tendría que durar semanas para verla.</li>
+  <li><b>Las <dfn data-term="metrica-proxy">métricas proxy</dfn></b>: se mueven en horas o días y se espera que empujen a la norte. La tasa de clics, el tiempo visto, el agregar al carrito, las compras a 7 días.</li>
+  <li><b>Las <dfn data-term="guardrail-metric">métricas de protección</dfn></b> (<i class="no-autolink">guardrail metrics</i>): no se intenta subirlas; se acuerda que no pueden empeorar más de cierto tope. La latencia p99, los "no me interesa", las devoluciones, las quejas, las ventas de los vendedores chicos.</li>
+</ul>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: una tasa</p>
+  <p>La proxy más común es el <dfn data-term="ctr">CTR</dfn> (<i>click-through rate</i>), la tasa de clics: clics dividido impresiones. En palabras, de cada cien veces que mostraste algo, cuántas veces lo tocaron. Si un ítem se mostró 10 000 veces y recibió 230 clics, su CTR es 230 / 10 000 = 0.023, o 2.3&#8239;%. En Python: <code>ctr = clics / impresiones</code>. Sin impresiones registradas no hay CTR: por eso la pieza 9 de la Lámina 42.B es obligatoria.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 310" role="img" aria-labelledby="f424t f424d">
+<title id="f424t">El árbol de métricas de Mercado Barrio</title>
+<desc id="f424d">Arriba, la métrica norte: compras por usuario a 28 días. En el medio, cuatro proxies que se mueven rápido y empujan a la norte: tasa de clics, tiempo visto, agregar al carrito y compras a 7 días. Abajo, las métricas de protección, que no pueden empeorar: latencia p99, "no me interesa", devoluciones, quejas y ventas de vendedores chicos.</desc>
+<defs><marker id="f424a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="235" y="16" width="300" height="60" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="385.0" y="42.0" text-anchor="middle">Métrica norte</text>
+<text class="dg-tiny" x="385.0" y="58.0" text-anchor="middle">compras por usuario a 28 días</text>
+<text class="dg-group" x="20" y="192" text-anchor="start">Proxies: se mueven en horas, son imperfectas</text>
+<rect class="dg-box" x="40" y="116" width="150" height="54" rx="8"/>
+<text class="dg-small" x="115.0" y="139.0" text-anchor="middle">CTR</text>
+<text class="dg-tiny" x="115.0" y="155.0" text-anchor="middle">clics / impresiones</text>
+<path class="dg-edge" d="M115 116 L300 78" marker-end="url(#f424a)"/>
+<rect class="dg-box" x="220" y="116" width="150" height="54" rx="8"/>
+<text class="dg-small" x="295.0" y="139.0" text-anchor="middle">Tiempo visto</text>
+<text class="dg-tiny" x="295.0" y="155.0" text-anchor="middle">en los videos</text>
+<path class="dg-edge" d="M295 116 L356 78" marker-end="url(#f424a)"/>
+<rect class="dg-box" x="400" y="116" width="150" height="54" rx="8"/>
+<text class="dg-small" x="475.0" y="139.0" text-anchor="middle">Al carrito</text>
+<text class="dg-tiny" x="475.0" y="155.0" text-anchor="middle">por impresión</text>
+<path class="dg-edge" d="M475 116 L412 78" marker-end="url(#f424a)"/>
+<rect class="dg-box" x="580" y="116" width="150" height="54" rx="8"/>
+<text class="dg-small" x="655.0" y="139.0" text-anchor="middle">Compras a 7 días</text>
+<text class="dg-tiny" x="655.0" y="155.0" text-anchor="middle">por usuario</text>
+<path class="dg-edge" d="M655 116 L468 78" marker-end="url(#f424a)"/>
+<text class="dg-tiny" x="600" y="92" text-anchor="start">empujan a la norte</text>
+<text class="dg-group" x="20" y="222" text-anchor="start">Métricas de protección: no pueden empeorar</text>
+<rect class="dg-warnbox" x="20" y="234" width="730" height="60" rx="8"/>
+<text class="dg-small" x="385" y="258" text-anchor="middle">latencia p99  ·  "no me interesa"  ·  devoluciones  ·  quejas  ·  ventas de vendedores chicos</text>
+<text class="dg-tiny" x="385" y="280" text-anchor="middle">Si una empeora más de lo acordado, el cambio no sale aunque la norte mejore.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 42.4.</b> El árbol de métricas. La norte dice si el negocio va bien, pero tarda semanas en moverse; las proxies se mueven rápido y se usan para decidir; las de protección frenan los cambios que ganan la proxy rompiendo otra cosa. Las cifras concretas de cada tope se acuerdan antes del experimento.</figcaption>
+</figure>
+
+<p>Las proxies son útiles porque se mueven rápido, y peligrosas por lo mismo. La <dfn data-term="ley-goodhart">ley de Goodhart</dfn> lo dice en una frase, en la versión de Marilyn Strathern (1997): "cuando una medida se convierte en objetivo, deja de ser una buena medida". Mientras el CTR solo se mira, sube cuando el producto mejora. Cuando un modelo se entrena para subirlo, encuentra atajos.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Si a un equipo de programadores se le paga por línea de código, el código se alarga, no mejora. La cantidad de líneas era una buena pista de cuánto se trabajó hasta el día en que se volvió el sueldo.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f425t f425d">
+<title id="f425t">La ley de Goodhart con la tasa de clics</title>
+<desc id="f425d">Dos columnas. A la izquierda, mientras la tasa de clics solo se mira, sube junto con la satisfacción, porque la gente toca lo que le interesa. A la derecha, cuando el modelo optimiza la tasa de clics, aprende a mostrar títulos engañosos: los clics suben, pero el tiempo visto y las compras bajan.</desc>
+<defs><marker id="f425a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-ok" x="20" y="16" width="355" height="196" rx="8"/>
+<text class="dg-group" x="34" y="42" text-anchor="start">Cuando el CTR solo se mira</text>
+<text class="dg-small" x="34" y="72" text-anchor="start">La gente toca lo que le interesa.</text>
+<text class="dg-small" x="34" y="92" text-anchor="start">Más clics suele ser mejor producto.</text>
+<text class="dg-small" x="34" y="112" text-anchor="start">El CTR acompaña a la norte.</text>
+<text class="dg-small" x="34" y="196" text-anchor="start" style="font-weight:600">✓ medida útil</text>
+<rect class="dg-bad" x="395" y="16" width="355" height="196" rx="8"/>
+<text class="dg-group" x="409" y="42" text-anchor="start">Cuando el modelo optimiza el CTR</text>
+<text class="dg-small" x="409" y="72" text-anchor="start">El modelo encuentra lo que se toca:</text>
+<text class="dg-small" x="409" y="92" text-anchor="start">títulos y miniaturas engañosos.</text>
+<text class="dg-small" x="409" y="112" text-anchor="start">Los clics suben; el tiempo visto y las</text>
+<text class="dg-small" x="409" y="132" text-anchor="start">compras bajan. La medida se rompió.</text>
+<text class="dg-small" x="409" y="196" text-anchor="start" style="font-weight:600">✗ objetivo que se volvió trampa</text>
+<path class="dg-edge" d="M377 114 H393" marker-end="url(#f425a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 42.5.</b> La misma métrica, antes y después de convertirse en objetivo. YouTube lo documentó en 2016: ordenar por tasa de clics promueve videos engañosos que la gente no termina, y por eso ordena por tiempo visto esperado.</figcaption>
+</figure>
+
+<p>El caso está documentado: el paper de YouTube de 2016 dice que ordenar por tasa de clics suele promover videos engañosos que la gente no termina (<i>clickbait</i>), mientras que el tiempo visto captura mejor el interés; por eso su objetivo final es una función del tiempo visto esperado por impresión <span class="badge badge--doc">Documentado</span>. El mismo paper dice que las métricas offline guían el desarrollo, pero que la decisión final se toma con experimentos en vivo, porque sus resultados no siempre coinciden <span class="badge badge--doc">Documentado</span>. Eso vuelve en M49.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Más métricas de protección hacen más difícil lanzar cualquier cambio: cada una tiene ruido y, con muchas, alguna empeora por azar. Pocas y bien elegidas (las que el negocio no puede perder) funcionan mejor que una lista de veinte. El cálculo de cuántos usuarios necesita un experimento para ver un cambio está en el <a href="m22-operar-modelos.html#ab">M22</a> y se extiende en M49.</p>
+</aside>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un equipo optimiza el tiempo visto sin protección y el modelo aprende que los videos largos y repetitivos retienen más. El tiempo visto sube, la gente compra menos y se queja de que el feed "engancha pero no sirve". Por qué un feed engancha, y cómo se diseña sin explotar eso, es el tema de M51.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> la norte dice si el negocio va bien, las proxies sirven para decidir rápido y las de protección frenan los cambios que ganan la proxy rompiendo otra cosa.</p>
+
+<h2 id="sin-ml"><span class="sec-num">42.6</span>Cuándo no hace falta ML</h2>
+
+<p>La primera pregunta de un diseño con ML es si hace falta ML. Muchas veces no. Una tienda con 200 productos no necesita un recomendador: necesita una portada bien curada. Y aun cuando hace falta, el primer paso no es el modelo sino la <dfn data-term="linea-base">línea base</dfn>: la solución más simple que funciona, medida con las mismas métricas con las que después vas a medir el modelo.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Antes de probar un remedio, se mide cuánto se cura la gente sin él. Si no sabes cuánto mejora sola una gripe en una semana, cualquier pastilla parece milagrosa.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 360" role="img" aria-labelledby="f427t f427d">
+<title id="f427t">¿Hace falta ML?</title>
+<desc id="f427d">Tres preguntas en cadena. ¿El catálogo tiene miles de ítems o más? Si no, alcanza una lista curada o reglas. ¿Hay mucha gente con gustos distintos? Si no, alcanza lo popular por segmento. ¿Hay datos de interacción suficientes? Si no, popular y contenido, registrando todo. Si las tres son sí, un modelo comparado contra la mejor línea base.</desc>
+<defs><marker id="f427a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-box dg-box--em" x="20" y="20" width="300" height="56" rx="8"/>
+<text class="dg-tiny" x="170.0" y="52.0" text-anchor="middle">¿El catálogo tiene miles de ítems o más?</text>
+<rect class="dg-box" x="400" y="20" width="350" height="56" rx="8"/>
+<text class="dg-tiny" x="575.0" y="44.0" text-anchor="middle">Lista curada o reglas a mano: 200 ítems se recorren</text>
+<text class="dg-tiny" x="575.0" y="60.0" text-anchor="middle">de un vistazo.</text>
+<path class="dg-edge" d="M320 48 H398" marker-end="url(#f427a)"/>
+<text class="dg-tiny" x="358" y="42" text-anchor="middle">no</text>
+<path class="dg-edge" d="M170 76 V114" marker-end="url(#f427a)"/>
+<text class="dg-tiny" x="180" y="100" text-anchor="start">sí</text>
+<rect class="dg-box dg-box--em" x="20" y="116" width="300" height="56" rx="8"/>
+<text class="dg-tiny" x="170.0" y="148.0" text-anchor="middle">¿Hay mucha gente con gustos distintos?</text>
+<rect class="dg-box" x="400" y="116" width="350" height="56" rx="8"/>
+<text class="dg-tiny" x="575.0" y="140.0" text-anchor="middle">Lo popular por segmento (país, categoría, edad de</text>
+<text class="dg-tiny" x="575.0" y="156.0" text-anchor="middle">la cuenta).</text>
+<path class="dg-edge" d="M320 144 H398" marker-end="url(#f427a)"/>
+<text class="dg-tiny" x="358" y="138" text-anchor="middle">no</text>
+<path class="dg-edge" d="M170 172 V210" marker-end="url(#f427a)"/>
+<text class="dg-tiny" x="180" y="196" text-anchor="start">sí</text>
+<rect class="dg-box dg-box--em" x="20" y="212" width="300" height="56" rx="8"/>
+<text class="dg-tiny" x="170.0" y="244.0" text-anchor="middle">¿Hay datos de interacción suficientes?</text>
+<rect class="dg-box" x="400" y="212" width="350" height="56" rx="8"/>
+<text class="dg-tiny" x="575.0" y="236.0" text-anchor="middle">Popular y contenido, y registra todo desde el</text>
+<text class="dg-tiny" x="575.0" y="252.0" text-anchor="middle">primer día (M43).</text>
+<path class="dg-edge" d="M320 240 H398" marker-end="url(#f427a)"/>
+<text class="dg-tiny" x="358" y="234" text-anchor="middle">no</text>
+<path class="dg-edge" d="M170 268 V306" marker-end="url(#f427a)"/>
+<text class="dg-tiny" x="180" y="292" text-anchor="start">sí</text>
+<rect class="dg-layer" x="20" y="308" width="300" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="170.0" y="334.0" text-anchor="middle">Un modelo, medido contra la mejor línea base</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 42.6.</b> Tres preguntas antes del primer modelo. Las respuestas cambian con el tiempo: una tienda chica empieza en la caja de arriba y llega a la de abajo cuando crecen el catálogo, la gente y los datos.</figcaption>
+</figure>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f426t f426d">
+<title id="f426t">La escalera de líneas base</title>
+<desc id="f426d">Cinco escalones de izquierda a derecha, cada uno más alto: al azar, lo popular global, lo popular por segmento, reglas del negocio y un modelo. Cada escalón se mide contra el anterior; un modelo solo se justifica si le gana al mejor escalón medido.</desc>
+
+<rect class="dg-layer" x="30" y="170" width="130" height="30" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="95" y="144" text-anchor="middle">Al azar</text>
+<text class="dg-tiny" x="95" y="160" text-anchor="middle">el piso</text>
+<text class="dg-num" x="95" y="222" text-anchor="middle">1</text>
+<rect class="dg-layer" x="176" y="140" width="130" height="60" rx="6" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="241" y="114" text-anchor="middle">Popular global</text>
+<text class="dg-tiny" x="241" y="130" text-anchor="middle">lo más comprado</text>
+<text class="dg-num" x="241" y="222" text-anchor="middle">2</text>
+<rect class="dg-layer" x="322" y="110" width="130" height="90" rx="6" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="387" y="84" text-anchor="middle">Popular por</text>
+<text class="dg-tiny" x="387" y="100" text-anchor="middle">país y categoría</text>
+<text class="dg-num" x="387" y="222" text-anchor="middle">3</text>
+<rect class="dg-layer" x="468" y="90" width="130" height="110" rx="6" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="533" y="64" text-anchor="middle">Reglas del</text>
+<text class="dg-tiny" x="533" y="80" text-anchor="middle">negocio</text>
+<text class="dg-num" x="533" y="222" text-anchor="middle">4</text>
+<rect class="dg-layer" x="614" y="60" width="130" height="140" rx="6" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="679" y="34" text-anchor="middle">Modelo</text>
+<text class="dg-tiny" x="679" y="50" text-anchor="middle">aprende de los datos</text>
+<text class="dg-num" x="679" y="222" text-anchor="middle">5</text>
+<line class="sim-axis" x1="20" x2="750" y1="200" y2="200" stroke="var(--separator)"/>
+<text class="dg-tiny" x="750" y="244" text-anchor="end">La altura es un dibujo del orden habitual, no una medición.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 42.7.</b> La escalera de líneas base. Cada escalón es más caro de construir que el anterior y se mide contra él. Si el modelo no le gana claramente al escalón 3 o 4, no vale lo que cuesta operarlo.</figcaption>
+</figure>
+
+<p>La línea base más útil casi siempre es "lo más popular de la semana, por país y categoría". Es barata, se entiende, no tiene <span data-term="arranque-frio">arranque en frío</span> para el ítem popular (<a href="m44-modelos-clasicos.html#frio">M44</a>) y es difícil de superar por mucho en los usuarios que no tienen historia. Un modelo que no le gana claramente cuesta entrenamiento, serving, monitoreo y un equipo de guardia, y no devuelve nada. Cómo hacer bien lo popular (con decaimiento en el tiempo y con promedios bayesianos) es la primera sección de <a href="m44-modelos-clasicos.html#popularidad">M44</a>.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>La línea base no se tira cuando llega el modelo. Queda como respaldo: si el servicio del modelo se cae o tarda de más, la API sirve la lista popular precalculada. Un feed un poco peor es mucho mejor que un feed vacío. Es la degradación elegante del <a href="m08-resiliencia.html">M08</a>, aplicada a un recomendador.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> nunca un modelo sin una línea base medida; y la línea base se queda como respaldo cuando el modelo falla.</p>
+
+<h2 id="numeros"><span class="sec-num">42.7</span>Los números de Mercado Barrio</h2>
+
+<p>Con el método de estimación del <a href="m00-metodo.html#estimaciones">M00</a>, las cuentas del feed de Mercado Barrio salen en cuatro líneas. Cada usuario activo abre el feed 20 veces al día; el pico es tres veces el promedio:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Cuenta</th><th>Operación</th><th class="r">Resultado</th></tr></thead>
+    <tbody>
+      <tr><td>Requests por día</td><td>20 000 000 usuarios × 20 aperturas</td><td class="r">400 000 000</td></tr>
+      <tr><td>Requests por segundo, promedio</td><td>400 000 000 / 86 400 s</td><td class="r">4 630</td></tr>
+      <tr><td>Requests por segundo, pico</td><td>4 630 × 3</td><td class="r">13 889</td></tr>
+      <tr><td>Puntuaciones por segundo, ranking pesado</td><td>13 889 × 500 ítems</td><td class="r">6 944 444</td></tr>
+      <tr><td>Puntuaciones por segundo, ranking liviano</td><td>13 889 × 9 000 ítems</td><td class="r">125 000 000</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>El presupuesto de latencia del feed es de 200 ms p99 en el servidor, medido como en el <a href="m00-metodo.html#percentiles">M00</a>. El reparto por etapa es un supuesto de diseño <span class="badge badge--ref">Diseño de referencia</span>: recuperación 25 ms (varias fuentes en paralelo), filtros 5, leer las features 15, ranking liviano 9 000 × 0.002 ms = 18, ranking pesado 500 × 0.1 ms = 50, re-ranking 5 y red y armado 20. Total: 138 ms, con 62 de margen. Los milisegundos por ítem de los rankings ya incluyen el batching, y cambian mucho con el modelo y el hardware.</p>
+
+<p>La cuenta que justifica el embudo es la del ranking pesado sobre el catálogo entero: 100 000 000 ítems × 0.1 ms = 10 000 segundos, casi tres horas por request. Ni el ranking liviano alcanza: 100 000 000 × 0.002 ms = 200 segundos. La recuperación existe porque ningún modelo que mire cada ítem puede recorrer el catálogo en 25 ms; tiene que usar índices que ni siquiera miran la mayoría de los ítems (<a href="m45-recuperacion.html#ann">M45</a>).</p>
+
+<div data-sim="funnel"></div>
+
+<p>Prueba en el widget la configuración "Sin ranking liviano": el pesado recibe los 9 000 candidatos filtrados, tarda 900 ms y la request se pasa del presupuesto por más de cuatro veces. Después prueba "Pesado 3 veces más caro": un modelo más grande, que quizás acierta más, rompe el presupuesto con solo 500 ítems. El presupuesto de latencia decide el tamaño del modelo tanto como la calidad.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Más candidatos en la recuperación sube el recall (es más probable que lo mejor esté entre ellos) pero cuesta latencia en el ranking liviano. Menos candidatos en el pesado deja margen para un modelo más grande, pero si el liviano se equivoca, el pesado nunca ve el mejor ítem. El tamaño de cada etapa es una decisión de diseño que se mide, no una constante.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> con requests por segundo, ítems por etapa y milisegundos por ítem se calcula si el embudo entra en el presupuesto; el catálogo entero no entra en ningún modelo.</p>
+
+<h2 id="restricciones"><span class="sec-num">42.8</span>Requisitos no funcionales de un recomendador</h2>
+
+<p>Los requisitos funcionales de un recomendador se dicen en una frase ("mostrar ítems relevantes"). Los que deciden la arquitectura son los otros, como en el <a href="m00-metodo.html#requisitos">M00</a>:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f428t f428d">
+<title id="f428t">Los requisitos no funcionales de un recomendador</title>
+<desc id="f428d">Seis tarjetas en dos filas: latencia, frescura, costo, privacidad, explicabilidad y equidad entre vendedores, cada una con su pregunta y el número o la decisión de Mercado Barrio.</desc>
+
+<rect class="dg-box" x="20" y="16" width="234" height="124" rx="8"/>
+<text class="dg-group" x="34" y="42" text-anchor="start">Latencia</text>
+<text class="dg-tiny" x="34" y="68" text-anchor="start">¿Cuánto espera el usuario?</text>
+<rect class="dg-layer" x="34" y="84" width="206" height="40" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="137" y="109" text-anchor="middle">200 ms p99 en el servidor</text>
+<rect class="dg-box" x="268" y="16" width="234" height="124" rx="8"/>
+<text class="dg-group" x="282" y="42" text-anchor="start">Frescura</text>
+<text class="dg-tiny" x="282" y="68" text-anchor="start">¿En cuánto aparece algo nuevo?</text>
+<rect class="dg-layer" x="282" y="84" width="206" height="40" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="385" y="109" text-anchor="middle">un video nuevo, en minutos</text>
+<rect class="dg-box" x="516" y="16" width="234" height="124" rx="8"/>
+<text class="dg-group" x="530" y="42" text-anchor="start">Costo</text>
+<text class="dg-tiny" x="530" y="68" text-anchor="start">¿Cuánto cuesta una request?</text>
+<rect class="dg-layer" x="530" y="84" width="206" height="40" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="633" y="109" text-anchor="middle">6.9 millones de puntuaciones/s</text>
+<rect class="dg-box" x="20" y="156" width="234" height="124" rx="8"/>
+<text class="dg-group" x="34" y="182" text-anchor="start">Privacidad</text>
+<text class="dg-tiny" x="34" y="208" text-anchor="start">¿Qué se guarda y por cuánto?</text>
+<rect class="dg-layer" x="34" y="224" width="206" height="40" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="137" y="249" text-anchor="middle">sin búsquedas sensibles (M43)</text>
+<rect class="dg-box" x="268" y="156" width="234" height="124" rx="8"/>
+<text class="dg-group" x="282" y="182" text-anchor="start">Explicabilidad</text>
+<text class="dg-tiny" x="282" y="208" text-anchor="start">¿Por qué veo esto?</text>
+<rect class="dg-layer" x="282" y="224" width="206" height="40" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="385" y="249" text-anchor="middle">una razón por ítem en la app</text>
+<rect class="dg-box" x="516" y="156" width="234" height="124" rx="8"/>
+<text class="dg-group" x="530" y="182" text-anchor="start">Equidad</text>
+<text class="dg-tiny" x="530" y="208" text-anchor="start">¿Llega lo de los vendedores chicos?</text>
+<rect class="dg-layer" x="530" y="224" width="206" height="40" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="633" y="249" text-anchor="middle">una métrica de protección</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 42.8.</b> Seis requisitos que no son "acertar más". Cada uno descarta diseños: la latencia descarta el modelo pesado sobre todo el catálogo, la frescura descarta reentrenar una vez por semana y la equidad descarta el ranking que solo premia lo popular.</figcaption>
+</figure>
+
+<ul>
+  <li><b>Latencia.</b> Ya la viste: decide cuántas etapas hay y qué tan grande puede ser cada modelo.</li>
+  <li><b>Frescura.</b> ¿En cuánto tiempo un video recién subido puede aparecer en el feed? Si la respuesta es "en minutos", el ítem nuevo no puede esperar al reentrenamiento nocturno: necesita features en tiempo real y una fuente de candidatos para lo nuevo (M50).</li>
+  <li><b>Costo.</b> Millones de puntuaciones por segundo en GPU o CPU son la mayor parte de la factura. Un modelo 10 veces más caro tiene que pagar su costo en ventas.</li>
+  <li><b>Privacidad.</b> Qué eventos se guardan, por cuánto tiempo y qué pasa cuando alguien pide que lo borren, si el modelo ya aprendió de él. Es parte del diseño de los datos (<a href="m43-datos-recomendacion.html#privacidad">M43</a>), no un agregado al final.</li>
+  <li><b>Explicabilidad.</b> "¿Por qué veo esto?" con una razón real ("porque compraste zapatillas de esta marca") baja las quejas y ayuda a depurar. Algunas leyes la exigen para ciertas plataformas (M51).</li>
+  <li><b>Equidad entre vendedores.</b> Un ranking que solo premia lo popular concentra las ventas en pocos vendedores, y el marketplace pierde a los demás. Se vigila con una métrica de protección.</li>
+</ul>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> los requisitos no funcionales descartan diseños antes de entrenar: latencia, frescura, costo, privacidad, explicabilidad y equidad.</p>
+
+<h2 id="design-doc"><span class="sec-num">42.9</span>El design doc de un recomendador</h2>
+
+<p>El design doc del <a href="m00-metodo.html#design-doc">M00</a> sirve, con cuatro partes que cambian de peso: las métricas, los datos, la línea base y el experimento ocupan la mitad. Esta es la plantilla, con el feed de Mercado Barrio como ejemplo:</p>
+
+<ol class="steps">
+  <li><span class="step-title">Problema</span>El feed de inicio muestra lo más popular para todos. Los usuarios nuevos se van en la primera semana, y los vendedores chicos casi no aparecen.</li>
+  <li><span class="step-title">Métricas</span>Norte: compras por usuario a 28 días. Proxies: compras a 7 días y tiempo visto en reseñas. Protección: latencia p99 de 200 ms, "no me interesa", devoluciones y ventas de vendedores chicos.</li>
+  <li><span class="step-title">Datos</span>Qué eventos existen, cuáles faltan (¿se registran las impresiones?), cuánta historia hay, cómo se unen y qué etiqueta se usa, con su ventana.</li>
+  <li><span class="step-title">Línea base</span>Lo popular de la semana por país y categoría, medido con las mismas métricas. Es el número a superar.</li>
+  <li><span class="step-title">Modelo</span>El embudo y qué modelo va en cada etapa, empezando por el más simple que puede ganarle a la línea base.</li>
+  <li><span class="step-title">Serving</span>Presupuesto de latencia por etapa, cuántas puntuaciones por segundo, qué se precalcula y qué se calcula al leer, y el respaldo si el modelo falla.</li>
+  <li><span class="step-title">Experimento</span>A/B contra la línea base: cuántos usuarios, cuántos días, qué resultado lanza y qué resultado frena, decidido antes de empezar.</li>
+  <li><span class="step-title">Riesgos</span>Bucles de retroalimentación, sesgos, privacidad, abuso (vendedores que inflan clics) y efectos en las personas.</li>
+  <li><span class="step-title">Plan de lanzamiento</span>Shadow, canary y A/B, como en el <a href="m22-operar-modelos.html#canary">M22</a>, con el criterio para volver atrás.</li>
+</ol>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>El paso que más se saltea es el 3. Los equipos descubren después de entrenar que no se registraban las impresiones, o que el evento de compra no tiene el id de la recomendación que la produjo, y no hay forma de saber qué compras vinieron del feed. Revisar los datos antes de dibujar modelos ahorra meses.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el design doc de un recomendador dedica la mitad a métricas, datos, línea base y experimento, y decide todo eso antes del modelo.</p>
+
+<h2 id="entrevista"><span class="sec-num">42.10</span>Cómo se razona en voz alta (y en una entrevista)</h2>
+
+<p>El mismo orden sirve para una reunión de diseño y para una entrevista de ML System Design. Lo que se evalúa no es si conoces el modelo de moda, sino si sabes en qué orden se piensa y qué se pregunta antes de decidir.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 196" role="img" aria-labelledby="f429t f429d">
+<title id="f429t">El orden para razonar el diseño de un recomendador</title>
+<desc id="f429d">Nueve pasos en dos filas, con los minutos sugeridos en una entrevista de 45: aclarar 4, métricas 5, datos 5, línea base 3, embudo 5, modelos por etapa 10, serving 5, evaluación 5 y riesgos 3.</desc>
+<defs><marker id="f429a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="22" width="126" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="83.0" y="46.0" text-anchor="middle">Aclarar</text>
+<text class="dg-tiny" x="83.0" y="62.0" text-anchor="middle">4 min</text>
+<text class="dg-tiny" x="28" y="16" text-anchor="start">1</text>
+<path class="dg-edge" d="M146 50 H168" marker-end="url(#f429a)"/>
+<rect class="dg-layer" x="170" y="22" width="126" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="233.0" y="46.0" text-anchor="middle">Métricas</text>
+<text class="dg-tiny" x="233.0" y="62.0" text-anchor="middle">5 min</text>
+<text class="dg-tiny" x="178" y="16" text-anchor="start">2</text>
+<path class="dg-edge" d="M296 50 H318" marker-end="url(#f429a)"/>
+<rect class="dg-layer" x="320" y="22" width="126" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="383.0" y="46.0" text-anchor="middle">Datos</text>
+<text class="dg-tiny" x="383.0" y="62.0" text-anchor="middle">5 min</text>
+<text class="dg-tiny" x="328" y="16" text-anchor="start">3</text>
+<path class="dg-edge" d="M446 50 H468" marker-end="url(#f429a)"/>
+<rect class="dg-layer" x="470" y="22" width="126" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="533.0" y="46.0" text-anchor="middle">Línea base</text>
+<text class="dg-tiny" x="533.0" y="62.0" text-anchor="middle">3 min</text>
+<text class="dg-tiny" x="478" y="16" text-anchor="start">4</text>
+<path class="dg-edge" d="M596 50 H618" marker-end="url(#f429a)"/>
+<rect class="dg-layer" x="620" y="22" width="126" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="683.0" y="46.0" text-anchor="middle">Embudo</text>
+<text class="dg-tiny" x="683.0" y="62.0" text-anchor="middle">5 min</text>
+<text class="dg-tiny" x="628" y="16" text-anchor="start">5</text>
+<rect class="dg-layer" x="20" y="112" width="126" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="83.0" y="136.0" text-anchor="middle">Modelos por etapa</text>
+<text class="dg-tiny" x="83.0" y="152.0" text-anchor="middle">10 min</text>
+<text class="dg-tiny" x="28" y="106" text-anchor="start">6</text>
+<path class="dg-edge" d="M146 140 H168" marker-end="url(#f429a)"/>
+<rect class="dg-layer" x="170" y="112" width="126" height="56" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="233.0" y="136.0" text-anchor="middle">Serving</text>
+<text class="dg-tiny" x="233.0" y="152.0" text-anchor="middle">5 min</text>
+<text class="dg-tiny" x="178" y="106" text-anchor="start">7</text>
+<path class="dg-edge" d="M296 140 H318" marker-end="url(#f429a)"/>
+<rect class="dg-layer" x="320" y="112" width="126" height="56" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="383.0" y="136.0" text-anchor="middle">Evaluación</text>
+<text class="dg-tiny" x="383.0" y="152.0" text-anchor="middle">5 min</text>
+<text class="dg-tiny" x="328" y="106" text-anchor="start">8</text>
+<path class="dg-edge" d="M446 140 H468" marker-end="url(#f429a)"/>
+<rect class="dg-layer" x="470" y="112" width="126" height="56" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="533.0" y="136.0" text-anchor="middle">Riesgos</text>
+<text class="dg-tiny" x="533.0" y="152.0" text-anchor="middle">3 min</text>
+<text class="dg-tiny" x="478" y="106" text-anchor="start">9</text>
+<path class="dg-feedback" d="M683 78 V96 H83 V110" marker-end="url(#f429a)"/>
+<text class="dg-tiny" x="750" y="186" text-anchor="end">Los minutos son una sugerencia para 45 minutos, no una regla.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 42.9.</b> El orden para razonar en voz alta. Los cuatro primeros pasos no tienen ningún modelo, y son los que más se saltan: un diseño que empieza por "uso un two-tower" no sabe todavía qué está optimizando.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Paso</th><th>Qué preguntas o qué dices</th></tr></thead>
+    <tbody>
+      <tr><td>Aclarar</td><td>¿Qué superficie? ¿Cuántos usuarios e ítems? ¿Qué se considera éxito? ¿Hay restricciones de latencia, de país o de ley?</td></tr>
+      <tr><td>Métricas</td><td>La norte, dos o tres proxies y las de protección, con la etiqueta de entrenamiento y su ventana.</td></tr>
+      <tr><td>Datos</td><td>Qué eventos existen, si hay impresiones, cuánta historia, cómo se evitan las fugas del futuro (<a href="m43-datos-recomendacion.html#fugas">M43</a>).</td></tr>
+      <tr><td>Línea base</td><td>Lo popular por segmento, medido. Es el número a superar.</td></tr>
+      <tr><td>Embudo</td><td>Las etapas con sus tamaños y la cuenta de 42.7: requests por segundo, puntuaciones por segundo, milisegundos.</td></tr>
+      <tr><td>Modelos por etapa</td><td>Fuentes de candidatos (<a href="m44-modelos-clasicos.html#comparar">M44</a>, <a href="m45-recuperacion.html#fuentes">M45</a>), ranking (<a href="m46-ranking.html">M46</a>), re-ranking (M47). Empieza simple y di qué agregarías y por qué.</td></tr>
+      <tr><td>Serving</td><td>Qué se precalcula, qué va en tiempo real, cachés y respaldo (M50).</td></tr>
+      <tr><td>Evaluación</td><td>Métricas offline para iterar y A/B para decidir (M49).</td></tr>
+      <tr><td>Riesgos</td><td>Bucles de retroalimentación, sesgos, abuso, privacidad y efectos en las personas (M51).</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>El error típico es empezar por el paso 6: "uso un two-tower para la recuperación y un transformer para el ranking". Sin métricas no se sabe qué optimiza, sin datos no se sabe si se puede entrenar, y sin línea base no se sabe si le gana a algo. Es la versión con ML de diseñar la base de datos antes de saber qué consultas se hacen.</p>
+</aside>
+
+<p>Para terminar, la lámina con la que vas a volver al principio de cada módulo de esta parte:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f42zt f42zd">
+<title id="f42zt">Dónde estás: el embudo completo</title>
+<desc id="f42zd">El embudo de la Lámina 42.A completo, sin ninguna pieza apagada: este módulo las presenta todas y los siguientes abren una por una.</desc>
+<defs><marker id="f42za" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="540" y="26" text-anchor="start">Cuántos quedan y la latencia acumulada</text>
+<g>
+<rect class="dg-layer" x="160.0" y="40" width="340" height="32" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="330" y="61" text-anchor="middle">Catálogo</text>
+<text class="dg-small" x="540" y="53" text-anchor="start">100 000 000 ítems</text>
+<text class="dg-tiny" x="540" y="69" text-anchor="start">productos y videos de reseña</text>
+</g>
+<g>
+<rect class="dg-layer" x="200.0" y="88" width="260" height="32" rx="6" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="330" y="109" text-anchor="middle">Recuperación</text>
+<text class="dg-small" x="540" y="101" text-anchor="start">10 000 candidatos  ·  25 ms</text>
+<text class="dg-tiny" x="540" y="117" text-anchor="start">varias fuentes en paralelo</text>
+</g>
+<g>
+<rect class="dg-layer" x="210.0" y="136" width="240" height="32" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="330" y="157" text-anchor="middle">Filtros</text>
+<text class="dg-small" x="540" y="149" text-anchor="start">unos 9 000  ·  30 ms</text>
+<text class="dg-tiny" x="540" y="165" text-anchor="start">ya visto, bloqueado, sin stock</text>
+</g>
+<g>
+<rect class="dg-layer" x="245.0" y="184" width="170" height="32" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="330" y="205" text-anchor="middle">Ranking liviano</text>
+<text class="dg-small" x="540" y="197" text-anchor="start">500  ·  63 ms</text>
+<text class="dg-tiny" x="540" y="213" text-anchor="start">features y un modelo barato</text>
+</g>
+<g>
+<rect class="dg-layer" x="270.0" y="232" width="120" height="32" rx="6" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="330" y="253" text-anchor="middle">Ranking pesado</text>
+<text class="dg-small" x="540" y="245" text-anchor="start">50  ·  113 ms</text>
+<text class="dg-tiny" x="540" y="261" text-anchor="start">un modelo grande, multi-tarea</text>
+</g>
+<g>
+<rect class="dg-layer" x="288.0" y="280" width="84" height="32" rx="6" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="330" y="301" text-anchor="middle">Re-ranking</text>
+<text class="dg-small" x="540" y="293" text-anchor="start">10 en pantalla  ·  118 ms</text>
+<text class="dg-tiny" x="540" y="309" text-anchor="start">diversidad, frescura, reglas</text>
+</g>
+<g><rect class="dg-box" x="230" y="336" width="200" height="40" rx="8"/>
+<text class="dg-small" x="330.0" y="360.0" text-anchor="middle">Registro de impresiones</text></g>
+<g><rect class="dg-box" x="20" y="336" width="130" height="40" rx="8"/>
+<text class="dg-small" x="85.0" y="360.0" text-anchor="middle">Log de eventos</text></g>
+<g><rect class="dg-box" x="20" y="150" width="120" height="44" rx="8"/>
+<text class="dg-small" x="80.0" y="176.0" text-anchor="middle">Entrenamiento</text></g>
+<path class="dg-edge" d="M330 312 V334" marker-end="url(#f42za)"/>
+<path class="dg-edge" d="M230 356 H152" marker-end="url(#f42za)"/>
+<text class="dg-tiny" x="191" y="389" text-anchor="middle">con clics y compras</text>
+<path class="dg-edge" d="M80 336 V196" marker-end="url(#f42za)"/>
+<path class="dg-feedback" d="M140 166 H176 V104 H198" marker-end="url(#f42za)"/>
+<path class="dg-feedback" d="M140 178 H200 V200 H243" marker-end="url(#f42za)"/>
+<path class="dg-feedback" d="M140 188 H186 V248 H268" marker-end="url(#f42za)"/>
+<text class="dg-tiny" x="88" y="230">modelos nuevos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 42.10.</b> Dónde estás. M42 recorrió el embudo entero sin abrir ninguna caja. M43 abre el registro y el log; <a href="m44-modelos-clasicos.html">M44</a> y <a href="m45-recuperacion.html">M45</a>, la recuperación; <a href="m46-ranking.html">M46</a>, los rankings; M47, el re-ranking.</figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Lo que viene</p>
+  <p>Las cuatro partes que más pesan del design doc (métricas, datos, línea base y experimento) tienen su módulo. <a href="m43-datos-recomendacion.html">M43</a> abre los datos: qué eventos se registran, la matriz usuario-ítem, los negativos, las features y las fugas del futuro. <a href="m44-modelos-clasicos.html">M44</a>, los modelos clásicos que todavía recomiendan la mitad de lo que ves. M49, cómo se experimenta.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m42"></div>
+
+<div data-exercise="m42-metricas"></div>
+
+<div data-checkpoint="m42"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m42.data.js"></script>
+<script src="../assets/js/data/exercises/m42.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-recsys.js"></script>
+</body>
+</html>

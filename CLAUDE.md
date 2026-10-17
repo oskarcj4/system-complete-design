@@ -8,9 +8,10 @@ Curso web en español de diseño de sistemas reales:
 
 - **Parte I:** fundamentos de sistemas distribuidos (M00–M11 y el Checkpoint A).
 - **Parte II:** de un LLM a ChatGPT (M12–M26, el mapa gigante y el Checkpoint B).
-- **Parte III:** casos de estudio: Stripe (M27), Cloudflare (M28) y WhatsApp (M29). La Fase 2 suma Twitter (M30) y Google Docs (M31).
+- **Parte III:** casos de estudio: Stripe (M27), Cloudflare (M28) y WhatsApp (M29). La Fase 2 suma Twitter (M30), Google Docs (M31) y el Checkpoint D (diseña un Slack), que la cierra.
 - **Parte IV:** ciberseguridad (M32–M38 y el Checkpoint E): firewalls, hardening de Linux, operación de SysAdmin, seguridad en bases de datos, criptografía, nube segura y Active Directory. Publicados M32 (firewalls), M33 (hardening de Linux), M34 (operación de SysAdmin), M35 (seguridad en bases de datos), M36 (criptografía desde cero), M37 (arquitecturas seguras en la nube) y M38 (Active Directory, cómo se ataca y cómo se defiende), más el Checkpoint E, que cierra la parte. La Parte IV está completa. Cuenta para el progreso. Plan detallado en `PLAN_SEGURIDAD.md`. Currículo en `PLAN.md`.
 - **Parte V:** manejo de pagos (M39 en adelante), del lado del comercio que cobra: las intuiciones de diseño (tablas, idempotencia, locks, webhooks, implementación propia y seguridad), no el código, que está en las guías A15, A27 y A28. Publicado M39 (manejo de pagos); M40 y M41 están propuestos en `PLAN.md`. Cuenta para el progreso.
+- **Parte VI:** ML System Design, sistemas de recomendación (M42–M53 y el Checkpoint F): método y métricas, datos, modelos clásicos, recuperación, ranking, exploración, grafos y amigos, experimentos, serving, engagement responsable y dos casos con mapa. Va al final de la ruta, después de la Fase 2, y cuenta para el progreso. Publicados M42 (el método de ML System Design), M43 (datos, eventos y features), M44 (modelos clásicos: popularidad, contenido y filtrado colaborativo), M45 (recuperación a escala: dos torres y búsqueda vectorial) y M46 (ranking: del modelo lineal al multi-tarea); el resto está como `soon`. Plan en `PLAN_ML_SYSTEM_DESIGN.md`, guías prácticas ML00–ML09 en `PLAN_ML_GUIAS.md` (como `mlTracks`): publicadas ML00 (el laboratorio de recomendación) y ML01 (la línea base: lo popular, bien medido), las demás `proposed`. Siguen las reglas de los tutoriales de AI Engineering, sin los dos modelos a la par: cada guía se mide con el laboratorio de ML00 contra la línea base de ML01.
 - **Aplicación de conocimiento** (`proyectos.html` y `proyectos/`): tutoriales en Java y Spring Boot para construir lo de cada módulo, y al final de la página los tutoriales de AI Engineering, en Python (IA00, IA01, IA02…). Cada guía es una página en `proyectos/`, generada con `tools/mkguide.py`. Las reglas están en "De las guías de proyectos" y "De los tutoriales de AI Engineering".
 
 Es un sitio estático de HTML, CSS y JS vanilla, sin build ni dependencias. Funciona con doble clic (`file://`) y se publica en GitHub Pages con cada push a `main` (`.github/workflows/static.yml`).
@@ -45,6 +46,8 @@ Quien lo usa habla español y tiene nivel backend intermedio (REST, SQL, Docker)
 - **Sin ejecutar no hay mediciones nuevas.** La guía dice qué comando correr y qué tiene que aparecer en la salida (qué pasa, qué error sale, qué número comparar) y deja que el lector anote los suyos. Nunca se inventan cifras ni salidas. Lo que se puede calcular a mano se muestra con la cuenta, y lo que viene de documentación lleva `badge--doc`. Las cifras que ya están publicadas en A00–A07 se midieron antes de esta regla y se conservan.
 - **Lo que sí se usa** son las herramientas de la página: `tools/mkguide.py` para generarla, y `test-page.mjs`, `links.mjs` y `shots.mjs` para revisarla (abren la página en Chrome con `file://`, sin servidor).
 - El orden de las secciones es fijo: la excusa con una figura, los endpoints, las dependencias de Maven con su propósito, la infraestructura comentada, el paso a paso (cada paso con La decisión, Lo que descartas y Qué puede salir mal), las decisiones guiadas, cómo comprobarlo (pruebas, Gatling y fallas provocadas), tu repositorio y, al final, cómo conectar.
+- **Tu repositorio:** la lista de comprobación, el enlace al repositorio del lector (opcional) y el botón "Marcar como terminado". El proyecto se termina al marcar todas las comprobaciones o con el botón. Si la guía tiene `repo` en `projects.data.js`, es el repositorio oficial: la caja lo muestra y no pide uno propio.
+- **A00 sale del repositorio oficial del autor** (`repo` en `projects.data.js`): el código se copia tal cual, con su arquitectura en capas, y la guía lo explica; los comandos los escribe la guía. Las pruebas y el CI se explican desde cero, sin suponer que el lector los sabe escribir, y cada falla provocada dice por qué importa en un sistema real.
 - Cada proyecto funciona solo. "Cómo conectar" va al final y solo nombra proyectos anteriores en la lista, nunca posteriores, con enlaces a los módulos y al glosario (`../glosario.html#t-<id>`).
 
 ### De los tutoriales de AI Engineering (`proyectos/iaNN-*.html`)
@@ -53,9 +56,20 @@ Quien lo usa habla español y tiene nivel backend intermedio (REST, SQL, Docker)
 - **Nivel Jr, sin suponer nivel.** El lector puede no haber usado Python, Docker ni Ollama. IA00 es la introducción y presenta las herramientas y las piezas de un agente; las demás la enlazan cuando usan algo de ella, pero funcionan solas. Concretamente:
   - **La excusa** cierra con la figura de arquitectura (`figure[data-arch]`, cada caja con `data-part`) y una tabla de flechas: #, De → a, Protocolo y formato, Ejemplo, Con qué permiso. Después, un párrafo con las fronteras (qué sale de tu máquina, con qué rol entra a la base).
   - **Antes de empezar** trae una lámina de términos (`ol.plate-key`), qué hay que tener instalado con cómo comprobarlo, y un `h3` (`ae-*`) por concepto nuevo, con analogía, figura y enlace al módulo que lo explica.
-  - **Cada archivo es un recorrido:** una `div.file-card[data-where]` (Qué hace, Quién lo usa, Qué entra, Qué sale; `data-where` nombra los `data-part` que se resaltan en la miniatura), el código en bloques de hasta unas 45 líneas con marcas `# (N)` o `-- (N)` en línea propia, y debajo de cada bloque un `ol.code-key` que explica cada marca. Las marcas son correlativas en todo el archivo.
+  - **Cada archivo es un recorrido:** una `div.file-card[data-where]` (Qué hace, Quién lo usa, Qué entra, Qué sale; `data-where` nombra los `data-part` que se resaltan en la miniatura), antes del código, un `div.pseudo` con lo que hace el archivo en palabras (pseudocódigo numerado), el código en bloques de hasta 25 líneas (salvo un árbol de carpetas) con marcas `# (N)` o `-- (N)` en línea propia, y debajo de cada bloque un `ol.code-key` que explica cada marca. Las marcas son correlativas en todo el archivo.
   - **Ayudas dentro del recorrido:** `callout--def` "Python de por medio" para la sintaxis que el lector no conoce, `callout--try` "Pruébalo ahora" con el comando y lo que debe aparecer, y `callout--fail` "Errores típicos" con `ul.pj-errs` (el error exacto y su arreglo).
   - **El archivo entero** va al final del recorrido en `details.solution.file-full`, con su `pre[data-file]`, para copiarlo de una vez. Un archivo de pocas líneas puede ir solo, sin bloques.
+  - **Hitos.** Los pasos se agrupan en tres hitos (`aside.hito#hito-N`, con título, tiempo, qué se logra y la lista de sus pasos). Cada hito cierra con un `aside.callout.callout--done` "Qué ya funciona": la lista de lo logrado, un comando y lo que tiene que aparecer. El último va antes de `#limitaciones`.
+  - **Mapa de cada paso.** Debajo del `h3` de cada paso (y de cada sección de cómo comprobar) va un `div.step-map[data-where]` con Entra, Sale, Cambia, Concepto nuevo (enlace a su `ae-*`) y Tiempo; `data-where` resalta las piezas en una miniatura de la figura de arquitectura. Un paso que no hace falta para terminar lleva `badge--opt` "Opcional" y dice por qué.
+  - **Fichas de concepto.** Los conceptos centrales llevan una ficha SVG con las mismas cajas en el mismo orden: Qué entra, Qué hace, Qué sale, un Ejemplo en monoespaciada, Qué falla sin él y Dónde vive (archivos y paso). Se generan con `ficha()`.
+  - **Analogías.** Cada `ae-*` lleva un `callout--analogy` debajo del título.
+  - **Predice la salida.** Antes del "Pruébalo ahora" de cada paso, un `div[data-exercise="iaNN-p-…"]` con una sola pregunta, definido con `SD.defineExercise` y `kind: 'predict'` en `data/projects/iaNN.data.js`. La respuesta sale del código de la guía (un valor por defecto, un `WHERE`, una regla de redondeo), nunca de una ejecución inventada. Cuenta para `quiz-bias.mjs`.
+  - **El viaje por adelantado.** Al final de `#excusa`, un `h3#excusa-viaje` con una versión corta del diagrama de secuencia; la completa sigue en `#viaje`.
+  - **Lo que viene de las guías anteriores.** A partir de IA01, un `h3#ae-repaso` al principio de `#antes` con una figura de tarjetas (lo que se vio y cómo vuelve) y una tabla de enlaces a cada sección de origen.
+  - **Anexos.** Lo que el lector necesita copiar pero no entender para seguir (la víctima de IA01, la semilla de IA02) va como caja negra en su paso, con una figura de qué entra y qué sale, y su recorrido completo en un `h2#anexo-*` después de "Cómo conectar". Mover a un anexo no quita nada: el paso enlaza al anexo y el anexo vuelve al paso.
+  - **El Python que vas a ver.** IA00 tiene una sección con un `h3` por idea de Python (`py-tipos`, `py-decoradores`, `py-with`, `py-yield`, `py-async`, `py-typeddict`, `py-pydantic`), cada uno con figura. Los "Python de por medio" de las demás guías enlazan al suyo.
+  - **Glosario.** Los términos propios de la serie van en el bloque `ia-*` de `glossary.data.js` (`ia-estado`, `ia-reducer`, `ia-checkpoint`, `ia-interrupt`, `ia-pass-k`, `ia-spotlighting`).
+  - **Una página por guía.** Una guía larga no se parte en varias páginas: el progreso, el enlace al repositorio y las comprobaciones se guardan por página. Se ordena con hitos, mapas y anexos.
   - **El viaje de un dato:** un diagrama de secuencia (`tools/seqdiag.py`) del caso principal y una tabla Paso, De → a, Qué viaja, Dónde queda.
   - **Limitaciones:** lo que no hace, dónde se rompe, riesgos que quedan, costo y latencia con la cuenta a mano (los supuestos se dicen como supuestos), y qué cambia en producción.
 - **Las figuras y los recorridos se generan con scripts de Python** en el scratchpad (helpers `walk()`, `figure()`), y la página se edita después con scripts que comprueban `s.count(viejo) == 1`. Una vez publicada, la página en `proyectos/` es la fuente de verdad.
@@ -65,7 +79,7 @@ Quien lo usa habla español y tiene nivel backend intermedio (REST, SQL, Docker)
 - **El grafo se prueba sin modelo:** pytest con un modelo falso que responde con un guion, sin red ni tokens. Lo que hace el modelo se mide aparte, con evals que repiten cada caso.
 - **Leer es libre, actuar se aprueba:** las herramientas con efecto pasan por un `interrupt` y llevan una clave de idempotencia; los permisos los impone la base o el servicio, no el prompt.
 - **Revisión sin ejecutar:** el código se escribe en el scratchpad y se revisa con `ast.parse` (Python) y `tomllib` (TOML). No se corren pip, uv, pytest, Docker ni servidores.
-- **Datos:** la lista está en `SD.data.projects.aiTracks` (misma forma que `tracks`), que `projects.js` dibuja en `[data-ai-tracks]`; `project-state.js` los marca con `series: 'ia'` y `project-guide.js` mantiene el anterior/siguiente dentro de la serie. Las decisiones guiadas van en `data/projects/iaNN.data.js` con `SD.defineExercise('iaNN-…')`.
+- **Datos:** la lista está en `SD.data.projects.aiTracks` (misma forma que `tracks`), que `projects.js` dibuja en `[data-ai-tracks]` (las guías de ML System Design van en `mlTracks`, `[data-ml-tracks]` y `series: 'ml'`); `project-state.js` los marca con `series: 'ia'` y `project-guide.js` mantiene el anterior/siguiente dentro de la serie. Las decisiones guiadas van en `data/projects/iaNN.data.js` con `SD.defineExercise('iaNN-…')`.
 - "Cómo conectar" nombra primero los tutoriales anteriores de la serie y, de forma opcional, las guías de la serie A que se juntan con este.
 
 ### De contenido
@@ -360,7 +374,7 @@ SD.defineExercise('m06-planificador', {
 
 - Los scripts: `data/exercises/<id>.data.js` después de los datos del quiz, y `core/exercise.js` después de `core/quiz.js` (usa `SD.quizKit`). Con `mkpage.py`, alcanza con `"exercises": true` en el META; en una página existente se agregan a mano (así está en M18).
 - El glosario no enlaza dentro de `[data-exercise]`: los términos se explican en el texto del módulo.
-- Ejercicios publicados: uno en M02, siete en M06.1 (los datos siguen en `exercises/m06.data.js`), uno en M18, uno en M19, uno en M21, cinco en M22 (incidentes), uno en M23, uno en M24, uno en M25, uno en M12.1 (diagnóstico de una réplica lenta), uno en M33, uno en M34 (diagnosticar un servidor lento), uno en M36 (criptografía de una API con datos sensibles), uno en M37 (endurecer la arquitectura de un SaaS en la nube), uno en M38 (auditar un dominio y cerrar sus rutas a tier 0), uno en M39 (`m39-festival`, la venta de entradas de un festival) y uno en M31 (`m31-clase`, las clases del clon de Docs).
+- Ejercicios publicados: uno en M02, siete en M06.1 (los datos siguen en `exercises/m06.data.js`), uno en M18, uno en M19, uno en M21, cinco en M22 (incidentes), uno en M23, uno en M24, uno en M25, uno en M12.1 (diagnóstico de una réplica lenta), uno en M33, uno en M34 (diagnosticar un servidor lento), uno en M36 (criptografía de una API con datos sensibles), uno en M37 (endurecer la arquitectura de un SaaS en la nube), uno en M38 (auditar un dominio y cerrar sus rutas a tier 0), uno en M39 (`m39-festival`, la venta de entradas de un festival), uno en M31 (`m31-clase`, las clases del clon de Docs) uno en M42 (`m42-metricas`, las métricas de "personas que quizás conozcas") uno en M43 (`m43-eventos`, el registro de "comprados juntos"), uno en M44 (`m44-comprados`, el modelo de "comprados juntos"), uno en M45 (`m45-indice`, el índice de vecinos) y uno en M46 (`m46-pesos`, el ranker del feed).
 
 ### Quiz y checkpoint
 
@@ -393,7 +407,7 @@ SD.defineQuiz('m17', {
   short: 'Una o dos frases que se entiendan solas.', related: ['rate-limiting'] }
 ```
 
-Categorías (`SD.catNames` en `glossary.js`): `metodo`, `redes`, `datos`, `distribuidos`, `resiliencia`, `seguridad`, `ia`, `pagos`, `edge`, `nube`, `mensajeria`.
+Categorías (`SD.catNames` en `glossary.js`): `metodo`, `redes`, `datos`, `distribuidos`, `resiliencia`, `seguridad`, `ia`, `pagos`, `edge`, `nube`, `mensajeria`, `reco`.
 
 ### Mapa explorable
 
@@ -462,6 +476,12 @@ Categorías (`SD.catNames` en `glossary.js`): `metodo`, `redes`, `datos`, `distr
 | `data-calc="trainmem"`, `"ckpt"` | `widgets/sim-train.js` | Memoria de un entrenamiento (16 B/param de Adam) y cuántas GPUs con data parallel vs ZeRO-3, e intervalo óptimo de checkpoint (Young/Daly); usa `data/llm.data.js`, que la página carga antes del widget (M26) |
 | `data-sim="ot"`, `data-calc="collab"` | `widgets/sim-collab.js` | Dos personas editan el mismo texto y el servidor transforma sus operaciones (OT con TP1, revisiones y el log), y cuántos servidores de sesión, conexiones y operaciones por segundo necesita un clon de Docs; lógica en `SD.otCore` (M31) |
 | `data-sim="seatrace"`, `"idemkey"`, `"whinbox"` | `widgets/sim-pay.js` | Simuladores paso a paso con carriles: dos transacciones contra el mismo asiento con seis estrategias (leer y escribir, UPDATE condicional, `NOWAIT`, `FOR UPDATE` con espera, optimista, exclusion constraint), la fila de `idempotency_keys` en cinco situaciones, y el inbox de webhooks ante duplicados, desorden, firma falsa y procesar antes de responder; cada escenario termina con un veredicto (M39) |
+| `data-sim="funnel"` | `widgets/sim-recsys.js` | El embudo de un recomendador: tráfico, ítems por etapa y milisegundos por ítem; calcula requests y puntuaciones por segundo, la latencia por etapa contra el presupuesto y cuánto tardaría el ranking pesado sobre todo el catálogo; tres presets (Mercado Barrio, sin ranking liviano, pesado 3 veces más caro); lógica en `SD.recsysCore` (M42) |
+| `data-calc="sparsity"` | `widgets/sim-recsys.js` | La matriz usuario-ítem densa contra CSR: celdas, densidad ("una celda de cada …"), bytes densos y en CSR, e interacciones promedio por usuario y por ítem (M43) |
+| `data-sim="itemcf"`, `"mf"` | `widgets/sim-recsys.js` | Ítem a ítem: una rejilla de compras de 4 personas por 4 ítems que se edita, con el coseno entre columnas y "quien mira este ítem ve"; y factorización de matrices sobre 6 × 6 calificaciones con k y λ elegibles, pasos de descenso por gradiente, las predicciones en cada celda, celdas de prueba y la curva de error de entrenamiento y de prueba que muestra el sobreajuste; lógica en `SD.recsysCore`; estilos `.rs-grid` (M44) |
+| `data-sim="leakage"`, `"posbias"` | `widgets/sim-events.js` | Fuga del futuro: el mismo modelo logístico entrenado con la feature point-in-time y con la del mes entero, con su AUC offline y "en producción" según las impresiones por ítem y día (datos sintéticos con semilla); y el sesgo de posición con el modelo de examen, el CTR observado y el corregido por propensión; lógica en `SD.eventsCore`; estilos `.ev-chart` (M43) |
+| `data-sim="hnsw"`, `data-calc="annsize"` | `widgets/sim-ann.js` | Un HNSW de juguete con 60 puntos y tres pisos: la búsqueda golosa piso por piso con efSearch y M elegibles, las distancias calculadas y el vecino exacto; y cuánto ocupa un índice de N vectores de d dimensiones (plano, HNSW, IVF e IVF-PQ) y cuánto lee cada consulta; lógica en `SD.annCore` (M45) |
+| `data-sim="ndcg"`, `"calib"`, `data-calc="multiobj"` | `widgets/sim-rank.js` | NDCG, precisión y recall en k sobre una lista que se reordena con flechas y relevancias editables; calibración con 6 000 impresiones sintéticas (tres modelos, cuatro correcciones, ECE, log loss y AUC, con el diagrama de fiabilidad); y cinco probabilidades combinadas en un puntaje con tres juegos de pesos (los de Twitter de 2023); lógica en `SD.rankCore`; estilos `.rk-plot`, `.rk-table` y `.rk-bar` (M46) |
 | `data-calc="bom" data-preset="m21\|m23\|m24\|m25\|m27\|m28\|m29\|m30\|m31"`, `data-calc="gateways"` | `widgets/sim-infra.js` | Factura mensual en AWS y dimensionamiento de gateways (módulos a fondo y casos de estudio) |
 
 Para escribir un widget nuevo:
@@ -516,6 +536,8 @@ ia-system-desing
 │   glosario.html
 │   index.html
 │   PLAN.md
+│   PLAN_ML_GUIAS.md
+│   PLAN_ML_SYSTEM_DESIGN.md
 │   PROGRESO.md
 │   proyectos.html
 │   Referencias.md
@@ -568,6 +590,11 @@ ia-system-desing
 │       │   │       m38.data.js
 │       │   │       m39.data.js
 │       │   │       m31.data.js
+│       │   │       m42.data.js
+│       │   │       m43.data.js
+│       │   │       m44.data.js
+│       │   │       m45.data.js
+│       │   │       m46.data.js
 │       │   │
 │       │   ├───maps
 │       │   │       chatgpt.data.js
@@ -605,11 +632,14 @@ ia-system-desing
 │       │   │       ia00.data.js
 │       │   │       ia01.data.js
 │       │   │       ia02.data.js
+│       │   │       ml00.data.js
+│       │   │       ml01.data.js
 │       │   │
 │       │   └───quizzes
 │       │           cpa.data.js
 │       │           cpb.data.js
 │       │           cpc.data.js
+│       │           cpd.data.js
 │       │           cpe.data.js
 │       │           m00.data.js
 │       │           m01.data.js
@@ -653,6 +683,11 @@ ia-system-desing
 │       │           m37.data.js
 │       │           m38.data.js
 │       │           m39.data.js
+│       │           m42.data.js
+│       │           m43.data.js
+│       │           m44.data.js
+│       │           m45.data.js
+│       │           m46.data.js
 │       │
 │       ├───map
 │       │       flow-sim.js
@@ -668,6 +703,7 @@ ia-system-desing
 │               calculators.js
 │               sim-ad.js
 │               sim-agent.js
+│               sim-ann.js
 │               sim-api.js
 │               sim-cache.js
 │               sim-cachepat.js
@@ -698,7 +734,10 @@ ia-system-desing
 │               sim-pay.js
 │               sim-quant.js
 │               sim-quota.js
+│               sim-rank.js
 │               sim-rbac.js
+│               sim-events.js
+│               sim-recsys.js
 │               sim-raft.js
 │               sim-resil.js
 │               sim-router.js
@@ -719,6 +758,7 @@ ia-system-desing
 │       checkpoint-a.html
 │       checkpoint-b.html
 │       checkpoint-c.html
+│       checkpoint-d.html
 │       checkpoint-e.html
 │       m00-metodo.html
 │       m01-viaje-request.html
@@ -762,6 +802,11 @@ ia-system-desing
 │       m37-nube.html
 │       m38-active-directory.html
 │       m39-manejo-pagos.html
+│       m42-ml-system-design.html
+│       m43-datos-recomendacion.html
+│       m44-modelos-clasicos.html
+│       m45-recuperacion.html
+│       m46-ranking.html
 │
 ├───proyectos
 │       a00-laboratorio.html
@@ -785,6 +830,8 @@ ia-system-desing
 │       ia00-laboratorio.html
 │       ia01-agente-guardia.html
 │       ia02-analista.html
+│       ml00-laboratorio.html
+│       ml01-linea-base.html
 │
 └───tools
     │   mkguide.py
@@ -806,7 +853,7 @@ ia-system-desing
 | `index.html` + `assets/css/home.css` + `assets/js/pages/home.js` | Portada: mapa de la ruta del curso, "continuar donde quedaste", plan por partes y respaldo del progreso |
 | `glosario.html` | Glosario con buscador y filtro por categoría; lo arma `core/glossary.js` |
 | `proyectos.html` + `assets/css/projects.css` + `assets/js/pages/projects.js` | "Aplicación de conocimiento": índice de mini-proyectos en Java y Spring Boot y de tutoriales de AI Engineering (`#ia-engineering`), con sus datos en `data/projects.data.js` (`tracks`, `capstones` y `aiTracks`; cada proyecto con `tier`, `status`, `mods` y `repo`, obligatorio para publicarlo) |
-| `proyectos/` + `assets/js/pages/project-guide.js` + `project-state.js` | Una guía por proyecto, generada con `tools/mkguide.py` y editada después a mano. `project-guide.js` arma la ruta de proyectos y el anterior/siguiente (dentro de cada serie), resalta java, javascript, yaml, xml, bash, nginx, ini, toml y dockerfile (python, sql y json los resalta `sd.js`), le pone ruta y botón de copiar a cada `<pre data-file>`, dibuja las marcas de los recorridos (`# (N)`, `-- (N)`, `// (N)`, `; (N)` y `<!-- (N) -->`) y le pone a cada `.file-card[data-where]` una miniatura de la figura `[data-arch]` con su pieza resaltada; `project-state.js` guarda el enlace al repositorio y las comprobaciones de cada guía |
+| `proyectos/` + `assets/js/pages/project-guide.js` + `project-state.js` | Una guía por proyecto, generada con `tools/mkguide.py` y editada después a mano. `project-guide.js` arma la ruta de proyectos (las tres series siempre, cada una con su encabezado `p.route-series` y "N de M publicadas", y las guías propuestas como próximamente) y el anterior/siguiente (dentro de cada serie), resalta java, javascript, yaml, xml, bash, nginx, ini, toml y dockerfile (python, sql y json los resalta `sd.js`), le pone ruta y botón de copiar a cada `<pre data-file>`, dibuja las marcas de los recorridos (`# (N)`, `-- (N)`, `// (N)`, `; (N)` y `<!-- (N) -->`) y le pone a cada `.file-card[data-where]` una miniatura de la figura `[data-arch]` con su pieza resaltada; `project-state.js` guarda el enlace al repositorio y las comprobaciones de cada guía |
 | `assets/js/data/projects/` | Las decisiones guiadas de cada guía, con `SD.defineExercise('aNN-…')` o `SD.defineExercise('iaNN-…')` |
 | `modules/` | Una página por módulo y por checkpoint, generada con `mkpage.py` y editada después a mano |
 | `assets/css/tokens.css` | Colores semánticos en claro y oscuro, paleta de capas `--l-*`, tipografía y espacios |

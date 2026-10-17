@@ -1,0 +1,2082 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M45. Recuperación a escala: dos torres y búsqueda vectorial</title>
+<meta name="description" content="Por qué no se puede puntuar todo el catálogo, el modelo de dos torres, los negativos dentro del lote, las fuentes de candidatos, HNSW, IVF con cuantización por productos, los filtros, la frescura del índice y los shards.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m45">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Recuperación a escala: dos torres y búsqueda vectorial</h1>
+        <p class="lead">De 100 millones a 10 000 en 25 ms. Un modelo que pone a personas e ítems en el mismo espacio y un índice que encuentra a los vecinos sin mirarlos a todos: la misma forma que el RAG, sin LLM.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M45</dd></div>
+          <div><dt>Parte</dt><dd>VI. ML System Design</dd></div>
+          <div><dt>Duración</dt><dd>120 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M44, M17</dd></div>
+          <div><dt>Estado</dt><dd data-status="m45">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Explicar con números por qué la recuperación no puede puntuar todo el catálogo y qué parte del presupuesto le toca.</li>
+    <li>Describir el modelo de dos torres, por qué separar las torres permite precalcular los ítems y cómo se entrena con negativos dentro del lote.</li>
+    <li>Combinar varias fuentes de candidatos con cuotas y deadlines.</li>
+    <li>Explicar cómo buscan HNSW e IVF con cuantización por productos, y qué controlan M, efSearch y nprobe.</li>
+    <li>Dimensionar la memoria de un índice de 100 millones de vectores con cada tipo de índice.</li>
+    <li>Diseñar los filtros, la frescura del índice y su reparto en shards sin perder recall ni latencia.</li>
+  </ul>
+</section>
+
+<p>Los modelos clásicos de <a href="m44-modelos-clasicos.html">M44</a> terminaron con una deuda: la factorización deja un vector por persona y uno por ítem, y recomendar es encontrar los ítems con el producto punto más alto. Con 100 millones de ítems y 25 ms, eso no se hace comparando uno por uno. Este módulo resuelve esa búsqueda en dos partes: un modelo que pone a personas e ítems en el mismo espacio (las dos torres) y un índice que encuentra a los vecinos sin mirarlos a todos.</p>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f45at f45ad">
+<title id="f45at">Las piezas de la recuperación</title>
+<desc id="f45ad">Arriba, el camino offline: el catálogo pasa por la torre de ítems y sus vectores se cargan en el índice de vecinos aproximados, con un índice delta para los ítems nuevos. Abajo, el camino de cada request: la persona pasa por la torre de usuario, su vector consulta el índice, y esa fuente se junta con otras (ítem a ítem, popular, seguidos, grafo) en una mezcla con cuotas que deja 10 000 candidatos para los filtros y el ranking.</desc>
+<defs><marker id="f45aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="20" y="24" text-anchor="start">De noche y al publicar (offline)</text>
+<rect class="dg-layer" x="20" y="36" width="130" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="85.0" y="57.0" text-anchor="middle">Catálogo</text>
+<text class="dg-tiny" x="85.0" y="73.0" text-anchor="middle">100 M ítems</text>
+<rect class="dg-layer" x="190" y="36" width="140" height="50" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="260.0" y="57.0" text-anchor="middle">Torre de ítems</text>
+<text class="dg-tiny" x="260.0" y="73.0" text-anchor="middle">un vector por ítem</text>
+<rect class="dg-layer" x="370" y="36" width="170" height="50" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="455.0" y="57.0" text-anchor="middle">Índice ANN</text>
+<text class="dg-tiny" x="455.0" y="73.0" text-anchor="middle">HNSW o IVF-PQ</text>
+<rect class="dg-layer" x="580" y="36" width="170" height="50" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="665.0" y="57.0" text-anchor="middle">Índice delta</text>
+<text class="dg-tiny" x="665.0" y="73.0" text-anchor="middle">lo publicado hoy</text>
+<path class="dg-edge" d="M152 61 H186" marker-end="url(#f45aa)"/>
+<path class="dg-edge" d="M332 61 H366" marker-end="url(#f45aa)"/>
+<path class="dg-feedback" d="M260 88 V104 H664 V90" marker-end="url(#f45aa)"/>
+<text class="dg-tiny" x="560" y="122" text-anchor="start">los nuevos van al delta</text>
+<text class="dg-tiny" x="560" y="137" text-anchor="start">hasta la reconstrucción</text>
+<text class="dg-group" x="20" y="158" text-anchor="start">En cada request (online, 25 ms)</text>
+<rect class="dg-layer" x="20" y="172" width="130" height="50" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="85.0" y="193.0" text-anchor="middle">Persona</text>
+<text class="dg-tiny" x="85.0" y="209.0" text-anchor="middle">historia, contexto</text>
+<rect class="dg-layer" x="190" y="172" width="140" height="50" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="260.0" y="193.0" text-anchor="middle">Torre de usuario</text>
+<text class="dg-tiny" x="260.0" y="209.0" text-anchor="middle">un vector, 2 ms</text>
+<path class="dg-edge" d="M152 197 H186" marker-end="url(#f45aa)"/>
+<path class="dg-edge" d="M332 197 H400 V90" marker-end="url(#f45aa)"/>
+<text class="dg-tiny" x="408" y="150" text-anchor="start">busca los más cercanos</text>
+<rect class="dg-box" x="20" y="262" width="110" height="40" rx="8"/>
+<text class="dg-small" x="75.0" y="286.0" text-anchor="middle">Dos torres</text>
+<path class="dg-edge" d="M75 304 V338" marker-end="url(#f45aa)"/>
+<rect class="dg-box" x="142" y="262" width="110" height="40" rx="8"/>
+<text class="dg-small" x="197.0" y="286.0" text-anchor="middle">Ítem a ítem</text>
+<path class="dg-edge" d="M197 304 V338" marker-end="url(#f45aa)"/>
+<rect class="dg-box" x="264" y="262" width="110" height="40" rx="8"/>
+<text class="dg-small" x="319.0" y="286.0" text-anchor="middle">Popular</text>
+<path class="dg-edge" d="M319 304 V338" marker-end="url(#f45aa)"/>
+<rect class="dg-box" x="386" y="262" width="110" height="40" rx="8"/>
+<text class="dg-small" x="441.0" y="286.0" text-anchor="middle">Seguidos</text>
+<path class="dg-edge" d="M441 304 V338" marker-end="url(#f45aa)"/>
+<rect class="dg-box" x="508" y="262" width="110" height="40" rx="8"/>
+<text class="dg-small" x="563.0" y="286.0" text-anchor="middle">Grafo</text>
+<path class="dg-edge" d="M563 304 V338" marker-end="url(#f45aa)"/>
+<path class="dg-edge" d="M455 90 V246 H75 V258" marker-end="url(#f45aa)"/>
+<rect class="dg-box dg-box--em" x="20" y="340" width="590" height="44" rx="8"/>
+<text class="dg-small" x="315.0" y="366.0" text-anchor="middle">Mezcla con cuotas y deduplicación: 10 000 candidatos</text>
+<rect class="dg-box" x="640" y="340" width="110" height="44" rx="8"/>
+<text class="dg-small" x="695.0" y="358.0" text-anchor="middle">Filtros y</text>
+<text class="dg-small" x="695.0" y="374.0" text-anchor="middle">ranking</text>
+<path class="dg-edge" d="M612 362 H636" marker-end="url(#f45aa)"/>
+<text class="dg-tiny" x="660" y="280" text-anchor="start">cada fuente con</text>
+<text class="dg-tiny" x="660" y="295" text-anchor="start">su deadline</text>
+<g class="pl-pin"><circle cx="150" cy="36" r="11"/><text x="150" y="40" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="330" cy="36" r="11"/><text x="330" y="40" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="540" cy="36" r="11"/><text x="540" y="40" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="750" cy="36" r="11"/><text x="750" y="40" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="330" cy="172" r="11"/><text x="330" y="176" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="130" cy="262" r="11"/><text x="130" y="266" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="455" cy="222" r="11"/><text x="455" y="226" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="610" cy="340" r="11"/><text x="610" y="344" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="252" cy="262" r="11"/><text x="252" y="266" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="374" cy="262" r="11"/><text x="374" y="266" text-anchor="middle">10</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 45.A.</b> La recuperación por dentro. Arriba lo que se calcula antes (los vectores de los ítems y el índice); abajo lo que corre en cada request, en 25 ms. La torre de dos lados es una fuente entre varias.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Catálogo</b><span>Los 100 millones de ítems de Mercado Barrio, con su texto, su categoría y sus números. <a href="#problema">45.1</a></span></li>
+  <li><b>Torre de ítems</b><span>La mitad del modelo de dos torres que convierte cada ítem en un vector; corre antes de las requests. <a href="#two-tower">45.2</a></span></li>
+  <li><b>Índice de vecinos aproximados</b><span>La estructura que encuentra los vectores más cercanos sin mirarlos todos. <a href="#ann">45.5</a></span></li>
+  <li><b>Índice delta</b><span>Un índice chico con lo publicado desde la última reconstrucción, que se busca junto al principal. <a href="#frescura-indice">45.9</a></span></li>
+  <li><b>Torre de usuario</b><span>La otra mitad: convierte a la persona y su contexto en un vector, en cada request. <a href="#two-tower">45.2</a></span></li>
+  <li><b>Fuente de candidatos</b><span>Cada camino barato que propone ítems: dos torres, ítem a ítem, popular, seguidos, grafo. <a href="#fuentes">45.4</a></span></li>
+  <li><b>Consulta al índice</b><span>El vector de la persona busca los ítems con el producto punto más alto. <a href="#hnsw">45.6</a></span></li>
+  <li><b>Mezcla con cuotas</b><span>Junta las fuentes, quita repetidos y reparte los 10 000 lugares entre ellas. <a href="#fuentes">45.4</a></span></li>
+  <li><b>Ítem a ítem</b><span>La tabla de vecinos de <a href="m44-modelos-clasicos.html#item-item">M44</a>, leída con los últimos ítems que tocó la persona. <a href="#fuentes">45.4</a></span></li>
+  <li><b>Popular por segmento</b><span>Las listas de <a href="m44-modelos-clasicos.html#popularidad">M44</a>: la red de seguridad cuando las otras fuentes no traen nada. <a href="#fuentes">45.4</a></span></li>
+</ol>
+
+<p>El caso sigue siendo Mercado Barrio, con los números de <a href="m42-ml-system-design.html#numeros">M42</a>: 20 millones de personas activas por día, 100 millones de ítems, 13 889 requests por segundo en el pico y un presupuesto de 200 ms en el p99, del que la recuperación tiene 25 ms.</p>
+
+<h2 id="problema"><span class="sec-num">45.1</span>El problema: 100 millones en 25 ms</h2>
+
+<p>La <dfn data-term="generacion-candidatos">generación de candidatos</dfn>, o recuperación, es la primera etapa del embudo: de todo el catálogo, elige unos miles de ítems que vale la pena puntuar con cuidado. No tiene que acertar el orden, eso es trabajo del ranking; tiene que no perder a los buenos. Lo que no trae la recuperación no existe para las etapas siguientes.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es la diferencia entre un buscador de departamentos y la visita. El filtro del sitio (zona, precio, ambientes) te deja 40 avisos de los 50 000 publicados en un segundo, sin mirar ninguno con atención. La visita, que es cara, la haces solo a 3. Si el filtro dejó afuera el departamento perfecto, ninguna visita lo va a encontrar.</p>
+</aside>
+
+<p>¿Por qué no puntuar todo? Con un vector de 128 números en float32 por ítem, comparar a una persona contra los 100 millones es leer 100 000 000 × 128 × 4 B = 51.2 GB por request. A un ancho de banda de memoria de 200 GB/s, un supuesto generoso para una máquina, son 256 ms solo en leer, diez veces el presupuesto. Y en el pico hay 13 889 requests por segundo: 100 000 000 × 13 889 = 1.39 × 10¹² productos punto por segundo.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f452t f452d">
+<title id="f452t">Cuántos productos punto hace cada estrategia por request</title>
+<desc id="f452d">Barras en escala logarítmica. Comparar contra todo el catálogo: 100 millones de productos punto. Un índice IVF con 262 144 celdas que mira 64: unos 24 414 vectores. Un HNSW mira unos pocos miles. El presupuesto de la recuperación es 25 ms.</desc>
+
+<text class="dg-tiny" x="248" y="50" text-anchor="end">Comparar contra todo</text>
+<rect class="dg-bad" x="260" y="30" width="450.0" height="30" rx="6"/>
+<text class="dg-tiny" x="700.0" y="50" text-anchor="end">100 000 000</text>
+<text class="dg-tiny" x="248" y="96" text-anchor="end">IVF, 64 de 262 144 celdas</text>
+<rect class="dg-box dg-box--em" x="260" y="76" width="124.88750462132361" height="30" rx="6"/>
+<text class="dg-tiny" x="392.9" y="96" text-anchor="start">unos 24 400</text>
+<text class="dg-tiny" x="248" y="142" text-anchor="end">HNSW, efSearch del orden de cientos</text>
+<rect class="dg-box dg-box--em" x="260" y="122" width="42.940912924769634" height="30" rx="6"/>
+<text class="dg-tiny" x="310.9" y="142" text-anchor="start">unos miles (se mide)</text>
+<path class="dg-frame" d="M260.0 24 V172"/>
+<text class="dg-tiny" x="260.0" y="188" text-anchor="middle">10³</text>
+<path class="dg-frame" d="M350.0 24 V172"/>
+<text class="dg-tiny" x="350.0" y="188" text-anchor="middle">10⁴</text>
+<path class="dg-frame" d="M440.0 24 V172"/>
+<text class="dg-tiny" x="440.0" y="188" text-anchor="middle">10⁵</text>
+<path class="dg-frame" d="M530.0 24 V172"/>
+<text class="dg-tiny" x="530.0" y="188" text-anchor="middle">10⁶</text>
+<path class="dg-frame" d="M620.0 24 V172"/>
+<text class="dg-tiny" x="620.0" y="188" text-anchor="middle">10⁷</text>
+<path class="dg-frame" d="M710.0 24 V172"/>
+<text class="dg-tiny" x="710.0" y="188" text-anchor="middle">10⁸</text>
+<text class="dg-tiny" x="20" y="214" text-anchor="start">Escala logarítmica. El HNSW no tiene una cuenta cerrada: lo que mira depende de efSearch y del grafo, y se mide con la curva de 45.5.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.2.</b> El trabajo por request. Un índice no hace más rápido cada producto punto: evita hacer casi todos.</figcaption>
+</figure>
+
+<p>La forma de la solución ya apareció en el curso. El RAG de <a href="m16-context-windows.html#rag">M16</a> y el pipeline de archivos de <a href="m20-producto-chatgpt.html#archivos">M20</a> convierten la pregunta en un embedding, buscan los fragmentos más parecidos en un índice vectorial y le pasan los encontrados al LLM. Un recomendador hace lo mismo, sin LLM: convierte a la persona en un vector, busca los ítems más cercanos y se los pasa al ranking.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f451t f451d">
+<title id="f451t">Un recomendador es un RAG sin LLM</title>
+<desc id="f451d">Dos filas con la misma forma. Arriba, RAG: una pregunta pasa por un modelo de embeddings, el vector busca en un índice vectorial los fragmentos más parecidos, y el LLM escribe con ellos. Abajo, la recuperación de un recomendador: la persona pasa por la torre de usuario, el vector busca en el índice los ítems con producto punto más alto, y el ranking los ordena.</desc>
+<defs><marker id="f451a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="20" y="32" text-anchor="start">RAG (M16, M20)</text>
+<rect class="dg-box" x="20" y="40" width="126" height="48" rx="8"/>
+<text class="dg-small" x="83.0" y="68.0" text-anchor="middle">Pregunta</text>
+<path class="dg-edge" d="M148 64 H168" marker-end="url(#f451a)"/>
+<rect class="dg-layer" x="170" y="40" width="126" height="48" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="233.0" y="68.0" text-anchor="middle">Embedding</text>
+<path class="dg-edge" d="M298 64 H318" marker-end="url(#f451a)"/>
+<rect class="dg-box" x="320" y="40" width="126" height="48" rx="8"/>
+<text class="dg-small" x="383.0" y="68.0" text-anchor="middle">Índice vectorial</text>
+<path class="dg-edge" d="M448 64 H468" marker-end="url(#f451a)"/>
+<rect class="dg-box" x="470" y="40" width="126" height="48" rx="8"/>
+<text class="dg-small" x="533.0" y="68.0" text-anchor="middle">Fragmentos</text>
+<path class="dg-edge" d="M598 64 H618" marker-end="url(#f451a)"/>
+<rect class="dg-layer" x="620" y="40" width="126" height="48" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="683.0" y="68.0" text-anchor="middle">LLM</text>
+<text class="dg-group" x="20" y="142" text-anchor="start">Recomendador (M45)</text>
+<rect class="dg-box" x="20" y="150" width="126" height="48" rx="8"/>
+<text class="dg-small" x="83.0" y="178.0" text-anchor="middle">Persona</text>
+<path class="dg-edge" d="M148 174 H168" marker-end="url(#f451a)"/>
+<rect class="dg-layer" x="170" y="150" width="126" height="48" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="233.0" y="178.0" text-anchor="middle">Torre de usuario</text>
+<path class="dg-edge" d="M298 174 H318" marker-end="url(#f451a)"/>
+<rect class="dg-box" x="320" y="150" width="126" height="48" rx="8"/>
+<text class="dg-small" x="383.0" y="178.0" text-anchor="middle">Índice vectorial</text>
+<path class="dg-edge" d="M448 174 H468" marker-end="url(#f451a)"/>
+<rect class="dg-box" x="470" y="150" width="126" height="48" rx="8"/>
+<text class="dg-small" x="533.0" y="178.0" text-anchor="middle">Candidatos</text>
+<path class="dg-edge" d="M598 174 H618" marker-end="url(#f451a)"/>
+<rect class="dg-layer" x="620" y="150" width="126" height="48" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="683.0" y="178.0" text-anchor="middle">Ranking</text>
+<path class="dg-feedback" d="M383 90 V148"/>
+<text class="dg-tiny" x="392" y="124" text-anchor="start">la misma pieza: HNSW o IVF</text>
+<text class="dg-tiny" x="20" y="232" text-anchor="start">Lo que cambia: qué se convierte en vector (una pregunta o una persona) y qué hace la etapa final (escribir u ordenar).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.1.</b> La recuperación de un recomendador tiene la forma del RAG de <a href="m16-context-windows.html#rag">M16</a>: convertir en vector, buscar los vecinos en un índice y pasar lo encontrado a la etapa siguiente.</figcaption>
+</figure>
+
+<p>Hacen falta dos piezas, y son las dos mitades del módulo. La primera es un modelo que produzca vectores en los que "cercano" quiera decir "le va a interesar" (45.2 a 45.4). La segunda es un índice que encuentre los vectores más cercanos mirando una fracción mínima del catálogo (45.5 a 45.10).</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> la recuperación elige unos miles de candidatos sin perder a los buenos; comparar contra todo el catálogo cuesta diez veces el presupuesto, y la solución tiene la forma de un RAG sin LLM.</p>
+
+<h2 id="two-tower"><span class="sec-num">45.2</span>El modelo de dos torres</h2>
+
+<p>El <dfn data-term="two-tower">modelo de dos torres</dfn> tiene dos redes neuronales que no se tocan. La torre de usuario recibe a la persona (su id, sus últimos ítems, su país, su dispositivo, la hora) y devuelve un vector <i>u</i>. La torre de ítems recibe un ítem (su id, su título, su categoría, su precio) y devuelve un vector <i>v</i> del mismo largo. El puntaje del par es el producto punto <i>u</i> · <i>v</i>.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es como un sitio de citas que le pide a cada persona un perfil con las mismas 128 preguntas. Los perfiles de todos se llenan una vez y se guardan; cuando entras, se llena el tuyo y se buscan los perfiles más compatibles. Nadie necesita leer dos perfiles juntos para que funcione, y por eso se puede buscar entre millones.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 334" role="img" aria-labelledby="f453t f453d">
+<title id="f453t">El modelo de dos torres</title>
+<desc id="f453d">Ficha de El modelo de dos torres. Qué entra: La persona con su historia y su contexto, de un lado; cada ítem con su id, su texto y su categoría, del otro. Qué hace: Dos redes separadas convierten a cada lado en un vector de 128 números; el puntaje de un par es el producto punto. Qué sale: Un vector por persona en cada request y un vector por ítem guardado en el índice; los más cercanos son los candidatos. Ejemplo: persona 4471: últimos 50 ítems, Chile, Android, 21:40  -&gt; u = [0.12, -0.40, ...] ítem 88: "Zapatilla running trail", Deportes, 59 990  -&gt; v = [0.09, -0.35, ...] puntaje = u · v = 0.81   (el índice busca los v con puntaje más alto) Qué falla sin él: Para puntuar 100 millones de ítems habría que correr un modelo que mira a la persona y al ítem juntos 100 millones de veces por request. Dónde vive: La torre de ítems corre de noche y al publicar (45.9); la de usuario, en el servicio de recuperación, en cada request.</desc>
+<defs><marker id="f453a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">La persona con su historia y</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">su contexto, de un lado; cada</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">ítem con su id, su texto y su</text>
+<text class="dg-tiny" x="32" y="104" text-anchor="start">categoría, del otro.</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="102" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Dos redes separadas convierten</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">a cada lado en un vector de</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">128 números; el puntaje de un</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">par es el producto punto.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Un vector por persona en cada</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">request y un vector por ítem</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">guardado en el índice; los más</text>
+<text class="dg-tiny" x="550" y="104" text-anchor="start">cercanos son los candidatos.</text>
+<path class="dg-edge" d="M234 67.0 H275" marker-end="url(#f453a)"/>
+<path class="dg-edge" d="M493 67.0 H534" marker-end="url(#f453a)"/>
+<rect class="dg-box" x="20" y="132" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="152" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="172" text-anchor="start" style="white-space:pre">persona 4471: últimos 50 ítems, Chile, Android, 21:40  -&gt; u = [0.12, -0.40, ...]</text>
+<text class="dg-tiny dg-mono" x="32" y="188" text-anchor="start" style="white-space:pre">ítem 88: "Zapatilla running trail", Deportes, 59 990  -&gt; v = [0.09, -0.35, ...]</text>
+<text class="dg-tiny dg-mono" x="32" y="204" text-anchor="start" style="white-space:pre">puntaje = u · v = 0.81   (el índice busca los v con puntaje más alto)</text>
+<rect class="dg-warnbox" x="20" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="252" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="272" text-anchor="start">Para puntuar 100 millones de ítems habría que correr</text>
+<text class="dg-tiny" x="32" y="288" text-anchor="start">un modelo que mira a la persona y al ítem juntos 100</text>
+<text class="dg-tiny" x="32" y="304" text-anchor="start">millones de veces por request.</text>
+<rect class="dg-box" x="393" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="252" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="272" text-anchor="start">La torre de ítems corre de noche y al publicar</text>
+<text class="dg-tiny" x="405" y="288" text-anchor="start">(45.9); la de usuario, en el servicio de</text>
+<text class="dg-tiny" x="405" y="304" text-anchor="start">recuperación, en cada request.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.3.</b> Ficha del modelo de dos torres. La separación es lo que lo hace servible: lo caro de los ítems se paga una vez, no en cada request.</figcaption>
+</figure>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f454t f454d">
+<title id="f454t">Las dos torres</title>
+<desc id="f454d">A la izquierda, la torre de usuario: entran el id de la persona, el promedio de los vectores de sus últimos 50 ítems, el país, el dispositivo y la hora; pasan por capas densas y sale un vector u de 128 números, normalizado. A la derecha, la torre de ítems: entran el id del ítem, las palabras del título, la categoría, el rango de precio y el vendedor, y sale v. Las dos flechas se juntan en el producto punto. Una banda indica que u se calcula en cada request y v de antemano.</desc>
+<defs><marker id="f454a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="170" y="24" text-anchor="middle">Torre de usuario</text>
+<rect class="dg-box" x="20" y="36" width="300" height="24" rx="8"/>
+<text class="dg-tiny" x="170.0" y="52.0" text-anchor="middle">id de la persona → embedding</text>
+<rect class="dg-box" x="20" y="66" width="300" height="24" rx="8"/>
+<text class="dg-tiny" x="170.0" y="82.0" text-anchor="middle">promedio de sus últimos 50 ítems</text>
+<rect class="dg-box" x="20" y="96" width="300" height="24" rx="8"/>
+<text class="dg-tiny" x="170.0" y="112.0" text-anchor="middle">país, dispositivo, hora del día</text>
+<path class="dg-edge" d="M170 128 V144" marker-end="url(#f454a)"/>
+<rect class="dg-layer" x="60" y="146" width="220" height="34" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="170.0" y="167.0" text-anchor="middle">Capas densas (MLP)</text>
+<path class="dg-edge" d="M170 182 V198" marker-end="url(#f454a)"/>
+<rect class="dg-box dg-box--em" x="90" y="200" width="160" height="34" rx="8"/>
+<text class="dg-small dg-mono" x="170.0" y="221.0" text-anchor="middle">u: 128 números</text>
+<text class="dg-tiny" x="170" y="252" text-anchor="middle">en cada request, unos 2 ms</text>
+<text class="dg-group" x="600" y="24" text-anchor="middle">Torre de ítems</text>
+<rect class="dg-box" x="450" y="36" width="300" height="24" rx="8"/>
+<text class="dg-tiny" x="600.0" y="52.0" text-anchor="middle">id del ítem → embedding</text>
+<rect class="dg-box" x="450" y="66" width="300" height="24" rx="8"/>
+<text class="dg-tiny" x="600.0" y="82.0" text-anchor="middle">palabras del título</text>
+<rect class="dg-box" x="450" y="96" width="300" height="24" rx="8"/>
+<text class="dg-tiny" x="600.0" y="112.0" text-anchor="middle">categoría, rango de precio, vendedor</text>
+<path class="dg-edge" d="M600 128 V144" marker-end="url(#f454a)"/>
+<rect class="dg-layer" x="490" y="146" width="220" height="34" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="600.0" y="167.0" text-anchor="middle">Capas densas (MLP)</text>
+<path class="dg-edge" d="M600 182 V198" marker-end="url(#f454a)"/>
+<rect class="dg-box dg-box--em" x="520" y="200" width="160" height="34" rx="8"/>
+<text class="dg-small dg-mono" x="600.0" y="221.0" text-anchor="middle">v: 128 números</text>
+<text class="dg-tiny" x="600" y="252" text-anchor="middle">de noche y al publicar; se guarda en el índice</text>
+<path class="dg-edge" d="M240 217 H335" marker-end="url(#f454a)"/>
+<path class="dg-edge" d="M520 217 H435" marker-end="url(#f454a)"/>
+<rect class="dg-layer" x="337" y="194" width="96" height="46" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-label" x="385.0" y="221.0" text-anchor="middle">u · v</text>
+<text class="dg-tiny" x="385" y="254" text-anchor="middle">puntaje del par</text>
+<text class="dg-tiny" x="20" y="288" text-anchor="start">Sin ninguna feature que mezcle a la persona con el ítem: esa es la condición para precalcular un lado.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.4.</b> Las dos torres. Una factorización de <a href="m44-modelos-clasicos.html#factorizacion">M44</a> es el caso en que cada torre solo recibe el id; agregar el texto y la categoría deja que un ítem recién publicado tenga vector. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>La separación es la idea entera. Como ninguna feature mezcla a la persona con el ítem, los 100 millones de <i>v</i> se calculan antes, de noche y cuando se publica un ítem, y se cargan en un índice. En cada request solo corre la torre de usuario, una vez, unos 2 ms (un supuesto para un MLP chico en CPU), y el resto es buscar. El precio de la separación es que el modelo no puede usar cruces como "esta persona ya compró en este vendedor" o "este precio es alto para lo que esta persona suele gastar". Esos cruces son justo lo que hace bien el ranking de <a href="m46-ranking.html#que-predice">M46</a>, que mira de a un par.</p>
+
+<p>La factorización de matrices de <a href="m44-modelos-clasicos.html#factorizacion">M44</a> es un modelo de dos torres en el que cada torre solo recibe el id: el vector de la persona es una fila de U y el del ítem, una fila de V. Agregarle features de contenido a la torre de ítems es lo que paga la promesa de la ficha del <span data-term="arranque-frio">arranque en frío</span> de <a href="m44-modelos-clasicos.html#frio">M44</a>: un ítem recién publicado no tiene interacciones, pero tiene título, categoría y precio, y con eso ya tiene un vector.</p>
+
+<pre data-lang="python"><code>import torch
+import torch.nn.functional as F
+from torch import nn
+
+class Torre(nn.Module):
+    """Convierte las features de un lado (persona o ítem) en un vector de 128 números, de largo 1."""
+    def __init__(self, n_ids, n_features, d=128):
+        super().__init__()
+        self.ids = nn.Embedding(n_ids, 64)
+        self.mlp = nn.Sequential(nn.Linear(64 + n_features, 256), nn.ReLU(), nn.Linear(256, d))
+
+    def forward(self, ids, x):
+        h = torch.cat([self.ids(ids), x], dim=-1)
+        return F.<span class="no-autolink">normalize</span>(self.mlp(h), dim=-1)    # largo 1: el producto punto es el coseno
+
+torre_usuario = Torre(n_ids=50_000_000, n_features=40)
+torre_items = Torre(n_ids=100_000_000, n_features=300)</code></pre>
+
+<p>La última línea de <code>forward</code> retoma <a href="m44-modelos-clasicos.html#coseno">M44</a>: con los vectores de largo 1, el producto punto es el coseno, y por eso los índices de este módulo hablan de los dos casi como sinónimos. Si no se <span class="no-autolink">normaliza</span>, el largo del vector entra en el puntaje, y los ítems con vectores largos (suelen ser los populares) le ganan a todos. A veces se quiere un poco de eso, y la decisión se mide.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Una sola torre que mira a la persona y al ítem juntos es más precisa, porque puede cruzar todo con todo, y no se puede servir: habría que correrla 100 millones de veces por request. Dos torres separadas son menos precisas y se sirven con una búsqueda. Por eso se usan en la recuperación, donde importa no perder candidatos, y no en el ranking, donde importa el orden fino.</p>
+</aside>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>YouTube describió en 2016 su recomendador en dos etapas: una red de generación de candidatos que, a partir de la historia de la persona, saca unos cientos de videos de un corpus enorme, y una red de ranking que los ordena <span class="badge badge--doc">Documentado</span> (Covington, Adams y Sargin, RecSys 2016). En 2019 publicó un modelo de dos torres para recuperación con un corpus de decenas de millones de videos <span class="badge badge--doc">Documentado</span> (Yi et al., RecSys 2019), que es la base de la sección siguiente.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> dos torres separadas convierten a la persona y a cada ítem en vectores del mismo espacio; separarlas permite precalcular los 100 millones de ítems, y las features de contenido le dan vector a un ítem nuevo.</p>
+
+<h2 id="entrenar-torres"><span class="sec-num">45.3</span>Cómo aprende: negativos dentro del lote</h2>
+
+<p>Para entrenar hacen falta positivos y negativos, el problema de <a href="m43-datos-recomendacion.html#negativos">M43</a>. Los positivos son los pares (persona, ítem que tocó). Los negativos podrían ser ítems al azar del catálogo, pero hay un truco más barato: los <dfn data-term="in-batch-negatives">negativos dentro del lote</dfn>. Un lote de entrenamiento tiene, digamos, 4 096 pares; para cada persona, los 4 095 ítems de las otras personas del lote hacen de negativos. Ya están calculados: no hay que correr la torre de ítems ni una vez más.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f455t f455d">
+<title id="f455t">Negativos dentro del lote</title>
+<desc id="f455d">Una rejilla de 3 por 3. Las filas son tres personas del lote y las columnas los tres ítems que tocaron. Cada celda es el producto punto de la persona con el ítem. La diagonal es el par real, el positivo; el resto son negativos que salen gratis del mismo lote. Para la primera fila, los logits 2.0, 0.5 y -1.0 dan, con softmax, probabilidades 0.786, 0.175 y 0.039, y una pérdida de 0.241.</desc>
+
+<text class="dg-tiny" x="190.0" y="58" text-anchor="middle">ítem de Ana</text>
+<text class="dg-tiny" x="270.0" y="58" text-anchor="middle">ítem de Beto</text>
+<text class="dg-tiny" x="350.0" y="58" text-anchor="middle">ítem de Caro</text>
+<text class="dg-small" x="138" y="102.0" text-anchor="end">Ana</text>
+<rect class="dg-ok" x="150" y="70.0" width="74" height="44.0" rx="6"/>
+<text class="dg-small dg-mono" x="187.0" y="100.0" text-anchor="middle">2.0</text>
+<rect class="dg-box" x="230" y="70.0" width="74" height="44.0" rx="6"/>
+<text class="dg-small dg-mono" x="267.0" y="100.0" text-anchor="middle">0.5</text>
+<rect class="dg-box" x="310" y="70.0" width="74" height="44.0" rx="6"/>
+<text class="dg-small dg-mono" x="347.0" y="100.0" text-anchor="middle">-1.0</text>
+<text class="dg-small" x="138" y="152.0" text-anchor="end">Beto</text>
+<rect class="dg-box" x="150" y="120.0" width="74" height="44.0" rx="6"/>
+<text class="dg-small dg-mono" x="187.0" y="150.0" text-anchor="middle">0.3</text>
+<rect class="dg-ok" x="230" y="120.0" width="74" height="44.0" rx="6"/>
+<text class="dg-small dg-mono" x="267.0" y="150.0" text-anchor="middle">1.6</text>
+<rect class="dg-box" x="310" y="120.0" width="74" height="44.0" rx="6"/>
+<text class="dg-small dg-mono" x="347.0" y="150.0" text-anchor="middle">0.1</text>
+<text class="dg-small" x="138" y="202.0" text-anchor="end">Caro</text>
+<rect class="dg-box" x="150" y="170.0" width="74" height="44.0" rx="6"/>
+<text class="dg-small dg-mono" x="187.0" y="200.0" text-anchor="middle">-0.4</text>
+<rect class="dg-box" x="230" y="170.0" width="74" height="44.0" rx="6"/>
+<text class="dg-small dg-mono" x="267.0" y="200.0" text-anchor="middle">0.2</text>
+<rect class="dg-ok" x="310" y="170.0" width="74" height="44.0" rx="6"/>
+<text class="dg-small dg-mono" x="347.0" y="200.0" text-anchor="middle">1.1</text>
+<text class="dg-tiny" x="150" y="238.0" text-anchor="start">diagonal: positivo · el resto: negativos del mismo lote</text>
+<text class="dg-group" x="430" y="70" text-anchor="start">Fila de Ana, con softmax</text>
+<text class="dg-tiny dg-mono" x="430" y="96" text-anchor="start">logits</text>
+<text class="dg-tiny dg-mono" x="560" y="96" text-anchor="end">2.0</text>
+<text class="dg-tiny dg-mono" x="626" y="96" text-anchor="end">0.5</text>
+<text class="dg-tiny dg-mono" x="692" y="96" text-anchor="end">-1.0</text>
+<text class="dg-tiny dg-mono" x="430" y="124" text-anchor="start">e^x</text>
+<text class="dg-tiny dg-mono" x="560" y="124" text-anchor="end">7.389</text>
+<text class="dg-tiny dg-mono" x="626" y="124" text-anchor="end">1.649</text>
+<text class="dg-tiny dg-mono" x="692" y="124" text-anchor="end">0.368</text>
+<text class="dg-tiny dg-mono" x="430" y="152" text-anchor="start">/ 9.406</text>
+<text class="dg-tiny dg-mono" x="560" y="152" text-anchor="end">0.786</text>
+<text class="dg-tiny dg-mono" x="626" y="152" text-anchor="end">0.175</text>
+<text class="dg-tiny dg-mono" x="692" y="152" text-anchor="end">0.039</text>
+<rect class="dg-box dg-box--em" x="430" y="184" width="320" height="40" rx="8"/>
+<text class="dg-small dg-mono" x="442" y="209" text-anchor="start">pérdida = −ln 0.786 = 0.241</text>
+<text class="dg-tiny" x="430" y="254" text-anchor="start">Con un lote de 4 096 pares, cada positivo tiene 4 095</text>
+<text class="dg-tiny" x="430" y="270" text-anchor="start">negativos, y la rejilla entera es una sola multiplicación</text>
+<text class="dg-tiny" x="430" y="286" text-anchor="start">de matrices de 4 096 × 4 096.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.5.</b> Negativos dentro del lote. Los ítems que tocaron las otras personas del lote hacen de negativos; la pérdida empuja hacia arriba la diagonal y hacia abajo el resto de la fila.</figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: softmax sobre el lote</p>
+  <p>Para la fila de Ana, los productos punto con los tres ítems del lote son 2.0 (el suyo), 0.5 y −1.0. El <span data-term="softmax">softmax</span> los convierte en probabilidades: e<sup>2.0</sup> = 7.389, e<sup>0.5</sup> = 1.649 y e<sup>−1.0</sup> = 0.368, que suman 9.406. Dividiendo, 0.786, 0.175 y 0.039. La pérdida de la fila es −ln 0.786 = 0.241: chica, porque el modelo ya pone al positivo arriba. Si el producto punto del positivo bajara a 0.5, la pérdida subiría. Entrenar es bajar el promedio de esas pérdidas sobre todas las filas, con el descenso por gradiente de <a href="m44-modelos-clasicos.html#factorizacion-perdida">M44</a>. En código, la rejilla entera es una multiplicación de matrices y una entropía cruzada.</p>
+</aside>
+
+<pre data-lang="python"><code>def perdida_lote(u, v, log_q, temperatura=0.05):
+    """u, v: (B, 128). La fila i de v es el ítem que tocó la persona i.
+    log_q: (B,) logaritmo de la frecuencia con que cada ítem aparece en los lotes."""
+    logits = u @ v.T / temperatura - log_q     # (B, B), menos el log de la frecuencia
+    etiquetas = torch.arange(u.shape[0])       # positivo de la fila i: columna i
+    return F.cross_entropy(logits, etiquetas)</code></pre>
+
+<h3 id="entrenar-correccion">La corrección por frecuencia</h3>
+
+<p>Los negativos del lote tienen un sesgo. Un ítem aparece en un lote cuando alguien lo tocó, así que los populares aparecen muchísimo, y como negativos de todos los demás. El modelo aprende a castigarlos más de la cuenta, aunque sean buenas recomendaciones. Es el <a href="m43-datos-recomendacion.html#sesgos">sesgo de popularidad</a> de M43, al revés.</p>
+
+<p>La corrección de Yi et al. resta del logit de cada ítem el logaritmo de la probabilidad de que aparezca en un lote, que es la línea <code>- log_q</code> del código <span class="badge badge--doc">Documentado</span>. Un ítem popular, con probabilidad 0.02, tiene ln 0.02 = −3.9; uno raro, con 0.0001, tiene ln 0.0001 = −9.2. Restar suma 3.9 al popular y 9.2 al raro: el raro sube 5.3 más, y el popular, que ya aparecía de más, pesa menos como negativo. La frecuencia se estima en streaming mientras se entrena, contando cada cuánto aparece cada ítem en los lotes.</p>
+
+<h3 id="entrenar-dificiles">Negativos difíciles</h3>
+
+<p>Un negativo al azar es fácil: un taladro para alguien que busca zapatillas. El modelo lo separa enseguida y deja de aprender. Un negativo difícil es uno que se parece al positivo y no es: otra zapatilla de trail, de la talla equivocada. Se pueden buscar con el mismo índice de este módulo (los vecinos que el modelo actual pone arriba y la persona no tocó), y se mezclan con los del lote.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>La intuición dice que lo mostrado y no tocado es el mejor negativo, y para la recuperación es una trampa. Facebook contó que, en su búsqueda de personas, entrenar con impresiones sin clic como negativos dio una caída absoluta de 55&#8239;% en el recall respecto de usar negativos al azar <span class="badge badge--doc">Documentado</span> (Huang et al., KDD 2020). La razón es que lo mostrado ya pasó por el ranking: son ítems casi buenos. La recuperación tiene que aprender a descartar el catálogo entero, y para eso necesita ver también lo que nunca se habría mostrado. Los negativos difíciles se agregan en una proporción chica, no se usan solos.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> las torres aprenden con un softmax en el que los ítems de las otras personas del lote son los negativos, con una corrección que resta el log de la frecuencia de cada ítem; los negativos difíciles ayudan en dosis chicas.</p>
+
+<h2 id="fuentes"><span class="sec-num">45.4</span>Varias fuentes de candidatos</h2>
+
+<p>Las dos torres son una fuente de candidatos, no la recuperación entera. En Mercado Barrio corren seis fuentes en paralelo, cada una buena en algo distinto: las dos torres para el gusto general, el ítem a ítem de <a href="m44-modelos-clasicos.html#item-item">M44</a> para los complementos de lo último que miraste, el grafo de M48 para lo que compran tus contactos, lo popular por segmento de <a href="m44-modelos-clasicos.html#popularidad">M44</a> para la persona nueva, lo de los vendedores que sigues y "volver a ver" para lo que dejaste en el carrito.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 340" role="img" aria-labelledby="f456t f456d">
+<title id="f456t">Varias fuentes de candidatos en paralelo</title>
+<desc id="f456d">Seis fuentes salen de la request en abanico, cada una con su cuota: dos torres 4 000, ítem a ítem 2 000, grafo 1 500, popular 1 000, seguidos 1 000 y volver a ver 500. Corren en paralelo con un deadline de 20 ms y se juntan en una mezcla que quita repetidos y deja hasta 10 000 candidatos. Una fuente que no llega a tiempo se omite.</desc>
+<defs><marker id="f456a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="140" width="120" height="56" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="80.0" y="164.0" text-anchor="middle">Request</text>
+<text class="dg-tiny" x="80.0" y="180.0" text-anchor="middle">deadline 20 ms</text>
+<path class="dg-edge" d="M142 168 C 190 168, 190 42, 236 42" marker-end="url(#f456a)"/>
+<rect class="dg-layer" x="240" y="22" width="170" height="40" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="325.0" y="46.0" text-anchor="middle">Dos torres</text>
+<text class="dg-tiny dg-mono" x="424" y="47" text-anchor="start">cuota 4 000</text>
+<path class="dg-edge" d="M512 42 C 546 42, 546 168, 576 168" marker-end="url(#f456a)"/>
+<path class="dg-edge" d="M142 168 C 190 168, 190 92, 236 92" marker-end="url(#f456a)"/>
+<rect class="dg-layer" x="240" y="72" width="170" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="325.0" y="96.0" text-anchor="middle">Ítem a ítem</text>
+<text class="dg-tiny dg-mono" x="424" y="97" text-anchor="start">cuota 2 000</text>
+<path class="dg-edge" d="M512 92 C 546 92, 546 168, 576 168" marker-end="url(#f456a)"/>
+<path class="dg-edge" d="M142 168 C 190 168, 190 142, 236 142" marker-end="url(#f456a)"/>
+<rect class="dg-layer" x="240" y="122" width="170" height="40" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="325.0" y="146.0" text-anchor="middle">Grafo (M48)</text>
+<text class="dg-tiny dg-mono" x="424" y="147" text-anchor="start">cuota 1 500</text>
+<path class="dg-edge" d="M512 142 C 546 142, 546 168, 576 168" marker-end="url(#f456a)"/>
+<path class="dg-edge" d="M142 168 C 190 168, 190 192, 236 192" marker-end="url(#f456a)"/>
+<rect class="dg-layer" x="240" y="172" width="170" height="40" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="325.0" y="196.0" text-anchor="middle">Popular</text>
+<text class="dg-tiny dg-mono" x="424" y="197" text-anchor="start">cuota 1 000</text>
+<path class="dg-edge" d="M512 192 C 546 192, 546 168, 576 168" marker-end="url(#f456a)"/>
+<path class="dg-edge" d="M142 168 C 190 168, 190 242, 236 242" marker-end="url(#f456a)"/>
+<rect class="dg-layer" x="240" y="222" width="170" height="40" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="325.0" y="246.0" text-anchor="middle">Seguidos</text>
+<text class="dg-tiny dg-mono" x="424" y="247" text-anchor="start">cuota 1 000</text>
+<path class="dg-edge" d="M512 242 C 546 242, 546 168, 576 168" marker-end="url(#f456a)"/>
+<path class="dg-edge" d="M142 168 C 190 168, 190 292, 236 292" marker-end="url(#f456a)"/>
+<rect class="dg-layer" x="240" y="272" width="170" height="40" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="325.0" y="296.0" text-anchor="middle">Volver a ver</text>
+<text class="dg-tiny dg-mono" x="424" y="297" text-anchor="start">cuota 500</text>
+<path class="dg-edge" d="M512 292 C 546 292, 546 168, 576 168" marker-end="url(#f456a)"/>
+<rect class="dg-box dg-box--em" x="580" y="130" width="170" height="76" rx="8"/>
+<text class="dg-label" x="665.0" y="156.0" text-anchor="middle">Mezcla</text>
+<text class="dg-tiny" x="665.0" y="172.0" text-anchor="middle">quita repetidos</text>
+<text class="dg-tiny" x="665.0" y="188.0" text-anchor="middle">hasta 10 000</text>
+<text class="dg-tiny" x="20" y="326" text-anchor="start">Cuotas de Mercado Barrio, un supuesto de diseño: suman 10 000, y después de quitar repetidos suelen quedar menos.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.6.</b> Las fuentes en abanico. Cada una es buena en algo distinto, y la cuota evita que la más fuerte se coma la lista. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>Tres reglas hacen que el abanico funcione:</p>
+
+<ol class="steps">
+  <li><span class="step-title">Cuotas</span>Cada fuente tiene un máximo de lugares en los 10 000. Sin cuotas, la fuente con más candidatos llena la lista y las otras no aparecen. Las cuotas son una decisión de producto y se ajustan con experimentos (M49).</li>
+  <li><span class="step-title">Deadline</span>Todas corren en paralelo con el mismo plazo, 20 ms de los 25. La que no llega se omite y la request sigue con las demás: es la degradación de <a href="m08-resiliencia.html">M08</a>. Con popular por segmento siempre disponible, la lista nunca queda vacía.</li>
+  <li><span class="step-title">Origen como feature</span>La mezcla quita los repetidos y anota de qué fuentes vino cada candidato y en qué posición. El ranking usa esa anotación: un ítem que traen tres fuentes suele ser mejor que uno que trae una.</li>
+</ol>
+
+<pre data-lang="python"><code>import asyncio
+
+CUOTAS = {"dos_torres": 4000, "item_item": 2000, "grafo": 1500,
+          "popular": 1000, "seguidos": 1000, "volver_a_ver": 500}
+
+async def recuperar(persona, fuentes, deadline_s=0.020):
+    tareas = {nombre: asyncio.create_task(f(persona, CUOTAS[nombre])) for nombre, f in fuentes.items()}
+    hechas, tarde = await asyncio.wait(tareas.values(), timeout=deadline_s)
+    for t in tarde:
+        t.cancel()                                   # la fuente lenta se omite, no se espera
+    candidatos = {}
+    for nombre, t in tareas.items():
+        if t in hechas and t.exception() is None:
+            for pos, item in enumerate(t.result()):
+                candidatos.setdefault(item, []).append((nombre, pos))   # origen y posición, para el ranking
+    return candidatos</code></pre>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Python de por medio</p>
+  <p><code>asyncio.wait</code> con <code>timeout</code> devuelve dos conjuntos: las tareas que terminaron y las que no. No lanza error al vencer el plazo; las que siguen corriendo hay que cancelarlas a mano, como en el bucle. <code>setdefault</code> crea la lista la primera vez que aparece un ítem y la devuelve las siguientes, así que un ítem que traen dos fuentes queda una vez, con los dos orígenes.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> la recuperación es un abanico de fuentes en paralelo, con cuotas que reparten los lugares, un deadline común que omite a la lenta y el origen de cada candidato anotado para el ranking.</p>
+
+<h2 id="ann"><span class="sec-num">45.5</span>Vecinos aproximados</h2>
+
+<p>Con los 100 millones de vectores de ítems calculados, falta la búsqueda. La <dfn data-term="ann">búsqueda de vecinos aproximados</dfn> (ANN, <i>approximate nearest neighbor</i>) organiza los vectores en una estructura que permite encontrar los más cercanos a una consulta mirando una fracción chica de ellos. A cambio, a veces devuelve uno parecido en lugar del mejor.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es buscar un libro en una biblioteca. La búsqueda exacta es recorrer todos los estantes. La aproximada es ir directo a la sección de novela policial y mirar ahí: casi siempre está, y si justo el libro que buscabas estaba mal catalogado en otra sección, no lo encuentras.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 350" role="img" aria-labelledby="f458t f458d">
+<title id="f458t">Búsqueda de vecinos aproximados</title>
+<desc id="f458d">Ficha de Búsqueda de vecinos aproximados. Qué entra: Un vector de consulta y millones de vectores ya cargados en un índice, con una medida de distancia o un producto punto. Qué hace: Mira una parte chica de los vectores, elegida por la estructura del índice, y devuelve los k más cercanos que encontró. Qué sale: Los k ítems con mejor puntaje entre los que miró: casi siempre los verdaderos, a veces uno parecido en lugar del mejor. Ejemplo: consulta: u de la persona 4471 (128 números), k = 4 000 exacta: 100 000 000 productos punto, unos 256 ms solo leyendo HNSW: unos miles de productos punto, pocos ms; recall@4000 = 0.95 (medido) Qué falla sin él: Comparar contra todo el catálogo: 51.2 GB leídos por request, diez veces el presupuesto de la recuperación en una sola máquina. Dónde vive: En el servicio de recuperación, cargado en memoria y repartido en shards (45.10); se reconstruye de noche (45.9).</desc>
+<defs><marker id="f458a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="118" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Un vector de consulta y</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">millones de vectores ya</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">cargados en un índice, con una</text>
+<text class="dg-tiny" x="32" y="104" text-anchor="start">medida de distancia o un</text>
+<text class="dg-tiny" x="32" y="120" text-anchor="start">producto punto.</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="118" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Mira una parte chica de los</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">vectores, elegida por la</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">estructura del índice, y</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">devuelve los k más cercanos</text>
+<text class="dg-tiny" x="291" y="120" text-anchor="start">que encontró.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="118" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Los k ítems con mejor puntaje</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">entre los que miró: casi</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">siempre los verdaderos, a</text>
+<text class="dg-tiny" x="550" y="104" text-anchor="start">veces uno parecido en lugar</text>
+<text class="dg-tiny" x="550" y="120" text-anchor="start">del mejor.</text>
+<path class="dg-edge" d="M234 75.0 H275" marker-end="url(#f458a)"/>
+<path class="dg-edge" d="M493 75.0 H534" marker-end="url(#f458a)"/>
+<rect class="dg-box" x="20" y="148" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="168" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="188" text-anchor="start" style="white-space:pre">consulta: u de la persona 4471 (128 números), k = 4 000</text>
+<text class="dg-tiny dg-mono" x="32" y="204" text-anchor="start" style="white-space:pre">exacta: 100 000 000 productos punto, unos 256 ms solo leyendo</text>
+<text class="dg-tiny dg-mono" x="32" y="220" text-anchor="start" style="white-space:pre">HNSW: unos miles de productos punto, pocos ms; recall@4000 = 0.95 (medido)</text>
+<rect class="dg-warnbox" x="20" y="248" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="268" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="288" text-anchor="start">Comparar contra todo el catálogo: 51.2 GB leídos por</text>
+<text class="dg-tiny" x="32" y="304" text-anchor="start">request, diez veces el presupuesto de la recuperación</text>
+<text class="dg-tiny" x="32" y="320" text-anchor="start">en una sola máquina.</text>
+<rect class="dg-box" x="393" y="248" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="268" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="288" text-anchor="start">En el servicio de recuperación, cargado en memoria y</text>
+<text class="dg-tiny" x="405" y="304" text-anchor="start">repartido en shards (45.10); se reconstruye de noche</text>
+<text class="dg-tiny" x="405" y="320" text-anchor="start">(45.9).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.8.</b> Ficha de la búsqueda de vecinos aproximados. El 0.95 del ejemplo es el tipo de número que se fija como objetivo y se mide, no un dato.</figcaption>
+</figure>
+
+<p>La calidad de un índice se mide contra la búsqueda exacta. El recall de un índice, para una consulta, es qué fracción de los <i>k</i> vecinos verdaderos devolvió: si de los 100 más cercanos de verdad trae 95, su recall@100 es 0.95. Se mide con unos miles de consultas reales, comparando con una búsqueda exacta que se corre aparte, sin apuro. Cada índice tiene perillas que cambian recall por latencia, y la relación tiene siempre la misma forma.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f457t f457d">
+<title id="f457t">Recall contra latencia de un índice aproximado</title>
+<desc id="f457d">Un dibujo, no una medición. El eje horizontal es la latencia por consulta y el vertical el recall a 100 respecto de la búsqueda exacta. La curva sube rápido y se aplana cerca de 1: los primeros puntos de recall son baratos y los últimos carísimos. Tres puntos marcados: efSearch bajo, medio y alto. La búsqueda exacta está a la derecha, fuera del presupuesto.</desc>
+
+<path d="M80 30 V230 H680" style="fill: none; stroke: var(--label-3)"/>
+<polyline points="80.0,230.0 85.6,217.2 91.2,205.2 96.8,194.0 102.4,183.6 108.0,173.9 113.6,164.8 119.2,156.4 124.8,148.5 130.4,141.2 136.0,134.4 141.6,128.0 147.2,122.0 152.8,116.5 158.4,111.3 164.0,106.5 169.6,102.0 175.2,97.8 180.8,93.9 186.4,90.3 192.0,86.9 197.6,83.7 203.2,80.7 208.8,78.0 214.4,75.4 220.0,73.0 225.6,70.8 231.2,68.7 236.8,66.8 242.4,65.0 248.0,63.3 253.6,61.7 259.2,60.2 264.8,58.9 270.4,57.6 276.0,56.4 281.6,55.3 287.2,54.3 292.8,53.3 298.4,52.4 304.0,51.6 309.6,50.8 315.2,50.0 320.8,49.4 326.4,48.7 332.0,48.1 337.6,47.6 343.2,47.1 348.8,46.6 354.4,46.2 360.0,45.7 365.6,45.3 371.2,45.0 376.8,44.7 382.4,44.3 388.0,44.0 393.6,43.8 399.2,43.5 404.8,43.3 410.4,43.1 416.0,42.8 421.6,42.7 427.2,42.5 432.8,42.3 438.4,42.2 444.0,42.0 449.6,41.9 455.2,41.7 460.8,41.6 466.4,41.5 472.0,41.4 477.6,41.3 483.2,41.2 488.8,41.1 494.4,41.1 500.0,41.0 505.6,40.9 511.2,40.9 516.8,40.8 522.4,40.8 528.0,40.7 533.6,40.7 539.2,40.6 544.8,40.6 550.4,40.5 556.0,40.5 561.6,40.5 567.2,40.4 572.8,40.4 578.4,40.4 584.0,40.3" fill="none" stroke="var(--l-service)" stroke-width="3"/>
+<circle cx="124.8" cy="148.5" r="6" fill="var(--l-gpu)"/>
+<text class="dg-tiny" x="134.8" y="166.5" text-anchor="start">efSearch bajo</text>
+<circle cx="220.0" cy="73.0" r="6" fill="var(--l-gpu)"/>
+<text class="dg-tiny" x="230.0" y="91.0" text-anchor="start">medio</text>
+<circle cx="416.0" cy="42.8" r="6" fill="var(--l-gpu)"/>
+<text class="dg-tiny" x="426.0" y="60.8" text-anchor="start">alto</text>
+<path class="dg-feedback" d="M276.0 30 V230"/>
+<text class="dg-tiny" x="282.0" y="214" text-anchor="start">presupuesto de la recuperación</text>
+<rect class="dg-bad" x="606.0" y="34.0" width="12" height="12" rx="2"/>
+<text class="dg-tiny" x="612.0" y="66.0" text-anchor="middle">exacta</text>
+<text class="dg-tiny" x="70" y="234.0" text-anchor="end">0.50</text>
+<text class="dg-tiny" x="70" y="139.0" text-anchor="end">0.75</text>
+<text class="dg-tiny" x="70" y="44.0" text-anchor="end">1.00</text>
+<text class="dg-tiny" x="380" y="262" text-anchor="middle">latencia por consulta →</text>
+<text class="dg-tiny" x="24" y="24" text-anchor="start">recall@100</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.7.</b> La forma de la curva de recall contra latencia (un dibujo; la de tu índice se mide con tus datos). Pasar de 0.95 a 0.99 cuesta mucho más que pasar de 0.80 a 0.95.</figcaption>
+</figure>
+
+<p>La forma importa para decidir. Los primeros puntos de recall son baratos y los últimos, carísimos. Y en recomendación el último punto vale poco: perder un candidato de 4 000 casi nunca cambia los 10 que se muestran, porque el ranking elige entre muchos parecidos. Un buscador de documentos legales puede necesitar 0.99; un recomendador suele andar bien con 0.9, y la cifra se decide con un experimento, no a ojo. Las secciones siguientes son dos formas de construir el índice: un grafo (HNSW) y particiones con compresión (IVF y PQ).</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> un índice aproximado mira una fracción del catálogo y pierde algunos vecinos; su recall se mide contra la búsqueda exacta, y los últimos puntos de recall cuestan mucha latencia.</p>
+
+<h2 id="hnsw"><span class="sec-num">45.6</span>HNSW por dentro</h2>
+
+<p><dfn data-term="hnsw">HNSW</dfn> (<i>Hierarchical Navigable Small World</i>) es el índice que nombró la base vectorial de <a href="m20-producto-chatgpt.html#archivos">M20</a>. Es un grafo: cada vector es un nodo unido a algunos de sus vecinos. Buscar es caminar: desde un nodo de entrada, se mira a los vecinos y se salta al que está más cerca de la consulta, hasta que ninguno mejora. Es una búsqueda golosa.</p>
+
+<p>En un grafo de un solo piso, ese camino es largo: con aristas cortas, cruzar el espacio son muchos saltos. HNSW agrega pisos. Todos los nodos están en el piso 0; una fracción que baja de forma exponencial está también en los pisos de arriba, donde hay pocos nodos y las aristas son largas. La búsqueda entra por arriba, cruza el espacio en pocos saltos, baja de piso por el mismo nodo y termina abajo con pasos cortos. El trabajo crece con el logaritmo del tamaño, no con el tamaño <span class="badge badge--doc">Documentado</span> (Malkov y Yashunin, 2016).</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es viajar de un barrio de Santiago a uno de Lima. Tomas un avión (pocas ciudades, saltos largos), después un bus dentro de Lima (más paradas, saltos medianos) y al final caminas unas cuadras. Nadie hace el viaje entero caminando, ni toma un avión para la última cuadra.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 380" role="img" aria-labelledby="f459t f459d">
+<title id="f459t">Los pisos de un HNSW</title>
+<desc id="f459d">Tres planos apilados en perspectiva. El piso 2 tiene cuatro puntos y aristas largas; el piso 1, unos quince con aristas medianas; el piso 0, todos los puntos con aristas cortas. La búsqueda entra por arriba, da dos saltos largos, baja al piso 1 por el mismo punto, da saltos medianos, baja al piso 0 y termina con pasos cortos cerca de la consulta.</desc>
+<defs><marker id="f459a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<path d="M140.0 30.0 L560.0 30.0 L640.0 110.0 L220.0 110.0 Z" fill="var(--bg-2)" stroke="var(--separator-strong)"/>
+<text class="dg-group" x="24" y="80" text-anchor="start">Piso 2</text>
+<text class="dg-tiny" x="24" y="96" text-anchor="start">uno de cada 16</text>
+<path d="M461.0 89.3 L524.5 103.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M461.0 89.3 L549.4 105.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M549.4 105.4 L524.5 103.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M549.4 105.4 L461.0 89.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M524.5 103.8 L549.4 105.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M524.5 103.8 L461.0 89.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M189.4 67.2 L461.0 89.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M189.4 67.2 L524.5 103.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<circle cx="461.0" cy="89.3" r="7" fill="var(--label-2)"/>
+<circle cx="549.4" cy="105.4" r="7" fill="var(--label-2)"/>
+<circle cx="524.5" cy="103.8" r="7" fill="var(--label-2)"/>
+<circle cx="189.4" cy="67.2" r="7" fill="var(--label-2)"/>
+<path d="M167.0 42.0 H179.0 M173.0 36.0 V48.0" stroke="var(--l-cache)" stroke-width="2.5"/>
+<path d="M140.0 146.0 L560.0 146.0 L640.0 226.0 L220.0 226.0 Z" fill="var(--bg-2)" stroke="var(--separator-strong)"/>
+<text class="dg-group" x="24" y="196" text-anchor="start">Piso 1</text>
+<text class="dg-tiny" x="24" y="212" text-anchor="start">uno de cada 4</text>
+<path d="M461.0 205.3 L414.3 191.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M461.0 205.3 L524.5 219.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M549.4 221.4 L524.5 219.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M549.4 221.4 L461.0 205.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M524.5 219.8 L549.4 221.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M524.5 219.8 L461.0 205.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M189.4 183.2 L162.8 163.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M189.4 183.2 L210.5 215.7" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M588.1 197.9 L549.4 221.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M588.1 197.9 L461.0 205.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M527.4 155.1 L485.9 157.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M527.4 155.1 L474.4 158.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M356.7 165.7 L409.5 156.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M356.7 165.7 L474.4 158.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M414.3 191.9 L461.0 205.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M414.3 191.9 L356.7 165.7" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M162.8 163.3 L189.4 183.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M162.8 163.3 L356.7 165.7" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M330.7 219.3 L210.5 215.7" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M330.7 219.3 L461.0 205.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M474.4 158.8 L485.9 157.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M474.4 158.8 L527.4 155.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M485.9 157.1 L474.4 158.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M485.9 157.1 L527.4 155.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M409.5 156.1 L474.4 158.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M409.5 156.1 L485.9 157.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M210.5 215.7 L330.7 219.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M210.5 215.7 L189.4 183.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<circle cx="461.0" cy="205.3" r="7" fill="var(--label-2)"/>
+<circle cx="549.4" cy="221.4" r="7" fill="var(--label-2)"/>
+<circle cx="524.5" cy="219.8" r="7" fill="var(--label-2)"/>
+<circle cx="189.4" cy="183.2" r="7" fill="var(--label-2)"/>
+<circle cx="588.1" cy="197.9" r="5" fill="var(--label-2)"/>
+<circle cx="527.4" cy="155.1" r="5" fill="var(--label-2)"/>
+<circle cx="356.7" cy="165.7" r="5" fill="var(--label-2)"/>
+<circle cx="414.3" cy="191.9" r="5" fill="var(--label-2)"/>
+<circle cx="162.8" cy="163.3" r="5" fill="var(--label-2)"/>
+<circle cx="330.7" cy="219.3" r="5" fill="var(--label-2)"/>
+<circle cx="474.4" cy="158.8" r="5" fill="var(--label-2)"/>
+<circle cx="485.9" cy="157.1" r="5" fill="var(--label-2)"/>
+<circle cx="409.5" cy="156.1" r="5" fill="var(--label-2)"/>
+<circle cx="210.5" cy="215.7" r="5" fill="var(--label-2)"/>
+<path d="M167.0 158.0 H179.0 M173.0 152.0 V164.0" stroke="var(--l-cache)" stroke-width="2.5"/>
+<path d="M140.0 262.0 L560.0 262.0 L640.0 342.0 L220.0 342.0 Z" fill="var(--bg-2)" stroke="var(--separator-strong)"/>
+<text class="dg-group" x="24" y="312" text-anchor="start">Piso 0</text>
+<text class="dg-tiny" x="24" y="328" text-anchor="start">todos los puntos</text>
+<path d="M461.0 321.3 L422.4 324.0" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M461.0 321.3 L420.7 316.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M461.0 321.3 L522.5 329.6" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M549.4 337.4 L524.5 335.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M549.4 337.4 L507.4 339.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M549.4 337.4 L522.5 329.6" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M524.5 335.8 L549.4 337.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M524.5 335.8 L507.4 339.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M524.5 335.8 L522.5 329.6" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M189.4 299.2 L195.7 316.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M189.4 299.2 L162.8 279.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M189.4 299.2 L311.1 300.5" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M588.1 313.9 L522.2 300.5" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M588.1 313.9 L622.4 331.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M588.1 313.9 L522.5 329.6" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M527.4 271.1 L485.9 273.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M527.4 271.1 L551.4 263.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M527.4 271.1 L474.4 274.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M356.7 281.7 L305.0 275.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M356.7 281.7 L306.7 286.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M356.7 281.7 L313.0 290.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M414.3 307.9 L420.7 316.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M414.3 307.9 L340.1 308.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M414.3 307.9 L461.0 321.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M162.8 279.3 L147.6 265.7" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M162.8 279.3 L245.2 279.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M162.8 279.3 L206.4 267.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M330.7 335.3 L338.4 338.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M330.7 335.3 L301.3 337.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M330.7 335.3 L292.4 338.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M474.4 274.8 L485.9 273.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M474.4 274.8 L440.5 266.6" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M474.4 274.8 L527.4 271.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M485.9 273.1 L474.4 274.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M485.9 273.1 L527.4 271.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M485.9 273.1 L440.5 266.6" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M409.5 272.1 L440.5 266.6" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M409.5 272.1 L474.4 274.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M409.5 272.1 L485.9 273.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M210.5 331.7 L210.6 325.0" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M210.5 331.7 L245.3 321.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M210.5 331.7 L195.7 316.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M245.2 279.2 L306.7 286.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M245.2 279.2 L305.0 275.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M245.2 279.2 L206.4 267.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M622.4 331.8 L605.8 337.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M622.4 331.8 L549.4 337.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M622.4 331.8 L588.1 313.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M338.4 338.9 L330.7 335.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M338.4 338.9 L301.3 337.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M338.4 338.9 L292.4 338.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M420.7 316.2 L422.4 324.0" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M420.7 316.2 L414.3 307.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M420.7 316.2 L461.0 321.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M301.3 337.3 L292.4 338.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M301.3 337.3 L330.7 335.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M301.3 337.3 L338.4 338.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M507.4 339.3 L524.5 335.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M507.4 339.3 L549.4 337.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M507.4 339.3 L522.5 329.6" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M539.3 285.9 L527.4 271.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M539.3 285.9 L485.9 273.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M539.3 285.9 L474.4 274.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M305.0 275.3 L356.7 281.7" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M305.0 275.3 L306.7 286.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M305.0 275.3 L245.2 279.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M206.4 267.2 L147.6 265.7" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M206.4 267.2 L245.2 279.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M206.4 267.2 L162.8 279.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M314.8 310.2 L340.1 308.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M314.8 310.2 L311.1 300.5" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M314.8 310.2 L283.0 322.5" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M195.7 316.2 L210.6 325.0" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M195.7 316.2 L245.3 321.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M195.7 316.2 L210.5 331.7" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M306.7 286.8 L313.0 290.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M306.7 286.8 L356.7 281.7" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M306.7 286.8 L305.0 275.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M522.2 300.5 L539.3 285.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M522.2 300.5 L588.1 313.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M522.2 300.5 L414.3 307.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M311.1 300.5 L340.1 308.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M311.1 300.5 L314.8 310.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M311.1 300.5 L313.0 290.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M440.5 266.6 L409.5 272.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M440.5 266.6 L474.4 274.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M440.5 266.6 L485.9 273.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M551.4 263.8 L527.4 271.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M551.4 263.8 L485.9 273.1" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M551.4 263.8 L474.4 274.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M522.5 329.6 L524.5 335.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M522.5 329.6 L549.4 337.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M522.5 329.6 L507.4 339.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M210.6 325.0 L210.5 331.7" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M210.6 325.0 L245.3 321.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M210.6 325.0 L195.7 316.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M340.1 308.3 L314.8 310.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M340.1 308.3 L311.1 300.5" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M340.1 308.3 L414.3 307.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M147.6 265.7 L206.4 267.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M147.6 265.7 L162.8 279.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M147.6 265.7 L245.2 279.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M292.4 338.4 L301.3 337.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M292.4 338.4 L330.7 335.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M292.4 338.4 L338.4 338.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M283.0 322.5 L245.3 321.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M283.0 322.5 L330.7 335.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M283.0 322.5 L210.6 325.0" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M605.8 337.4 L622.4 331.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M605.8 337.4 L549.4 337.4" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M605.8 337.4 L524.5 335.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M313.0 290.4 L306.7 286.8" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M313.0 290.4 L311.1 300.5" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M313.0 290.4 L356.7 281.7" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M422.4 324.0 L420.7 316.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M422.4 324.0 L461.0 321.3" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M422.4 324.0 L414.3 307.9" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M245.3 321.9 L283.0 322.5" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M245.3 321.9 L210.6 325.0" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<path d="M245.3 321.9 L195.7 316.2" stroke="var(--label-3)" stroke-opacity="0.5"/>
+<circle cx="461.0" cy="321.3" r="7" fill="var(--label-2)"/>
+<circle cx="549.4" cy="337.4" r="7" fill="var(--label-2)"/>
+<circle cx="524.5" cy="335.8" r="7" fill="var(--label-2)"/>
+<circle cx="189.4" cy="299.2" r="7" fill="var(--label-2)"/>
+<circle cx="588.1" cy="313.9" r="5" fill="var(--label-2)"/>
+<circle cx="527.4" cy="271.1" r="5" fill="var(--label-2)"/>
+<circle cx="356.7" cy="281.7" r="5" fill="var(--label-2)"/>
+<circle cx="414.3" cy="307.9" r="5" fill="var(--label-2)"/>
+<circle cx="162.8" cy="279.3" r="5" fill="var(--label-2)"/>
+<circle cx="330.7" cy="335.3" r="5" fill="var(--label-2)"/>
+<circle cx="474.4" cy="274.8" r="5" fill="var(--label-2)"/>
+<circle cx="485.9" cy="273.1" r="5" fill="var(--label-2)"/>
+<circle cx="409.5" cy="272.1" r="5" fill="var(--label-2)"/>
+<circle cx="210.5" cy="331.7" r="5" fill="var(--label-2)"/>
+<circle cx="245.2" cy="279.2" r="3" fill="var(--label-2)"/>
+<circle cx="622.4" cy="331.8" r="3" fill="var(--label-2)"/>
+<circle cx="338.4" cy="338.9" r="3" fill="var(--label-2)"/>
+<circle cx="420.7" cy="316.2" r="3" fill="var(--label-2)"/>
+<circle cx="301.3" cy="337.3" r="3" fill="var(--label-2)"/>
+<circle cx="507.4" cy="339.3" r="3" fill="var(--label-2)"/>
+<circle cx="539.3" cy="285.9" r="3" fill="var(--label-2)"/>
+<circle cx="305.0" cy="275.3" r="3" fill="var(--label-2)"/>
+<circle cx="206.4" cy="267.2" r="3" fill="var(--label-2)"/>
+<circle cx="314.8" cy="310.2" r="3" fill="var(--label-2)"/>
+<circle cx="195.7" cy="316.2" r="3" fill="var(--label-2)"/>
+<circle cx="306.7" cy="286.8" r="3" fill="var(--label-2)"/>
+<circle cx="522.2" cy="300.5" r="3" fill="var(--label-2)"/>
+<circle cx="311.1" cy="300.5" r="3" fill="var(--label-2)"/>
+<circle cx="440.5" cy="266.6" r="3" fill="var(--label-2)"/>
+<circle cx="551.4" cy="263.8" r="3" fill="var(--label-2)"/>
+<circle cx="522.5" cy="329.6" r="3" fill="var(--label-2)"/>
+<circle cx="210.6" cy="325.0" r="3" fill="var(--label-2)"/>
+<circle cx="340.1" cy="308.3" r="3" fill="var(--label-2)"/>
+<circle cx="147.6" cy="265.7" r="3" fill="var(--label-2)"/>
+<circle cx="292.4" cy="338.4" r="3" fill="var(--label-2)"/>
+<circle cx="283.0" cy="322.5" r="3" fill="var(--label-2)"/>
+<circle cx="605.8" cy="337.4" r="3" fill="var(--label-2)"/>
+<circle cx="313.0" cy="290.4" r="3" fill="var(--label-2)"/>
+<circle cx="422.4" cy="324.0" r="3" fill="var(--label-2)"/>
+<circle cx="245.3" cy="321.9" r="3" fill="var(--label-2)"/>
+<path d="M167.0 274.0 H179.0 M173.0 268.0 V280.0" stroke="var(--l-cache)" stroke-width="2.5"/>
+<path d="M549.4 105.4 L461.0 89.3" stroke="var(--l-gpu)" stroke-width="3"/>
+<path d="M461.0 89.3 L461.0 205.3" stroke="var(--l-gpu)" stroke-width="3" stroke-dasharray="5 4"/>
+<path d="M461.0 205.3 L414.3 191.9" stroke="var(--l-gpu)" stroke-width="3"/>
+<path d="M414.3 191.9 L356.7 165.7" stroke="var(--l-gpu)" stroke-width="3"/>
+<path d="M356.7 165.7 L356.7 281.7" stroke="var(--l-gpu)" stroke-width="3" stroke-dasharray="5 4"/>
+<path d="M356.7 281.7 L305.0 275.3" stroke="var(--l-gpu)" stroke-width="3"/>
+<path d="M305.0 275.3 L245.2 279.2" stroke="var(--l-gpu)" stroke-width="3"/>
+<path d="M245.2 279.2 L206.4 267.2" stroke="var(--l-gpu)" stroke-width="3"/>
+<path d="M206.4 267.2 L162.8 279.3" stroke="var(--l-gpu)" stroke-width="3"/>
+<text class="dg-tiny" x="660" y="60" text-anchor="start">entra por arriba:</text>
+<text class="dg-tiny" x="660" y="75" text-anchor="start">saltos largos</text>
+<text class="dg-tiny" x="660" y="300" text-anchor="start">termina abajo:</text>
+<text class="dg-tiny" x="660" y="315" text-anchor="start">pasos cortos</text>
+<text class="dg-tiny" x="660" y="180" text-anchor="start">baja por el</text>
+<text class="dg-tiny" x="660" y="195" text-anchor="start">mismo punto</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.9.</b> Los pisos de un HNSW. Arriba hay pocos puntos y aristas largas, como las autopistas; abajo están todos, con aristas cortas, como las calles. La línea gruesa es el camino de una búsqueda; la cortada es bajar de piso.</figcaption>
+</figure>
+
+<p>Prueba la búsqueda en un HNSW de juguete. Con M = 2 y efSearch = 1, la primera consulta engaña a la búsqueda golosa: se queda en un nodo del que ningún vecino está más cerca y devuelve el décimo más cercano. Sube efSearch o M y vuelve a buscar.</p>
+
+<div data-sim="hnsw"></div>
+
+<p>Tres perillas controlan el índice:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Perilla</th><th>Qué es</th><th>Si la subes</th><th>Cuándo se decide</th></tr></thead>
+    <tbody>
+      <tr><td><code>M</code></td><td>Cuántas aristas tiene cada nodo por piso (el doble en el piso 0)</td><td>Más recall, más memoria y construcción más lenta</td><td>Al construir; cambiarla es reconstruir</td></tr>
+      <tr><td><code>efConstruction</code></td><td>Cuántos candidatos mira al insertar cada nodo</td><td>Un grafo mejor y una construcción más lenta</td><td>Al construir</td></tr>
+      <tr><td><code>efSearch</code></td><td>Cuántos candidatos mantiene la búsqueda en el piso 0</td><td>Más recall y más latencia</td><td>En cada consulta: es la perilla de la curva de 45.5</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>La memoria es la debilidad. FAISS documenta (4<i>d</i> + 8<i>M</i>) bytes por vector para su HNSW: el vector entero en float32 más las aristas <span class="badge badge--doc">Documentado</span>. Con <i>d</i> = 128 y <i>M</i> = 32, 512 + 256 = 768 B por ítem, y 100 000 000 × 768 B = 76.8 GB, todo en RAM, porque el grafo se recorre saltando por la memoria y en disco cada salto sería una lectura aleatoria.</p>
+
+<pre data-lang="python"><code>import faiss
+import numpy as np
+
+d = 128
+xb = np.load("vectores_items.npy").astype("float32")      # (N, 128), ya de largo 1
+index = faiss.IndexHNSWFlat(d, 32, faiss.METRIC_INNER_PRODUCT)   # M = 32
+index.hnsw.efConstruction = 200
+index.add(xb)                                              # construir: horas para 100 millones
+
+index.hnsw.efSearch = 5000          # con k grande, efSearch va por encima de k
+puntajes, ids = index.search(u.reshape(1, -1), 4000)       # los 4 000 ítems con producto punto más alto</code></pre>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> HNSW es un grafo de pisos que se recorre de forma golosa desde arriba; M y efConstruction se fijan al construir, efSearch se elige en cada consulta, y el costo es la memoria: 76.8 GB para 100 millones de vectores de 128.</p>
+
+<h2 id="ivfpq"><span class="sec-num">45.7</span>IVF y cuantización por productos</h2>
+
+<p>La otra familia ataca los dos problemas por separado: mirar menos vectores y que cada uno ocupe menos.</p>
+
+<h3 id="ivf">IVF: mirar solo algunas celdas</h3>
+
+<p><dfn data-term="ivf">IVF</dfn> (<i>inverted file</i>) parte el espacio en celdas con k-means: se eligen <i>nlist</i> centroides y cada vector va a la lista del centroide más cercano. Para buscar, se compara la consulta con los centroides, se eligen los <i>nprobe</i> más cercanos y solo se miran los vectores de esas celdas.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es el código postal. Para encontrar a los vecinos de una casa no recorres el país: vas a su código postal y a los dos o tres de al lado. Si la casa está justo en el borde y su vecino más cercano cae en un código que no miraste, lo pierdes; por eso se mira más de uno.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 320" role="img" aria-labelledby="f45bt f45bd">
+<title id="f45bt">IVF: celdas y nprobe</title>
+<desc id="f45bd">A la izquierda, un plano partido en catorce celdas, cada una alrededor de un centroide. La consulta cae en una celda y se miran las tres celdas con el centroide más cercano (nprobe = 3), resaltadas; el resto del plano no se mira. A la derecha, las cuentas para Mercado Barrio: 262 144 celdas, nprobe 64, unos 24 414 vectores por consulta.</desc>
+
+<defs><clipPath id="f45bc"><rect x="20" y="20" width="360" height="270" rx="8"/></clipPath></defs>
+<rect class="dg-box" x="20" y="20" width="360" height="270" rx="8"/>
+<g clip-path="url(#f45bc)">
+<rect x="210" y="130" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="210" y="140" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="220" y="130" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="220" y="140" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="220" y="150" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="220" y="160" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="230" y="130" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="230" y="140" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="230" y="150" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="230" y="160" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="230" y="170" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="230" y="180" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="240" y="120" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="240" y="130" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="240" y="140" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="240" y="150" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="240" y="160" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="240" y="170" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="240" y="180" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="240" y="190" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="250" y="110" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="250" y="120" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="250" y="130" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="250" y="140" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="250" y="150" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="250" y="160" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="250" y="170" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="250" y="180" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="250" y="190" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="260" y="110" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="260" y="120" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="260" y="130" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="260" y="140" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="260" y="150" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="260" y="160" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="260" y="170" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="260" y="180" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="260" y="190" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="260" y="200" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="270" y="100" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="270" y="110" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="270" y="120" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="270" y="130" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="270" y="140" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="270" y="150" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="270" y="160" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="270" y="170" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="270" y="180" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="270" y="190" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="270" y="200" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="270" y="210" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="90" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="100" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="110" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="120" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="130" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="140" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="150" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="160" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="170" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="180" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="190" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="200" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="280" y="210" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="80" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="90" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="100" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="110" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="120" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="130" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="140" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="150" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="160" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="170" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="180" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="190" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="200" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="210" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="290" y="220" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="80" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="90" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="100" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="110" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="120" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="130" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="140" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="150" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="160" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="170" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="180" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="190" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="200" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="210" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="300" y="220" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="70" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="80" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="90" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="100" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="110" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="120" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="130" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="140" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="150" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="160" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="170" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="180" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="190" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="200" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="210" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="220" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="310" y="230" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="320" y="220" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="320" y="230" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="320" y="240" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="330" y="240" width="10" height="10" fill="color-mix(in srgb, var(--l-cache) 22%, transparent)"/>
+<rect x="20" y="36" width="2" height="2" fill="var(--label-3)"/>
+<rect x="20" y="40" width="2" height="2" fill="var(--label-3)"/>
+<rect x="20" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="20" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="20" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="24" y="40" width="2" height="2" fill="var(--label-3)"/>
+<rect x="24" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="24" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="24" y="136" width="2" height="2" fill="var(--label-3)"/>
+<rect x="24" y="140" width="2" height="2" fill="var(--label-3)"/>
+<rect x="28" y="40" width="2" height="2" fill="var(--label-3)"/>
+<rect x="28" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="28" y="140" width="2" height="2" fill="var(--label-3)"/>
+<rect x="28" y="144" width="2" height="2" fill="var(--label-3)"/>
+<rect x="32" y="40" width="2" height="2" fill="var(--label-3)"/>
+<rect x="32" y="44" width="2" height="2" fill="var(--label-3)"/>
+<rect x="32" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="32" y="144" width="2" height="2" fill="var(--label-3)"/>
+<rect x="32" y="148" width="2" height="2" fill="var(--label-3)"/>
+<rect x="36" y="44" width="2" height="2" fill="var(--label-3)"/>
+<rect x="36" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="36" y="148" width="2" height="2" fill="var(--label-3)"/>
+<rect x="36" y="152" width="2" height="2" fill="var(--label-3)"/>
+<rect x="40" y="44" width="2" height="2" fill="var(--label-3)"/>
+<rect x="40" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="40" y="152" width="2" height="2" fill="var(--label-3)"/>
+<rect x="40" y="156" width="2" height="2" fill="var(--label-3)"/>
+<rect x="44" y="44" width="2" height="2" fill="var(--label-3)"/>
+<rect x="44" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="44" y="156" width="2" height="2" fill="var(--label-3)"/>
+<rect x="44" y="160" width="2" height="2" fill="var(--label-3)"/>
+<rect x="48" y="44" width="2" height="2" fill="var(--label-3)"/>
+<rect x="48" y="48" width="2" height="2" fill="var(--label-3)"/>
+<rect x="48" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="48" y="160" width="2" height="2" fill="var(--label-3)"/>
+<rect x="48" y="164" width="2" height="2" fill="var(--label-3)"/>
+<rect x="52" y="48" width="2" height="2" fill="var(--label-3)"/>
+<rect x="52" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="52" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="52" y="164" width="2" height="2" fill="var(--label-3)"/>
+<rect x="52" y="168" width="2" height="2" fill="var(--label-3)"/>
+<rect x="56" y="48" width="2" height="2" fill="var(--label-3)"/>
+<rect x="56" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="56" y="168" width="2" height="2" fill="var(--label-3)"/>
+<rect x="56" y="172" width="2" height="2" fill="var(--label-3)"/>
+<rect x="60" y="48" width="2" height="2" fill="var(--label-3)"/>
+<rect x="60" y="52" width="2" height="2" fill="var(--label-3)"/>
+<rect x="60" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="60" y="172" width="2" height="2" fill="var(--label-3)"/>
+<rect x="60" y="176" width="2" height="2" fill="var(--label-3)"/>
+<rect x="64" y="52" width="2" height="2" fill="var(--label-3)"/>
+<rect x="64" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="64" y="176" width="2" height="2" fill="var(--label-3)"/>
+<rect x="64" y="180" width="2" height="2" fill="var(--label-3)"/>
+<rect x="68" y="52" width="2" height="2" fill="var(--label-3)"/>
+<rect x="68" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="68" y="180" width="2" height="2" fill="var(--label-3)"/>
+<rect x="68" y="184" width="2" height="2" fill="var(--label-3)"/>
+<rect x="72" y="52" width="2" height="2" fill="var(--label-3)"/>
+<rect x="72" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="72" y="184" width="2" height="2" fill="var(--label-3)"/>
+<rect x="72" y="188" width="2" height="2" fill="var(--label-3)"/>
+<rect x="76" y="52" width="2" height="2" fill="var(--label-3)"/>
+<rect x="76" y="56" width="2" height="2" fill="var(--label-3)"/>
+<rect x="76" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="76" y="188" width="2" height="2" fill="var(--label-3)"/>
+<rect x="76" y="192" width="2" height="2" fill="var(--label-3)"/>
+<rect x="80" y="56" width="2" height="2" fill="var(--label-3)"/>
+<rect x="80" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="80" y="192" width="2" height="2" fill="var(--label-3)"/>
+<rect x="80" y="196" width="2" height="2" fill="var(--label-3)"/>
+<rect x="84" y="56" width="2" height="2" fill="var(--label-3)"/>
+<rect x="84" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="84" y="196" width="2" height="2" fill="var(--label-3)"/>
+<rect x="84" y="200" width="2" height="2" fill="var(--label-3)"/>
+<rect x="88" y="56" width="2" height="2" fill="var(--label-3)"/>
+<rect x="88" y="60" width="2" height="2" fill="var(--label-3)"/>
+<rect x="88" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="88" y="200" width="2" height="2" fill="var(--label-3)"/>
+<rect x="88" y="204" width="2" height="2" fill="var(--label-3)"/>
+<rect x="92" y="60" width="2" height="2" fill="var(--label-3)"/>
+<rect x="92" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="92" y="204" width="2" height="2" fill="var(--label-3)"/>
+<rect x="92" y="208" width="2" height="2" fill="var(--label-3)"/>
+<rect x="96" y="60" width="2" height="2" fill="var(--label-3)"/>
+<rect x="96" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="96" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="96" y="208" width="2" height="2" fill="var(--label-3)"/>
+<rect x="96" y="212" width="2" height="2" fill="var(--label-3)"/>
+<rect x="100" y="60" width="2" height="2" fill="var(--label-3)"/>
+<rect x="100" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="100" y="212" width="2" height="2" fill="var(--label-3)"/>
+<rect x="100" y="216" width="2" height="2" fill="var(--label-3)"/>
+<rect x="104" y="60" width="2" height="2" fill="var(--label-3)"/>
+<rect x="104" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="104" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="104" y="216" width="2" height="2" fill="var(--label-3)"/>
+<rect x="104" y="220" width="2" height="2" fill="var(--label-3)"/>
+<rect x="108" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="108" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="108" y="220" width="2" height="2" fill="var(--label-3)"/>
+<rect x="108" y="224" width="2" height="2" fill="var(--label-3)"/>
+<rect x="108" y="228" width="2" height="2" fill="var(--label-3)"/>
+<rect x="112" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="112" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="112" y="216" width="2" height="2" fill="var(--label-3)"/>
+<rect x="112" y="220" width="2" height="2" fill="var(--label-3)"/>
+<rect x="112" y="224" width="2" height="2" fill="var(--label-3)"/>
+<rect x="112" y="228" width="2" height="2" fill="var(--label-3)"/>
+<rect x="112" y="232" width="2" height="2" fill="var(--label-3)"/>
+<rect x="112" y="236" width="2" height="2" fill="var(--label-3)"/>
+<rect x="116" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="116" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="116" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="116" y="204" width="2" height="2" fill="var(--label-3)"/>
+<rect x="116" y="208" width="2" height="2" fill="var(--label-3)"/>
+<rect x="116" y="212" width="2" height="2" fill="var(--label-3)"/>
+<rect x="116" y="236" width="2" height="2" fill="var(--label-3)"/>
+<rect x="116" y="240" width="2" height="2" fill="var(--label-3)"/>
+<rect x="116" y="244" width="2" height="2" fill="var(--label-3)"/>
+<rect x="120" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="120" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="120" y="188" width="2" height="2" fill="var(--label-3)"/>
+<rect x="120" y="192" width="2" height="2" fill="var(--label-3)"/>
+<rect x="120" y="196" width="2" height="2" fill="var(--label-3)"/>
+<rect x="120" y="200" width="2" height="2" fill="var(--label-3)"/>
+<rect x="120" y="244" width="2" height="2" fill="var(--label-3)"/>
+<rect x="120" y="248" width="2" height="2" fill="var(--label-3)"/>
+<rect x="120" y="252" width="2" height="2" fill="var(--label-3)"/>
+<rect x="124" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="124" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="124" y="176" width="2" height="2" fill="var(--label-3)"/>
+<rect x="124" y="180" width="2" height="2" fill="var(--label-3)"/>
+<rect x="124" y="184" width="2" height="2" fill="var(--label-3)"/>
+<rect x="124" y="252" width="2" height="2" fill="var(--label-3)"/>
+<rect x="124" y="256" width="2" height="2" fill="var(--label-3)"/>
+<rect x="124" y="260" width="2" height="2" fill="var(--label-3)"/>
+<rect x="124" y="264" width="2" height="2" fill="var(--label-3)"/>
+<rect x="124" y="268" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="164" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="168" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="172" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="252" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="256" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="268" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="272" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="276" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="280" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="284" width="2" height="2" fill="var(--label-3)"/>
+<rect x="128" y="288" width="2" height="2" fill="var(--label-3)"/>
+<rect x="132" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="132" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="132" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="132" y="152" width="2" height="2" fill="var(--label-3)"/>
+<rect x="132" y="156" width="2" height="2" fill="var(--label-3)"/>
+<rect x="132" y="160" width="2" height="2" fill="var(--label-3)"/>
+<rect x="132" y="248" width="2" height="2" fill="var(--label-3)"/>
+<rect x="136" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="136" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="136" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="136" y="140" width="2" height="2" fill="var(--label-3)"/>
+<rect x="136" y="144" width="2" height="2" fill="var(--label-3)"/>
+<rect x="136" y="148" width="2" height="2" fill="var(--label-3)"/>
+<rect x="136" y="240" width="2" height="2" fill="var(--label-3)"/>
+<rect x="136" y="244" width="2" height="2" fill="var(--label-3)"/>
+<rect x="140" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="140" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="140" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="140" y="136" width="2" height="2" fill="var(--label-3)"/>
+<rect x="140" y="236" width="2" height="2" fill="var(--label-3)"/>
+<rect x="144" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="144" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="144" y="228" width="2" height="2" fill="var(--label-3)"/>
+<rect x="144" y="232" width="2" height="2" fill="var(--label-3)"/>
+<rect x="148" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="148" y="76" width="2" height="2" fill="var(--label-3)"/>
+<rect x="148" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="148" y="224" width="2" height="2" fill="var(--label-3)"/>
+<rect x="152" y="76" width="2" height="2" fill="var(--label-3)"/>
+<rect x="152" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="152" y="216" width="2" height="2" fill="var(--label-3)"/>
+<rect x="152" y="220" width="2" height="2" fill="var(--label-3)"/>
+<rect x="152" y="288" width="2" height="2" fill="var(--label-3)"/>
+<rect x="156" y="76" width="2" height="2" fill="var(--label-3)"/>
+<rect x="156" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="156" y="212" width="2" height="2" fill="var(--label-3)"/>
+<rect x="156" y="284" width="2" height="2" fill="var(--label-3)"/>
+<rect x="160" y="76" width="2" height="2" fill="var(--label-3)"/>
+<rect x="160" y="80" width="2" height="2" fill="var(--label-3)"/>
+<rect x="160" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="160" y="204" width="2" height="2" fill="var(--label-3)"/>
+<rect x="160" y="208" width="2" height="2" fill="var(--label-3)"/>
+<rect x="160" y="280" width="2" height="2" fill="var(--label-3)"/>
+<rect x="164" y="80" width="2" height="2" fill="var(--label-3)"/>
+<rect x="164" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="164" y="200" width="2" height="2" fill="var(--label-3)"/>
+<rect x="164" y="272" width="2" height="2" fill="var(--label-3)"/>
+<rect x="164" y="276" width="2" height="2" fill="var(--label-3)"/>
+<rect x="168" y="80" width="2" height="2" fill="var(--label-3)"/>
+<rect x="168" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="168" y="192" width="2" height="2" fill="var(--label-3)"/>
+<rect x="168" y="196" width="2" height="2" fill="var(--label-3)"/>
+<rect x="168" y="268" width="2" height="2" fill="var(--label-3)"/>
+<rect x="172" y="80" width="2" height="2" fill="var(--label-3)"/>
+<rect x="172" y="84" width="2" height="2" fill="var(--label-3)"/>
+<rect x="172" y="88" width="2" height="2" fill="var(--label-3)"/>
+<rect x="172" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="172" y="188" width="2" height="2" fill="var(--label-3)"/>
+<rect x="172" y="264" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="40" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="44" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="48" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="52" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="56" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="60" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="76" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="88" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="92" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="96" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="100" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="104" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="108" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="112" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="180" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="184" width="2" height="2" fill="var(--label-3)"/>
+<rect x="176" y="260" width="2" height="2" fill="var(--label-3)"/>
+<rect x="180" y="20" width="2" height="2" fill="var(--label-3)"/>
+<rect x="180" y="24" width="2" height="2" fill="var(--label-3)"/>
+<rect x="180" y="28" width="2" height="2" fill="var(--label-3)"/>
+<rect x="180" y="32" width="2" height="2" fill="var(--label-3)"/>
+<rect x="180" y="36" width="2" height="2" fill="var(--label-3)"/>
+<rect x="180" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="180" y="112" width="2" height="2" fill="var(--label-3)"/>
+<rect x="180" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="180" y="176" width="2" height="2" fill="var(--label-3)"/>
+<rect x="180" y="256" width="2" height="2" fill="var(--label-3)"/>
+<rect x="184" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="184" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="184" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="184" y="168" width="2" height="2" fill="var(--label-3)"/>
+<rect x="184" y="172" width="2" height="2" fill="var(--label-3)"/>
+<rect x="184" y="248" width="2" height="2" fill="var(--label-3)"/>
+<rect x="184" y="252" width="2" height="2" fill="var(--label-3)"/>
+<rect x="188" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="188" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="188" y="164" width="2" height="2" fill="var(--label-3)"/>
+<rect x="188" y="244" width="2" height="2" fill="var(--label-3)"/>
+<rect x="192" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="192" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="192" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="192" y="156" width="2" height="2" fill="var(--label-3)"/>
+<rect x="192" y="160" width="2" height="2" fill="var(--label-3)"/>
+<rect x="192" y="240" width="2" height="2" fill="var(--label-3)"/>
+<rect x="196" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="196" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="196" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="196" y="152" width="2" height="2" fill="var(--label-3)"/>
+<rect x="196" y="236" width="2" height="2" fill="var(--label-3)"/>
+<rect x="200" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="200" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="200" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="200" y="144" width="2" height="2" fill="var(--label-3)"/>
+<rect x="200" y="148" width="2" height="2" fill="var(--label-3)"/>
+<rect x="200" y="232" width="2" height="2" fill="var(--label-3)"/>
+<rect x="204" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="204" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="204" y="136" width="2" height="2" fill="var(--label-3)"/>
+<rect x="204" y="140" width="2" height="2" fill="var(--label-3)"/>
+<rect x="204" y="224" width="2" height="2" fill="var(--label-3)"/>
+<rect x="204" y="228" width="2" height="2" fill="var(--label-3)"/>
+<rect x="208" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="208" y="136" width="2" height="2" fill="var(--label-3)"/>
+<rect x="208" y="140" width="2" height="2" fill="var(--label-3)"/>
+<rect x="208" y="220" width="2" height="2" fill="var(--label-3)"/>
+<rect x="212" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="212" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="212" y="140" width="2" height="2" fill="var(--label-3)"/>
+<rect x="212" y="144" width="2" height="2" fill="var(--label-3)"/>
+<rect x="212" y="148" width="2" height="2" fill="var(--label-3)"/>
+<rect x="212" y="216" width="2" height="2" fill="var(--label-3)"/>
+<rect x="216" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="216" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="216" y="148" width="2" height="2" fill="var(--label-3)"/>
+<rect x="216" y="152" width="2" height="2" fill="var(--label-3)"/>
+<rect x="216" y="156" width="2" height="2" fill="var(--label-3)"/>
+<rect x="216" y="160" width="2" height="2" fill="var(--label-3)"/>
+<rect x="216" y="212" width="2" height="2" fill="var(--label-3)"/>
+<rect x="220" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="220" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="220" y="160" width="2" height="2" fill="var(--label-3)"/>
+<rect x="220" y="164" width="2" height="2" fill="var(--label-3)"/>
+<rect x="220" y="168" width="2" height="2" fill="var(--label-3)"/>
+<rect x="220" y="208" width="2" height="2" fill="var(--label-3)"/>
+<rect x="224" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="224" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="224" y="168" width="2" height="2" fill="var(--label-3)"/>
+<rect x="224" y="172" width="2" height="2" fill="var(--label-3)"/>
+<rect x="224" y="176" width="2" height="2" fill="var(--label-3)"/>
+<rect x="224" y="200" width="2" height="2" fill="var(--label-3)"/>
+<rect x="224" y="204" width="2" height="2" fill="var(--label-3)"/>
+<rect x="228" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="228" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="228" y="176" width="2" height="2" fill="var(--label-3)"/>
+<rect x="228" y="180" width="2" height="2" fill="var(--label-3)"/>
+<rect x="228" y="184" width="2" height="2" fill="var(--label-3)"/>
+<rect x="228" y="196" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="20" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="24" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="28" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="32" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="36" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="40" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="44" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="48" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="52" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="56" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="60" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="184" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="188" width="2" height="2" fill="var(--label-3)"/>
+<rect x="232" y="192" width="2" height="2" fill="var(--label-3)"/>
+<rect x="236" y="60" width="2" height="2" fill="var(--label-3)"/>
+<rect x="236" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="236" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="236" y="192" width="2" height="2" fill="var(--label-3)"/>
+<rect x="240" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="240" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="240" y="192" width="2" height="2" fill="var(--label-3)"/>
+<rect x="240" y="196" width="2" height="2" fill="var(--label-3)"/>
+<rect x="244" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="244" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="244" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="244" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="244" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="244" y="196" width="2" height="2" fill="var(--label-3)"/>
+<rect x="248" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="248" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="248" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="248" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="248" y="196" width="2" height="2" fill="var(--label-3)"/>
+<rect x="248" y="200" width="2" height="2" fill="var(--label-3)"/>
+<rect x="252" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="252" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="252" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="252" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="252" y="200" width="2" height="2" fill="var(--label-3)"/>
+<rect x="252" y="204" width="2" height="2" fill="var(--label-3)"/>
+<rect x="256" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="256" y="112" width="2" height="2" fill="var(--label-3)"/>
+<rect x="256" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="256" y="136" width="2" height="2" fill="var(--label-3)"/>
+<rect x="256" y="204" width="2" height="2" fill="var(--label-3)"/>
+<rect x="260" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="260" y="76" width="2" height="2" fill="var(--label-3)"/>
+<rect x="260" y="108" width="2" height="2" fill="var(--label-3)"/>
+<rect x="260" y="136" width="2" height="2" fill="var(--label-3)"/>
+<rect x="260" y="140" width="2" height="2" fill="var(--label-3)"/>
+<rect x="260" y="204" width="2" height="2" fill="var(--label-3)"/>
+<rect x="260" y="208" width="2" height="2" fill="var(--label-3)"/>
+<rect x="264" y="76" width="2" height="2" fill="var(--label-3)"/>
+<rect x="264" y="104" width="2" height="2" fill="var(--label-3)"/>
+<rect x="264" y="140" width="2" height="2" fill="var(--label-3)"/>
+<rect x="264" y="144" width="2" height="2" fill="var(--label-3)"/>
+<rect x="264" y="208" width="2" height="2" fill="var(--label-3)"/>
+<rect x="264" y="212" width="2" height="2" fill="var(--label-3)"/>
+<rect x="268" y="76" width="2" height="2" fill="var(--label-3)"/>
+<rect x="268" y="80" width="2" height="2" fill="var(--label-3)"/>
+<rect x="268" y="100" width="2" height="2" fill="var(--label-3)"/>
+<rect x="268" y="144" width="2" height="2" fill="var(--label-3)"/>
+<rect x="268" y="148" width="2" height="2" fill="var(--label-3)"/>
+<rect x="268" y="212" width="2" height="2" fill="var(--label-3)"/>
+<rect x="272" y="80" width="2" height="2" fill="var(--label-3)"/>
+<rect x="272" y="100" width="2" height="2" fill="var(--label-3)"/>
+<rect x="272" y="148" width="2" height="2" fill="var(--label-3)"/>
+<rect x="272" y="152" width="2" height="2" fill="var(--label-3)"/>
+<rect x="272" y="212" width="2" height="2" fill="var(--label-3)"/>
+<rect x="272" y="216" width="2" height="2" fill="var(--label-3)"/>
+<rect x="276" y="80" width="2" height="2" fill="var(--label-3)"/>
+<rect x="276" y="84" width="2" height="2" fill="var(--label-3)"/>
+<rect x="276" y="96" width="2" height="2" fill="var(--label-3)"/>
+<rect x="276" y="152" width="2" height="2" fill="var(--label-3)"/>
+<rect x="276" y="156" width="2" height="2" fill="var(--label-3)"/>
+<rect x="276" y="216" width="2" height="2" fill="var(--label-3)"/>
+<rect x="280" y="84" width="2" height="2" fill="var(--label-3)"/>
+<rect x="280" y="92" width="2" height="2" fill="var(--label-3)"/>
+<rect x="280" y="156" width="2" height="2" fill="var(--label-3)"/>
+<rect x="280" y="160" width="2" height="2" fill="var(--label-3)"/>
+<rect x="280" y="216" width="2" height="2" fill="var(--label-3)"/>
+<rect x="280" y="220" width="2" height="2" fill="var(--label-3)"/>
+<rect x="284" y="84" width="2" height="2" fill="var(--label-3)"/>
+<rect x="284" y="88" width="2" height="2" fill="var(--label-3)"/>
+<rect x="284" y="160" width="2" height="2" fill="var(--label-3)"/>
+<rect x="284" y="164" width="2" height="2" fill="var(--label-3)"/>
+<rect x="284" y="220" width="2" height="2" fill="var(--label-3)"/>
+<rect x="284" y="224" width="2" height="2" fill="var(--label-3)"/>
+<rect x="288" y="84" width="2" height="2" fill="var(--label-3)"/>
+<rect x="288" y="88" width="2" height="2" fill="var(--label-3)"/>
+<rect x="288" y="92" width="2" height="2" fill="var(--label-3)"/>
+<rect x="288" y="96" width="2" height="2" fill="var(--label-3)"/>
+<rect x="288" y="100" width="2" height="2" fill="var(--label-3)"/>
+<rect x="288" y="104" width="2" height="2" fill="var(--label-3)"/>
+<rect x="288" y="108" width="2" height="2" fill="var(--label-3)"/>
+<rect x="288" y="164" width="2" height="2" fill="var(--label-3)"/>
+<rect x="288" y="168" width="2" height="2" fill="var(--label-3)"/>
+<rect x="288" y="224" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="84" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="108" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="112" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="136" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="140" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="144" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="148" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="152" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="168" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="172" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="224" width="2" height="2" fill="var(--label-3)"/>
+<rect x="292" y="228" width="2" height="2" fill="var(--label-3)"/>
+<rect x="296" y="80" width="2" height="2" fill="var(--label-3)"/>
+<rect x="296" y="152" width="2" height="2" fill="var(--label-3)"/>
+<rect x="296" y="156" width="2" height="2" fill="var(--label-3)"/>
+<rect x="296" y="160" width="2" height="2" fill="var(--label-3)"/>
+<rect x="296" y="164" width="2" height="2" fill="var(--label-3)"/>
+<rect x="296" y="168" width="2" height="2" fill="var(--label-3)"/>
+<rect x="296" y="172" width="2" height="2" fill="var(--label-3)"/>
+<rect x="296" y="176" width="2" height="2" fill="var(--label-3)"/>
+<rect x="296" y="228" width="2" height="2" fill="var(--label-3)"/>
+<rect x="300" y="76" width="2" height="2" fill="var(--label-3)"/>
+<rect x="300" y="176" width="2" height="2" fill="var(--label-3)"/>
+<rect x="300" y="180" width="2" height="2" fill="var(--label-3)"/>
+<rect x="300" y="228" width="2" height="2" fill="var(--label-3)"/>
+<rect x="300" y="232" width="2" height="2" fill="var(--label-3)"/>
+<rect x="304" y="76" width="2" height="2" fill="var(--label-3)"/>
+<rect x="304" y="180" width="2" height="2" fill="var(--label-3)"/>
+<rect x="304" y="184" width="2" height="2" fill="var(--label-3)"/>
+<rect x="304" y="232" width="2" height="2" fill="var(--label-3)"/>
+<rect x="304" y="236" width="2" height="2" fill="var(--label-3)"/>
+<rect x="308" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="308" y="184" width="2" height="2" fill="var(--label-3)"/>
+<rect x="308" y="188" width="2" height="2" fill="var(--label-3)"/>
+<rect x="308" y="192" width="2" height="2" fill="var(--label-3)"/>
+<rect x="308" y="236" width="2" height="2" fill="var(--label-3)"/>
+<rect x="312" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="312" y="192" width="2" height="2" fill="var(--label-3)"/>
+<rect x="312" y="196" width="2" height="2" fill="var(--label-3)"/>
+<rect x="312" y="236" width="2" height="2" fill="var(--label-3)"/>
+<rect x="312" y="240" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="68" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="72" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="76" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="80" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="84" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="88" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="92" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="96" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="100" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="104" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="108" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="112" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="116" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="120" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="124" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="128" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="132" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="136" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="140" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="144" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="148" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="152" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="156" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="160" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="164" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="168" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="172" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="176" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="180" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="184" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="188" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="192" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="196" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="200" width="2" height="2" fill="var(--label-3)"/>
+<rect x="316" y="240" width="2" height="2" fill="var(--label-3)"/>
+<rect x="320" y="64" width="2" height="2" fill="var(--label-3)"/>
+<rect x="320" y="200" width="2" height="2" fill="var(--label-3)"/>
+<rect x="320" y="204" width="2" height="2" fill="var(--label-3)"/>
+<rect x="320" y="208" width="2" height="2" fill="var(--label-3)"/>
+<rect x="320" y="212" width="2" height="2" fill="var(--label-3)"/>
+<rect x="320" y="240" width="2" height="2" fill="var(--label-3)"/>
+<rect x="320" y="244" width="2" height="2" fill="var(--label-3)"/>
+<rect x="324" y="60" width="2" height="2" fill="var(--label-3)"/>
+<rect x="324" y="212" width="2" height="2" fill="var(--label-3)"/>
+<rect x="324" y="216" width="2" height="2" fill="var(--label-3)"/>
+<rect x="324" y="220" width="2" height="2" fill="var(--label-3)"/>
+<rect x="324" y="244" width="2" height="2" fill="var(--label-3)"/>
+<rect x="324" y="248" width="2" height="2" fill="var(--label-3)"/>
+<rect x="328" y="56" width="2" height="2" fill="var(--label-3)"/>
+<rect x="328" y="220" width="2" height="2" fill="var(--label-3)"/>
+<rect x="328" y="224" width="2" height="2" fill="var(--label-3)"/>
+<rect x="328" y="228" width="2" height="2" fill="var(--label-3)"/>
+<rect x="328" y="232" width="2" height="2" fill="var(--label-3)"/>
+<rect x="328" y="248" width="2" height="2" fill="var(--label-3)"/>
+<rect x="332" y="52" width="2" height="2" fill="var(--label-3)"/>
+<rect x="332" y="232" width="2" height="2" fill="var(--label-3)"/>
+<rect x="332" y="236" width="2" height="2" fill="var(--label-3)"/>
+<rect x="332" y="240" width="2" height="2" fill="var(--label-3)"/>
+<rect x="332" y="244" width="2" height="2" fill="var(--label-3)"/>
+<rect x="332" y="248" width="2" height="2" fill="var(--label-3)"/>
+<rect x="332" y="252" width="2" height="2" fill="var(--label-3)"/>
+<rect x="336" y="48" width="2" height="2" fill="var(--label-3)"/>
+<rect x="336" y="244" width="2" height="2" fill="var(--label-3)"/>
+<rect x="336" y="248" width="2" height="2" fill="var(--label-3)"/>
+<rect x="336" y="252" width="2" height="2" fill="var(--label-3)"/>
+<rect x="340" y="44" width="2" height="2" fill="var(--label-3)"/>
+<rect x="340" y="252" width="2" height="2" fill="var(--label-3)"/>
+<rect x="340" y="256" width="2" height="2" fill="var(--label-3)"/>
+<rect x="340" y="260" width="2" height="2" fill="var(--label-3)"/>
+<rect x="344" y="36" width="2" height="2" fill="var(--label-3)"/>
+<rect x="344" y="40" width="2" height="2" fill="var(--label-3)"/>
+<rect x="344" y="260" width="2" height="2" fill="var(--label-3)"/>
+<rect x="344" y="264" width="2" height="2" fill="var(--label-3)"/>
+<rect x="348" y="32" width="2" height="2" fill="var(--label-3)"/>
+<rect x="348" y="264" width="2" height="2" fill="var(--label-3)"/>
+<rect x="348" y="268" width="2" height="2" fill="var(--label-3)"/>
+<rect x="352" y="28" width="2" height="2" fill="var(--label-3)"/>
+<rect x="352" y="268" width="2" height="2" fill="var(--label-3)"/>
+<rect x="352" y="272" width="2" height="2" fill="var(--label-3)"/>
+<rect x="356" y="24" width="2" height="2" fill="var(--label-3)"/>
+<rect x="356" y="272" width="2" height="2" fill="var(--label-3)"/>
+<rect x="356" y="276" width="2" height="2" fill="var(--label-3)"/>
+<rect x="356" y="280" width="2" height="2" fill="var(--label-3)"/>
+<rect x="360" y="20" width="2" height="2" fill="var(--label-3)"/>
+<rect x="360" y="280" width="2" height="2" fill="var(--label-3)"/>
+<rect x="360" y="284" width="2" height="2" fill="var(--label-3)"/>
+<rect x="364" y="284" width="2" height="2" fill="var(--label-3)"/>
+<rect x="364" y="288" width="2" height="2" fill="var(--label-3)"/>
+<rect x="368" y="288" width="2" height="2" fill="var(--label-3)"/>
+</g>
+<circle cx="111.4" cy="159.7" r="5" fill="var(--label-2)"/>
+<circle cx="151.0" cy="172.9" r="5" fill="var(--label-2)"/>
+<circle cx="227.7" cy="54.4" r="5" fill="var(--label-2)"/>
+<circle cx="44.0" cy="224.2" r="5" fill="var(--label-2)"/>
+<circle cx="117.8" cy="91.6" r="5" fill="var(--label-2)"/>
+<circle cx="338.7" cy="143.5" r="5" fill="var(--label-2)"/>
+<circle cx="290.9" cy="144.8" r="5" fill="var(--l-gpu)"/>
+<circle cx="231.7" cy="73.1" r="5" fill="var(--label-2)"/>
+<circle cx="230.5" cy="231.0" r="5" fill="var(--label-2)"/>
+<circle cx="197.0" cy="203.1" r="5" fill="var(--label-2)"/>
+<circle cx="241.4" cy="54.1" r="5" fill="var(--label-2)"/>
+<circle cx="267.5" cy="170.0" r="5" fill="var(--l-gpu)"/>
+<circle cx="130.4" cy="46.8" r="5" fill="var(--label-2)"/>
+<circle cx="299.7" cy="144.0" r="5" fill="var(--l-gpu)"/>
+<path d="M242 150 H258 M250 142 V158" stroke="var(--l-cache)" stroke-width="3"/>
+<text class="dg-tiny" x="238" y="174" text-anchor="end">consulta</text>
+<text class="dg-tiny" x="20" y="310" text-anchor="start">Puntos: centroides de k-means. Sombreadas: las 3 celdas que se miran.</text>
+<text class="dg-group" x="410" y="40" text-anchor="start">En Mercado Barrio</text>
+<text class="dg-tiny" x="410" y="66" text-anchor="start">100 000 000 vectores</text>
+<text class="dg-tiny" x="410" y="84" text-anchor="start">nlist = 262 144 celdas (2¹⁸, la cifra de FAISS</text>
+<text class="dg-tiny" x="410" y="102" text-anchor="start">para 10 a 100 millones de vectores)</text>
+<text class="dg-tiny" x="410" y="120" text-anchor="start">unos 381 vectores por celda</text>
+<text class="dg-tiny" x="410" y="138" text-anchor="start"></text>
+<text class="dg-tiny" x="410" y="156" text-anchor="start">nprobe = 64 celdas por consulta</text>
+<text class="dg-tiny" x="410" y="174" text-anchor="start">100 000 000 × 64 / 262 144 = 24 414 vectores</text>
+<text class="dg-tiny" x="410" y="192" text-anchor="start"></text>
+<text class="dg-tiny" x="410" y="210" text-anchor="start">Más nprobe: más recall y más latencia.</text>
+<text class="dg-tiny" x="410" y="228" text-anchor="start">Un vector justo en el borde de una celda que</text>
+<text class="dg-tiny" x="410" y="246" text-anchor="start">no se mira se pierde: por eso es aproximado.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.10.</b> IVF reparte los vectores en celdas con k-means y cada consulta mira solo las celdas más cercanas. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+<p>Las cuentas para Mercado Barrio salen de la guía de FAISS, que para 10 a 100 millones de vectores recomienda 2<sup>18</sup> = 262 144 celdas, y que el k-means se entrene con entre 30 y 256 vectores por celda: entre 7.9 y 67 millones de vectores de muestra <span class="badge badge--doc">Documentado</span>. Con 100 millones de ítems quedan unos 381 por celda, y con <i>nprobe</i> = 64 cada consulta mira 100 000 000 × 64 / 262 144 = 24 414 vectores. Comparar la consulta con 262 144 centroides ya sería caro, y por eso FAISS busca los centroides con un HNSW chico.</p>
+
+<h3 id="pq">PQ: vectores de 64 bytes</h3>
+
+<p>Con IVF solo, los vectores siguen pesando 512 B: 51.2 GB más los ids. La <dfn data-term="pq">cuantización por productos</dfn> (PQ) los comprime. Parte cada vector en <i>m</i> trozos, aprende con k-means 256 centroides para cada trozo y reemplaza cada trozo por el número de su centroide, que entra en un byte. Un vector de 128 dimensiones partido en 64 trozos de 2 queda en 64 bytes <span class="badge badge--doc">Documentado</span> (Jégou, Douze y Schmid, 2011).</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f45ct f45cd">
+<title id="f45ct">Cuantización por productos</title>
+<desc id="f45cd">Un vector de 128 float32 ocupa 512 bytes. Se parte en 64 trozos de 2 números. Cada trozo se reemplaza por el número del centroide más cercano entre 256 de su propio diccionario, que entra en un byte. El código entero son 64 bytes. Para comparar, se arma una tabla de 64 por 256 distancias parciales una vez por consulta, y cada código se compara sumando 64 valores de esa tabla.</desc>
+<defs><marker id="f45ca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="20" y="26" text-anchor="start">Un vector: 128 float32 = 512 B</text>
+<rect class="dg-box" x="20" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="40" y="58" text-anchor="middle">t1</text>
+<rect class="dg-box" x="65" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="85" y="58" text-anchor="middle">t2</text>
+<rect class="dg-box" x="110" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="130" y="58" text-anchor="middle">t3</text>
+<rect class="dg-box" x="155" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="175" y="58" text-anchor="middle">t4</text>
+<rect class="dg-box" x="200" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="220" y="58" text-anchor="middle">t5</text>
+<rect class="dg-box" x="245" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="265" y="58" text-anchor="middle">t6</text>
+<rect class="dg-box" x="290" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="310" y="58" text-anchor="middle">t7</text>
+<rect class="dg-box" x="335" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="355" y="58" text-anchor="middle">t8</text>
+<rect class="dg-box" x="380" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="400" y="58" text-anchor="middle">t9</text>
+<rect class="dg-box" x="425" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="445" y="58" text-anchor="middle">t10</text>
+<rect class="dg-box" x="470" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="490" y="58" text-anchor="middle">t11</text>
+<rect class="dg-box" x="515" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="535" y="58" text-anchor="middle">t12</text>
+<rect class="dg-box" x="560" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="580" y="58" text-anchor="middle">t13</text>
+<rect class="dg-box" x="605" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="625" y="58" text-anchor="middle">t14</text>
+<rect class="dg-box" x="650" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="670" y="58" text-anchor="middle">t15</text>
+<rect class="dg-box" x="695" y="38" width="40" height="30" rx="4"/>
+<text class="dg-tiny dg-mono" x="715" y="58" text-anchor="middle">…</text>
+<text class="dg-tiny" x="20" y="88" text-anchor="start">partido en 64 trozos (t1 a t64) de 2 números cada uno; se ven 15</text>
+<path class="dg-edge" d="M40 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M85 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M130 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M175 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M220 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M265 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M310 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M355 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M400 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M445 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M490 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M535 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M580 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M625 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M670 96 V120" marker-end="url(#f45ca)"/>
+<path class="dg-edge" d="M715 96 V120" marker-end="url(#f45ca)"/>
+<text class="dg-tiny" x="20" y="144" text-anchor="start">Cada trozo se reemplaza por su centroide más cercano entre 256 (1 byte):</text>
+<rect class="dg-layer" x="20" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="40" y="174" text-anchor="middle">17</text>
+<rect class="dg-layer" x="65" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="85" y="174" text-anchor="middle">203</text>
+<rect class="dg-layer" x="110" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="130" y="174" text-anchor="middle">4</text>
+<rect class="dg-layer" x="155" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="175" y="174" text-anchor="middle">88</text>
+<rect class="dg-layer" x="200" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="220" y="174" text-anchor="middle">129</text>
+<rect class="dg-layer" x="245" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="265" y="174" text-anchor="middle">61</text>
+<rect class="dg-layer" x="290" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="310" y="174" text-anchor="middle">250</text>
+<rect class="dg-layer" x="335" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="355" y="174" text-anchor="middle">33</text>
+<rect class="dg-layer" x="380" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="400" y="174" text-anchor="middle">7</text>
+<rect class="dg-layer" x="425" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="445" y="174" text-anchor="middle">142</text>
+<rect class="dg-layer" x="470" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="490" y="174" text-anchor="middle">99</text>
+<rect class="dg-layer" x="515" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="535" y="174" text-anchor="middle">180</text>
+<rect class="dg-layer" x="560" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="580" y="174" text-anchor="middle">12</text>
+<rect class="dg-layer" x="605" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="625" y="174" text-anchor="middle">76</text>
+<rect class="dg-layer" x="650" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="670" y="174" text-anchor="middle">231</text>
+<rect class="dg-layer" x="695" y="154" width="40" height="30" rx="4" style="--c: var(--l-cache)"/>
+<text class="dg-tiny dg-mono" x="715" y="174" text-anchor="middle">…</text>
+<text class="dg-small" x="20" y="204" text-anchor="start">Código: 64 bytes en lugar de 512 (8 veces menos). Con 100 000 000 ítems y el id de 8 B: 7.2 GB.</text>
+<rect class="dg-box" x="20" y="222" width="730" height="60" rx="8"/>
+<text class="dg-tiny" x="32" y="244" text-anchor="start">Comparar sin descomprimir: para cada consulta se calcula una tabla de 64 × 256 distancias parciales (16 384 números).</text>
+<text class="dg-tiny" x="32" y="262" text-anchor="start">La distancia a un código es la suma de 64 valores de la tabla, uno por byte: no hay que reconstruir el vector.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.11.</b> Cuantización por productos. Pierde precisión en la distancia a cambio de que el índice entre en memoria; por eso se suele reordenar al final con los vectores completos. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: la distancia sin descomprimir</p>
+  <p>Para comparar la consulta con un código, no hace falta reconstruir el vector. Se calcula una vez, por consulta, la distancia de cada trozo de la consulta a cada uno de los 256 centroides de ese trozo: 64 × 256 = 16 384 números. La distancia a un código es la suma de 64 valores leídos de esa tabla, uno por byte. Son 64 lecturas y 64 sumas en lugar de 128 multiplicaciones, y la tabla entra en la caché del procesador.</p>
+</aside>
+
+<p>Con PQ, el índice de Mercado Barrio ocupa 100 000 000 × (64 + 8) B = 7.2 GB contando el id de 8 bytes de cada vector, diez veces menos que el HNSW. Lo que se pierde es precisión en la distancia: dos ítems muy parecidos pueden quedar con el mismo código. La solución habitual es pedirle al índice más candidatos de los necesarios (por ejemplo 8 000 para quedarse con 4 000) y reordenarlos con los vectores completos, guardados aparte, en disco o en otra máquina. Esto es parecido a la <a href="m14-cuantizacion.html">cuantización</a> de pesos de M14: menos bytes por número a cambio de algo de error que hay que medir.</p>
+
+<p>Calcula tu propio índice:</p>
+
+<div data-calc="annsize"></div>
+
+<pre data-lang="python"><code>import faiss
+
+index = faiss.index_factory(128, "IVF262144_HNSW32,PQ64", faiss.METRIC_INNER_PRODUCT)
+index.train(muestra)          # k-means de las celdas y de los diccionarios de PQ: millones de vectores
+index.add(xb)                 # cada vector va a su celda, guardado como 64 bytes
+faiss.extract_index_ivf(index).nprobe = 64
+puntajes, ids = index.search(u.reshape(1, -1), 8000)    # 8 000 para reordenar y quedarse con 4 000</code></pre>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>La búsqueda de Facebook sirve sus embeddings con Faiss, cuantización gruesa (las celdas) más PQ, y ajusta la cantidad de celdas y <i>nprobe</i> mirando recall contra costo; como regla práctica, eligen un código PQ de <i>d</i>/4 bytes <span class="badge badge--doc">Documentado</span> (Huang et al., KDD 2020). Con <i>d</i> = 128 serían 32 B, la mitad de lo que usa este módulo: otra perilla que se mide.</p>
+</aside>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>HNSW da el mejor recall por milisegundo y ocupa mucho: 76.8 GB. IVF-PQ ocupa diez veces menos, 7.2 GB, entra en una máquina y pierde algo de recall que se recupera reordenando. Con un catálogo de unos pocos millones, HNSW entra en memoria y es lo más simple. Con cientos de millones, o cuando la memoria cuesta, IVF-PQ.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> IVF reparte los vectores en celdas con k-means y mira solo nprobe de ellas; PQ guarda cada vector en m bytes y compara con una tabla por consulta; juntos llevan 100 millones de vectores a 7.2 GB.</p>
+
+<h2 id="filtros"><span class="sec-num">45.8</span>Filtrar sin perder recall</h2>
+
+<p>Casi ninguna búsqueda real es "los más cercanos del catálogo". Es "los más cercanos con stock en tu ciudad, que no hayas comprado, de un vendedor activo". El índice ordena por cercanía y no sabe nada de stock, y hay tres formas de combinar las dos cosas.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f45dt f45dd">
+<title id="f45dt">Tres formas de filtrar</title>
+<desc id="f45dd">Tres columnas. Filtrar después: se buscan 10 000 vecinos y se descartan los que no pasan; si solo el 1 por ciento tiene stock en tu ciudad, quedan unos 100. Filtrar antes: se arma el subconjunto que pasa y se busca exacto en él; sirve si es chico. Filtrar durante: la búsqueda recorre el grafo saltando los que no pasan; si casi ninguno pasa, el grafo se desconecta y el recall cae.</desc>
+<defs><marker id="f45da" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="20" width="230" height="250" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-label" x="135" y="46" text-anchor="middle">Filtrar después</text>
+<text class="dg-tiny" x="36" y="82" text-anchor="start">busca 10 000 vecinos</text>
+<text class="dg-tiny" x="36" y="102" text-anchor="start">descarta los que no pasan</text>
+<text class="dg-tiny" x="36" y="122" text-anchor="start">con un filtro del 1 %:</text>
+<text class="dg-tiny" x="36" y="142" text-anchor="start">quedan unos 100</text>
+<rect class="dg-warnbox" x="32" y="206" width="206" height="48" rx="6"/>
+<text class="dg-tiny" x="135" y="226" text-anchor="middle">falla con filtros muy</text>
+<text class="dg-tiny" x="135" y="241" text-anchor="middle">selectivos</text>
+<rect class="dg-layer" x="270" y="20" width="230" height="250" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-label" x="385" y="46" text-anchor="middle">Filtrar antes</text>
+<text class="dg-tiny" x="286" y="82" text-anchor="start">arma el subconjunto que pasa</text>
+<text class="dg-tiny" x="286" y="102" text-anchor="start">busca exacto ahí</text>
+<text class="dg-tiny" x="286" y="122" text-anchor="start">1 % de 100 millones:</text>
+<text class="dg-tiny" x="286" y="142" text-anchor="start">1 000 000 productos punto</text>
+<rect class="dg-ok" x="282" y="206" width="206" height="48" rx="6"/>
+<text class="dg-tiny" x="385" y="226" text-anchor="middle">sirve si el subconjunto es</text>
+<text class="dg-tiny" x="385" y="241" text-anchor="middle">chico</text>
+<rect class="dg-layer" x="520" y="20" width="230" height="250" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-label" x="635" y="46" text-anchor="middle">Filtrar durante</text>
+<text class="dg-tiny" x="536" y="82" text-anchor="start">recorre el grafo y no devuelve</text>
+<text class="dg-tiny" x="536" y="102" text-anchor="start">los que no pasan</text>
+<text class="dg-tiny" x="536" y="122" text-anchor="start">con un filtro del 1 %, el</text>
+<text class="dg-tiny" x="536" y="142" text-anchor="start">grafo queda casi desconectado</text>
+<rect class="dg-warnbox" x="532" y="206" width="206" height="48" rx="6"/>
+<text class="dg-tiny" x="635" y="226" text-anchor="middle">el índice tiene que soportarlo</text>
+<text class="dg-tiny" x="20" y="290" text-anchor="start">Lo habitual: particionar por lo que más filtra (un índice por país) y filtrar durante o después por el resto.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.12.</b> Filtrar sin perder recall. La cifra del 1&#8239;% es un supuesto; lo que importa es qué fracción del catálogo pasa el filtro. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>Filtrar después es lo más simple y falla con los filtros selectivos: si se piden 10 000 y solo el 1&#8239;% tiene stock en tu ciudad, quedan unos 100. Pedir más ayuda hasta cierto punto; pedir 100 veces más vuelve a ser la búsqueda cara. Filtrar antes funciona cuando lo que pasa el filtro es chico: si son 1 000 ítems, una búsqueda exacta sobre ellos es barata. Filtrar durante la búsqueda es lo que hacen los motores vectoriales modernos, y tiene su propio modo de fallar: si casi ningún nodo pasa, el grafo de HNSW queda lleno de nodos que no se pueden devolver y la búsqueda se pierde.</p>
+
+<p>Lo habitual en un catálogo como el de Mercado Barrio es particionar por lo que más filtra y es estable, un índice por país, y filtrar durante o después por el resto. El país separa casi todo (nadie recibe ítems de otro país) y tiene pocos valores; el stock por ciudad cambia cada minuto y se resuelve al final, en los filtros del embudo de <a href="m42-ml-system-design.html#lamina">M42</a>, que tienen 5 ms.</p>
+
+<pre data-lang="sql"><code>-- pgvector: un índice HNSW por producto punto, con el filtro por país en la misma consulta
+CREATE INDEX items_vec_hnsw ON items USING hnsw (vec vector_ip_ops) WITH (m = 16, ef_construction = 64);
+
+SET hnsw.ef_search = 200;
+SET hnsw.iterative_scan = relaxed_order;   -- si el filtro descarta muchos, sigue buscando en el grafo
+
+SELECT id
+FROM items
+WHERE pais = 'CL' AND activo
+ORDER BY vec &lt;#&gt; $1         -- &lt;#&gt; es el producto punto con signo negativo: más chico es mejor
+LIMIT 1000;</code></pre>
+
+<p>El <code>iterative_scan</code> de pgvector, desde la versión 0.8, es la respuesta al problema de filtrar después: cuando el filtro deja menos filas que el <code>LIMIT</code>, el índice sigue recorriendo el grafo en lugar de devolver menos <span class="badge badge--doc">Documentado</span>. No es gratis: con un filtro muy selectivo puede recorrer mucho, y por eso sigue valiendo particionar por país.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un filtro de seguridad no se deja para "después, si alcanza". En el pipeline de <a href="m20-producto-chatgpt.html#archivos">M20</a>, el filtro por dueño es lo que impide que una búsqueda devuelva fragmentos de otra persona. En un recomendador, lo mismo vale para los ítems bloqueados o prohibidos en un país: van en el filtro de cada consulta o en la partición, nunca en una lista que se recorta cuando hay tiempo.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> filtrar después falla con filtros selectivos, filtrar antes sirve si lo que pasa es chico y filtrar durante necesita un índice que lo soporte; lo práctico es particionar por lo estable y filtrar el resto.</p>
+
+<h2 id="frescura-indice"><span class="sec-num">45.9</span>Un índice que cambia</h2>
+
+<p>En Mercado Barrio se publican productos todo el día. Si fuera un millón por día (un supuesto), son unos 12 por segundo, y cada uno tendría que ser recomendable en minutos, no mañana. Al mismo tiempo, se borran productos y otros se quedan sin stock. Un HNSW acepta inserciones, pero un grafo que crece de a uno durante semanas se degrada, y un IVF-PQ se entrenó con la distribución vieja.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 306" role="img" aria-labelledby="f45et f45ed">
+<title id="f45et">Un índice que cambia</title>
+<desc id="f45ed">Una línea de tiempo de un día. A las 3:00 se reconstruye el índice principal con todos los ítems. Durante el día, los ítems publicados entran a un índice delta chico, y los borrados se marcan como lápidas. Cada consulta busca en los dos índices, junta los resultados y descarta las lápidas. A las 3:00 del día siguiente, todo se reconstruye y el delta vuelve a empezar vacío.</desc>
+<defs><marker id="f45ea" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<path class="dg-edge" d="M60 60 H720" marker-end="url(#f45ea)"/>
+<path class="dg-frame" d="M80 52 V68"/>
+<text class="dg-tiny" x="80" y="44" text-anchor="middle">3:00</text>
+<path class="dg-frame" d="M400 52 V68"/>
+<text class="dg-tiny" x="400" y="44" text-anchor="middle">15:00</text>
+<path class="dg-frame" d="M700 52 V68"/>
+<text class="dg-tiny" x="700" y="44" text-anchor="middle">3:00</text>
+<rect class="dg-layer" x="60" y="84" width="640" height="40" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="380.0" y="108.0" text-anchor="middle">Índice principal: 100 M ítems, reconstruido de noche, de solo lectura</text>
+<path class="dg-layer" style="--c: var(--l-gpu)" d="M100 176 L690 146 L690 176 Z"/>
+<text class="dg-tiny" x="110" y="198" text-anchor="start">Índice delta: crece con lo publicado (unos 12 por segundo si son 1 M por día)</text>
+<path d="M174 214 L186 226 M186 214 L174 226" stroke="var(--fail)" stroke-width="2"/>
+<path d="M294 214 L306 226 M306 214 L294 226" stroke="var(--fail)" stroke-width="2"/>
+<path d="M464 214 L476 226 M476 214 L464 226" stroke="var(--fail)" stroke-width="2"/>
+<path d="M604 214 L616 226 M616 214 L604 226" stroke="var(--fail)" stroke-width="2"/>
+<text class="dg-tiny" x="110" y="246" text-anchor="start">Lápidas: ítems borrados o sin stock, que se descartan al leer hasta la reconstrucción</text>
+<rect class="dg-box dg-box--em" x="60" y="260" width="640" height="32" rx="8"/>
+<text class="dg-tiny" x="380" y="281" text-anchor="middle">Cada consulta: busca en el principal y en el delta, junta, quita las lápidas</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.13.</b> Principal, delta y lápidas. El índice grande se reconstruye en paz y lo nuevo es buscable en segundos. Las cifras de publicaciones son un supuesto. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>La solución tiene tres piezas. El índice principal se reconstruye de noche, con todo el catálogo, y queda de solo lectura durante el día. Un índice delta chico recibe lo publicado desde la reconstrucción: el servicio que publica un ítem llama a la torre de ítems y mete el vector en el delta, que se puede buscar en segundos. Y los borrados se marcan como lápidas: una lista de ids que se descartan al leer, hasta que la reconstrucción los saca. Cada consulta busca en el principal y en el delta, junta y quita las lápidas. Es la misma idea que el LSM-tree de las bases de datos: una parte grande inmutable, una chica que recibe lo nuevo y una compactación periódica.</p>
+
+<h3 id="frescura-version">La versión del modelo</h3>
+
+<p>Hay una trampa que no se ve en las métricas de servicio. Los vectores de la torre de usuario y los de la torre de ítems solo tienen sentido juntos, si salieron del mismo entrenamiento. Cada entrenamiento ubica el espacio a su manera: el mismo gusto puede quedar en otra dirección. Si el lunes se reentrena el modelo y la torre de usuario nueva consulta un índice armado con la torre de ítems vieja, los productos punto no significan nada, y las recomendaciones se vuelven ruido sin un solo error en los logs.</p>
+
+<p>La regla es versionar el índice con el modelo: el índice lleva el id del modelo que lo armó, el servicio carga la torre de usuario de esa misma versión, y el cambio a un modelo nuevo es un cambio atómico de los dos, con el índice nuevo ya construido al lado del viejo. Es un despliegue azul-verde (<a href="m22-operar-modelos.html">M22</a>) en el que la unidad que se despliega es el par.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un ítem nuevo que entra al delta con la torre de ítems de un modelo que ya no está en servicio queda en el espacio equivocado: la consulta no lo encuentra nunca, o lo encuentra para todo el mundo. El servicio que publica tiene que usar la misma versión de la torre que el índice principal, y lo más seguro es que la versión viaje con el vector y el delta rechace las que no coinciden.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> un índice principal que se reconstruye de noche, un delta para lo nuevo y lápidas para lo borrado dejan buscar ítems de hace segundos; el índice y la torre de usuario se versionan y se cambian juntos.</p>
+
+<h2 id="donde"><span class="sec-num">45.10</span>Dónde vive el índice</h2>
+
+<p>Hay tres lugares habituales, y la elección es más de operación que de algoritmo:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th></th><th>Una biblioteca en el servicio (FAISS, hnswlib)</th><th>Una extensión de la base (pgvector)</th><th>Un motor dedicado (Milvus, Vespa, OpenSearch)</th></tr></thead>
+    <tbody>
+      <tr><td>Qué es</td><td>El índice en la memoria del proceso de recuperación</td><td>Un tipo de columna y un índice en PostgreSQL</td><td>Un sistema aparte con API de búsqueda</td></tr>
+      <tr><td>Latencia</td><td>La más baja: sin red</td><td>Buena; comparte la máquina con lo demás</td><td>Buena, con un salto de red</td></tr>
+      <tr><td>Filtros</td><td>Los programas tú</td><td>SQL, con la transacción y los permisos de la base</td><td>Incluidos, con filtrado durante la búsqueda</td></tr>
+      <tr><td>Actualizar y escalar</td><td>Tu problema: delta, reconstrucción, shards</td><td>La base: réplicas, backups; escala menos</td><td>El motor: shards, réplicas e inserciones</td></tr>
+      <tr><td>Cuándo</td><td>Equipo con experiencia y latencia crítica</td><td>Hasta unos millones de vectores, o si los datos ya están ahí</td><td>Cientos de millones sin construir la operación</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Con 100 millones de ítems y HNSW, los 76.8 GB no entran cómodos en una máquina. Se reparten en <span data-term="sharding">shards</span> por ítem: 4 shards de 25 millones, de 19.2 GB cada uno. Partir por ítem tiene una consecuencia: los vecinos de una persona pueden estar en cualquier shard, así que cada consulta va a todos, cada uno devuelve sus mejores 4 000 y el servicio se queda con los 4 000 mejores de los 16 000.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f45ft f45fd">
+<title id="f45ft">El índice repartido en shards</title>
+<desc id="f45fd">El servicio de recuperación manda la misma consulta a cuatro shards, cada uno con un cuarto de los ítems y su propio HNSW de 19.2 GB. Cada shard devuelve sus mejores 4 000 y el servicio se queda con los 4 000 mejores de todos. La request espera al shard más lento: si cada uno tiene un 1 por ciento de respuestas lentas, el 3.9 por ciento de las requests espera a alguno lento.</desc>
+<defs><marker id="f45fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="120" width="150" height="60" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="95.0" y="146.0" text-anchor="middle">Recuperación</text>
+<text class="dg-tiny" x="95.0" y="162.0" text-anchor="middle">vector u</text>
+<path class="dg-edge" d="M172 150 C 220 150, 220 44, 270 44" marker-end="url(#f45fa)"/>
+<rect class="dg-layer" x="274" y="20" width="200" height="48" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="374.0" y="40.0" text-anchor="middle">Shard 1: 25 M ítems</text>
+<text class="dg-tiny" x="374.0" y="56.0" text-anchor="middle">HNSW, 19.2 GB</text>
+<path class="dg-edge" d="M476 44 C 520 44, 520 150, 566 150" marker-end="url(#f45fa)"/>
+<path class="dg-edge" d="M172 150 C 220 150, 220 110, 270 110" marker-end="url(#f45fa)"/>
+<rect class="dg-layer" x="274" y="86" width="200" height="48" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="374.0" y="106.0" text-anchor="middle">Shard 2: 25 M ítems</text>
+<text class="dg-tiny" x="374.0" y="122.0" text-anchor="middle">HNSW, 19.2 GB</text>
+<path class="dg-edge" d="M476 110 C 520 110, 520 150, 566 150" marker-end="url(#f45fa)"/>
+<path class="dg-edge" d="M172 150 C 220 150, 220 176, 270 176" marker-end="url(#f45fa)"/>
+<rect class="dg-layer" x="274" y="152" width="200" height="48" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="374.0" y="172.0" text-anchor="middle">Shard 3: 25 M ítems</text>
+<text class="dg-tiny" x="374.0" y="188.0" text-anchor="middle">HNSW, 19.2 GB</text>
+<path class="dg-edge" d="M476 176 C 520 176, 520 150, 566 150" marker-end="url(#f45fa)"/>
+<path class="dg-edge" d="M172 150 C 220 150, 220 242, 270 242" marker-end="url(#f45fa)"/>
+<rect class="dg-layer" x="274" y="218" width="200" height="48" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="374.0" y="238.0" text-anchor="middle">Shard 4: 25 M ítems</text>
+<text class="dg-tiny" x="374.0" y="254.0" text-anchor="middle">HNSW, 19.2 GB</text>
+<path class="dg-edge" d="M476 242 C 520 242, 520 150, 566 150" marker-end="url(#f45fa)"/>
+<rect class="dg-box dg-box--em" x="570" y="116" width="180" height="68" rx="8"/>
+<text class="dg-small" x="660.0" y="146.0" text-anchor="middle">Junta y corta</text>
+<text class="dg-tiny" x="660.0" y="162.0" text-anchor="middle">4 × 4 000 → 4 000</text>
+<text class="dg-tiny" x="20" y="290" text-anchor="start">Con 4 shards y un 1 % de respuestas lentas en cada uno: 1 − 0.99⁴ = 3.9 % de las requests esperan a uno lento.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.14.</b> Shards por ítem y fan-out a todos. Es la latencia de cola con fan-out de <a href="m00-metodo.html#percentiles">M00</a>: más shards, más probabilidad de esperar al lento. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>Es la <a href="m00-metodo.html#percentiles">latencia de cola</a> con fan-out de M00: la request espera al shard más lento. Si cada shard tiene un 1&#8239;% de respuestas lentas, con 4 shards el 1 − 0.99<sup>4</sup> = 3.9&#8239;% de las requests espera a alguno; con 8, el 7.7&#8239;%. Las defensas son las conocidas: réplicas de cada shard, mandar una segunda request a otra réplica si la primera tarda (<i>hedged requests</i>) y aceptar resultados parciales al vencer el deadline, porque perder un shard de cuatro es perder un cuarto de los candidatos de una fuente, no la recomendación.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>La búsqueda de Facebook no puso un motor vectorial al lado de su buscador: metió la búsqueda por embeddings dentro de su índice invertido. La celda de cada vector se guarda como un término más, con el código PQ como dato, así que una consulta puede pedir a la vez "estas palabras", "este filtro" y "esta celda", y los filtros se resuelven con la maquinaria que el buscador ya tenía <span class="badge badge--doc">Documentado</span> (Huang et al., KDD 2020).</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el índice vive en una biblioteca, en la base o en un motor dedicado; con 100 millones de vectores se reparte en shards por ítem, cada consulta va a todos y la cola se defiende con réplicas, hedging y resultados parciales.</p>
+
+<p>Para cerrar, el embudo con las etapas que cubrieron M44 y este módulo:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f45zt f45zd">
+<title id="f45zt">Dónde estás: la recuperación y los filtros</title>
+<desc id="f45zd">El embudo de la Lámina 42.A con la recuperación y los filtros resaltados; las demás etapas quedan tenues.</desc>
+<defs><marker id="f45za" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="540" y="26" text-anchor="start">Cuántos quedan y la latencia acumulada</text>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="160.0" y="40" width="340" height="32" rx="6"/>
+<text class="dg-small" x="330" y="61" text-anchor="middle">Catálogo</text>
+<text class="dg-small" x="540" y="53" text-anchor="start">100 000 000 ítems</text>
+<text class="dg-tiny" x="540" y="69" text-anchor="start">productos y videos de reseña</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="200.0" y="88" width="260" height="32" rx="6"/>
+<text class="dg-small" x="330" y="109" text-anchor="middle">Recuperación</text>
+<text class="dg-small" x="540" y="101" text-anchor="start">10 000 candidatos  ·  25 ms</text>
+<text class="dg-tiny" x="540" y="117" text-anchor="start">varias fuentes en paralelo</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="210.0" y="136" width="240" height="32" rx="6"/>
+<text class="dg-small" x="330" y="157" text-anchor="middle">Filtros</text>
+<text class="dg-small" x="540" y="149" text-anchor="start">unos 9 000  ·  30 ms</text>
+<text class="dg-tiny" x="540" y="165" text-anchor="start">ya visto, bloqueado, sin stock</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="245.0" y="184" width="170" height="32" rx="6"/>
+<text class="dg-small" x="330" y="205" text-anchor="middle">Ranking liviano</text>
+<text class="dg-small" x="540" y="197" text-anchor="start">500  ·  63 ms</text>
+<text class="dg-tiny" x="540" y="213" text-anchor="start">features y un modelo barato</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="270.0" y="232" width="120" height="32" rx="6"/>
+<text class="dg-small" x="330" y="253" text-anchor="middle">Ranking pesado</text>
+<text class="dg-small" x="540" y="245" text-anchor="start">50  ·  113 ms</text>
+<text class="dg-tiny" x="540" y="261" text-anchor="start">un modelo grande, multi-tarea</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="288.0" y="280" width="84" height="32" rx="6"/>
+<text class="dg-small" x="330" y="301" text-anchor="middle">Re-ranking</text>
+<text class="dg-small" x="540" y="293" text-anchor="start">10 en pantalla  ·  118 ms</text>
+<text class="dg-tiny" x="540" y="309" text-anchor="start">diversidad, frescura, reglas</text>
+</g>
+<g style="opacity: 0.45"><rect class="dg-box" x="230" y="336" width="200" height="40" rx="8"/>
+<text class="dg-small" x="330.0" y="360.0" text-anchor="middle">Registro de impresiones</text></g>
+<g style="opacity: 0.45"><rect class="dg-box" x="20" y="336" width="130" height="40" rx="8"/>
+<text class="dg-small" x="85.0" y="360.0" text-anchor="middle">Log de eventos</text></g>
+<g style="opacity: 0.45"><rect class="dg-box" x="20" y="150" width="120" height="44" rx="8"/>
+<text class="dg-small" x="80.0" y="176.0" text-anchor="middle">Entrenamiento</text></g>
+<path class="dg-edge" d="M330 312 V334" marker-end="url(#f45za)"/>
+<path class="dg-edge" d="M230 356 H152" marker-end="url(#f45za)"/>
+<text class="dg-tiny" x="191" y="389" text-anchor="middle">con clics y compras</text>
+<path class="dg-edge" d="M80 336 V196" marker-end="url(#f45za)"/>
+<path class="dg-feedback" d="M140 166 H176 V104 H198" marker-end="url(#f45za)"/>
+<path class="dg-feedback" d="M140 178 H200 V200 H243" marker-end="url(#f45za)"/>
+<path class="dg-feedback" d="M140 188 H186 V248 H268" marker-end="url(#f45za)"/>
+<text class="dg-tiny" x="88" y="230">modelos nuevos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 45.15.</b> Dónde estás. M44 y M45 llevaron el catálogo de 100 millones a unos 9 000 candidatos en 30 ms. Lo que sigue es ordenarlos: el ranking liviano y el pesado de <a href="m46-ranking.html#cascada">M46</a>.</figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Lo que viene</p>
+  <p>La recuperación deja unos 9 000 candidatos que nadie ordenó con cuidado. <a href="m46-ranking.html">M46</a> los ordena: qué probabilidades predice un ranker, de la regresión logística a los modelos multi-tarea, cómo se combinan en un puntaje y cómo se mide un orden con NDCG.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m45"></div>
+
+<div data-exercise="m45-indice"></div>
+
+<div data-checkpoint="m45"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m45.data.js"></script>
+<script src="../assets/js/data/exercises/m45.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-ann.js"></script>
+</body>
+</html>

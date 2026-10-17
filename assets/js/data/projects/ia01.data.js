@@ -103,3 +103,172 @@ SD.defineExercise('ia01-guardia', {
   ],
   solution: '<ul><li>Los permisos de solo lectura van en un rol de PostgreSQL, no en el prompt.</li><li>Las acciones son esquemas que solo se proponen; el grafo se detiene con <code>interrupt</code> antes del efecto.</li><li>Nada con efectos antes del <code>interrupt</code>: el nodo se repite al reanudar.</li><li>La clave de cada acción sale del hilo y del id de la llamada, guardados en el checkpoint.</li><li>El presupuesto lo corta la arista, con contadores en el estado.</li><li>Las herramientas devuelven poco, con tope y aviso.</li><li>Salida estructurada con <code>json_schema</code>.</li><li>Contra la injection, barreras que no dependen del modelo: aprobación y privilegio mínimo.</li></ul>'
 });
+
+/* «Predice la salida» de cada paso (kind: 'predict'). Se responden antes de correr el comando del paso. */
+
+SD.defineExercise('ia01-p-victima', {
+  kind: 'predict', title: 'la víctima',
+  scenario: '<p>Copiaste <code>compose.yaml</code>, <code>prometheus.yml</code>, <code>init.sql</code> y los seis archivos de <code>servicios/</code>. Corres <code>docker compose up -d --build</code> y después <code>docker compose ps</code>.</p>',
+  steps: [{
+    id: 'contenedores', type: 'single',
+    prompt: '¿Cuántos contenedores aparecen en <code>Up</code>?',
+    options: [
+      'Seis: postgres, pagos, tienda, trafico, prometheus y phoenix',
+      'Tres, porque la tienda, pagos y el tráfico comparten una imagen',
+      'Cinco: Phoenix solo arranca cuando defines <code>GUARDIA_PHOENIX</code>',
+      'Siete: los seis del compose más Ollama, que el agente necesita'
+    ],
+    answer: 0,
+    explain: 'Una imagen puede correr en varios contenedores: <code>servicios/</code> se construye una vez y el compose la arranca tres veces, con un <code>command</code> distinto. Phoenix está en el compose y arranca siempre; <code>GUARDIA_PHOENIX</code> solo le dice al agente si mandarle traces. Ollama corre fuera de Docker, en tu máquina.'
+  }]
+});
+
+SD.defineExercise('ia01-p-caos', {
+  kind: 'predict', title: 'los incidentes',
+  scenario: '<p>Corres <code>uv run python caos.py deploy</code>, que termina con <code>listo: deploy</code>. Enseguida corres <code>uv run python caos.py estado</code>.</p>',
+  steps: [{
+    id: 'version', type: 'single',
+    prompt: '¿Qué versión imprime <code>estado</code>?',
+    options: [
+      '<code>versión 2.4.0</code>: cada comando corre <code>normal</code> antes de empezar',
+      '<code>versión 2.5.0</code>',
+      '<code>versión ?</code>, hasta que la tienda relea la base dentro de 2&#8239;s',
+      'Ninguna: <code>estado</code> solo imprime flags y reportes'
+    ],
+    answer: 1,
+    explain: 'El <code>if</code> del final corre <code>normal()</code> antes de cada escenario, salvo con <code>normal</code> y con <code>estado</code>: mirar no deshace nada. <code>estado</code> lee la versión de la tabla <code>despliegues</code>, no de la tienda, así que no espera los 2&#8239;s del refresco. El <code>?</code> es lo que muestra <code>/salud</code> antes de la primera lectura.'
+  }]
+});
+
+SD.defineExercise('ia01-p-config', {
+  kind: 'predict', title: 'la configuración',
+  scenario: '<p>Sin nada exportado en la terminal, corres <code>GUARDIA_MODELO=ollama uv run python -c "from guardia.config import CFG; print(CFG.max_pasos, CFG.modelo)"</code>.</p>',
+  steps: [{
+    id: 'imprime', type: 'single',
+    prompt: '¿Qué imprime?',
+    options: [
+      '<code>12 claude</code>, porque el valor por defecto gana',
+      '<code>3 ollama</code>, el tope que usaste en el comando anterior',
+      '<code>12 ollama</code>',
+      'Un <code>KeyError</code>, porque falta <code>GUARDIA_MAX_PASOS</code>'
+    ],
+    answer: 2,
+    explain: 'La variable delante del comando vale solo para ese proceso: el modelo es <code>ollama</code>. <code>GUARDIA_MAX_PASOS</code> no está, y <code>os.environ.get(…, "12")</code> usa el valor por defecto en lugar de fallar. El 3 del comando anterior no quedó guardado en ningún lado.'
+  }]
+});
+
+SD.defineExercise('ia01-p-herr', {
+  kind: 'predict', title: 'las herramientas',
+  scenario: '<p>Con el compose andando, intentas escribir con la herramienta de lectura: <code>consultar_sql.invoke({"sql": "UPDATE flags SET activo = false WHERE nombre = \'checkout_v2\'"})</code>.</p>',
+  steps: [{
+    id: 'update', type: 'single',
+    prompt: '¿Qué pasa?',
+    options: [
+      'Devuelve <code>La consulta no devolvió filas.</code> y el flag queda en <code>false</code>',
+      'Devuelve <code>ERROR: una sola consulta, sin punto y coma en medio.</code>',
+      'La base lanza un error de transacción de solo lectura, y el flag no cambia',
+      'El flag cambia, porque la conexión usa <code>autocommit=True</code>'
+    ],
+    answer: 2,
+    explain: 'El rol <code>agente_lector</code> tiene las transacciones en solo lectura y no tiene <code>UPDATE</code>: PostgreSQL responde <code>cannot execute UPDATE in a read-only transaction</code>. <code>autocommit</code> decide cuándo se confirma, no qué se permite. La revisión del punto y coma solo mira si hay dos consultas. Aquí la excepción sube; en el paso 7, el grafo la convierte en un texto <code>ERROR: …</code> para el modelo.'
+  }]
+});
+
+SD.defineExercise('ia01-p-runbooks', {
+  kind: 'predict', title: 'los runbooks',
+  scenario: '<p>Corres <code>uv run guardia-indexar</code> dos veces seguidas, sin tocar los runbooks. Después cuentas las filas con <code>SELECT count(*) FROM runbooks</code> en la base <code>guardia</code>.</p>',
+  steps: [{
+    id: 'filas', type: 'single',
+    prompt: '¿Cuántas filas hay?',
+    options: ['4', '12', '24', 'Ninguna: la segunda corrida falla por clave duplicada'],
+    fixed: true,
+    answer: 1,
+    explain: 'Cuatro runbooks con tres secciones <code>##</code> cada uno dan doce trozos. La segunda corrida choca con la clave <code>(archivo, seccion)</code>, y <code>ON CONFLICT … DO UPDATE</code> reemplaza el texto y el vector en lugar de fallar o duplicar. Por eso puedes indexar de nuevo cada vez que cambias un runbook.'
+  }]
+});
+
+SD.defineExercise('ia01-p-acciones', {
+  kind: 'predict', title: 'las acciones',
+  scenario: '<p>Corres <code>uv run python -c "from guardia.acciones import CambiarFlag; CambiarFlag(nombre=\'tienda\', activo=False, motivo=\'x\')"</code>.</p>',
+  steps: [{
+    id: 'flag', type: 'single',
+    prompt: '¿Qué pasa?',
+    options: [
+      'Un <code>ValidationError</code>: <code>tienda</code> no es uno de los tres flags',
+      '<code>permission denied for table flags</code>, porque no hay conexión con el rol actor',
+      'Nada: crea el objeto, y el error aparecería recién en el <code>UPDATE</code>',
+      'Imprime <code>No existe el flag tienda.</code>, que es lo que devuelve el efecto'
+    ],
+    answer: 0,
+    explain: '<code>nombre</code> es un <code>Literal</code> con tres valores, y Pydantic lo revisa al crear el objeto, antes de cualquier conexión. Crear un <code>CambiarFlag</code> no toca la base: el efecto vive en <code>_cambiar_flag</code>, y solo corre desde <code>aplicar()</code>. Por eso un nombre inventado por el modelo nunca llega al <code>UPDATE</code>.'
+  }]
+});
+
+SD.defineExercise('ia01-p-grafo', {
+  kind: 'predict', title: 'el grafo',
+  scenario: '<p>En una misma respuesta, el modelo pide dos cosas: <code>consultar_sql</code> con un <code>SELECT</code>, y <code>CambiarFlag</code> para apagar <code>checkout_v2</code>.</p>',
+  steps: [{
+    id: 'camino', type: 'single',
+    prompt: '¿Qué nodo sigue, y qué pasa con la consulta?',
+    options: [
+      '<code>herramientas</code>: primero corre la lectura, y la acción espera a la próxima vuelta',
+      '<code>aprobar</code>, y la consulta corre después en <code>actuar</code>, junto con tu decisión',
+      '<code>aprobar</code>, y la consulta se descarta: el modelo tiene que volver a pedirla',
+      '<code>informe</code>, porque pedir una acción y una lectura juntas cierra la investigación'
+    ],
+    answer: 1,
+    explain: '<code>despues_de_investigar</code> manda a <code>aprobar</code> si alguna llamada es una acción. Después, <code>actuar</code> recorre todas las llamadas del mensaje: las acciones se aplican o se rechazan, y las lecturas pasan por <code>ejecutar_lectura</code>. Todas tienen que recibir su <code>ToolMessage</code>, porque la API rechaza una llamada sin respuesta.'
+  }]
+});
+
+SD.defineExercise('ia01-p-cli', {
+  kind: 'predict', title: 'la línea de comandos',
+  scenario: '<p><code>guardia investigar … --hilo inc-1</code> terminó con <code>== Necesita aprobación ==</code> y la pista para decidir. Antes de decidir, corres <code>uv run guardia ver inc-1</code>.</p>',
+  steps: [{
+    id: 'siguiente', type: 'single',
+    prompt: '¿Qué dice la primera línea?',
+    options: [
+      '<code>Siguiente: nada, terminó</code>, porque el comando ya volvió a la terminal',
+      '<code>Siguiente: (\'actuar\',)</code>',
+      '<code>Siguiente: (\'aprobar\',)</code>',
+      'Un error: el hilo vivía en el proceso de <code>investigar</code>, que ya terminó'
+    ],
+    answer: 2,
+    explain: 'El grafo quedó detenido dentro de <code>aprobar</code>, en el <code>interrupt</code>, y el checkpoint guardó que ese es el nodo pendiente. Que el comando haya terminado no cierra el hilo: el estado está en PostgreSQL. <code>actuar</code> todavía no corre, porque falta tu decisión.'
+  }]
+});
+
+SD.defineExercise('ia01-p-pruebas', {
+  kind: 'predict', title: 'las pruebas',
+  scenario: '<p>En <code>test_lee_y_termina_con_informe</code>, el guion es <code>[llamada("buscar_logs", …), final()]</code>, y cada respuesta falsa trae <code>usage_metadata</code> con 1000 tokens de entrada y 50 de salida.</p>',
+  steps: [{
+    id: 'llamadas', type: 'single',
+    prompt: '¿Cuántas veces llama el grafo a un modelo, y cuántos tokens suma?',
+    options: [
+      'Dos veces, una por respuesta del guion: 2100 tokens',
+      'Tres veces (triage y las dos del guion): 3150 tokens',
+      'Cuatro veces (triage, dos del guion e informe): 4200 tokens',
+      'Cinco veces, porque herramientas también llama al modelo: 5250'
+    ],
+    answer: 2,
+    explain: 'El guion solo cubre <code>investigar</code>. El triage y el informe usan <code>with_structured_output</code>, que en el modelo falso devuelve respuestas fijas con el mismo <code>usage_metadata</code>. Son 4 × 1050 = 4200, la cuenta de la última línea de la prueba. <code>herramientas</code> no llama al modelo: corre las funciones.'
+  }]
+});
+
+SD.defineExercise('ia01-p-evals', {
+  kind: 'predict', title: 'los evals',
+  scenario: '<p>Corres los evals con <code>--k 3</code>. El caso <code>pagos</code> sale <code>ok</code>, <code>FALLA</code> y <code>ok</code>.</p>',
+  steps: [{
+    id: 'tabla', type: 'single',
+    prompt: '¿Qué fila imprime la tabla para <code>pagos</code>?',
+    options: [
+      '<code>pagos  sí  no  2 de 3</code>',
+      '<code>pagos  no  no  2 de 3</code>',
+      '<code>pagos  sí  sí  2 de 3</code>',
+      '<code>pagos  no  sí  2 de 3</code>'
+    ],
+    fixed: true,
+    answer: 0,
+    explain: 'pass@k pregunta si pasó alguno (<code>any</code>): sí. pass^k pregunta si pasaron todos (<code>all</code>): no, por el intento del medio. La última columna cuenta los aciertos. pass^k en sí con pass@k en no es imposible: si pasan todos, pasó alguno.'
+  }]
+});

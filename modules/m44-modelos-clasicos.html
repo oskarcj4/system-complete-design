@@ -1,0 +1,1381 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M44. Modelos clásicos: popularidad, contenido y filtrado colaborativo</title>
+<meta name="description" content="Lo popular con decaimiento y prior, el contenido con TF-IDF y embeddings, el coseno y Jaccard, el ítem a ítem de Amazon, la factorización de matrices, ALS con confianza, BPR y el arranque en frío.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m44">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Modelos clásicos: popularidad, contenido y filtrado colaborativo</h1>
+        <p class="lead">Cuatro ideas viejas que todavía recomiendan la mitad de lo que ves. Este módulo las construye sobre la matriz de M43: lo popular bien contado, lo parecido por contenido, lo que se compra junto y los factores que encuentran gustos que nadie nombró.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M44</dd></div>
+          <div><dt>Parte</dt><dd>VI. ML System Design</dd></div>
+          <div><dt>Duración</dt><dd>150 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M43</dd></div>
+          <div><dt>Estado</dt><dd data-status="m44">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Calcular una popularidad con decaimiento y un promedio bayesiano, y decir cuándo cada uno cambia el orden.</li>
+    <li>Describir un ítem por su contenido con TF-IDF o un embedding, y comparar dos ítems con el coseno o con Jaccard.</li>
+    <li>Resolver a mano el filtrado colaborativo ítem a ítem y explicar por qué escala mejor que el de usuario a usuario.</li>
+    <li>Explicar la factorización de matrices: qué es un factor, qué se minimiza y cómo baja el error con el descenso por gradiente.</li>
+    <li>Elegir entre ALS y BPR para clics y compras, y explicar qué optimiza cada uno.</li>
+    <li>Diseñar qué se recomienda a una persona nueva y qué se hace con un ítem nuevo.</li>
+  </ul>
+</section>
+
+<p>Los datos de <a href="m43-datos-recomendacion.html">M43</a> dejaron lista la <a href="m43-datos-recomendacion.html#matriz">matriz usuario-ítem</a>: 50 millones de filas, 100 millones de columnas y una celda llena de cada 500 000. Este módulo construye los primeros modelos sobre ella. Son ideas de hace veinte o treinta años, y siguen en producción: en un embudo como el de <a href="m42-ml-system-design.html#recomendador">M42</a> no compiten entre sí, sino que son fuentes de candidatos en paralelo, cada una buena en lo que las otras fallan.</p>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 340" role="img" aria-labelledby="f44at f44ad">
+<title id="f44at">Las cuatro familias de modelos clásicos</title>
+<desc id="f44ad">Cuatro cajas en fila. Popularidad: mira contadores por ítem con decaimiento y un prior, y produce lo más vendido por país y categoría. Contenido: mira el texto, la categoría y la imagen de cada ítem, los vuelve un vector y produce lo parecido a lo que te gustó. Ítem a ítem: mira quién compró qué y produce una tabla de vecinos por ítem. Factorización: mira la matriz entera y aprende un vector chico por persona y por ítem. Las dos primeras funcionan sin historia; las dos últimas la necesitan. Las cuatro alimentan la recuperación.</desc>
+<defs><marker id="f44aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<rect class="dg-layer" x="20" y="40" width="168" height="200" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-label" x="104.0" y="64" text-anchor="middle">Popularidad</text>
+<text class="dg-tiny" x="32" y="86" text-anchor="start">Mira contadores por</text>
+<text class="dg-tiny" x="32" y="101" text-anchor="start">ítem, con decaimiento</text>
+<text class="dg-tiny" x="32" y="116" text-anchor="start">en el tiempo y un</text>
+<text class="dg-tiny" x="32" y="131" text-anchor="start">prior para los que</text>
+<text class="dg-tiny" x="32" y="146" text-anchor="start">tienen pocos votos.</text>
+<text class="dg-tiny" x="32" y="161" text-anchor="start"></text>
+<text class="dg-tiny" x="32" y="176" text-anchor="start">Sale lo más vendido</text>
+<text class="dg-tiny" x="32" y="191" text-anchor="start">por país y categoría.</text>
+<rect class="dg-ok" x="30" y="200" width="148" height="28" rx="6"/>
+<text class="dg-tiny" x="104.0" y="218" text-anchor="middle">funciona sin historia</text>
+<path class="dg-edge" d="M104 242 V278" marker-end="url(#f44aa)"/>
+<rect class="dg-layer" x="207" y="40" width="168" height="200" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-label" x="291.0" y="64" text-anchor="middle">Contenido</text>
+<text class="dg-tiny" x="219" y="86" text-anchor="start">Mira el texto, la</text>
+<text class="dg-tiny" x="219" y="101" text-anchor="start">categoría y la imagen</text>
+<text class="dg-tiny" x="219" y="116" text-anchor="start">de cada ítem, y los</text>
+<text class="dg-tiny" x="219" y="131" text-anchor="start">vuelve un vector.</text>
+<text class="dg-tiny" x="219" y="146" text-anchor="start"></text>
+<text class="dg-tiny" x="219" y="161" text-anchor="start">Sale lo parecido a lo</text>
+<text class="dg-tiny" x="219" y="176" text-anchor="start">que te gustó.</text>
+<rect class="dg-ok" x="217" y="200" width="148" height="28" rx="6"/>
+<text class="dg-tiny" x="291.0" y="218" text-anchor="middle">funciona sin historia</text>
+<path class="dg-edge" d="M291 242 V278" marker-end="url(#f44aa)"/>
+<rect class="dg-layer" x="394" y="40" width="168" height="200" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-label" x="478.0" y="64" text-anchor="middle">Ítem a ítem</text>
+<text class="dg-tiny" x="406" y="86" text-anchor="start">Mira quién compró</text>
+<text class="dg-tiny" x="406" y="101" text-anchor="start">qué: las columnas de</text>
+<text class="dg-tiny" x="406" y="116" text-anchor="start">la matriz</text>
+<text class="dg-tiny" x="406" y="131" text-anchor="start">usuario-ítem.</text>
+<text class="dg-tiny" x="406" y="146" text-anchor="start"></text>
+<text class="dg-tiny" x="406" y="161" text-anchor="start">Sale una tabla de</text>
+<text class="dg-tiny" x="406" y="176" text-anchor="start">vecinos por ítem.</text>
+<rect class="dg-warnbox" x="404" y="200" width="148" height="28" rx="6"/>
+<text class="dg-tiny" x="478.0" y="218" text-anchor="middle">necesita historia</text>
+<path class="dg-edge" d="M478 242 V278" marker-end="url(#f44aa)"/>
+<rect class="dg-layer" x="581" y="40" width="168" height="200" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-label" x="665.0" y="64" text-anchor="middle">Factorización</text>
+<text class="dg-tiny" x="593" y="86" text-anchor="start">Mira la matriz entera</text>
+<text class="dg-tiny" x="593" y="101" text-anchor="start">y aprende un vector</text>
+<text class="dg-tiny" x="593" y="116" text-anchor="start">chico por persona y</text>
+<text class="dg-tiny" x="593" y="131" text-anchor="start">por ítem.</text>
+<text class="dg-tiny" x="593" y="146" text-anchor="start"></text>
+<text class="dg-tiny" x="593" y="161" text-anchor="start">Sale una predicción</text>
+<text class="dg-tiny" x="593" y="176" text-anchor="start">para cualquier par.</text>
+<rect class="dg-warnbox" x="591" y="200" width="148" height="28" rx="6"/>
+<text class="dg-tiny" x="665.0" y="218" text-anchor="middle">necesita historia</text>
+<path class="dg-edge" d="M665 242 V278" marker-end="url(#f44aa)"/>
+<rect class="dg-box dg-box--em" x="20" y="280" width="729" height="40" rx="8"/>
+<text class="dg-small" x="384" y="305" text-anchor="middle">Recuperación: cada familia es una fuente de candidatos, en paralelo (M45)</text>
+<g class="pl-pin"><circle cx="188" cy="40" r="11"/><text x="188" y="44" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="188" cy="72" r="11"/><text x="188" y="76" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="375" cy="40" r="11"/><text x="375" y="44" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="375" cy="72" r="11"/><text x="375" y="76" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="562" cy="40" r="11"/><text x="562" y="44" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="562" cy="72" r="11"/><text x="562" y="76" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="749" cy="40" r="11"/><text x="749" y="44" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="749" cy="72" r="11"/><text x="749" y="76" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="749" cy="104" r="11"/><text x="749" y="108" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="188" cy="214" r="11"/><text x="188" y="218" text-anchor="middle">10</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 44.A.</b> Las cuatro familias de modelos clásicos. Ninguna reemplaza a las otras: en Mercado Barrio, las cuatro son fuentes de candidatos de la recuperación, y cada una tapa un hueco de las demás.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Popularidad con decaimiento</b><span>Un contador por ítem en el que cada venta pesa menos a medida que envejece. <a href="#popularidad">44.1</a></span></li>
+  <li><b>Promedio bayesiano</b><span>El promedio de estrellas corrido hacia un valor previo, para que pocos votos no ganen. <a href="#popularidad">44.1</a></span></li>
+  <li><b>Vector de contenido</b><span>Un ítem descrito con números a partir de su texto o su imagen: TF-IDF o un embedding. <a href="#contenido">44.2</a></span></li>
+  <li><b>Similitud coseno</b><span>Cuánto apuntan dos vectores hacia el mismo lado, de 0 a 1 si no hay negativos. <a href="#coseno">44.3</a></span></li>
+  <li><b>Matriz usuario-ítem</b><span>La tabla dispersa de <a href="m43-datos-recomendacion.html#matriz">M43</a>: cada columna es un ítem descrito por quién lo tocó. <a href="#item-item">44.4</a></span></li>
+  <li><b>Ítem a ítem</b><span>Quienes compraron esto también compraron: coseno entre columnas, calculado de noche. <a href="#item-item">44.4</a></span></li>
+  <li><b>Factores</b><span>Un vector de k números por persona y otro por ítem; su producto punto predice la celda. <a href="#factorizacion">44.6</a></span></li>
+  <li><b>ALS con confianza</b><span>Factorización para clics y compras, que alterna entre resolver personas y resolver ítems. <a href="#implicito">44.7</a></span></li>
+  <li><b>BPR</b><span>Aprende a ordenar: lo que la persona tocó tiene que quedar arriba de lo que no tocó. <a href="#bpr">44.8</a></span></li>
+  <li><b><span class="no-autolink">Arranque en frío</span></b><span>Qué se recomienda a quien no tiene historia, y qué pasa con el ítem que nadie tocó. <a href="#frio">44.9</a></span></li>
+</ol>
+
+<p>El caso sigue siendo Mercado Barrio, con sus números de <a href="m42-ml-system-design.html#numeros">M42</a>: 20 millones de personas activas por día, 100 millones de ítems y 10 000 millones de interacciones fuertes por año (el supuesto de M43). La recuperación tiene 25 ms del presupuesto de 200 ms.</p>
+
+<h2 id="popularidad"><span class="sec-num">44.1</span>Lo popular, bien hecho</h2>
+
+<p>"Lo más vendido" es la <a href="m42-ml-system-design.html#sin-ml">línea base</a> que recomendó M42, y parece trivial: contar ventas por ítem y ordenar. Contado así tiene dos defectos. El primero es que no olvida: un producto que se vendió mucho en diciembre sigue arriba en marzo. El segundo es que no distingue cuánta evidencia hay: un producto con un voto de 5 estrellas le gana a uno con dos mil votos de 4.7.</p>
+
+<h3 id="popularidad-decaimiento">Contar con decaimiento</h3>
+
+<p>La <dfn data-term="popularidad-decaimiento">popularidad con decaimiento</dfn> le da a cada venta un peso que baja con su edad. Con decaimiento exponencial y una vida media de 24 horas, una venta de ayer pesa la mitad, una de anteayer un cuarto y una de hace tres días un octavo.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es la diferencia entre "el más vendido del año" y "lo que está sonando". La radio no pone el éxito del verano pasado aunque haya sumado más reproducciones: pone lo que la gente pide esta semana, y lo de la semana pasada pesa un poco menos.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f441t f441d">
+<title id="f441t">Popularidad con vida media de 24 horas</title>
+<desc id="f441d">A la izquierda, cuánto pesa una venta según su edad: 1 recién hecha, 0.5 a las 24 horas, 0.25 a las 48 y 0.125 a las 72. A la derecha, dos productos. La zapatilla X vendió 100 unidades hace 3 días y suma 12.5. El termo Y vendió 30 hace 2 horas y suma 28.3. Contando sin decaimiento gana X; con decaimiento gana Y.</desc>
+<defs><marker id="f441a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<line class="sim-axis" x1="60" x2="400" y1="210" y2="210" stroke="var(--label-2)"/>
+<line class="sim-axis" x1="60" x2="60" y1="30" y2="210" stroke="var(--label-2)"/>
+<polyline points="60.0,30.0 67.1,40.1 74.2,49.6 81.2,58.6 88.3,67.1 95.4,75.2 102.5,82.7 109.6,89.9 116.7,96.6 123.8,103.0 130.8,109.0 137.9,114.6 145.0,120.0 152.1,125.1 159.2,129.8 166.2,134.3 173.3,138.6 180.4,142.6 187.5,146.4 194.6,149.9 201.7,153.3 208.8,156.5 215.8,159.5 222.9,162.3 230.0,165.0 237.1,167.5 244.2,169.9 251.2,172.2 258.3,174.3 265.4,176.3 272.5,178.2 279.6,180.0 286.7,181.7 293.8,183.2 300.8,184.7 307.9,186.2 315.0,187.5 322.1,188.8 329.2,190.0 336.2,191.1 343.3,192.1 350.4,193.1 357.5,194.1 364.6,195.0 371.7,195.8 378.8,196.6 385.8,197.4 392.9,198.1 400.0,198.8" fill="none" stroke="var(--l-cache)" stroke-width="2.5"/>
+<text class="dg-tiny" x="60.0" y="228" text-anchor="middle">0 h</text>
+<text class="dg-tiny" x="145.0" y="228" text-anchor="middle">24 h</text>
+<text class="dg-tiny" x="230.0" y="228" text-anchor="middle">48 h</text>
+<text class="dg-tiny" x="315.0" y="228" text-anchor="middle">72 h</text>
+<text class="dg-tiny" x="400.0" y="228" text-anchor="middle">96 h</text>
+<text class="dg-tiny" x="52" y="169.0" text-anchor="end">0.25</text>
+<text class="dg-tiny" x="52" y="124.0" text-anchor="end">0.5</text>
+<text class="dg-tiny" x="52" y="34" text-anchor="end">1</text>
+<path class="dg-feedback" d="M145.0 120.0 V210.0 M60.0 120.0 H145.0"/>
+<circle cx="145.0" cy="120.0" r="4" class="dg-box dg-box--em"/>
+<text class="dg-small" x="153.0" y="112.0" text-anchor="start">0.5</text>
+<path class="dg-feedback" d="M230.0 165.0 V210.0 M60.0 165.0 H230.0"/>
+<circle cx="230.0" cy="165.0" r="4" class="dg-box dg-box--em"/>
+<text class="dg-small" x="238.0" y="157.0" text-anchor="start">0.25</text>
+<path class="dg-feedback" d="M315.0 187.5 V210.0 M60.0 187.5 H315.0"/>
+<circle cx="315.0" cy="187.5" r="4" class="dg-box dg-box--em"/>
+<text class="dg-small" x="323.0" y="179.5" text-anchor="start">0.125</text>
+<text class="dg-tiny" x="60" y="252" text-anchor="start">Peso de una venta según su edad: 0.5 elevado a (horas / 24)</text>
+<rect class="dg-box" x="450" y="40" width="300" height="62" rx="8"/>
+<text class="dg-small" x="600.0" y="67.0" text-anchor="middle">Zapatilla X: 100 ventas hace 3 días</text>
+<text class="dg-tiny" x="600.0" y="83.0" text-anchor="middle">100 × 0.125 = 12.5</text>
+<rect class="dg-box dg-box--em" x="450" y="118" width="300" height="62" rx="8"/>
+<text class="dg-small" x="600.0" y="145.0" text-anchor="middle">Termo Y: 30 ventas hace 2 horas</text>
+<text class="dg-tiny" x="600.0" y="161.0" text-anchor="middle">30 × 0.944 = 28.3</text>
+<text class="dg-tiny" x="450" y="206" text-anchor="start">Sin decaimiento gana X, 100 contra 30.</text>
+<text class="dg-tiny" x="450" y="221" text-anchor="start">Con vida media de 24 h gana Y, que se vende ahora.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.1.</b> Decaimiento exponencial con vida media de 24 horas. Cada venta pierde la mitad de su peso por día, así que el contador cuenta lo que se vende ahora y lo de la semana pasada casi no pesa.</figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: el decaimiento exponencial</p>
+  <p>El peso de una venta de edad <i>t</i> horas, con vida media <i>T</i>, es 0.5<sup><i>t</i>/<i>T</i></sup>. Con <i>T</i> = 24: 0.5<sup>72/24</sup> = 0.125 para una de hace 72 horas, y 0.5<sup>2/24</sup> = 0.944 para una de hace 2 horas. Lo práctico es que no hace falta guardar cada venta: se guarda un solo número por ítem y la hora de su última actualización. Cuando llega una venta, el número viejo se multiplica por el decaimiento del tiempo que pasó y se le suma 1.</p>
+</aside>
+
+<pre data-lang="python"><code>def actualizar(puntaje, ultima_hora, ahora, vida_media=24.0):
+    """Suma una venta al puntaje de un ítem, envejeciendo primero lo anterior."""
+    horas = ahora - ultima_hora
+    return puntaje * 0.5 ** (horas / vida_media) + 1, ahora
+
+# Para ordenar, todos los puntajes se llevan a la misma hora:
+# puntaje_ahora = puntaje * 0.5 ** ((ahora - ultima_hora) / vida_media)</code></pre>
+
+<p>Este es el mismo problema que los trending topics de <a href="m30-twitter.html#trending">M30</a>: un contador por ventana que olvida, actualizado por un procesador de streams. La diferencia es de escala y de exactitud. Twitter cuenta millones de hashtags que aparecen y desaparecen, y por eso usa un count-min sketch, que es aproximado. Acá el contador es por ítem y por segmento, y se puede guardar exacto en el feature store online de <a href="m43-datos-recomendacion.html#feature-store">M43</a>.</p>
+
+<p>"Por segmento" es la otra mitad. Lo más vendido de todo Mercado Barrio son pilas y cargadores, que no le sirven a nadie como recomendación. Lo útil es lo más vendido por país y categoría, o por país y franja de edad: con 10 países y 500 categorías (un supuesto) son 5 000 listas, y cada una se recalcula cada pocos minutos. La vida media también depende de la categoría: en moda una semana de diferencia importa; en herramientas, casi nada.</p>
+
+<h3 id="popularidad-bayesiana">Pocos votos: el promedio bayesiano</h3>
+
+<p>Ordenar por promedio de estrellas tiene el problema contrario: premia la falta de datos. Un producto con un voto de 5 tiene promedio 5.0, el máximo posible. El <dfn data-term="promedio-bayesiano">promedio bayesiano</dfn> hace como si cada producto empezara con unos votos imaginarios de un valor previo, el <i>prior</i>, y le suma los reales. Con pocos votos reales, el resultado queda cerca del prior; con muchos, cerca del promedio real.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f442t f442d">
+<title id="f442t">El promedio bayesiano corre los pocos votos hacia el prior</title>
+<desc id="f442d">Una recta de 3.5 a 5 estrellas. El prior está en 4.0, como si cada producto empezara con 20 votos de 4.0. El producto A tiene 1 voto de 5 estrellas: su promedio crudo es 5.0 y el bayesiano 4.05, casi en el prior. El producto B tiene 2 000 votos con promedio 4.7: el bayesiano queda en 4.69, casi igual. Con el promedio crudo A le gana a B; con el bayesiano B le gana a A.</desc>
+<defs><marker id="f442a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<line x1="60" x2="710" y1="120" y2="120" stroke="var(--label-2)" stroke-width="1.5"/>
+<line x1="60.0" x2="60.0" y1="116" y2="124" stroke="var(--label-2)"/>
+<text class="dg-tiny" x="60.0" y="140" text-anchor="middle">3.5</text>
+<line x1="276.7" x2="276.7" y1="116" y2="124" stroke="var(--label-2)"/>
+<text class="dg-tiny" x="276.7" y="140" text-anchor="middle">4.0</text>
+<line x1="493.3" x2="493.3" y1="116" y2="124" stroke="var(--label-2)"/>
+<text class="dg-tiny" x="493.3" y="140" text-anchor="middle">4.5</text>
+<line x1="710.0" x2="710.0" y1="116" y2="124" stroke="var(--label-2)"/>
+<text class="dg-tiny" x="710.0" y="140" text-anchor="middle">5.0</text>
+<path class="dg-feedback" d="M276.7 36 V112 M276.7 146 V200"/>
+<text class="dg-tiny" x="268.7" y="32" text-anchor="end">prior: 4.0, como 20 votos</text>
+<circle cx="710.0" cy="80" r="7" class="dg-box"/>
+<path class="dg-edge" d="M701.0 80 H308.3" marker-end="url(#f442a)"/>
+<circle cx="298.3" cy="80" r="7" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="515.0" y="70" text-anchor="middle">A: 1 voto de 5.0</text>
+<text class="dg-small" x="310.3" y="100" text-anchor="start">4.05</text>
+<circle cx="575.7" cy="165" r="7" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-small" x="561.7" y="170" text-anchor="end">B: 2 000 votos, 4.7 · bayesiano 4.69</text>
+<text class="dg-tiny" x="60" y="220" text-anchor="start">bayesiano = (20 × 4.0 + suma de estrellas) / (20 + votos) · A: (80 + 5) / 21 = 4.05 · B: (80 + 9 400) / 2 020 = 4.69</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.2.</b> El promedio bayesiano. Un voto solo mueve poco al producto que empieza en el prior; dos mil votos lo llevan casi hasta su promedio real. El orden cambia: B queda arriba de A.</figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: el promedio con prior</p>
+  <p>Con <i>C</i> votos imaginarios de valor <i>m</i>, un producto con <i>n</i> votos que suman <i>S</i> estrellas tiene puntaje (<i>C</i> · <i>m</i> + <i>S</i>) / (<i>C</i> + <i>n</i>). Con <i>C</i> = 20 y <i>m</i> = 4.0, el producto A, con un voto de 5, queda en (80 + 5) / 21 = 4.05. El producto B, con 2 000 votos de promedio 4.7 (9 400 estrellas en total), queda en (80 + 9 400) / 2 020 = 4.69. En Python: <code>(C * m + suma) / (C + n)</code>. <i>m</i> suele ser el promedio de la categoría, y <i>C</i> la cantidad de votos a partir de la cual confías en un producto; los dos son decisiones, no datos.</p>
+</aside>
+
+<p>La misma idea sirve para el CTR, que es un promedio de ceros y unos. Un ítem nuevo con 1 clic en 2 impresiones tiene CTR 50&#8239;%, y no por eso es mejor que uno con 3&#8239;% en un millón. Correrlo hacia el CTR de su categoría evita que lo nuevo con suerte ocupe el primer lugar; darle una oportunidad de juntar impresiones es la exploración de M47.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>La popularidad se alimenta a sí misma: lo que está arriba se muestra más, se vende más y sigue arriba. Es el <a href="m43-datos-recomendacion.html#sesgos">sesgo de popularidad</a> de M43. El decaimiento lo frena un poco, porque obliga a seguir vendiendo, pero no lo resuelve; por eso la popularidad es una fuente de candidatos entre varias, no la lista entera.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> lo popular se cuenta con decaimiento, por segmento, y con un prior cuando hay pocos datos; no necesita historia de la persona, y por eso es la red de seguridad del <span class="no-autolink">arranque en frío</span>.</p>
+
+<h2 id="contenido"><span class="sec-num">44.2</span>Basado en contenido</h2>
+
+<p>La <dfn data-term="contenido-recomendacion">recomendación basada en contenido</dfn> describe cada ítem con lo que es (su título, su categoría, su marca, su foto) y recomienda lo que se parece a lo que a la persona ya le gustó. No necesita que nadie más haya comprado nada: un producto publicado hace diez minutos ya tiene título y foto.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es el vendedor que no sabe qué compran los demás clientes, pero conoce bien la tienda: "si te gustó esta zapatilla de trail, tengo otra de la misma marca, también impermeable".</p>
+</aside>
+
+<h3 id="contenido-tfidf">Del texto a un vector: TF-IDF</h3>
+
+<p>Para comparar dos títulos, primero hay que volverlos números. La forma clásica es <dfn data-term="tf-idf">TF-IDF</dfn>: un vector con una posición por palabra del vocabulario, en el que cada palabra pesa más cuanto más aparece en el título (TF, <i>term frequency</i>) y menos cuanto más títulos la tienen (IDF, <i>inverse document frequency</i>). Una palabra que está en todos los títulos no ayuda a distinguir ninguno.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f443t f443d">
+<title id="f443t">TF-IDF de tres títulos de productos</title>
+<desc id="f443d">Una tabla con tres títulos en las filas y seis palabras en las columnas. Nueva aparece en los tres títulos y su idf es 0. Zapatilla, running y liviana aparecen en dos y valen 0.405. Trail y mochila aparecen en uno y valen 1.099. Cada celda es tf por idf. El coseno entre d1 y d2 es 0.378, entre d1 y d3 0.2 y entre d2 y d3 0.</desc>
+
+<text class="dg-small" x="197.5" y="44" text-anchor="middle" style="font-weight: 600">nueva</text>
+<text class="dg-small" x="292.5" y="44" text-anchor="middle" style="font-weight: 600">zapatilla</text>
+<text class="dg-small" x="387.5" y="44" text-anchor="middle" style="font-weight: 600">running</text>
+<text class="dg-small" x="482.5" y="44" text-anchor="middle" style="font-weight: 600">liviana</text>
+<text class="dg-small" x="577.5" y="44" text-anchor="middle" style="font-weight: 600">trail</text>
+<text class="dg-small" x="672.5" y="44" text-anchor="middle" style="font-weight: 600">mochila</text>
+<text class="dg-small" x="140" y="80" text-anchor="end" style="font-weight: 600">d1</text>
+<rect class="dg-layer" x="158" y="62" width="79" height="26" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="197.5" y="80" text-anchor="middle">0.000</text>
+<rect class="dg-layer" x="253" y="62" width="79" height="26" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="292.5" y="80" text-anchor="middle">0.405</text>
+<rect class="dg-layer" x="348" y="62" width="79" height="26" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="387.5" y="80" text-anchor="middle">0.405</text>
+<rect class="dg-layer" x="443" y="62" width="79" height="26" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="482.5" y="80" text-anchor="middle">0.405</text>
+<text class="dg-small" x="577.5" y="80" text-anchor="middle">·</text>
+<text class="dg-small" x="672.5" y="80" text-anchor="middle">·</text>
+<text class="dg-small" x="140" y="112" text-anchor="end" style="font-weight: 600">d2</text>
+<rect class="dg-layer" x="158" y="94" width="79" height="26" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="197.5" y="112" text-anchor="middle">0.000</text>
+<rect class="dg-layer" x="253" y="94" width="79" height="26" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="292.5" y="112" text-anchor="middle">0.405</text>
+<rect class="dg-layer" x="348" y="94" width="79" height="26" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="387.5" y="112" text-anchor="middle">0.405</text>
+<text class="dg-small" x="482.5" y="112" text-anchor="middle">·</text>
+<rect class="dg-layer" x="538" y="94" width="79" height="26" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="577.5" y="112" text-anchor="middle">1.099</text>
+<text class="dg-small" x="672.5" y="112" text-anchor="middle">·</text>
+<text class="dg-small" x="140" y="144" text-anchor="end" style="font-weight: 600">d3</text>
+<rect class="dg-layer" x="158" y="126" width="79" height="26" rx="6" style="--c: var(--l-external)"/>
+<text class="dg-small" x="197.5" y="144" text-anchor="middle">0.000</text>
+<text class="dg-small" x="292.5" y="144" text-anchor="middle">·</text>
+<text class="dg-small" x="387.5" y="144" text-anchor="middle">·</text>
+<rect class="dg-layer" x="443" y="126" width="79" height="26" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="482.5" y="144" text-anchor="middle">0.405</text>
+<text class="dg-small" x="577.5" y="144" text-anchor="middle">·</text>
+<rect class="dg-layer" x="633" y="126" width="79" height="26" rx="6" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="672.5" y="144" text-anchor="middle">1.099</text>
+<line x1="40" x2="720" y1="168" y2="168" stroke="var(--separator)"/>
+<text class="dg-tiny" x="140" y="190" text-anchor="end">en cuántos (df)</text>
+<text class="dg-tiny" x="140" y="222" text-anchor="end">idf = ln(3 / df)</text>
+<text class="dg-small" x="197.5" y="190" text-anchor="middle">3</text>
+<text class="dg-small" x="197.5" y="222" text-anchor="middle">0.000</text>
+<text class="dg-small" x="292.5" y="190" text-anchor="middle">2</text>
+<text class="dg-small" x="292.5" y="222" text-anchor="middle">0.405</text>
+<text class="dg-small" x="387.5" y="190" text-anchor="middle">2</text>
+<text class="dg-small" x="387.5" y="222" text-anchor="middle">0.405</text>
+<text class="dg-small" x="482.5" y="190" text-anchor="middle">2</text>
+<text class="dg-small" x="482.5" y="222" text-anchor="middle">0.405</text>
+<text class="dg-small" x="577.5" y="190" text-anchor="middle">1</text>
+<text class="dg-small" x="577.5" y="222" text-anchor="middle">1.099</text>
+<text class="dg-small" x="672.5" y="190" text-anchor="middle">1</text>
+<text class="dg-small" x="672.5" y="222" text-anchor="middle">1.099</text>
+<text class="dg-tiny" x="40" y="256" text-anchor="start">d1: "Zapatilla running liviana nueva" · d2: "Zapatilla running trail nueva" · d3: "Mochila liviana nueva"</text>
+<text class="dg-tiny" x="40" y="276" text-anchor="start">cos(d1, d2) = 0.378 · cos(d1, d3) = 0.200 · cos(d2, d3) = 0.000 · tf = 1 si la palabra está en el título</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.3.</b> TF-IDF a mano. "Nueva" está en todos los títulos y no distingue nada: su idf es 0. Las palabras raras pesan más. Quien miró d1 recibe primero d2, que comparte zapatilla y running.</figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: TF-IDF</p>
+  <p>Con <i>N</i> documentos, una palabra que aparece en <i>df</i> de ellos tiene idf = ln(<i>N</i> / <i>df</i>). En la figura 44.3, <i>N</i> = 3: "nueva" está en los 3 y vale ln(1) = 0; "zapatilla" está en 2 y vale ln(1.5) = 0.405; "trail" está en 1 y vale ln(3) = 1.099. El peso de una palabra en un título es tf × idf, donde tf es cuántas veces aparece (en títulos cortos, casi siempre 1). Hay variantes (suavizar con un +1, <span class="no-autolink">normalizar</span> el largo), y BM25, el ranking de los buscadores, es una de ellas.</p>
+</aside>
+
+<pre data-lang="python"><code>from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+titulos = ["Zapatilla running liviana nueva",
+           "Zapatilla running trail nueva",
+           "Mochila liviana nueva"]
+X = TfidfVectorizer().fit_transform(titulos)   # matriz dispersa: 3 títulos x 6 palabras
+sim = cosine_similarity(X)                      # 3 x 3; la diagonal vale 1</code></pre>
+
+<p>Ojo con comparar los números del código con los de la figura: <code>TfidfVectorizer</code> usa por defecto un idf suavizado, ln((1 + <i>N</i>) / (1 + <i>df</i>)) + 1, así que ninguna palabra vale 0 y los cosenos salen distintos. El orden de los parecidos suele ser el mismo; los valores, no.</p>
+
+<h3 id="contenido-embeddings">Embeddings y el perfil de la persona</h3>
+
+<p>TF-IDF no sabe que "zapatilla" y "calzado deportivo" son lo mismo: son palabras distintas, posiciones distintas del vector. Un <a href="m17-api-streaming.html#embeddings">embedding</a> de texto, como los de M17, sí lo sabe, porque el modelo que lo produce aprendió de millones de textos qué palabras aparecen en contextos parecidos. Lo mismo vale para las fotos, con un modelo de imágenes. En Mercado Barrio, cada ítem nuevo pasa por un modelo de embeddings al publicarse y su vector queda guardado; el costo es una vez por ítem, no por request.</p>
+
+<p>¿Y la persona? En la versión más simple, su perfil es el promedio de los vectores de lo que le gustó. Si a alguien le gustaron d1 y d2, su perfil es el promedio de los dos, y el coseno con d3 es 0.086: casi nada en común, porque d3 es una mochila. Es simple, se explica solo ("porque viste zapatillas") y funciona desde el primer ítem.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>El contenido es fuerte en el <span data-term="arranque-frio">arranque en frío</span> del ítem: no necesita interacciones. Su debilidad es que no sorprende. Solo recomienda lo que se parece a lo que ya viste, así que alguien que compró una zapatilla recibe más zapatillas, nunca la botella que todos los corredores compran con ellas. Esa relación no está en el texto de ninguno de los dos productos; está en el comportamiento de la gente, y para eso es el filtrado colaborativo.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> un ítem se vuelve un vector con TF-IDF o un embedding, la persona es el promedio de lo que le gustó, y el parecido se mide con el coseno; sirve con ítems nuevos y no descubre relaciones que no estén en el contenido.</p>
+
+<h2 id="coseno"><span class="sec-num">44.3</span>Similitud: coseno y Jaccard</h2>
+
+<p>Las dos secciones anteriores ya usaron una medida de parecido. Esta sección la explica, porque las siguientes la usan en todas partes: entre ítems, entre personas y, en <a href="m45-recuperacion.html#two-tower">M45</a>, entre una persona y cien millones de ítems.</p>
+
+<p>La <dfn data-term="similitud-coseno">similitud coseno</dfn> trata a cada ítem como una flecha que sale del origen y mide el ángulo entre dos flechas. Si apuntan al mismo lado, el coseno vale 1; si son perpendiculares (no comparten nada), 0. El largo de la flecha no importa.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f444t f444d">
+<title id="f444t">El coseno mide el ángulo entre dos flechas</title>
+<desc id="f444d">Tres flechas desde el origen: u = (4, 1), v = (3, 2) y w = (1, 4). u y v apuntan casi al mismo lado: el coseno es 0.942. u y w forman un ángulo grande: el coseno es 0.471. A la derecha, las cuentas.</desc>
+<defs><marker id="f444a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<line class="sim-grid" x1="70" x2="300" y1="262" y2="262"/>
+<line class="sim-grid" x1="70" x2="70" y1="262" y2="32"/>
+<text class="dg-tiny" x="70" y="278" text-anchor="middle">0</text>
+<line class="sim-grid" x1="70" x2="300" y1="216" y2="216"/>
+<line class="sim-grid" x1="116" x2="116" y1="262" y2="32"/>
+<text class="dg-tiny" x="116" y="278" text-anchor="middle">1</text>
+<text class="dg-tiny" x="62" y="220" text-anchor="end">1</text>
+<line class="sim-grid" x1="70" x2="300" y1="170" y2="170"/>
+<line class="sim-grid" x1="162" x2="162" y1="262" y2="32"/>
+<text class="dg-tiny" x="162" y="278" text-anchor="middle">2</text>
+<text class="dg-tiny" x="62" y="174" text-anchor="end">2</text>
+<line class="sim-grid" x1="70" x2="300" y1="124" y2="124"/>
+<line class="sim-grid" x1="208" x2="208" y1="262" y2="32"/>
+<text class="dg-tiny" x="208" y="278" text-anchor="middle">3</text>
+<text class="dg-tiny" x="62" y="128" text-anchor="end">3</text>
+<line class="sim-grid" x1="70" x2="300" y1="78" y2="78"/>
+<line class="sim-grid" x1="254" x2="254" y1="262" y2="32"/>
+<text class="dg-tiny" x="254" y="278" text-anchor="middle">4</text>
+<text class="dg-tiny" x="62" y="82" text-anchor="end">4</text>
+<line class="sim-grid" x1="70" x2="300" y1="32" y2="32"/>
+<line class="sim-grid" x1="300" x2="300" y1="262" y2="32"/>
+<text class="dg-tiny" x="300" y="278" text-anchor="middle">5</text>
+<text class="dg-tiny" x="62" y="36" text-anchor="end">5</text>
+<path d="M70 262 L254 216" stroke="var(--l-service)" stroke-width="2.5" marker-end="url(#f444a)"/>
+<text class="dg-small" x="266" y="220" text-anchor="start">u = (4, 1)</text>
+<path d="M70 262 L208 170" stroke="var(--l-cache)" stroke-width="2.5" marker-end="url(#f444a)"/>
+<text class="dg-small" x="218" y="164" text-anchor="start">v = (3, 2)</text>
+<path d="M70 262 L116 78" stroke="var(--l-gpu)" stroke-width="2.5" marker-end="url(#f444a)"/>
+<text class="dg-small" x="126" y="76" text-anchor="start">w = (1, 4)</text>
+<text class="dg-small dg-mono" x="400" y="40" text-anchor="start">u · v = 4 × 3 + 1 × 2 = 14</text>
+<text class="dg-small dg-mono" x="400" y="64" text-anchor="start">|u| = √17 = 4.12 · |v| = √13 = 3.61</text>
+<text class="dg-small dg-mono" x="400" y="88" text-anchor="start" style="font-weight: 600">cos(u, v) = 14 / (4.12 × 3.61) = 0.942</text>
+<text class="dg-small dg-mono" x="400" y="128" text-anchor="start">u · w = 4 × 1 + 1 × 4 = 8 · |w| = √17</text>
+<text class="dg-small dg-mono" x="400" y="152" text-anchor="start" style="font-weight: 600">cos(u, w) = 8 / (√17 × √17) = 0.471</text>
+<text class="dg-tiny" x="400" y="196" text-anchor="start">Si duplicas u, (8, 2) apunta igual: el coseno</text>
+<text class="dg-tiny" x="400" y="211" text-anchor="start">no cambia. Cuenta la dirección, no el largo.</text>
+<text class="dg-tiny" x="400" y="226" text-anchor="start">Una persona que compra mucho y otra que compra</text>
+<text class="dg-tiny" x="400" y="241" text-anchor="start">poco, con los mismos gustos, quedan cerca.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.4.</b> El coseno entre dos vectores. Con números positivos va de 0 (nada en común) a 1 (la misma dirección). Funciona igual con tres números, con 64 o con 50 millones.</figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: producto punto, norma y coseno</p>
+  <p>El <b>producto punto</b> de dos vectores multiplica posición por posición y suma: (4, 1) · (3, 2) = 4 × 3 + 1 × 2 = 14. La <b>norma</b> es el largo de la flecha, la raíz de la suma de los cuadrados: |(4, 1)| = √(16 + 1) = √17 = 4.12. El coseno es el producto punto dividido por las dos normas: 14 / (4.12 × 3.61) = 0.942. Con tres números es igual: a = (1, 1, 0) y b = (1, 1, 1) dan 2 / (√2 × √3) = 0.816. En Python, con NumPy: <code>a @ b / (np.linalg.norm(a) * np.linalg.norm(b))</code>.</p>
+</aside>
+
+<p>Si los vectores se guardan ya <span class="no-autolink">normalizados</span>, de largo 1, el coseno es solo el producto punto. Esa es la razón de que las bases vectoriales de <a href="m45-recuperacion.html#ann">M45</a> hablen de "producto punto" y de "coseno" casi como sinónimos: <span class="no-autolink">normalizar</span> una vez al guardar ahorra dos raíces por comparación.</p>
+
+<p>Cuando lo que hay son conjuntos (quiénes compraron cada ítem, sin contar cuántas veces), se usa también el <dfn data-term="jaccard">índice de Jaccard</dfn>: lo que está en los dos conjuntos dividido lo que está en alguno.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f445t f445d">
+<title id="f445t">Jaccard entre dos conjuntos</title>
+<desc id="f445d">Dos óvalos que se cruzan. A la izquierda, quienes compraron A: u1, u2 y u4. A la derecha, quienes compraron B: u1, u2 y u3. En el cruce quedan u1 y u2. Jaccard es lo que está en los dos sobre lo que está en alguno: 2 sobre 4, 0.5. El coseno de los mismos vectores de ceros y unos es 0.667.</desc>
+
+<ellipse cx="190" cy="112" rx="120" ry="68" class="dg-layer" style="--c: var(--l-service)"/>
+<ellipse cx="320" cy="112" rx="120" ry="68" class="dg-layer" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="130" y="30" text-anchor="middle" style="font-weight: 600">compraron A</text>
+<text class="dg-small" x="380" y="30" text-anchor="middle" style="font-weight: 600">compraron B</text>
+<text class="dg-label" x="130" y="110" text-anchor="middle">u4</text>
+<text class="dg-label" x="255" y="98" text-anchor="middle">u1</text>
+<text class="dg-label" x="255" y="126" text-anchor="middle">u2</text>
+<text class="dg-label" x="380" y="110" text-anchor="middle">u3</text>
+<text class="dg-small" x="470" y="58" text-anchor="start">Jaccard = en los dos / en alguno</text>
+<text class="dg-small dg-mono" x="470" y="82" text-anchor="start">= |{u1, u2}| / |{u1, u2, u3, u4}|</text>
+<text class="dg-small dg-mono" x="470" y="104" text-anchor="start" style="font-weight: 600">= 2 / 4 = 0.5</text>
+<text class="dg-small" x="470" y="140" text-anchor="start">Coseno con vectores de 0 y 1:</text>
+<text class="dg-small dg-mono" x="470" y="164" text-anchor="start" style="font-weight: 600">= 2 / √(3 × 3) = 0.667</text>
+<text class="dg-tiny" x="40" y="206" text-anchor="start">Jaccard castiga más la diferencia de tamaño: si B tuviera 30 compradores y los mismos 2 en común, daría 2 / 31 = 0.065 y el coseno 0.211.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.5.</b> Jaccard trabaja con conjuntos: quiénes compraron cada ítem. No usa cuántas veces, solo sí o no.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Medida</th><th>Entra</th><th>Rango</th><th>Cuándo se usa</th></tr></thead>
+    <tbody>
+      <tr><td>Producto punto</td><td>Dos vectores</td><td>Cualquier número</td><td>Cuando el largo también importa, o si los vectores ya están <span class="no-autolink">normalizados</span></td></tr>
+      <tr><td>Coseno</td><td>Dos vectores</td><td>De −1 a 1 (de 0 a 1 sin negativos)</td><td>Embeddings, TF-IDF, columnas de la matriz usuario-ítem</td></tr>
+      <tr><td>Jaccard</td><td>Dos conjuntos</td><td>De 0 a 1</td><td>Compras sí o no, etiquetas, deduplicar ítems casi iguales</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el coseno mide la dirección de dos vectores sin importar su largo, y Jaccard el solapamiento de dos conjuntos; con vectores <span class="no-autolink">normalizados</span>, el coseno es un producto punto.</p>
+
+<h2 id="item-item"><span class="sec-num">44.4</span>Filtrado colaborativo ítem a ítem</h2>
+
+<p>El <dfn data-term="filtrado-colaborativo">filtrado colaborativo</dfn> no mira qué es cada ítem, sino quién lo tocó. Dos productos son parecidos si los compra la misma gente, aunque uno sea una zapatilla y el otro una botella. Es la relación que el contenido no podía ver.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es el librero que no leyó los libros pero tiene memoria: "los que se llevaron este también se llevaron aquel". No sabe por qué; sabe que pasa.</p>
+</aside>
+
+<p>El <dfn data-term="item-item">ítem a ítem</dfn> lo hace con las columnas de la matriz usuario-ítem. Cada ítem es un vector con una posición por persona: 1 si la compró, 0 si no. El parecido entre dos ítems es el coseno entre sus columnas. Linden, Smith y York lo publicaron en 2003 como el algoritmo de "quienes compraron esto también compraron" de Amazon <span class="badge badge--doc">Documentado</span>. Con cuatro personas y cuatro productos se resuelve a mano.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f446t f446d">
+<title id="f446t">Ítem a ítem resuelto con cuatro personas y cuatro productos</title>
+<desc id="f446d">A la izquierda, la matriz de compras: u1 compró A y B; u2 A, B y C; u3 B y C; u4 A y D. Cada columna es el vector de un ítem. En el centro, los cosenos entre columnas: A y B 0.667, A y D 0.577, A y C 0.408, B y C 0.816, B y D 0. A la derecha, lo que ve quien mira cada ítem: quien mira A ve B, D y C; quien mira B ve C y A.</desc>
+<defs><marker id="f446a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-small" x="90.0" y="52" text-anchor="middle" style="font-weight: 600">A</text>
+<text class="dg-small" x="130.0" y="52" text-anchor="middle" style="font-weight: 600">B</text>
+<text class="dg-small" x="170.0" y="52" text-anchor="middle" style="font-weight: 600">C</text>
+<text class="dg-small" x="210.0" y="52" text-anchor="middle" style="font-weight: 600">D</text>
+<text class="dg-small" x="60" y="89" text-anchor="end">u1</text>
+<rect class="dg-layer" x="73" y="67" width="34" height="34" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-small" x="90.0" y="89" text-anchor="middle">1</text>
+<rect class="dg-layer" x="113" y="67" width="34" height="34" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-small" x="130.0" y="89" text-anchor="middle">1</text>
+<rect class="dg-box" x="153" y="67" width="34" height="34" rx="5"/>
+<text class="dg-small" x="170.0" y="89" text-anchor="middle">0</text>
+<rect class="dg-box" x="193" y="67" width="34" height="34" rx="5"/>
+<text class="dg-small" x="210.0" y="89" text-anchor="middle">0</text>
+<text class="dg-small" x="60" y="129" text-anchor="end">u2</text>
+<rect class="dg-layer" x="73" y="107" width="34" height="34" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-small" x="90.0" y="129" text-anchor="middle">1</text>
+<rect class="dg-layer" x="113" y="107" width="34" height="34" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-small" x="130.0" y="129" text-anchor="middle">1</text>
+<rect class="dg-layer" x="153" y="107" width="34" height="34" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-small" x="170.0" y="129" text-anchor="middle">1</text>
+<rect class="dg-box" x="193" y="107" width="34" height="34" rx="5"/>
+<text class="dg-small" x="210.0" y="129" text-anchor="middle">0</text>
+<text class="dg-small" x="60" y="169" text-anchor="end">u3</text>
+<rect class="dg-box" x="73" y="147" width="34" height="34" rx="5"/>
+<text class="dg-small" x="90.0" y="169" text-anchor="middle">0</text>
+<rect class="dg-layer" x="113" y="147" width="34" height="34" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-small" x="130.0" y="169" text-anchor="middle">1</text>
+<rect class="dg-layer" x="153" y="147" width="34" height="34" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-small" x="170.0" y="169" text-anchor="middle">1</text>
+<rect class="dg-box" x="193" y="147" width="34" height="34" rx="5"/>
+<text class="dg-small" x="210.0" y="169" text-anchor="middle">0</text>
+<text class="dg-small" x="60" y="209" text-anchor="end">u4</text>
+<rect class="dg-layer" x="73" y="187" width="34" height="34" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-small" x="90.0" y="209" text-anchor="middle">1</text>
+<rect class="dg-box" x="113" y="187" width="34" height="34" rx="5"/>
+<text class="dg-small" x="130.0" y="209" text-anchor="middle">0</text>
+<rect class="dg-box" x="153" y="187" width="34" height="34" rx="5"/>
+<text class="dg-small" x="170.0" y="209" text-anchor="middle">0</text>
+<rect class="dg-layer" x="193" y="187" width="34" height="34" rx="5" style="--c: var(--l-service)"/>
+<text class="dg-small" x="210.0" y="209" text-anchor="middle">1</text>
+<text class="dg-tiny" x="70" y="246" text-anchor="start">A = (1, 1, 0, 1): una posición por persona</text>
+<path class="dg-edge" d="M246 140 H286" marker-end="url(#f446a)"/>
+<text class="dg-tiny" x="266" y="128" text-anchor="middle">coseno</text>
+<text class="dg-tiny" x="266" y="162" text-anchor="middle">entre</text>
+<text class="dg-tiny" x="266" y="176" text-anchor="middle">columnas</text>
+<text class="dg-tiny" x="300" y="52" text-anchor="start" style="font-weight: 600">Par</text>
+<text class="dg-tiny" x="360" y="52" text-anchor="start" style="font-weight: 600">En común / (√ compras × √ compras)</text>
+<text class="dg-small" x="300" y="76" text-anchor="start">A · B</text>
+<text class="dg-small dg-mono" x="360" y="76" text-anchor="start">2 / (√3 × √3)</text>
+<text class="dg-small" x="560" y="76" text-anchor="end" style="font-weight: 600">0.667</text>
+<text class="dg-small" x="300" y="104" text-anchor="start">A · D</text>
+<text class="dg-small dg-mono" x="360" y="104" text-anchor="start">1 / (√3 × √1)</text>
+<text class="dg-small" x="560" y="104" text-anchor="end" style="font-weight: 600">0.577</text>
+<text class="dg-small" x="300" y="132" text-anchor="start">A · C</text>
+<text class="dg-small dg-mono" x="360" y="132" text-anchor="start">1 / (√3 × √2)</text>
+<text class="dg-small" x="560" y="132" text-anchor="end" style="font-weight: 600">0.408</text>
+<text class="dg-small" x="300" y="160" text-anchor="start">B · C</text>
+<text class="dg-small dg-mono" x="360" y="160" text-anchor="start">2 / (√3 × √2)</text>
+<text class="dg-small" x="560" y="160" text-anchor="end" style="font-weight: 600">0.816</text>
+<text class="dg-small" x="300" y="188" text-anchor="start">B · D</text>
+<text class="dg-small dg-mono" x="360" y="188" text-anchor="start">nadie compró los dos</text>
+<text class="dg-small" x="560" y="188" text-anchor="end" style="font-weight: 600">0</text>
+<text class="dg-small" x="300" y="216" text-anchor="start">C · D</text>
+<text class="dg-small dg-mono" x="360" y="216" text-anchor="start">nadie compró los dos</text>
+<text class="dg-small" x="560" y="216" text-anchor="end" style="font-weight: 600">0</text>
+<rect class="dg-box dg-box--em" x="590" y="48" width="160" height="140" rx="8"/>
+<text class="dg-small" x="670" y="72" text-anchor="middle" style="font-weight: 600">Quien mira…</text>
+<text class="dg-small" x="604" y="98" text-anchor="start">A ve B, D, C</text>
+<text class="dg-small" x="604" y="120" text-anchor="start">B ve C, A</text>
+<text class="dg-small" x="604" y="142" text-anchor="start">C ve B, A</text>
+<text class="dg-small" x="604" y="164" text-anchor="start">D ve A</text>
+<text class="dg-tiny" x="300" y="262" text-anchor="start">Entre paréntesis de cada raíz, cuántas personas compraron el ítem: A 3, B 3, C 2, D 1.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.6.</b> El ejemplo resuelto. A y D tienen una sola persona en común, pero D casi no se vende, así que el coseno lo deja segundo, arriba de C. El widget de abajo deja cambiar las compras y recalcula.</figcaption>
+</figure>
+
+<p>Con columnas de ceros y unos, el producto punto de dos columnas es la cantidad de personas que compraron los dos, y la norma de cada columna es la raíz de cuántas personas compraron ese ítem. Por eso el coseno queda "en común dividido raíz por raíz". La raíz del denominador es la que frena a los ítems que compra todo el mundo: unas pilas aparecen en muchos pares, pero su columna es larga y el coseno con cualquier cosa queda chico.</p>
+
+<div data-sim="itemcf"></div>
+
+<pre data-lang="python"><code>import numpy as np
+from scipy.sparse import csr_matrix
+
+# Filas: u1..u4; columnas: A, B, C, D (la figura 44.6)
+R = csr_matrix(np.array([[1, 1, 0, 0], [1, 1, 1, 0], [0, 1, 1, 0], [1, 0, 0, 1]]))
+comun = (R.T @ R).toarray()            # comun[i, j]: personas que compraron i y j
+compras = np.diag(comun)               # en la diagonal: compras de cada ítem
+cos = comun / np.sqrt(np.outer(compras, compras))
+# cos[0, 1] = 2 / sqrt(3 * 3) = 0.667 (A con B)</code></pre>
+
+<p><code>R.T @ R</code> es la idea entera: multiplicar la matriz transpuesta por sí misma cuenta, para cada par de ítems, cuántas filas los tienen a los dos. En la escala de Mercado Barrio no se hace con una matriz densa de 100 millones por 100 millones, que no entra en ninguna memoria, sino recorriendo cada persona y sumando un 1 por cada par de ítems de su historia. Solo existen los pares que alguien compró junto.</p>
+
+<h3 id="item-item-escala">Por qué escala: lo caro se hace de noche</h3>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f447t f447d">
+<title id="f447t">Ítem a ítem: lo caro de noche, lo barato en la request</title>
+<desc id="f447d">Arriba, el trabajo de noche: las compras de 90 días del data lake entran a un job que cuenta, por cada persona, los pares de ítems que compró, calcula el coseno y guarda los 50 vecinos de cada ítem en una tabla. Abajo, la request: alguien mira el ítem 123, la API lee los vecinos de 123 con una sola lectura por clave y manda esos candidatos al ranking.</desc>
+<defs><marker id="f447a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="20" y="26" text-anchor="start">De noche, en batch</text>
+<rect class="dg-layer" x="20" y="40" width="170" height="56" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="105.0" y="64.0" text-anchor="middle">Compras de 90 días</text>
+<text class="dg-tiny" x="105.0" y="80.0" text-anchor="middle">data lake (M43)</text>
+<rect class="dg-layer" x="230" y="40" width="190" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="325.0" y="64.0" text-anchor="middle">Job de Spark</text>
+<text class="dg-tiny" x="325.0" y="80.0" text-anchor="middle">pares por persona, coseno</text>
+<rect class="dg-layer" x="560" y="40" width="190" height="56" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="655.0" y="64.0" text-anchor="middle">Tabla de vecinos</text>
+<text class="dg-tiny" x="655.0" y="80.0" text-anchor="middle">ítem → 50 parecidos</text>
+<path class="dg-edge" d="M190 68 H228" marker-end="url(#f447a)"/>
+<path class="dg-edge" d="M420 68 H558" marker-end="url(#f447a)"/>
+<text class="dg-tiny" x="489" y="60" text-anchor="middle">carga diaria</text>
+<text class="dg-group" x="20" y="146" text-anchor="start">En cada request</text>
+<rect class="dg-layer" x="20" y="160" width="170" height="56" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="105.0" y="184.0" text-anchor="middle">Alguien mira</text>
+<text class="dg-tiny" x="105.0" y="200.0" text-anchor="middle">el ítem 123</text>
+<rect class="dg-layer" x="230" y="160" width="190" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="325.0" y="184.0" text-anchor="middle">API del feed</text>
+<text class="dg-tiny" x="325.0" y="200.0" text-anchor="middle">GET vecinos:123</text>
+<rect class="dg-layer" x="560" y="160" width="190" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="655.0" y="184.0" text-anchor="middle">Al ranking</text>
+<text class="dg-tiny" x="655.0" y="200.0" text-anchor="middle">50 candidatos</text>
+<path class="dg-edge" d="M190 188 H228" marker-end="url(#f447a)"/>
+<path class="dg-edge" d="M420 176 H500 V130 H600 V99" marker-end="url(#f447a)"/>
+<text class="dg-tiny" x="550" y="122" text-anchor="middle">una lectura por clave</text>
+<path class="dg-edge" d="M640 98 V158" marker-end="url(#f447a)"/>
+<text class="dg-tiny" x="20" y="240" text-anchor="start">El costo de la request no depende del tamaño del catálogo ni de cuántas personas hay: es una lectura y una lista corta.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.7.</b> La división de Linden, Smith y York: la tabla de ítems parecidos se calcula offline, y servir es buscar en ella. Por eso el ítem a ítem aguantó el catálogo de Amazon en 2003.</figcaption>
+</figure>
+
+<p>Linden y sus colegas destacaron la propiedad que hizo famoso al algoritmo: la tabla de ítems parecidos se calcula offline, y servir cuesta lo mismo tenga el catálogo mil ítems o cien millones <span class="badge badge--doc">Documentado</span>. La cuenta en Mercado Barrio, con los supuestos de M43:</p>
+
+<ul>
+  <li><b>El job.</b> 50 millones de personas con 200 interacciones en promedio son unos 50 000 000 × 200² = 2 × 10<sup>12</sup> sumas de pares. Es un promedio optimista, porque las historias largas pesan con su cuadrado: por eso se recorta cada historia, por ejemplo a los últimos 100 ítems, y se descartan las personas con miles de compras, que suelen ser revendedores o bots.</li>
+  <li><b>La tabla.</b> 100 millones de ítems con 50 vecinos cada uno, a 12 B por vecino (8 B de id y 4 B de puntaje): 100 000 000 × 50 × 12 B = 60 GB. Entra en un clúster chico de Redis o en un key-value store.</li>
+  <li><b>La request.</b> Una lectura por clave, la del ítem que se está mirando, o unas pocas, las de los últimos ítems de la persona, con sus listas mezcladas. Cabe holgada en los 25 ms de la recuperación.</li>
+</ul>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Dos ajustes son casi obligatorios. Un mínimo de personas en común: un coseno de 1 entre dos ítems que compró una sola persona, la misma, es ruido, así que se exigen, por ejemplo, 3 o más compradores en común, o se corre el coseno hacia 0 con un prior como el de 44.1. Y una ventana: "comprados juntos" suele contar compras en la misma sesión o en pocos días, porque dos compras separadas por un año casi no se relacionan. Smith y Linden repasaron en 2017 las dos décadas del algoritmo en Amazon, con ajustes de este tipo <span class="badge badge--doc">Documentado</span>.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> ítem a ítem es el coseno entre columnas de la matriz usuario-ítem; se calcula de noche contando pares dentro de cada historia, se guarda como 50 vecinos por ítem y se sirve con una lectura.</p>
+
+<h2 id="usuario-usuario"><span class="sec-num">44.5</span>Usuario a usuario y por qué casi no se usa</h2>
+
+<p>La versión original del filtrado colaborativo comparaba filas en lugar de columnas: buscar las personas más parecidas a ti y recomendarte lo que ellas compraron y tú no. Es intuitivo ("gente como tú") y fue lo primero que se probó, en los años noventa. En un catálogo grande tiene tres problemas.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 210" role="img" aria-labelledby="f448t f448d">
+<title id="f448t">Cuántas comparaciones hace cada enfoque</title>
+<desc id="f448d">Barras en escala logarítmica, de mil millones a diez mil billones. Comparar todos los pares de usuarios de Mercado Barrio son 1.25 × 10^15 comparaciones. Contar pares de ítems dentro de la historia de cada persona son unos 2 × 10^12. Con historias recortadas a los últimos 100 ítems, 5 × 10^11.</desc>
+
+<text class="dg-small" x="270" y="50" text-anchor="end">Usuario a usuario: todos los pares</text>
+<rect class="dg-layer" x="280" y="30" width="383.23434367479217" height="28" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="671.2" y="50" text-anchor="start" style="font-weight: 600">1.25 × 10¹⁵</text>
+<text class="dg-small" x="270" y="94" text-anchor="end">Ítem a ítem: pares en cada historia</text>
+<rect class="dg-layer" x="280" y="74" width="207.49331401316454" height="28" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-small" x="495.5" y="94" text-anchor="start" style="font-weight: 600">2 × 10¹²</text>
+<text class="dg-small" x="270" y="138" text-anchor="end">Ítem a ítem, historias de 100</text>
+<rect class="dg-layer" x="280" y="118" width="169.64954312969257" height="28" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-small" x="457.6" y="138" text-anchor="start" style="font-weight: 600">5 × 10¹¹</text>
+<line class="sim-grid" x1="280.0" x2="280.0" y1="24" y2="166"/>
+<text class="dg-tiny" x="280.0" y="184" text-anchor="middle">10⁹</text>
+<line class="sim-grid" x1="405.7" x2="405.7" y1="24" y2="166"/>
+<text class="dg-tiny" x="405.7" y="184" text-anchor="middle">10¹¹</text>
+<line class="sim-grid" x1="531.4" x2="531.4" y1="24" y2="166"/>
+<text class="dg-tiny" x="531.4" y="184" text-anchor="middle">10¹³</text>
+<line class="sim-grid" x1="657.1" x2="657.1" y1="24" y2="166"/>
+<text class="dg-tiny" x="657.1" y="184" text-anchor="middle">10¹⁵</text>
+<text class="dg-tiny" x="20" y="202" text-anchor="start">50 M usuarios: 50 M × 50 M / 2 pares. Ítem a ítem: 50 M personas × 200 ítems² en promedio (supuesto de M43). Escala logarítmica.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.8.</b> El costo de comparar. Usuario a usuario compara a todos con todos; ítem a ítem solo cuenta los pares que alguien compró junto. La diferencia es de casi mil veces, y crece con la cantidad de usuarios.</figcaption>
+</figure>
+
+<ul>
+  <li><b>El costo.</b> Comparar a todos con todos son 50 000 000 × 50 000 000 / 2 = 1.25 × 10<sup>15</sup> pares, casi mil veces lo del ítem a ítem. Se puede acotar con trucos, pero el punto de partida es peor.</li>
+  <li><b>La inestabilidad.</b> Tus vecinos cambian con cada compra tuya y de ellos, así que la tabla se desactualiza en horas. Los vecinos de un ítem cambian mucho más despacio: lo que se compra junto con una carpa este mes es casi lo mismo que el mes pasado. Una tabla que dura un día es una tabla que se puede calcular de noche.</li>
+  <li><b>La dispersión.</b> Con 200 interacciones sobre 100 millones de ítems, dos personas casi nunca comparten nada, y el parecido entre ellas sale de dos o tres ítems en común. Los ítems, sobre todo los que se venden, tienen columnas mucho más llenas.</li>
+</ul>
+
+<p>La idea de "gente como tú" no desapareció: la factorización de la sección siguiente la contiene, de forma mucho más barata, y el grafo de M48 la usa para recomendar amigos, donde la relación entre personas es justo lo que se busca.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> usuario a usuario compara filas; es caro, inestable y ve poco en común entre dos personas, así que en catálogos grandes se usa ítem a ítem o factorización.</p>
+
+<h2 id="factorizacion"><span class="sec-num">44.6</span>Factorización de matrices</h2>
+
+<p>Ítem a ítem solo encuentra relaciones directas: dos ítems que alguien compró junto. Si nadie compró la carpa A con la linterna B, su coseno es 0, aunque los dos se compren con las mismas otras cosas. La <dfn data-term="factorizacion-matrices">factorización de matrices</dfn> encuentra esas relaciones indirectas, porque resume a cada persona y a cada ítem en unos pocos números, los <b>factores</b>, y predice cualquier celda con ellos.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es como describir películas y gustos con unas pocas perillas. Si una perilla va de "comedia" a "drama", una película se describe con dónde está en esa perilla, y una persona con dónde le gusta tenerla. Nadie define las perillas: el entrenamiento las encuentra, y a veces una se deja nombrar y otras no.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 320" role="img" aria-labelledby="f449t f449d">
+<title id="f449t">La matriz se aproxima con dos matrices finas</title>
+<desc id="f449d">A la izquierda, la matriz de calificaciones de seis personas y seis películas, tres comedias y tres dramas, con huecos. Se aproxima con U, de seis filas y dos columnas, una fila por persona, multiplicada por V transpuesta, de dos filas y seis columnas, una por película. Abajo, la cuenta de una celda vacía: Ana con el drama 2 da 2.85 más menos 1.13 más menos 0.06, unas 1.7 estrellas.</desc>
+
+<text class="dg-small" x="60" y="30" text-anchor="start" style="font-weight: 600">R: 6 × 6, con huecos</text>
+<text class="dg-tiny" x="73.0" y="62" text-anchor="middle">C1</text>
+<text class="dg-tiny" x="99.0" y="62" text-anchor="middle">C2</text>
+<text class="dg-tiny" x="125.0" y="62" text-anchor="middle">C3</text>
+<text class="dg-tiny" x="151.0" y="62" text-anchor="middle">D1</text>
+<text class="dg-tiny" x="177.0" y="62" text-anchor="middle">D2</text>
+<text class="dg-tiny" x="203.0" y="62" text-anchor="middle">D3</text>
+<text class="dg-tiny" x="54" y="87" text-anchor="end">Ana</text>
+<rect class="dg-layer" x="61" y="71" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="73.0" y="87" text-anchor="middle">5</text>
+<rect class="dg-box" x="87" y="71" width="24" height="24" rx="3"/>
+<text class="dg-tiny" x="99.0" y="87" text-anchor="middle">?</text>
+<rect class="dg-layer" x="113" y="71" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="125.0" y="87" text-anchor="middle">4</text>
+<rect class="dg-layer" x="139" y="71" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="151.0" y="87" text-anchor="middle">1</text>
+<rect class="dg-box" x="165" y="71" width="24" height="24" rx="3"/>
+<text class="dg-tiny" x="177.0" y="87" text-anchor="middle">?</text>
+<rect class="dg-layer" x="191" y="71" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="203.0" y="87" text-anchor="middle">2</text>
+<text class="dg-tiny" x="54" y="113" text-anchor="end">Beto</text>
+<rect class="dg-layer" x="61" y="97" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="73.0" y="113" text-anchor="middle">5</text>
+<rect class="dg-layer" x="87" y="97" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="99.0" y="113" text-anchor="middle">4</text>
+<rect class="dg-layer" x="113" y="97" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="125.0" y="113" text-anchor="middle">4</text>
+<rect class="dg-layer" x="139" y="97" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="151.0" y="113" text-anchor="middle">2</text>
+<rect class="dg-box" x="165" y="97" width="24" height="24" rx="3"/>
+<text class="dg-tiny" x="177.0" y="113" text-anchor="middle">?</text>
+<rect class="dg-layer" x="191" y="97" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="203.0" y="113" text-anchor="middle">2</text>
+<text class="dg-tiny" x="54" y="139" text-anchor="end">Caro</text>
+<rect class="dg-layer" x="61" y="123" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="73.0" y="139" text-anchor="middle">2</text>
+<rect class="dg-layer" x="87" y="123" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="99.0" y="139" text-anchor="middle">2</text>
+<rect class="dg-layer" x="113" y="123" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="125.0" y="139" text-anchor="middle">1</text>
+<rect class="dg-box" x="139" y="123" width="24" height="24" rx="3"/>
+<text class="dg-tiny" x="151.0" y="139" text-anchor="middle">?</text>
+<rect class="dg-layer" x="165" y="123" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="177.0" y="139" text-anchor="middle">4</text>
+<rect class="dg-box" x="191" y="123" width="24" height="24" rx="3"/>
+<text class="dg-tiny" x="203.0" y="139" text-anchor="middle">?</text>
+<text class="dg-tiny" x="54" y="165" text-anchor="end">Dani</text>
+<rect class="dg-box" x="61" y="149" width="24" height="24" rx="3"/>
+<text class="dg-tiny" x="73.0" y="165" text-anchor="middle">?</text>
+<rect class="dg-layer" x="87" y="149" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="99.0" y="165" text-anchor="middle">1</text>
+<rect class="dg-layer" x="113" y="149" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="125.0" y="165" text-anchor="middle">1</text>
+<rect class="dg-layer" x="139" y="149" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="151.0" y="165" text-anchor="middle">5</text>
+<rect class="dg-layer" x="165" y="149" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="177.0" y="165" text-anchor="middle">4</text>
+<rect class="dg-layer" x="191" y="149" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="203.0" y="165" text-anchor="middle">5</text>
+<text class="dg-tiny" x="54" y="191" text-anchor="end">Eli</text>
+<rect class="dg-layer" x="61" y="175" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="73.0" y="191" text-anchor="middle">2</text>
+<rect class="dg-layer" x="87" y="175" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="99.0" y="191" text-anchor="middle">1</text>
+<rect class="dg-layer" x="113" y="175" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="125.0" y="191" text-anchor="middle">1</text>
+<rect class="dg-layer" x="139" y="175" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="151.0" y="191" text-anchor="middle">4</text>
+<rect class="dg-box" x="165" y="175" width="24" height="24" rx="3"/>
+<text class="dg-tiny" x="177.0" y="191" text-anchor="middle">?</text>
+<rect class="dg-layer" x="191" y="175" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="203.0" y="191" text-anchor="middle">5</text>
+<text class="dg-tiny" x="54" y="217" text-anchor="end">Fede</text>
+<rect class="dg-box" x="61" y="201" width="24" height="24" rx="3"/>
+<text class="dg-tiny" x="73.0" y="217" text-anchor="middle">?</text>
+<rect class="dg-box" x="87" y="201" width="24" height="24" rx="3"/>
+<text class="dg-tiny" x="99.0" y="217" text-anchor="middle">?</text>
+<rect class="dg-layer" x="113" y="201" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="125.0" y="217" text-anchor="middle">3</text>
+<rect class="dg-layer" x="139" y="201" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="151.0" y="217" text-anchor="middle">2</text>
+<rect class="dg-layer" x="165" y="201" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="177.0" y="217" text-anchor="middle">2</text>
+<rect class="dg-layer" x="191" y="201" width="24" height="24" rx="3" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="203.0" y="217" text-anchor="middle">3</text>
+<text class="dg-big" x="232" y="156" text-anchor="middle">≈</text>
+<text class="dg-small" x="254" y="30" text-anchor="start" style="font-weight: 600">U: 6 × 2</text>
+<text class="dg-tiny" x="254" y="46" text-anchor="start">una fila por persona</text>
+<rect class="dg-layer" x="255" y="71" width="44" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="277.0" y="87" text-anchor="middle">-1.33</text>
+<rect class="dg-layer" x="301" y="71" width="44" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="323.0" y="87" text-anchor="middle">0.20</text>
+<rect class="dg-layer" x="255" y="97" width="44" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="277.0" y="113" text-anchor="middle">-1.13</text>
+<rect class="dg-layer" x="301" y="97" width="44" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="323.0" y="113" text-anchor="middle">0.18</text>
+<rect class="dg-layer" x="255" y="123" width="44" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="277.0" y="139" text-anchor="middle">0.59</text>
+<rect class="dg-layer" x="301" y="123" width="44" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="323.0" y="139" text-anchor="middle">-1.03</text>
+<rect class="dg-layer" x="255" y="149" width="44" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="277.0" y="165" text-anchor="middle">1.23</text>
+<rect class="dg-layer" x="301" y="149" width="44" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="323.0" y="165" text-anchor="middle">-1.02</text>
+<rect class="dg-layer" x="255" y="175" width="44" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="277.0" y="191" text-anchor="middle">0.60</text>
+<rect class="dg-layer" x="301" y="175" width="44" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="323.0" y="191" text-anchor="middle">-1.33</text>
+<rect class="dg-layer" x="255" y="201" width="44" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="277.0" y="217" text-anchor="middle">-0.97</text>
+<rect class="dg-layer" x="301" y="201" width="44" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="323.0" y="217" text-anchor="middle">-0.43</text>
+<text class="dg-big" x="370" y="156" text-anchor="middle">×</text>
+<text class="dg-small" x="392" y="30" text-anchor="start" style="font-weight: 600">Vᵀ: 2 × 6</text>
+<text class="dg-tiny" x="392" y="46" text-anchor="start">una columna por película</text>
+<text class="dg-tiny" x="420.0" y="62" text-anchor="middle">C1</text>
+<rect class="dg-layer" x="393" y="71" width="54" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="420.0" y="87" text-anchor="middle">-1.69</text>
+<rect class="dg-layer" x="393" y="97" width="54" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="420.0" y="113" text-anchor="middle">-0.12</text>
+<text class="dg-tiny" x="476.0" y="62" text-anchor="middle">C2</text>
+<rect class="dg-layer" x="449" y="71" width="54" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="476.0" y="87" text-anchor="middle">-0.84</text>
+<rect class="dg-layer" x="449" y="97" width="54" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="476.0" y="113" text-anchor="middle">0.76</text>
+<text class="dg-tiny" x="532.0" y="62" text-anchor="middle">C3</text>
+<rect class="dg-layer" x="505" y="71" width="54" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="532.0" y="87" text-anchor="middle">-0.70</text>
+<rect class="dg-layer" x="505" y="97" width="54" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="532.0" y="113" text-anchor="middle">1.12</text>
+<text class="dg-tiny" x="588.0" y="62" text-anchor="middle">D1</text>
+<rect class="dg-layer" x="561" y="71" width="54" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="588.0" y="87" text-anchor="middle">1.10</text>
+<rect class="dg-layer" x="561" y="97" width="54" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="588.0" y="113" text-anchor="middle">-0.49</text>
+<text class="dg-tiny" x="644.0" y="62" text-anchor="middle">D2</text>
+<rect class="dg-layer" x="617" y="71" width="54" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="644.0" y="87" text-anchor="middle">0.85</text>
+<rect class="dg-layer" x="617" y="97" width="54" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="644.0" y="113" text-anchor="middle">-0.32</text>
+<text class="dg-tiny" x="700.0" y="62" text-anchor="middle">D3</text>
+<rect class="dg-layer" x="673" y="71" width="54" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="700.0" y="87" text-anchor="middle">0.50</text>
+<rect class="dg-layer" x="673" y="97" width="54" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="700.0" y="113" text-anchor="middle">-1.39</text>
+<rect class="dg-box dg-box--em" x="392" y="140" width="336" height="96" rx="8"/>
+<text class="dg-small dg-mono" x="404" y="162" text-anchor="start">Ana con D2, un hueco:</text>
+<text class="dg-small dg-mono" x="404" y="180" text-anchor="start">promedio + u_Ana · v_D2</text>
+<text class="dg-small dg-mono" x="404" y="198" text-anchor="start">= 2.85 + (−1.33)(0.85) + (0.20)(−0.32)</text>
+<text class="dg-small dg-mono" x="404" y="216" text-anchor="start">= 2.85 − 1.13 − 0.06 ≈ 1.7 estrellas</text>
+<text class="dg-tiny" x="20" y="268" text-anchor="start">Las 36 celdas se describen con 12 + 12 = 24 números. En Mercado Barrio: 50 M + 100 M filas de 64 números,</text>
+<text class="dg-tiny" x="20" y="284" text-anchor="start">contra 5 × 10¹⁵ celdas. "?" es una celda que el modelo no ve: vacía o guardada para medir.</text>
+<text class="dg-tiny" x="20" y="306" text-anchor="start">Los números de U y V son los que aprende el widget de esta sección con k = 2 y λ = 0.1 después de 500 pasos.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.9.</b> Factorización de matrices. Cada persona y cada película se resumen en dos números, y el producto punto de los dos vectores predice la celda, también las que estaban vacías.</figcaption>
+</figure>
+
+<p>La predicción para la persona <i>u</i> y el ítem <i>i</i> es el promedio global más el producto punto de sus vectores: <i>r̂</i> = μ + <b>u</b> · <b>v</b>. Si los dos vectores apuntan al mismo lado, el producto es positivo y la predicción sube; si apuntan a lados opuestos, baja. Es el coseno de 44.3, sin dividir por los largos, y por eso los largos también cuentan: un vector largo es una persona con gustos marcados o un ítem que divide opiniones.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f44bt f44bd">
+<title id="f44bt">Personas y películas en el mapa de los factores</title>
+<desc id="f44bd">Un plano con el factor 1 en el eje horizontal y el factor 2 en el vertical. Las comedias quedan a la izquierda y los dramas a la derecha. Ana, Beto y Fede, que califican mejor las comedias, quedan a la izquierda, cerca de ellas. Caro, Dani y Eli quedan abajo a la derecha, cerca de los dramas. El factor 2 no tiene un nombre claro.</desc>
+
+<line x1="417.5" x2="417.5" y1="24" y2="276" stroke="var(--label-3)" stroke-dasharray="4 4"/>
+<line x1="70" x2="690" y1="136.7" y2="136.7" stroke="var(--label-3)" stroke-dasharray="4 4"/>
+<rect x="94.6" y="141.3" width="12" height="12" rx="2" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="110.6" y="151.3" text-anchor="start" style="font-weight: 600">C1</text>
+<rect x="254.0" y="63.1" width="12" height="12" rx="2" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="270.0" y="73.1" text-anchor="start" style="font-weight: 600">C2</text>
+<rect x="280.2" y="31.1" width="12" height="12" rx="2" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="296.2" y="41.1" text-anchor="start" style="font-weight: 600">C3</text>
+<rect x="617.8" y="174.2" width="12" height="12" rx="2" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="633.8" y="184.2" text-anchor="start" style="font-weight: 600">D1</text>
+<rect x="570.9" y="159.1" width="12" height="12" rx="2" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="566.9" y="161.1" text-anchor="end" style="font-weight: 600">D2</text>
+<rect x="505.2" y="254.2" width="12" height="12" rx="2" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="501.2" y="266.2" text-anchor="end" style="font-weight: 600">D3</text>
+<circle cx="168.1" cy="118.9" r="6" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-small" x="168.1" y="106.9" text-anchor="middle">Ana</text>
+<circle cx="205.6" cy="120.7" r="6" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-small" x="215.6" y="112.7" text-anchor="start">Beto</text>
+<circle cx="528.1" cy="228.2" r="6" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-small" x="518.1" y="232.2" text-anchor="end">Caro</text>
+<circle cx="648.1" cy="227.3" r="6" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-small" x="658.1" y="231.3" text-anchor="start">Dani</text>
+<circle cx="530.0" cy="254.9" r="6" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-small" x="540.0" y="262.9" text-anchor="start">Eli</text>
+<circle cx="235.6" cy="174.9" r="6" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-small" x="245.6" y="178.9" text-anchor="start">Fede</text>
+<text class="dg-tiny" x="80.0" y="300" text-anchor="start">← comedias</text>
+<text class="dg-tiny" x="680.0" y="300" text-anchor="end">dramas →</text>
+<text class="dg-tiny" x="417.5" y="300" text-anchor="middle">factor 1</text>
+<text class="dg-tiny" x="425.5" y="34" text-anchor="start">factor 2</text>
+<text class="dg-tiny" x="700" y="40" text-anchor="end">Cuadrado: película</text>
+<text class="dg-tiny" x="700" y="56" text-anchor="end">Círculo: persona</text>
+<text class="dg-tiny" x="20" y="322" text-anchor="start">Cerca y del mismo lado del centro: producto punto grande, calificación alta. Lados opuestos: producto negativo, calificación baja.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.10.</b> Nadie le dijo al modelo qué es una comedia. El factor 1 separa comedias de dramas porque esa es la forma más barata de explicar las calificaciones; el factor 2 junta restos y no tiene nombre. Con 64 factores pasa lo mismo, pero casi ninguno se deja nombrar.</figcaption>
+</figure>
+
+<p>Koren, Bell y Volinsky, del equipo que ganó el Netflix Prize, mostraron un mapa así con películas reales: los dos primeros factores ordenaban las películas de un modo que se podía interpretar, aunque nadie le había dado al modelo géneros ni descripciones <span class="badge badge--doc">Documentado</span>. El Netflix Prize (2006 a 2009) ofrecía un millón de dólares a quien bajara un 10&#8239;% el error de Cinematch, el recomendador de Netflix, sobre más de 100 millones de calificaciones de 1 a 5 estrellas <span class="badge badge--doc">Documentado</span>; la factorización fue una de las piezas centrales de las soluciones que lo lograron.</p>
+
+<h3 id="factorizacion-perdida">Qué se minimiza</h3>
+
+<p>Entrenar es elegir los números de U y V para que las predicciones se parezcan a las calificaciones conocidas. Lo que se minimiza se llama la pérdida: la suma, sobre las celdas conocidas, de (real − predicho)², más un castigo por tener factores grandes. Ese castigo es la <dfn data-term="regularizacion">regularización</dfn>, y sin ella el modelo hace trampa: con muchos factores puede reproducir exacto cada calificación conocida y predecir cualquier cosa en los huecos, que es el <dfn data-term="sobreajuste">sobreajuste</dfn>.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: la pérdida de la factorización</p>
+  <p>Pérdida = Σ (<i>r</i> − μ − <b>u</b> · <b>v</b>)² + λ (Σ |<b>u</b>|² + Σ |<b>v</b>|²). La primera suma recorre solo las celdas conocidas: los huecos no cuentan como cero, porque no se sabe qué hay en ellos. λ dice cuánto pesa el castigo: con λ = 0 no hay freno; con λ grande todos los factores se achican y las predicciones se acercan al promedio. Las versiones reales suman además un sesgo por persona y otro por ítem (<i>b<sub>u</sub></i> y <i>b<sub>i</sub></i>: alguien que califica todo alto, una película que a todos les gusta), como hicieron Koren y sus colegas.</p>
+</aside>
+
+<p>El <dfn data-term="descenso-gradiente">descenso por gradiente</dfn> es la forma de bajar esa pérdida. Para cada número de U y V se calcula hacia dónde sube la pérdida si ese número crece un poco (la pendiente, o gradiente), y se lo mueve un poco hacia el otro lado. Se repite hasta que la pérdida deja de bajar.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f44ct f44cd">
+<title id="f44ct">El descenso por gradiente baja por la curva de la pérdida</title>
+<desc id="f44cd">Dos curvas con forma de valle: la pérdida según el valor de un peso, con el mínimo en 2. A la izquierda, con una tasa de 0.3, los pasos van de menos 0.5 a 1, a 1.6 y a 1.84, cada vez más cerca del fondo. A la derecha, con una tasa de 1.05, el paso es tan largo que salta al otro lado del valle y cae cada vez más alto.</desc>
+<defs><marker id="f44ca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="40" y="26" text-anchor="start">Tasa 0.3: baja hacia el fondo</text>
+<polyline points="40.0,40.0 44.6,49.0 49.1,57.8 53.7,66.3 58.3,74.5 62.9,82.4 67.4,90.2 72.0,97.6 76.6,104.8 81.1,111.7 85.7,118.4 90.3,124.8 94.9,130.9 99.4,136.8 104.0,142.4 108.6,147.8 113.1,152.8 117.7,157.7 122.3,162.3 126.9,166.6 131.4,170.6 136.0,174.4 140.6,177.9 145.1,181.2 149.7,184.2 154.3,186.9 158.9,189.4 163.4,191.6 168.0,193.6 172.6,195.3 177.1,196.7 181.7,197.9 186.3,198.8 190.9,199.5 195.4,199.9 200.0,200.0 204.6,199.9 209.1,199.5 213.7,198.8 218.3,197.9 222.9,196.7 227.4,195.3 232.0,193.6 236.6,191.6 241.1,189.4 245.7,186.9 250.3,184.2 254.9,181.2 259.4,177.9 264.0,174.4 268.6,170.6 273.1,166.6 277.7,162.3 282.3,157.7 286.9,152.8 291.4,147.8 296.0,142.4 300.6,136.8 305.1,130.9 309.7,124.8 314.3,118.4 318.9,111.7 323.4,104.8 328.0,97.6 332.6,90.2 337.1,82.4 341.7,74.5 346.3,66.3 350.9,57.8 355.4,49.0 360.0,40.0" fill="none" stroke="var(--label-2)" stroke-width="2"/>
+<line x1="40" x2="360" y1="200" y2="200" stroke="var(--separator)"/>
+<text class="dg-tiny" x="62.9" y="216" text-anchor="middle">-1</text>
+<text class="dg-tiny" x="108.6" y="216" text-anchor="middle">0</text>
+<text class="dg-tiny" x="154.3" y="216" text-anchor="middle">1</text>
+<text class="dg-tiny" x="200.0" y="216" text-anchor="middle">2</text>
+<text class="dg-tiny" x="245.7" y="216" text-anchor="middle">3</text>
+<text class="dg-tiny" x="291.4" y="216" text-anchor="middle">4</text>
+<text class="dg-tiny" x="337.1" y="216" text-anchor="middle">5</text>
+<circle cx="85.7" cy="118.4" r="6" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M85.7 110.4 L154.3 178.9" marker-end="url(#f44ca)"/>
+<circle cx="154.3" cy="186.9" r="6" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M154.3 178.9 L181.7 189.9" marker-end="url(#f44ca)"/>
+<circle cx="181.7" cy="197.9" r="6" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M181.7 189.9 L192.7 191.7" marker-end="url(#f44ca)"/>
+<circle cx="192.7" cy="199.7" r="6" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="40" y="238" text-anchor="start">peso nuevo = peso − tasa × pendiente</text>
+<text class="dg-group" x="410" y="26" text-anchor="start">Tasa 1.05: salta y se aleja</text>
+<polyline points="410.0,40.0 414.6,49.0 419.1,57.8 423.7,66.3 428.3,74.5 432.9,82.4 437.4,90.2 442.0,97.6 446.6,104.8 451.1,111.7 455.7,118.4 460.3,124.8 464.9,130.9 469.4,136.8 474.0,142.4 478.6,147.8 483.1,152.8 487.7,157.7 492.3,162.3 496.9,166.6 501.4,170.6 506.0,174.4 510.6,177.9 515.1,181.2 519.7,184.2 524.3,186.9 528.9,189.4 533.4,191.6 538.0,193.6 542.6,195.3 547.1,196.7 551.7,197.9 556.3,198.8 560.9,199.5 565.4,199.9 570.0,200.0 574.6,199.9 579.1,199.5 583.7,198.8 588.3,197.9 592.9,196.7 597.4,195.3 602.0,193.6 606.6,191.6 611.1,189.4 615.7,186.9 620.3,184.2 624.9,181.2 629.4,177.9 634.0,174.4 638.6,170.6 643.1,166.6 647.7,162.3 652.3,157.7 656.9,152.8 661.4,147.8 666.0,142.4 670.6,136.8 675.1,130.9 679.7,124.8 684.3,118.4 688.9,111.7 693.4,104.8 698.0,97.6 702.6,90.2 707.1,82.4 711.7,74.5 716.3,66.3 720.9,57.8 725.4,49.0 730.0,40.0" fill="none" stroke="var(--label-2)" stroke-width="2"/>
+<line x1="410" x2="730" y1="200" y2="200" stroke="var(--separator)"/>
+<text class="dg-tiny" x="432.9" y="216" text-anchor="middle">-1</text>
+<text class="dg-tiny" x="478.6" y="216" text-anchor="middle">0</text>
+<text class="dg-tiny" x="524.3" y="216" text-anchor="middle">1</text>
+<text class="dg-tiny" x="570.0" y="216" text-anchor="middle">2</text>
+<text class="dg-tiny" x="615.7" y="216" text-anchor="middle">3</text>
+<text class="dg-tiny" x="661.4" y="216" text-anchor="middle">4</text>
+<text class="dg-tiny" x="707.1" y="216" text-anchor="middle">5</text>
+<circle cx="455.7" cy="118.4" r="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<path class="dg-feedback" d="M455.7 110.4 L695.7 93.2" marker-end="url(#f44ca)"/>
+<circle cx="695.7" cy="101.2" r="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<path class="dg-feedback" d="M695.7 93.2 L431.7 72.5" marker-end="url(#f44ca)"/>
+<circle cx="431.7" cy="80.5" r="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny dg-mono" x="410" y="238" text-anchor="start">peso nuevo = peso − tasa × pendiente</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.11.</b> El descenso por gradiente con un solo peso. La pendiente dice hacia dónde baja la pérdida y la tasa cuánto se avanza. Con miles de millones de pesos es lo mismo, una pendiente por peso.</figcaption>
+</figure>
+
+<pre data-lang="python"><code># Un paso de descenso por gradiente estocástico, para una calificación r de la persona u al ítem i
+err = r - (mu + U[u] @ V[i])
+u_viejo = U[u].copy()
+U[u] += tasa * (err * V[i] - lam * U[u])
+V[i] += tasa * (err * u_viejo - lam * V[i])</code></pre>
+
+<p>Si la predicción quedó baja (<code>err</code> positivo), el paso acerca los dos vectores entre sí y sube su producto; si quedó alta, los aleja. El término de <code>lam</code> los achica un poco en cada paso. A escala, se recorren las calificaciones en orden al azar, una por una o en lotes, y se da varias vueltas al conjunto entero.</p>
+
+<p>El widget entrena la matriz de la figura 44.9. Las celdas marcadas "prueba" tienen una calificación real que el modelo no ve: es la manera de medir si generaliza o si memoriza. Prueba primero con k = 2 y λ = 0.1, y después con k = 5 y λ = 0.</p>
+
+<div data-sim="mf"></div>
+
+<p>Con k = 5 y λ = 0, el error de entrenamiento llega a 0 y el de prueba se queda en 1.19: con 60 números libres (5 por cada persona y por cada película) para 27 calificaciones conocidas, el modelo puede copiarlas todas, y lo que predice en los huecos ya no sigue ningún patrón. Con k = 2 y λ = 0.1, el de entrenamiento se queda en 0.21 y el de prueba baja a 0.76. Predecir siempre el promedio da 1.92 en prueba. Son las cuentas que hace el widget en tu navegador con esa semilla; con otra semilla cambian los decimales, no la historia.</p>
+
+<p>¿Cuánto ocupa en Mercado Barrio? Con 64 factores en float32: (50 000 000 + 100 000 000) × 64 × 4 B = 38.4 GB. Es poco al lado de las 5 × 10<sup>15</sup> celdas de la matriz, y es lo que permite predecir cualquier par. Lo difícil no es guardarlo, sino buscar entre 100 millones de ítems los que tienen el producto punto más alto con tu vector en 25 ms: esa búsqueda es <a href="m45-recuperacion.html#ann">M45</a>.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> la factorización resume personas e ítems en k factores y predice con un producto punto; se entrena minimizando el error en las celdas conocidas más una regularización, con descenso por gradiente, y se mide con celdas guardadas para prueba.</p>
+
+<h2 id="implicito"><span class="sec-num">44.7</span>Feedback implícito: ALS con confianza</h2>
+
+<p>Netflix tenía estrellas. Mercado Barrio, como casi todos los productos, tiene sobre todo el <a href="m42-ml-system-design.html#objetivo">feedback implícito</a> de M42: vistas, clics, carritos y compras. Eso cambia el problema de dos maneras. No hay calificaciones bajas: no comprar algo no dice que no guste. Y los huecos no se pueden ignorar, porque casi todo es hueco; si se entrena solo con las celdas llenas, que valen todas "le gustó", el modelo aprende a predecir "le gusta" para todo.</p>
+
+<p>Hu, Koren y Volinsky propusieron en 2008 separar dos cosas <span class="badge badge--doc">Documentado</span>. La <b>preferencia</b> <i>p</i> es 1 si la persona tocó el ítem y 0 si no. La <b>confianza</b> <i>c</i> dice cuánto creerle a esa preferencia: <i>c</i> = 1 + α · conteo. Un hueco tiene confianza 1, poca; un ítem visto tres veces, con α = 40 (el valor que les funcionó en sus experimentos), tiene 1 + 40 × 3 = 121. Ahora todas las celdas cuentan, también los huecos, cada una con su peso.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: la pérdida con confianza</p>
+  <p>Pérdida = Σ<sub>todas las celdas</sub> <i>c<sub>ui</sub></i> (<i>p<sub>ui</sub></i> − <b>u</b> · <b>v</b>)² + λ (Σ |<b>u</b>|² + Σ |<b>v</b>|²). La suma recorre las 5 × 10<sup>15</sup> celdas, que no se pueden recorrer una por una. El truco del artículo es que con los vectores de los ítems fijos, la parte de los huecos (confianza 1, preferencia 0) es la misma para todas las personas y se calcula una sola vez, y solo las celdas llenas de cada persona se suman aparte.</p>
+</aside>
+
+<p>Con tantas celdas, el descenso por gradiente de 44.6 es lento. Se usa <dfn data-term="als">ALS</dfn> (<i>alternating least squares</i>, mínimos cuadrados alternados): si se fijan los vectores de los ítems, encontrar el mejor vector de cada persona es un problema de mínimos cuadrados con solución exacta, una cuenta de álgebra lineal con una matriz de k × k. Después se fijan las personas y se resuelve cada ítem. Se alterna.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f44dt f44dd">
+<title id="f44dt">ALS alterna entre resolver personas y resolver ítems</title>
+<desc id="f44dd">Dos pasos que se repiten. Paso 1: con los vectores de los ítems fijos, cada persona es un problema chico de mínimos cuadrados, independiente de las demás, y se reparten entre muchas máquinas. Paso 2: con los vectores de las personas fijos, lo mismo para cada ítem. Se repite unas 10 a 20 veces.</desc>
+<defs><marker id="f44da" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="20" y="26" text-anchor="start">Paso 1: fija V, resuelve U</text>
+<rect class="dg-box" x="20" y="40" width="340" height="36" rx="8"/>
+<text class="dg-small" x="190.0" y="62.0" text-anchor="middle">V fija (ítems)</text>
+<rect class="dg-layer" x="20" y="108" width="60" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="50.0" y="130.0" text-anchor="middle">persona</text>
+<text class="dg-tiny" x="50.0" y="146.0" text-anchor="middle">1</text>
+<path class="dg-edge" d="M50 78 V106" marker-end="url(#f44da)"/>
+<rect class="dg-layer" x="90" y="108" width="60" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="120.0" y="130.0" text-anchor="middle">persona</text>
+<text class="dg-tiny" x="120.0" y="146.0" text-anchor="middle">2</text>
+<path class="dg-edge" d="M120 78 V106" marker-end="url(#f44da)"/>
+<rect class="dg-layer" x="160" y="108" width="60" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="190.0" y="130.0" text-anchor="middle">persona</text>
+<text class="dg-tiny" x="190.0" y="146.0" text-anchor="middle">3</text>
+<path class="dg-edge" d="M190 78 V106" marker-end="url(#f44da)"/>
+<rect class="dg-layer" x="230" y="108" width="60" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="260.0" y="130.0" text-anchor="middle">persona</text>
+<text class="dg-tiny" x="260.0" y="146.0" text-anchor="middle">4</text>
+<path class="dg-edge" d="M260 78 V106" marker-end="url(#f44da)"/>
+<rect class="dg-layer" x="300" y="108" width="60" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="330.0" y="130.0" text-anchor="middle">persona</text>
+<text class="dg-tiny" x="330.0" y="146.0" text-anchor="middle">…</text>
+<path class="dg-edge" d="M330 78 V106" marker-end="url(#f44da)"/>
+<text class="dg-tiny" x="20" y="186" text-anchor="start">Cada persona: un sistema de k × k ecuaciones.</text>
+<text class="dg-tiny" x="20" y="202" text-anchor="start">No depende de las demás: se reparte entre máquinas.</text>
+<text class="dg-group" x="410" y="26" text-anchor="start">Paso 2: fija U, resuelve V</text>
+<rect class="dg-box" x="410" y="40" width="340" height="36" rx="8"/>
+<text class="dg-small" x="580.0" y="62.0" text-anchor="middle">U fija (personas)</text>
+<rect class="dg-layer" x="410" y="108" width="60" height="52" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="440.0" y="130.0" text-anchor="middle">ítem</text>
+<text class="dg-tiny" x="440.0" y="146.0" text-anchor="middle">1</text>
+<path class="dg-edge" d="M440 78 V106" marker-end="url(#f44da)"/>
+<rect class="dg-layer" x="480" y="108" width="60" height="52" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="510.0" y="130.0" text-anchor="middle">ítem</text>
+<text class="dg-tiny" x="510.0" y="146.0" text-anchor="middle">2</text>
+<path class="dg-edge" d="M510 78 V106" marker-end="url(#f44da)"/>
+<rect class="dg-layer" x="550" y="108" width="60" height="52" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="580.0" y="130.0" text-anchor="middle">ítem</text>
+<text class="dg-tiny" x="580.0" y="146.0" text-anchor="middle">3</text>
+<path class="dg-edge" d="M580 78 V106" marker-end="url(#f44da)"/>
+<rect class="dg-layer" x="620" y="108" width="60" height="52" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="650.0" y="130.0" text-anchor="middle">ítem</text>
+<text class="dg-tiny" x="650.0" y="146.0" text-anchor="middle">4</text>
+<path class="dg-edge" d="M650 78 V106" marker-end="url(#f44da)"/>
+<rect class="dg-layer" x="690" y="108" width="60" height="52" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="720.0" y="130.0" text-anchor="middle">ítem</text>
+<text class="dg-tiny" x="720.0" y="146.0" text-anchor="middle">…</text>
+<path class="dg-edge" d="M720 78 V106" marker-end="url(#f44da)"/>
+<text class="dg-tiny" x="410" y="186" text-anchor="start">Cada ítem: un sistema de k × k ecuaciones.</text>
+<text class="dg-tiny" x="410" y="202" text-anchor="start">No depende de las demás: se reparte entre máquinas.</text>
+<path class="dg-edge" d="M362 134 H408" marker-end="url(#f44da)"/>
+<path class="dg-feedback" d="M560 216 V232 H190 V214" marker-end="url(#f44da)"/>
+<text class="dg-tiny" x="375" y="246" text-anchor="middle">se repite unas 10 a 20 veces</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.12.</b> Mínimos cuadrados alternados. Fijar un lado vuelve el problema de cada fila una cuenta cerrada, sin tasa de aprendizaje, y las filas no se esperan entre sí.</figcaption>
+</figure>
+
+<pre data-lang="python"><code>import numpy as np
+
+def resolver_persona(V, VtV, items, conteos, alpha=40.0, lam=0.1):
+    """El mejor vector de una persona con V fija: (VtV + Vᵀ(C − I)V + λI)⁻¹ Vᵀ C p."""
+    k = V.shape[1]
+    Vi = V[items]                          # solo los ítems que tocó
+    c = 1.0 + alpha * np.asarray(conteos)  # su confianza
+    A = VtV + (Vi.T * (c - 1.0)) @ Vi + lam * np.eye(k)
+    b = (Vi.T * c).sum(axis=1)             # p = 1 en los ítems que tocó
+    return np.linalg.solve(A, b)
+
+# VtV = V.T @ V se calcula una vez por vuelta y sirve para todas las personas</code></pre>
+
+<p>Lo que lo vuelve práctico es la figura 44.12: cada persona se resuelve sin mirar a las demás, así que 50 millones de cuentas chicas se reparten entre las máquinas de un clúster de Spark, que trae ALS en su biblioteca de ML <span class="badge badge--doc">Documentado</span>. No hay tasa de aprendizaje que ajustar, y unas 10 a 20 vueltas suelen alcanzar.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>α es una decisión, no un dato: con α chico, un ítem visto pesa poco más que un hueco; con α grande, una sola vista accidental pesa como una preferencia firme. Una compra y una vista tampoco deberían pesar igual: se puede dar un conteo distinto por tipo de evento (una compra vale como cinco vistas, por ejemplo), y esos pesos se eligen midiendo, como todo lo de M49.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> con clics y compras, la factorización usa preferencia 0 o 1 y una confianza que crece con el conteo; ALS la resuelve alternando personas e ítems, en paralelo y con solución exacta en cada paso.</p>
+
+<h2 id="bpr"><span class="sec-num">44.8</span>Aprender a ordenar: BPR</h2>
+
+<p>ALS intenta acertar un número por celda. Pero en un feed nadie mira el número: mira el orden. Lo que importa es que lo que te va a gustar quede arriba de lo que no. <dfn data-term="bpr">BPR</dfn> (<i>Bayesian personalized ranking</i>), de Rendle y sus colegas en 2009, entrena para eso directamente <span class="badge badge--doc">Documentado</span>: toma una persona, un ítem que tocó y uno que no, y castiga al modelo si el que no tocó quedó arriba.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un examen que en lugar de preguntar "¿cuánto vale esto?" pregunta "¿cuál de estos dos te llevarías?". No importa si das 7 y 3 o 9 y 1: importa que el primero quede arriba.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f44et f44ed">
+<title id="f44et">La pérdida de BPR con un par</title>
+<desc id="f44ed">Dos filas. En la primera, el ítem que la persona tocó puntúa 2.5 y el que no tocó 0.5: la diferencia es 2, sigmoide 0.881, pérdida 0.127, chica. En la segunda, el que tocó puntúa 0.5 y el otro 1.5: la diferencia es menos 1, sigmoide 0.269, pérdida 1.313, grande, y el gradiente empuja a subir el tocado y bajar el otro.</desc>
+<defs><marker id="f44ea" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-tiny" x="76" y="30" text-anchor="middle" style="font-weight: 600">Tocó: x_ui</text>
+<text class="dg-tiny" x="208" y="30" text-anchor="middle" style="font-weight: 600">No tocó: x_uj</text>
+<text class="dg-tiny" x="340" y="30" text-anchor="middle" style="font-weight: 600">Diferencia</text>
+<text class="dg-tiny" x="472" y="30" text-anchor="middle" style="font-weight: 600">σ(diferencia)</text>
+<text class="dg-tiny" x="604" y="30" text-anchor="middle" style="font-weight: 600">−ln σ</text>
+<rect class="dg-box" x="20" y="44" width="112" height="44" rx="8"/>
+<text class="dg-label" x="76.0" y="70.0" text-anchor="middle">2.5</text>
+<path class="dg-edge" d="M134 66 H150" marker-end="url(#f44ea)"/>
+<rect class="dg-box" x="152" y="44" width="112" height="44" rx="8"/>
+<text class="dg-label" x="208.0" y="70.0" text-anchor="middle">0.5</text>
+<path class="dg-edge" d="M266 66 H282" marker-end="url(#f44ea)"/>
+<rect class="dg-box" x="284" y="44" width="112" height="44" rx="8"/>
+<text class="dg-label" x="340.0" y="70.0" text-anchor="middle">2</text>
+<path class="dg-edge" d="M398 66 H414" marker-end="url(#f44ea)"/>
+<rect class="dg-box" x="416" y="44" width="112" height="44" rx="8"/>
+<text class="dg-label" x="472.0" y="70.0" text-anchor="middle">0.881</text>
+<path class="dg-edge" d="M530 66 H546" marker-end="url(#f44ea)"/>
+<rect class="dg-ok" x="548" y="44" width="112" height="44" rx="8"/>
+<text class="dg-label" x="604.0" y="70.0" text-anchor="middle">0.127</text>
+<text class="dg-tiny" x="674" y="62" text-anchor="start">bien</text>
+<text class="dg-tiny" x="674" y="77" text-anchor="start">ordenado</text>
+<rect class="dg-box" x="20" y="118" width="112" height="44" rx="8"/>
+<text class="dg-label" x="76.0" y="144.0" text-anchor="middle">0.5</text>
+<path class="dg-edge" d="M134 140 H150" marker-end="url(#f44ea)"/>
+<rect class="dg-box" x="152" y="118" width="112" height="44" rx="8"/>
+<text class="dg-label" x="208.0" y="144.0" text-anchor="middle">1.5</text>
+<path class="dg-edge" d="M266 140 H282" marker-end="url(#f44ea)"/>
+<rect class="dg-box" x="284" y="118" width="112" height="44" rx="8"/>
+<text class="dg-label" x="340.0" y="144.0" text-anchor="middle">−1</text>
+<path class="dg-edge" d="M398 140 H414" marker-end="url(#f44ea)"/>
+<rect class="dg-box" x="416" y="118" width="112" height="44" rx="8"/>
+<text class="dg-label" x="472.0" y="144.0" text-anchor="middle">0.269</text>
+<path class="dg-edge" d="M530 140 H546" marker-end="url(#f44ea)"/>
+<rect class="dg-bad" x="548" y="118" width="112" height="44" rx="8"/>
+<text class="dg-label" x="604.0" y="144.0" text-anchor="middle">1.313</text>
+<text class="dg-tiny" x="674" y="136" text-anchor="start">mal</text>
+<text class="dg-tiny" x="674" y="151" text-anchor="start">ordenado</text>
+<text class="dg-tiny" x="20" y="206" text-anchor="start">σ(x) = 1 / (1 + e^−x): la probabilidad que el modelo le da a "prefiere el que tocó". La pérdida es 0 si está seguro y acierta.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.13.</b> BPR no intenta adivinar un número por celda: compara dos ítems de la misma persona y castiga cuando el que no tocó queda arriba.</figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: la pérdida de BPR</p>
+  <p>Con <i>x<sub>ui</sub></i> = <b>u</b> · <b>v</b><sub><i>i</i></sub> el puntaje del ítem que tocó y <i>x<sub>uj</sub></i> el del que no, la pérdida del par es −ln σ(<i>x<sub>ui</sub></i> − <i>x<sub>uj</sub></i>), donde σ(<i>x</i>) = 1 / (1 + e<sup>−<i>x</i></sup>) es la sigmoide, que lleva cualquier número a una probabilidad entre 0 y 1. Con diferencia 2: σ = 0.881 y la pérdida es 0.127. Con diferencia −1: σ = 0.269 y la pérdida es 1.313, diez veces más. El gradiente sube el puntaje del tocado y baja el del otro, con más fuerza cuanto peor ordenado está el par.</p>
+</aside>
+
+<pre data-lang="python"><code>import numpy as np
+
+def paso_bpr(U, V, u, i, j, tasa=0.05, lam=0.01):
+    """u tocó i y no tocó j. Sube x_ui − x_uj."""
+    x = U[u] @ (V[i] - V[j])
+    g = 1.0 / (1.0 + np.exp(x))          # = 1 − σ(x): grande si el par está mal ordenado
+    u_viejo = U[u].copy()
+    U[u] += tasa * (g * (V[i] - V[j]) - lam * U[u])
+    V[i] += tasa * (g * u_viejo - lam * V[i])
+    V[j] += tasa * (-g * u_viejo - lam * V[j])</code></pre>
+
+<p>El ítem <i>j</i> sale del <a href="m43-datos-recomendacion.html#negativos">muestreo de negativos</a> de M43: al azar del catálogo, por popularidad, o un negativo visto y no tocado. Es la primera <dfn data-term="perdida-pares">pérdida por pares</dfn> del curso; vuelve en el ranking de <a href="m46-ranking.html#ltr">M46</a>, donde los pares se arman con los ítems de una misma lista.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th></th><th>ALS con confianza</th><th>BPR</th></tr></thead>
+    <tbody>
+      <tr><td>Qué aprende</td><td>Un número por celda, cerca de 1 en lo tocado y de 0 en lo demás</td><td>Un orden: lo tocado arriba de lo no tocado</td></tr>
+      <tr><td>Con qué datos</td><td>Todas las celdas, cada una con su confianza</td><td>Tríos (persona, tocado, no tocado), muestreados</td></tr>
+      <tr><td>Cómo se entrena</td><td>Alternando, con solución exacta, en paralelo</td><td>Descenso por gradiente, par por par</td></tr>
+      <tr><td>Lo que hay que cuidar</td><td>Elegir α y λ</td><td>Cómo se eligen los negativos</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> BPR entrena el orden con pares de un ítem tocado y uno no tocado, y su pérdida crece cuando el par queda mal ordenado; la calidad depende de qué negativos se muestrean.</p>
+
+<h2 id="frio"><span class="sec-num">44.9</span>Arranque en frío</h2>
+
+<p>Ítem a ítem, la factorización, ALS y BPR tienen la misma debilidad: sin historia no hay columna, ni fila, ni vector. El <dfn data-term="arranque-frio">arranque en frío</dfn> de un recomendador es qué hacer cuando falta esa historia, y aparece en tres casos.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 382" role="img" aria-labelledby="f44ft f44fd">
+<title id="f44ft">Arranque en frío</title>
+<desc id="f44fd">Ficha de Arranque en frío. Qué entra: Una persona sin historia, un ítem que nadie tocó o un producto que recién empieza y todavía no tiene datos. Qué hace: Usa lo que sí se sabe: el contexto de la request, el contenido del ítem y lo popular del segmento, y reserva tráfico para aprender rápido. Qué sale: Una lista razonable desde la primera request, y las primeras interacciones, que sacan a la persona o al ítem del frío. Ejemplo: persona nueva, Chile, Android, llegó por un anuncio de zapatillas -&gt; popular en Chile esta semana (44.1) + vecinos del ítem del anuncio (44.4) zapatilla publicada hace 10 minutos, 0 ventas -&gt; embedding del título y la foto (44.2) + un poco de exploración (M47) Qué falla sin él: El ítem nuevo no aparece nunca porque nadie lo tocó, y nadie lo toca porque no aparece. La persona nueva ve una lista vacía o al azar y se va. Dónde vive: En las fuentes de candidatos de la recuperación (M45) y en el ranking, que recibe "cuántos días de historia" como feature.</desc>
+<defs><marker id="f44fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="134" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Una persona sin historia, un</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">ítem que nadie tocó o un</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">producto que recién empieza y</text>
+<text class="dg-tiny" x="32" y="104" text-anchor="start">todavía no tiene datos.</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="134" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Usa lo que sí se sabe: el</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">contexto de la request, el</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">contenido del ítem y lo</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">popular del segmento, y</text>
+<text class="dg-tiny" x="291" y="120" text-anchor="start">reserva tráfico para aprender</text>
+<text class="dg-tiny" x="291" y="136" text-anchor="start">rápido.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="134" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Una lista razonable desde la</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">primera request, y las</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">primeras interacciones, que</text>
+<text class="dg-tiny" x="550" y="104" text-anchor="start">sacan a la persona o al ítem</text>
+<text class="dg-tiny" x="550" y="120" text-anchor="start">del frío.</text>
+<path class="dg-edge" d="M234 83.0 H275" marker-end="url(#f44fa)"/>
+<path class="dg-edge" d="M493 83.0 H534" marker-end="url(#f44fa)"/>
+<rect class="dg-box" x="20" y="164" width="730" height="102" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="184" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="204" text-anchor="start" style="white-space:pre">persona nueva, Chile, Android, llegó por un anuncio de zapatillas</text>
+<text class="dg-tiny dg-mono" x="32" y="220" text-anchor="start" style="white-space:pre">-&gt; popular en Chile esta semana (44.1) + vecinos del ítem del anuncio (44.4)</text>
+<text class="dg-tiny dg-mono" x="32" y="236" text-anchor="start" style="white-space:pre">zapatilla publicada hace 10 minutos, 0 ventas</text>
+<text class="dg-tiny dg-mono" x="32" y="252" text-anchor="start" style="white-space:pre">-&gt; embedding del título y la foto (44.2) + un poco de exploración (M47)</text>
+<rect class="dg-warnbox" x="20" y="280" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="300" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="320" text-anchor="start">El ítem nuevo no aparece nunca porque nadie lo tocó,</text>
+<text class="dg-tiny" x="32" y="336" text-anchor="start">y nadie lo toca porque no aparece. La persona nueva</text>
+<text class="dg-tiny" x="32" y="352" text-anchor="start">ve una lista vacía o al azar y se va.</text>
+<rect class="dg-box" x="393" y="280" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="300" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="320" text-anchor="start">En las fuentes de candidatos de la recuperación (M45)</text>
+<text class="dg-tiny" x="405" y="336" text-anchor="start">y en el ranking, que recibe "cuántos días de</text>
+<text class="dg-tiny" x="405" y="352" text-anchor="start">historia" como feature.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.14.</b> Ficha del <span class="no-autolink">arranque en frío</span>. No es un modelo aparte: es elegir, para cada caso, la familia que no necesita la historia que falta.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Caso</th><th>Qué falta</th><th>Qué se usa</th></tr></thead>
+    <tbody>
+      <tr><td>Persona nueva</td><td>Su fila de la matriz</td><td>Lo popular de su país y su dispositivo (44.1), lo que eligió en un onboarding de tres pantallas, el contexto de la request (de qué anuncio llegó, qué buscó) y, en cuanto toca un ítem, sus vecinos (44.4)</td></tr>
+      <tr><td>Ítem nuevo</td><td>Su columna</td><td>Su contenido: el embedding del título y la foto lo pone cerca de ítems parecidos con historia (44.2); y un poco de tráfico de exploración para que junte sus primeras impresiones (M47)</td></tr>
+      <tr><td>Producto nuevo</td><td>Toda la matriz</td><td>Popularidad y reglas editoriales hasta tener datos, como la línea base de <a href="m42-ml-system-design.html#sin-ml">M42</a>; y registrar impresiones desde el primer día (M43), para tener historia cuando llegue el modelo</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>El caso del ítem nuevo tiene un bucle propio: no aparece porque nadie lo tocó, y nadie lo toca porque no aparece. En un marketplace eso es un problema de negocio, no solo de modelo, porque un vendedor que publica y no vende se va. Por eso los sistemas reales reservan una fracción del tráfico para lo nuevo, y la manera de hacerlo sin empeorar demasiado la lista es la exploración de M47.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Dos <span class="no-autolink">arranques en frío</span></p>
+  <p>En el curso, "<span class="no-autolink">arranque en frío</span>" ya apareció con otro sentido: la <a href="m19-router-flota.html#cold-start">primera request a una réplica que todavía no está cargada</a> (M19, M28). Es la misma imagen, un motor que todavía no tomó temperatura, pero otro problema. En los módulos de recomendación, "<span class="no-autolink">arranque en frío</span>" siempre es el de esta sección: falta de historia.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> sin historia se usa lo que sí hay: el contexto y lo popular para la persona nueva, el contenido y algo de exploración para el ítem nuevo, y la línea base con buen registro para el producto nuevo.</p>
+
+<h2 id="comparar"><span class="sec-num">44.10</span>Cuál usar</h2>
+
+<p>La respuesta corta es "varios": en Mercado Barrio, las cuatro familias son fuentes de candidatos que corren en paralelo, y el ranking de <a href="m46-ranking.html">M46</a> decide qué queda. Igual conviene saber qué da cada una, para elegir con qué empezar y qué agregar después.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th></th><th>Popularidad</th><th>Contenido</th><th>Ítem a ítem</th><th>Factorización (ALS o BPR)</th></tr></thead>
+    <tbody>
+      <tr><td>Datos que necesita</td><td>Contadores por ítem</td><td>Texto, foto, categoría</td><td>Historias de compras</td><td>La matriz entera</td></tr>
+      <tr><td>Costo de entrenar</td><td>Casi nada: contadores en streaming</td><td>Un embedding por ítem, una vez</td><td>Un job nocturno de pares</td><td>Varias vueltas sobre la matriz, en un clúster</td></tr>
+      <tr><td>Costo de servir</td><td>Leer una lista por segmento</td><td>Búsqueda vectorial (<a href="m45-recuperacion.html#ann">M45</a>)</td><td>Una lectura por clave</td><td>Búsqueda vectorial (<a href="m45-recuperacion.html#ann">M45</a>)</td></tr>
+      <tr><td>Persona nueva</td><td>Sirve</td><td>Sirve desde el primer ítem</td><td>Sirve desde el primer ítem</td><td>No sirve hasta el reentrenamiento</td></tr>
+      <tr><td>Ítem nuevo</td><td>No aparece hasta que vende</td><td>Sirve</td><td>No sirve</td><td>No sirve</td></tr>
+      <tr><td>Sorpresa y diversidad</td><td>Ninguna: lo mismo para todos</td><td>Poca: más de lo mismo</td><td>Buena para complementos</td><td>La mejor: relaciones indirectas</td></tr>
+      <tr><td>Se explica</td><td>"Lo más vendido en Chile"</td><td>"Porque viste zapatillas"</td><td>"Comprados juntos"</td><td>Difícil: los factores no tienen nombre</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Un orden razonable para un producto que empieza: popularidad por segmento el primer día, ítem a ítem cuando hay unas semanas de compras, contenido cuando el catálogo nuevo es grande, y factorización cuando hay equipo para entrenarla y medirla. Cada paso se mide contra el anterior con un experimento (M49), que es lo que pidió el design doc de <a href="m42-ml-system-design.html#design-doc">M42</a>.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Que un modelo sea viejo no quiere decir que esté retirado. Ítem a ítem sigue detrás de las filas "comprados juntos" de muchas tiendas, porque es barato, rápido y se explica. Netflix contó en 2012 que de las soluciones del Netflix Prize llevó a producción dos piezas, una factorización y un modelo de máquinas de Boltzmann, y no la mezcla ganadora entera, porque la ganancia extra no justificaba el costo de ingeniería <span class="badge badge--doc">Documentado</span>.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> cada familia tapa un hueco de las otras: popularidad y contenido cubren el <span class="no-autolink">arranque en frío</span>, ítem a ítem da complementos baratos y explicables, y la factorización encuentra relaciones indirectas.</p>
+
+<p>Para cerrar, el embudo con la etapa que abrió este módulo:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f44zt f44zd">
+<title id="f44zt">Dónde estás: la recuperación</title>
+<desc id="f44zd">El embudo de la Lámina 42.A con la recuperación resaltada; las otras etapas quedan tenues.</desc>
+<defs><marker id="f44za" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+
+<text class="dg-group" x="540" y="26" text-anchor="start">Cuántos quedan y la latencia acumulada</text>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="160.0" y="40" width="340" height="32" rx="6"/>
+<text class="dg-small" x="330" y="61" text-anchor="middle">Catálogo</text>
+<text class="dg-small" x="540" y="53" text-anchor="start">100 000 000 ítems</text>
+<text class="dg-tiny" x="540" y="69" text-anchor="start">productos y videos de reseña</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="200.0" y="88" width="260" height="32" rx="6"/>
+<text class="dg-small" x="330" y="109" text-anchor="middle">Recuperación</text>
+<text class="dg-small" x="540" y="101" text-anchor="start">10 000 candidatos  ·  25 ms</text>
+<text class="dg-tiny" x="540" y="117" text-anchor="start">varias fuentes en paralelo</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="210.0" y="136" width="240" height="32" rx="6"/>
+<text class="dg-small" x="330" y="157" text-anchor="middle">Filtros</text>
+<text class="dg-small" x="540" y="149" text-anchor="start">unos 9 000  ·  30 ms</text>
+<text class="dg-tiny" x="540" y="165" text-anchor="start">ya visto, bloqueado, sin stock</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="245.0" y="184" width="170" height="32" rx="6"/>
+<text class="dg-small" x="330" y="205" text-anchor="middle">Ranking liviano</text>
+<text class="dg-small" x="540" y="197" text-anchor="start">500  ·  63 ms</text>
+<text class="dg-tiny" x="540" y="213" text-anchor="start">features y un modelo barato</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="270.0" y="232" width="120" height="32" rx="6"/>
+<text class="dg-small" x="330" y="253" text-anchor="middle">Ranking pesado</text>
+<text class="dg-small" x="540" y="245" text-anchor="start">50  ·  113 ms</text>
+<text class="dg-tiny" x="540" y="261" text-anchor="start">un modelo grande, multi-tarea</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="288.0" y="280" width="84" height="32" rx="6"/>
+<text class="dg-small" x="330" y="301" text-anchor="middle">Re-ranking</text>
+<text class="dg-small" x="540" y="293" text-anchor="start">10 en pantalla  ·  118 ms</text>
+<text class="dg-tiny" x="540" y="309" text-anchor="start">diversidad, frescura, reglas</text>
+</g>
+<g style="opacity: 0.45"><rect class="dg-box" x="230" y="336" width="200" height="40" rx="8"/>
+<text class="dg-small" x="330.0" y="360.0" text-anchor="middle">Registro de impresiones</text></g>
+<g style="opacity: 0.45"><rect class="dg-box" x="20" y="336" width="130" height="40" rx="8"/>
+<text class="dg-small" x="85.0" y="360.0" text-anchor="middle">Log de eventos</text></g>
+<g style="opacity: 0.45"><rect class="dg-box" x="20" y="150" width="120" height="44" rx="8"/>
+<text class="dg-small" x="80.0" y="176.0" text-anchor="middle">Entrenamiento</text></g>
+<path class="dg-edge" d="M330 312 V334" marker-end="url(#f44za)"/>
+<path class="dg-edge" d="M230 356 H152" marker-end="url(#f44za)"/>
+<text class="dg-tiny" x="191" y="389" text-anchor="middle">con clics y compras</text>
+<path class="dg-edge" d="M80 336 V196" marker-end="url(#f44za)"/>
+<path class="dg-feedback" d="M140 166 H176 V104 H198" marker-end="url(#f44za)"/>
+<path class="dg-feedback" d="M140 178 H200 V200 H243" marker-end="url(#f44za)"/>
+<path class="dg-feedback" d="M140 188 H186 V248 H268" marker-end="url(#f44za)"/>
+<text class="dg-tiny" x="88" y="230">modelos nuevos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 44.15.</b> Dónde estás. Los cuatro modelos de M44 son fuentes de candidatos: llevan de 100 millones a unos miles. <a href="m45-recuperacion.html">M45</a> los pone a escala con dos torres y búsqueda vectorial; <a href="m46-ranking.html">M46</a> ordena lo que traen.</figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Lo que viene</p>
+  <p>La factorización deja un vector por persona y uno por ítem, y la recomendación es buscar los ítems con el producto punto más alto. Con 100 millones de ítems, eso no se puede hacer comparando uno por uno en 25 ms. <a href="m45-recuperacion.html">M45</a> resuelve esa búsqueda con índices de vecinos aproximados, y cambia la factorización por un modelo de dos torres que también usa el contenido, y así sirve con ítems nuevos.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m44"></div>
+
+<div data-exercise="m44-comprados"></div>
+
+<div data-checkpoint="m44"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m44.data.js"></script>
+<script src="../assets/js/data/exercises/m44.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-recsys.js"></script>
+</body>
+</html>

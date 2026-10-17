@@ -177,32 +177,61 @@
     });
   }
 
-  /* .file-card[data-where="a b"]: miniatura de la figura de arquitectura (figure[data-arch]) con las cajas
-     [data-part] que nombra resaltadas. La copia no lleva título ni ids repetidos y no la leen los lectores de pantalla. */
+  /* Copia de la figura de arquitectura (figure[data-arch]) con las cajas [data-part] que nombra `parts` resaltadas.
+     La copia no lleva título ni ids repetidos y no la leen los lectores de pantalla. */
+  function archCopy(src, parts, suffix) {
+    var svg = src.cloneNode(true);
+    svg.removeAttribute('role');
+    svg.removeAttribute('aria-labelledby');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.querySelectorAll('title, desc').forEach(function (n) { n.remove(); });
+    svg.querySelectorAll('[id]').forEach(function (n) {
+      var old = n.id, nu = old + suffix;
+      n.id = nu;
+      ['marker-end', 'marker-start'].forEach(function (attr) {
+        svg.querySelectorAll('[' + attr + '="url(#' + old + ')"]').forEach(function (e) { e.setAttribute(attr, 'url(#' + nu + ')'); });
+      });
+    });
+    svg.querySelectorAll('[data-part]').forEach(function (g) {
+      var mine = g.getAttribute('data-part').split(/\s+/).some(function (p) { return parts.indexOf(p) >= 0; });
+      g.classList.add(mine ? 'is-here' : 'is-away');
+    });
+    return svg;
+  }
+
+  /* .file-card[data-where="a b"]: miniatura de la arquitectura con las piezas del archivo resaltadas. */
   function fileMaps(root) {
     var src = root.querySelector('figure[data-arch] svg');
     if (!src) return;
     root.querySelectorAll('.file-card[data-where]').forEach(function (card, i) {
-      var parts = card.getAttribute('data-where').split(/\s+/);
-      var svg = src.cloneNode(true);
-      svg.removeAttribute('role');
-      svg.removeAttribute('aria-labelledby');
-      svg.setAttribute('aria-hidden', 'true');
-      svg.setAttribute('focusable', 'false');
-      svg.querySelectorAll('title, desc').forEach(function (n) { n.remove(); });
-      svg.querySelectorAll('[id]').forEach(function (n) {
-        var old = n.id, nu = old + '-m' + i;
-        n.id = nu;
-        ['marker-end', 'marker-start'].forEach(function (attr) {
-          svg.querySelectorAll('[' + attr + '="url(#' + old + ')"]').forEach(function (e) { e.setAttribute(attr, 'url(#' + nu + ')'); });
-        });
-      });
-      svg.querySelectorAll('[data-part]').forEach(function (g) {
-        var mine = g.getAttribute('data-part').split(/\s+/).some(function (p) { return parts.indexOf(p) >= 0; });
-        g.classList.add(mine ? 'is-here' : 'is-away');
-      });
+      var svg = archCopy(src, card.getAttribute('data-where').split(/\s+/), '-m' + i);
       card.appendChild(h('figure', { class: 'file-card-map' }, [svg, h('figcaption', { text: 'Dónde encaja' })]));
     });
+  }
+
+  /* .step-map[data-where]: al comienzo de cada paso, la arquitectura más grande con las piezas que toca el paso,
+     al lado de lo que entra, lo que sale y lo que cambia (el dl que ya trae el marcado). */
+  function stepMaps(root) {
+    var src = root.querySelector('figure[data-arch] svg');
+    if (!src) return;
+    var num = (root.querySelector('figure[data-arch] figcaption b') || {}).textContent || '';
+    root.querySelectorAll('.step-map[data-where]').forEach(function (box, i) {
+      var svg = archCopy(src, box.getAttribute('data-where').split(/\s+/), '-s' + i);
+      num = num.replace(/\.$/, '');
+      var cap = 'Las piezas de este paso' + (num ? ', sobre la ' + num.charAt(0).toLowerCase() + num.slice(1) : '');
+      box.insertBefore(h('figure', { class: 'step-map-fig' }, [svg, h('figcaption', { text: cap })]), box.firstChild);
+    });
+  }
+
+  /* Un enlace a un ancla que está dentro de un <details> cerrado (el archivo completo de un anexo) lo abre. */
+  function openTarget() {
+    var id = decodeURIComponent(location.hash.slice(1));
+    var el = id && document.getElementById(id);
+    if (!el) return;
+    for (var d = el.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
+    if (el.tagName === 'DETAILS') el.open = true;
+    el.scrollIntoView({ block: 'start' });
   }
 
   /* ---------- Ruta de proyectos ---------- */
@@ -233,19 +262,42 @@
     function part(label, title, line, items, kind) {
       var el = h('div', { class: 'route-part', style: '--line: var(' + line + ')' });
       el.appendChild(h('p', { class: 'route-part-head' }, [
-        h('span', { class: 'route-part-num', text: label }),
+        label ? h('span', { class: 'route-part-num', text: label }) : null,
         h('span', { class: 'route-part-title', text: title })
       ]));
       el.appendChild(h('ol', { class: 'route-stops' }, items.map(function (p) { return stop(p, kind); })));
       container.appendChild(el);
     }
-    var cur = SD.projectItem(currentId);
-    if (cur && cur.series === 'ia') {
-      (d.aiTracks || []).forEach(function (t) { part(t.label, t.title, t.line, t.items, 'module'); });
-      return;
+    /* Las tres series, siempre y en el mismo orden: las guías que faltan se ven como "pronto",
+       para que la barra muestre también lo que viene. */
+    function series(title, anchor, n, total) {
+      container.appendChild(h('p', { class: 'route-series' }, [
+        h('a', { href: SD.url('proyectos.html#' + anchor), text: title }),
+        h('span', { class: 'route-series-count', text: n + ' de ' + total + ' publicadas' })
+      ]));
     }
+    function count(groups) {
+      var all = [].concat.apply([], groups.map(function (t) { return t.items || t; }));
+      return [all.filter(function (p) { return p.status === 'ready'; }).length, all.length];
+    }
+    var java = count(d.tracks.concat([d.capstones]));
+    series('Java y Spring Boot', 'indice', java[0], java[1]);
     d.tracks.forEach(function (t) { part(t.label, t.title, t.line, t.items, 'module'); });
     part('Al final', 'Sistemas completos', '--label-3', d.capstones, 'checkpoint');
+    [['aiTracks', 'AI Engineering', 'ia-engineering'], ['mlTracks', 'ML System Design', 'ml-system-design']].forEach(function (s) {
+      var tracks = d[s[0]] || [];
+      if (!tracks.length) return;
+      var c = count(tracks);
+      series(s[1], s[2], c[0], c[1]);
+      /* Con una sola parte, la etiqueta repetiría el nombre de la serie. */
+      tracks.forEach(function (t) { part(tracks.length > 1 ? t.label : '', t.title, t.line, t.items, 'module'); });
+    });
+    /* La barra se desplaza sola hasta la guía actual, sin mover la página. */
+    var here = container.querySelector('.stop.is-current');
+    var box = container.closest('.sidebar');
+    if (here && box && box.scrollHeight > box.clientHeight) {
+      box.scrollTop += here.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientHeight / 3;
+    }
   }
 
   function buildPager(pagerEl, currentId) {
@@ -292,7 +344,7 @@
     var save = h('button', { type: 'submit', class: 'btn btn--primary', text: 'Guardar' });
     var msg = h('p', { class: 'pj-repo-msg', id: uid + '-msg' });
     var form = h('form', { class: 'pj-repo-form', novalidate: true }, [
-      h('label', { for: uid, class: 'pj-repo-label', text: 'Enlace a tu repositorio' }),
+      h('label', { for: uid, class: 'pj-repo-label', text: 'Enlace a tu repositorio (opcional)' }),
       h('div', { class: 'pj-repo-row' }, [input, save]),
       msg
     ]);
@@ -313,8 +365,9 @@
       render();
     });
 
+    /* Con repositorio oficial no se pide uno propio: el lector clona el oficial. */
     var publishedRow = published
-      ? h('p', { class: 'pj-repo-published' }, ['Repositorio publicado: ', h('a', { href: published, text: published, rel: 'noopener' })])
+      ? h('p', { class: 'pj-repo-published' }, ['Repositorio oficial: ', h('a', { href: published, text: published, rel: 'noopener' })])
       : null;
 
     checks.forEach(function (li, i) {
@@ -330,23 +383,36 @@
     });
 
     var state = h('p', { class: 'pj-repo-state', role: 'status' });
+    var doneBtn = h('button', { type: 'button', class: 'btn', 'aria-pressed': 'false' });
+    doneBtn.addEventListener('click', function () {
+      st.setDone(id, st.status(id) !== 'done');
+      render();
+    });
+    var doneRow = h('div', { class: 'pj-repo-done' }, [state, doneBtn]);
     var head = box.querySelector('.pj-repo-head');
-    box.insertBefore(form, list || null);
-    if (publishedRow) box.insertBefore(publishedRow, form);
-    box.appendChild(state);
+    if (published) {
+      box.insertBefore(publishedRow, list || null);
+    } else {
+      box.insertBefore(form, list || null);
+    }
+    box.appendChild(doneRow);
     if (head) box.insertBefore(head, box.firstChild);
 
     function render() {
-      var s = st.get(id), repo = st.repoOf(id);
+      var s = st.get(id);
       var missing = checks.length - Object.keys(s.checks).filter(function (k) {
         return checks.some(function (li) { return li.getAttribute('data-check') === k; });
       }).length;
-      var parts = [];
-      if (!repo) parts.push('falta el enlace a tu repositorio');
-      if (missing > 0) parts.push(missing === 1 ? 'falta 1 comprobación' : 'faltan ' + missing + ' comprobaciones');
-      var done = !parts.length;
+      var done = st.status(id) === 'done';
       state.className = 'pj-repo-state' + (done ? ' is-done' : '');
-      state.textContent = done ? 'Proyecto terminado.' : 'Para terminarlo, ' + parts.join(' y ') + '.';
+      state.textContent = done
+        ? 'Proyecto terminado.'
+        : (missing === 1 ? 'Falta 1 comprobación.' : 'Faltan ' + missing + ' comprobaciones.') +
+          ' Al marcarlas todas se termina solo; también puedes marcarlo a mano.';
+      doneBtn.textContent = done ? 'Quitar la marca de terminado' : 'Marcar como terminado';
+      doneBtn.setAttribute('aria-pressed', done ? 'true' : 'false');
+      // Terminado por las comprobaciones: la marca a mano no cambia nada, así que el botón no se muestra.
+      doneBtn.hidden = missing <= 0 && !s.done;
       document.querySelectorAll('[data-project-status="' + id + '"]').forEach(function (el) {
         el.textContent = SD.projectStatusText[st.status(id)];
       });
@@ -360,6 +426,7 @@
     highlight(content);
     codePins(content);
     fileMaps(content);
+    stepMaps(content);
     fileHeaders(content);
     var routeEl = document.querySelector('[data-project-route]');
     var pagerEl = document.querySelector('[data-project-pager]');
@@ -370,6 +437,8 @@
       el.textContent = SD.projectStatusText[SD.projectState.status(el.getAttribute('data-project-status'))];
     });
     window.addEventListener('sd:projects', function () { if (routeEl) buildRoute(routeEl, currentId); });
+    if (location.hash) openTarget();
+    window.addEventListener('hashchange', openTarget);
   });
 
   SD.projectHighlight = highlight;
