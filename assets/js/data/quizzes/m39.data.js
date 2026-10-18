@@ -236,6 +236,30 @@ SD.defineQuiz('m39', {
       ],
       answer: 1,
       explain: 'Toda consulta lleva AND user_id = :actual, así que para ese usuario la orden no existe. Un 403 confirmaría que el id es válido, algo que ayuda a enumerar órdenes. Ver 39.15.'
+    },
+    {
+      id: 'clave-cliente', type: 'single',
+      prompt: 'El navegador manda <code>POST /v1/orders</code> y la request termina en timeout. Ana recarga la página y aprieta Pagar con el mismo carrito. ¿Qué clave debe llevar el nuevo POST?',
+      options: [
+        'Una nueva, porque la anterior pudo quedar a medias y el servidor la rechazaría con un 409',
+        'La misma, leída de sessionStorage, donde se guardó antes del primer fetch',
+        'Ninguna: después de una recarga el servidor reconoce el carrito por su id y deduplica solo',
+        'Una derivada del contenido del carrito, para que cualquier pestaña llegue a la misma clave'
+      ],
+      answer: 1,
+      explain: 'Un timeout es «no sé»: el reintento lleva la misma clave y el mismo body, y el servidor decide con su fila (repetir, 409 o retomar). Por eso la clave se escribe antes del fetch: si se guardara después, la recarga la perdería. Una clave nueva podría cobrar dos veces, y una derivada del contenido bloquearía la segunda compra igual. Ver 39.4, «La clave nace en el cliente».'
+    },
+    {
+      id: 'clave-rotar', type: 'single',
+      prompt: 'Ana compró una tarjeta de regalo (201) y diez minutos después quiere otra igual. ¿Qué evita que la segunda compra quede bloqueada?',
+      options: [
+        'Que el servidor borre la fila de idempotencia en cuanto responde un 201',
+        'Que el cliente borró la clave al recibir la respuesta definitiva de la primera',
+        'Que el lease de 30 segundos ya venció, así que la fila vieja ya no cuenta para nadie',
+        'Que la huella incluye la hora del clic, así que dos compras nunca coinciden'
+      ],
+      answer: 1,
+      explain: 'La clave dura lo que dura una intención: se borra con la respuesta definitiva, y la próxima compra nace sin clave. El servidor guarda la fila 24 horas, así que si el cliente reusara la clave recibiría el 201 viejo. El lease solo excluye ejecuciones simultáneas, y una huella con la hora rompería los reintentos legítimos. Ver 39.4, «Cuándo cambia la clave».'
     }
   ]
 });

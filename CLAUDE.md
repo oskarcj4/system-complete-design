@@ -268,10 +268,10 @@ La tarjeta de definición completa (`callout--def`) suma `p.def-term` (con `span
 ### Código
 
 ```html
-<pre data-lang="python"><code>…</code></pre>      <!-- json | http | sse | sql | python | shell -->
+<pre data-lang="python"><code>…</code></pre>      <!-- json | http | sse | sql | python | shell | js -->
 ```
 
-`sd.js` resalta el código solo. `shell` sirve para comandos y archivos de configuración (`sshd_config`, nftables, sysctl): resalta los comentarios con `#`, el prompt `$` y las cadenas. Dentro de `<code>` hay que escapar `&`, `<` y `>`.
+`sd.js` resalta el código solo. `js` es JavaScript en los módulos (las guías de `proyectos/` usan `javascript`, que resalta `project-guide.js`). `shell` sirve para comandos y archivos de configuración (`sshd_config`, nftables, sysctl): resalta los comentarios con `#`, el prompt `$` y las cadenas. Dentro de `<code>` hay que escapar `&`, `<` y `>`.
 
 ### Figuras SVG
 
@@ -419,8 +419,8 @@ Categorías (`SD.catNames` en `glossary.js`): `metodo`, `redes`, `datos`, `distr
   - cada nodo tiene cinco pestañas: `info.resp`, `info.api`, `info.data`, `info.fail` e `info.nums`, y puede llevar `brief`, una frase de qué hace, que aparece en su detalle y como tooltip en el lienzo (sin `brief`, el tooltip muestra `sub`);
   - `scenarios` con `steps` de la forma `{from, to | at, kind, tag, ms, title, text, code, lang, down, up}`;
   - enlaces directos: `#node=<id>&scenario=<id>&step=<n>`.
-  - `stepPanel: true` en la definición hace que el panel lateral explique el escenario y el paso actual (ruta entre nodos, texto, payload y la lista de pasos) en lugar de la ayuda del mapa; abajo queda solo el título del paso. Lo usan M09 (`m09-objetos`), M10 (`m10-identidad`), M27 (`m27-pagos`) y el mapa de ChatGPT (`chatgpt`). Con `stepPanel`, el detalle de un nodo trae "← Volver al escenario", y en pantalla completa con el panel al costado se oculta también el título del paso de abajo, para que el lienzo gane alto.
-  - `pieces: true` suma al panel la lista plegable "Qué hace cada pieza": los nodos agrupados según el grupo que contiene su centro, cada uno con su `brief`. Marca las piezas del paso actual, resalta el nodo en el lienzo al pasar el mouse o con el foco, abre su detalle con un clic y recuerda si el lector la abrió o la cerró. Lo usa M27.
+  - `stepPanel: true` en la definición hace que el panel lateral explique el escenario y el paso actual (ruta entre nodos, texto, payload y la lista de pasos) en lugar de la ayuda del mapa; abajo queda solo el título del paso. Lo usan M09 (`m09-objetos`), M10 (`m10-identidad`), M27 (`m27-pagos`), M39 (`m39-flujo`) y el mapa de ChatGPT (`chatgpt`). Con `stepPanel`, el detalle de un nodo trae "← Volver al escenario", y en pantalla completa con el panel al costado se oculta también el título del paso de abajo, para que el lienzo gane alto.
+  - `pieces: true` suma al panel la lista plegable "Qué hace cada pieza": los nodos agrupados según el grupo que contiene su centro, cada uno con su `brief`. Marca las piezas del paso actual, resalta el nodo en el lienzo al pasar el mouse o con el foco, abre su detalle con un clic y recuerda si el lector la abrió o la cerró. Lo usan M27 y M39.
 - Deja pasillos de unos 150 px entre columnas de nodos para que las etiquetas de las aristas no se pisen.
 - El encuadre (`fit` y `home`) reserva 104 px abajo cuando el lienzo mide más de 640 px de ancho, para que el minimapa y la ayuda no tapen nodos. En pantalla completa con menos de 1000 px de ancho, el panel va debajo: el lienzo mide `max(320px, 64vh)` y el resto se desplaza.
 - **Mapa gigante de ChatGPT:** `maps/chatgpt.html` es la primera página de mapa suelta (no embebida en un módulo), en la carpeta `maps/`. Se arma como un módulo pero sin quiz ni checkpoint (`data-module="map-chatgpt"`, `data-root="../"`, scripts `map/map-engine.js` y `map/flow-sim.js`); sus datos están en `assets/js/data/maps/chatgpt.data.js` (24 nodos, 27 aristas y 9 escenarios: cliente y borde a la izquierda, chatapi al centro, inferencia a la derecha, datos y colas abajo, con Kafka sola en su fila, e imágenes en el extremo derecho). Es `kind: 'map'` en `course.data.js`, así que no cuenta para el progreso. Regla de sus escenarios: cada salto usa una arista real y la vuelta reusa la misma arista (`both: true`); no hay saltos sin arista.
@@ -609,6 +609,7 @@ ia-system-desing
 │       │   │       m29-whatsapp.data.js
 │       │   │       m30-twitter.data.js
 │       │   │       m31-docs.data.js
+│       │   │       m39-flujo.data.js
 │       │   │
 │       │   ├───projects
 │       │   │       a00.data.js

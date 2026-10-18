@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="../assets/css/tokens.css">
 <link rel="stylesheet" href="../assets/css/layout.css">
 <link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/map.css">
 </head>
 <body data-root="../" data-module="m39">
 <a class="skip-link" href="#contenido">Saltar al contenido</a>
@@ -42,7 +43,7 @@
         <dl class="tb-grid">
           <div><dt>Plano</dt><dd>M39</dd></div>
           <div><dt>Parte</dt><dd>V. Manejo de pagos</dd></div>
-          <div><dt>Duración</dt><dd>150 min</dd></div>
+          <div><dt>Duración</dt><dd>175 min</dd></div>
           <div><dt>Requisitos previos</dt><dd>M05, M27</dd></div>
           <div><dt>Estado</dt><dd data-status="m39">Sin empezar</dd></div>
         </dl>
@@ -53,9 +54,11 @@
     <li>Diseñar un sistema de pagos a partir de sus <b>invariantes</b>, lo que nunca puede pasar, y ubicar cada defensa en el tramo donde se rompe.</li>
     <li>Modelar las <b>tablas</b> de un comercio que cobra: la orden como intención, los intentos de cobro, la clave de idempotencia y el evento del proveedor, cada uno con sus restricciones.</li>
     <li>Decidir cómo funciona la <b>tabla de idempotencia</b>: alcance, huella, lease, qué se guarda y por qué no sirve un advisory lock detrás de PgBouncer.</li>
+    <li>Generar la <b>clave en el cliente</b> y conservarla en cada reintento, y saber cuándo cambiarla para no bloquear una compra legítima.</li>
     <li>Elegir entre un <b>UPDATE condicional</b>, un <b>lock pesimista</b> (<code>FOR UPDATE</code>, <code>NOWAIT</code>, <code>SKIP LOCKED</code>), uno <b>optimista</b> o una <b>restricción</b> según cuánto chocan las transacciones.</li>
     <li>Separar el lock de fila, que dura milisegundos, del <b>apartado con vencimiento</b>, que dura minutos, y repartir una <b>fila caliente</b> cuando el tráfico entero cae sobre ella.</li>
     <li>Recibir <b>webhooks</b> con un inbox, decidir cuándo conviene una <b>implementación propia</b> y revisar un diseño de pagos con una lista de comprobación.</li>
+    <li>Seguir un pago <b>de punta a punta</b> en un mapa animado, de la clave en el navegador a la conciliación del día siguiente, con nueve fallas distintas.</li>
   </ul>
 </section>
 
@@ -475,7 +478,7 @@
 <text class="dg-small" x="560" y="388" text-anchor="middle" style="fill:var(--label)">Retoma desde el recovery_point guardado</text>
 </svg>
   </div>
-  <figcaption><b>Figura 39.3.</b> Seis salidas para una sola pregunta: ¿ya vi esta clave? El <code>INSERT … ON CONFLICT DO NOTHING</code> es la puerta: solo una request puede crear la fila, y las demás leen lo que dejó.</figcaption>
+  <figcaption><b>Figura 39.3a.</b> Seis salidas para una sola pregunta: ¿ya vi esta clave? El <code>INSERT … ON CONFLICT DO NOTHING</code> es la puerta: solo una request puede crear la fila, y las demás leen lo que dejó.</figcaption>
 </figure>
 
 
@@ -515,6 +518,268 @@ RETURNING recovery_point;
 <aside class="callout callout--fail">
   <p class="callout-label">Qué pasa si falla</p>
   <p>Los errores clásicos, cada uno con su síntoma: generar la clave en el servidor (no protege del doble clic, que manda dos requests distintas); generarla de nuevo en cada reintento del cliente (dos cobros, el último escenario del simulador); no comparar la huella (un cliente con un bug repite «compra de 1» cuando quiso comprar 3); y guardar la respuesta solo si fue exitosa (el reintento de un 500 vuelve a ejecutar la mitad que sí ocurrió).</p>
+</aside>
+
+<h3 id="idem-cliente">La clave nace en el cliente</h3>
+
+<p>Todo el árbol de la figura 39.3a supone algo que el servidor no puede comprobar: que dos requests con la misma clave son la misma intención y que dos intenciones nunca comparten clave. Eso lo decide el cliente, porque es el único que sabe si el segundo POST es un reintento o una compra nueva. Por eso la clave la genera el cliente, y Stripe sugiere un UUID v4 u otra cadena aleatoria con suficiente entropía, de hasta 255 caracteres y sin datos personales como el correo <span class="badge badge--doc">Documentado</span>.</p>
+
+<p>La unidad es la <b>intención</b>: «comprar este carrito, una vez». La clave nace la primera vez que el usuario aprieta Pagar con ese contenido, acompaña a todos los reintentos de esa request y muere cuando llega una respuesta definitiva. No es una clave por request (un reintento sería otra operación), ni por sesión (bloquearía la segunda compra), ni por usuario.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 316" role="img" aria-labelledby="f393bt f393bd">
+<title id="f393bt">El ciclo de vida de una Idempotency-Key en el navegador</title>
+<desc id="f393bd">Seis estados. Sin clave; al apretar Pagar se genera con randomUUID y se guarda con la huella antes de enviar; en vuelo hay una sola request. Sin respuesta, un 5xx o un 409 en curso llevan a esperar con backoff y a reintentar con la misma clave y el mismo body. Si pasó la ventana de una hora o cambió la huella, se consulta el estado antes de cambiar de clave. Un 201 o un 4xx sin efecto es una respuesta definitiva y la clave se borra; la próxima compra empieza sin clave.</desc>
+<defs><marker id="f393ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="36" width="155" height="64" rx="8"/>
+<text class="dg-small" x="97.5" y="58.0" text-anchor="middle" style="fill:var(--label);font-weight:600">Sin clave</text>
+<text class="dg-tiny" x="97.5" y="75.0" text-anchor="middle">nada guardado</text>
+<text class="dg-tiny" x="97.5" y="89.0" text-anchor="middle">para esta acción</text>
+<rect class="hb-a" x="265" y="36" width="210" height="64" rx="8"/>
+<text class="dg-small" x="370.0" y="58.0" text-anchor="middle" style="fill:var(--label);font-weight:600">Clave guardada</text>
+<text class="dg-tiny" x="370.0" y="75.0" text-anchor="middle">randomUUID() + huella,</text>
+<text class="dg-tiny" x="370.0" y="89.0" text-anchor="middle">escrita antes del fetch</text>
+<rect class="dg-box--em dg-box" x="585" y="36" width="160" height="64" rx="8"/>
+<text class="dg-small" x="665.0" y="58.0" text-anchor="middle" style="fill:var(--label);font-weight:600">En vuelo</text>
+<text class="dg-tiny" x="665.0" y="75.0" text-anchor="middle">una request; el botón</text>
+<text class="dg-tiny" x="665.0" y="89.0" text-anchor="middle">deshabilitado</text>
+<rect class="dg-warnbox" x="585" y="196" width="160" height="64" rx="8"/>
+<text class="dg-small" x="665.0" y="218.0" text-anchor="middle" style="fill:var(--label);font-weight:600">Esperando</text>
+<text class="dg-tiny" x="665.0" y="235.0" text-anchor="middle">backoff con jitter</text>
+<text class="dg-tiny" x="665.0" y="249.0" text-anchor="middle">o el Retry-After</text>
+<rect class="dg-box" x="265" y="196" width="210" height="64" rx="8"/>
+<text class="dg-small" x="370.0" y="218.0" text-anchor="middle" style="fill:var(--label);font-weight:600">Consultar antes de cambiar</text>
+<text class="dg-tiny" x="370.0" y="235.0" text-anchor="middle">GET /v1/orders?cart_id=…</text>
+<text class="dg-tiny" x="370.0" y="249.0" text-anchor="middle">si hay orden, mostrarla</text>
+<rect class="dg-ok" x="20" y="196" width="155" height="64" rx="8"/>
+<text class="dg-small" x="97.5" y="218.0" text-anchor="middle" style="fill:var(--label);font-weight:600">Borrada</text>
+<text class="dg-tiny" x="97.5" y="235.0" text-anchor="middle">la intención</text>
+<text class="dg-tiny" x="97.5" y="249.0" text-anchor="middle">terminó</text>
+<path class="dg-edge" d="M175 68 H261" marker-end="url(#f393ba)"/>
+<text class="dg-tiny" x="218" y="60" text-anchor="middle">Pagar</text>
+<path class="dg-edge" d="M475 68 H581" marker-end="url(#f393ba)"/>
+<text class="dg-tiny" x="528" y="60" text-anchor="middle">envía con K</text>
+<path class="dg-edge" d="M640 100 V192" marker-end="url(#f393ba)"/>
+<path class="dg-edge" d="M678 196 V104" marker-end="url(#f393ba)"/>
+<text class="dg-tiny" x="632" y="136" text-anchor="end">sin respuesta, 5xx</text>
+<text class="dg-tiny" x="632" y="150" text-anchor="end">o 409 en curso</text>
+<text class="dg-tiny" x="685" y="136" text-anchor="start">misma K,</text>
+<text class="dg-tiny" x="685" y="150" text-anchor="start">mismo body</text>
+<path class="dg-edge" d="M585 236 H479" marker-end="url(#f393ba)"/>
+<text class="dg-tiny" x="530" y="214" text-anchor="middle">pasó 1 h o</text>
+<text class="dg-tiny" x="530" y="228" text-anchor="middle">cambió la huella</text>
+<path class="dg-edge" d="M265 228 H179" marker-end="url(#f393ba)"/>
+<text class="dg-tiny" x="220" y="220" text-anchor="middle">nada en curso</text>
+<path class="dg-edge" d="M97 196 V104" marker-end="url(#f393ba)"/>
+<text class="dg-tiny" x="105" y="150" text-anchor="start">otra compra</text>
+<path class="dg-edge" d="M745 60 H764 V300 H97 V264" marker-end="url(#f393ba)"/>
+<text class="dg-tiny" x="430" y="292" text-anchor="middle">201, o un 4xx sin efecto (400, 409 de negocio, 422): respuesta definitiva, se borra la clave</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.3b.</b> El ciclo de vida de la clave en el navegador. Los reintentos dan vueltas entre «En vuelo» y «Esperando» con la misma clave; solo una respuesta definitiva la borra, y cambiar de intención con una request en duda pasa antes por una consulta.</figcaption>
+</figure>
+
+<p>Cinco mecanismos, cada uno contra una forma distinta de perder la clave:</p>
+
+<ol class="steps">
+  <li><span class="step-title">Generarla con un generador criptográfico</span><code>crypto.randomUUID()</code> devuelve un UUID v4 de un generador criptográficamente seguro y solo existe en contextos seguros (HTTPS o <code>localhost</code>) <span class="badge badge--doc">Documentado</span>. Con <code>Math.random()</code> o <code>Date.now()</code>, dos clientes que aprietan en el mismo milisegundo pueden generar la misma clave; el alcance por usuario de <a href="#idem-alcance">39.4</a> evita que choquen entre sí, pero no que un mismo usuario repita una.</li>
+  <li><span class="step-title">Guardarla antes de enviar</span>La clave se escribe en <code>sessionStorage</code> junto con la huella del body y la hora, <b>antes</b> del <code>fetch</code>. Si la pestaña se recarga a mitad del envío, el reintento la encuentra. En una app móvil se escribe en disco, por la misma razón: el sistema puede matar la app con la request en el aire. Es lo que pide Stripe a cualquier cliente que reintenta a través de reinicios: generar la clave, persistirla y mandarla en cada intento <span class="badge badge--doc">Documentado</span>.</li>
+  <li><span class="step-title">Una sola request en vuelo por intención</span>El botón se deshabilita y la función guarda la promesa en curso: un doble clic recibe la misma promesa y no sale una segunda request. Es experiencia de usuario, no la garantía: si igual sale otra (una capa de reintentos, una extensión, un JavaScript que falló), lleva la misma clave y el servidor responde 409 o repite.</li>
+  <li><span class="step-title">Reintentar con la misma clave y el mismo body</span>Con backoff exponencial y full jitter, como en <a href="m08-resiliencia.html#reintentos">M08</a>, y respetando el <code>Retry-After</code> del <code>409 IDEMPOTENCY_IN_PROGRESS</code>. El body sale de la misma forma canónica, así que la huella coincide y el servidor no responde 422.</li>
+  <li><span class="step-title">Vivir menos que la fila del servidor</span>El servidor guarda la clave 24 horas y después la borra; una clave reutilizada después de borrada ejecuta otra vez <span class="badge badge--doc">Documentado</span>. El cliente se pone una ventana mucho más corta, de una hora en las guías: pasada la ventana no reintenta, consulta el estado.</li>
+</ol>
+
+<p>El código del navegador. Primero, la huella y el registro guardado:</p>
+
+<pre data-lang="js"><code>const VENTANA_MS = 60 * 60 * 1000;          // 1 h, muy por debajo de las 24 h del servidor
+const memoria = {};                          // respaldo si sessionStorage no existe (modo privado)
+
+function ordenar(v) {                        // forma canónica: claves ordenadas, igual que el servidor
+  if (Array.isArray(v)) return v.map(ordenar);
+  if (v &amp;&amp; typeof v === "object")
+    return Object.fromEntries(Object.keys(v).sort().map((k) =&gt; [k, ordenar(v[k])]));
+  return v;
+}
+
+async function huellaDe(body) {              // SHA-256 del body canónico, en hexadecimal
+  const bytes = new TextEncoder().encode(JSON.stringify(ordenar(body)));
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(hash)].map((b) =&gt; b.toString(16).padStart(2, "0")).join("");
+}
+
+function leer(accion) {
+  try { return JSON.parse(sessionStorage.getItem(accion)); } catch { return memoria[accion] ?? null; }
+}
+function guardar(accion, registro) {
+  memoria[accion] = registro;
+  try { sessionStorage.setItem(accion, JSON.stringify(registro)); } catch { /* solo memoria */ }
+}
+function olvidar(accion) {
+  delete memoria[accion];
+  try { sessionStorage.removeItem(accion); } catch { /* solo memoria */ }
+}
+
+async function claveDe(accion, body) {
+  const huella = await huellaDe(body);
+  const r = leer(accion);
+  if (r &amp;&amp; r.huella === huella &amp;&amp; Date.now() - r.creada &lt; VENTANA_MS) return r.clave;  // reintento
+  if (r) throw new Error("INTENCION_EN_DUDA");    // otra huella o ventana vencida: consultar antes
+  const nueva = { clave: crypto.randomUUID(), huella, creada: Date.now() };
+  guardar(accion, nueva);                       // antes del fetch
+  return nueva.clave;
+}</code></pre>
+
+<p>Después, el envío con sus reintentos. Lo único que borra la clave es una respuesta definitiva:</p>
+
+<pre data-lang="js"><code>let enVuelo = null;
+function pagar(carrito) {                    // doble clic: la segunda llamada recibe la misma promesa
+  return (enVuelo ??= enviar(carrito).finally(() =&gt; { enVuelo = null; }));
+}
+
+async function enviar(carrito) {
+  const accion = "pago:" + carrito.cart_id;
+  const clave = await claveDe(accion, carrito);
+  for (let n = 0; n &lt; 5; n++) {
+    let r;
+    try {
+      r = await fetch("/v1/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": clave },
+        body: JSON.stringify(ordenar(carrito)),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch { await esperar(jitter(n)); continue; }          // red o timeout: no sé si se ejecutó
+    if (r.status === 409 &amp;&amp; (await r.clone().json()).error === "IDEMPOTENCY_IN_PROGRESS") {
+      await esperar(1000 * Number(r.headers.get("Retry-After") || 1)); continue;
+    }
+    if (r.status &gt;= 500) { await esperar(jitter(n)); continue; }
+    olvidar(accion);                          // 2xx o 4xx: respuesta definitiva
+    return r;
+  }
+  throw new Error("PAGO_EN_DUDA");           // la clave queda guardada: «verificando», no «falló»
+}
+
+const esperar = (ms) =&gt; new Promise((ok) =&gt; setTimeout(ok, ms));
+const jitter = (n) =&gt; Math.random() * 1000 * 2 ** n;     // full jitter: entre 0 y 1, 2, 4, 8 s</code></pre>
+
+<p>Dos detalles que no se ven en el código. La lista <code>items</code> es un conjunto, así que se ordena por <code>product_id</code> antes de calcular la huella, igual que en el servidor (<a href="#idem-alcance">39.4</a>). Y <code>PAGO_EN_DUDA</code> no muestra «falló»: muestra «estamos verificando tu pago», porque decir «falló» invita a pagar otra vez con otra clave, el error de <a href="#fases">39.5</a> visto desde la pantalla.</p>
+
+<h3 id="idem-rotar">Cuándo cambia la clave, sin bloquear compras legítimas</h3>
+
+<p>Hay dos errores simétricos. Cambiar la clave demasiado pronto duplica: un reintento con clave nueva es, para el servidor, una compra nueva. Conservarla demasiado tiempo bloquea: la segunda compra legítima llega con la clave de la primera y recibe el 201 de ayer (Ana cree que compró y no tiene nada) o un 422 si el carrito cambió. La regla que evita los dos: <b>la clave sigue a la huella</b>. Misma huella y sin respuesta definitiva, misma clave; respuesta definitiva, se borra; huella nueva, clave nueva, pero solo después de saber qué pasó con la anterior.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 362" role="img" aria-labelledby="f393ct f393cd">
+<title id="f393ct">Cinco situaciones y qué clave lleva cada request</title>
+<desc id="f393cd">Cinco filas. Doble clic: tres requests con la misma clave K; la primera ejecuta, la segunda recibe 409 y la tercera la respuesta repetida; una orden. Corte y recarga: K sin respuesta y K otra vez tras recargar; una orden y un pago. Segunda compra igual: K termina con 201 y se borra, la nueva compra usa K2; dos órdenes legítimas. Antipatrón, la clave es un hash del carrito: la segunda compra manda el mismo hash y recibe el 201 viejo; compra bloqueada. Antipatrón, clave nueva en cada reintento: K1 sin respuesta y K2; dos órdenes y dos cobros.</desc>
+<defs><marker id="f393ca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="20" y="26" text-anchor="start">Situación</text>
+<text class="dg-small" x="250" y="26" text-anchor="start">Requests, en orden</text>
+<text class="dg-small" x="665" y="26" text-anchor="middle">Resultado</text>
+<text class="dg-small" x="20" y="62" text-anchor="start" style="fill:var(--label);font-weight:600">Doble clic</text>
+<text class="dg-tiny" x="20" y="80" text-anchor="start">misma clave en los dos</text>
+<rect class="hb-a" x="250" y="44" width="76" height="28" rx="6"/>
+<text class="dg-small dg-mono" x="288" y="63" text-anchor="middle" style="fill:var(--label)">K</text>
+<text class="dg-tiny" x="288" y="88" text-anchor="middle">ejecuta</text>
+<path class="dg-edge" d="M330 58 H354" marker-end="url(#f393ca)"/>
+<rect class="hb-a" x="358" y="44" width="76" height="28" rx="6"/>
+<text class="dg-small dg-mono" x="396" y="63" text-anchor="middle" style="fill:var(--label)">K</text>
+<text class="dg-tiny" x="396" y="88" text-anchor="middle">409, espera</text>
+<path class="dg-edge" d="M438 58 H462" marker-end="url(#f393ca)"/>
+<rect class="hb-a" x="466" y="44" width="76" height="28" rx="6"/>
+<text class="dg-small dg-mono" x="504" y="63" text-anchor="middle" style="fill:var(--label)">K</text>
+<text class="dg-tiny" x="504" y="88" text-anchor="middle">repite el 201</text>
+<path class="dg-feedback" d="M548 58 H576" style="fill:none"/>
+<rect class="dg-ok" x="580" y="42" width="170" height="32" rx="7"/>
+<text class="dg-small" x="665" y="63" text-anchor="middle" style="fill:var(--label)">1 orden</text>
+<path class="dg-frame" d="M20 100 H750" style="fill:none"/>
+<text class="dg-small" x="20" y="128" text-anchor="start" style="fill:var(--label);font-weight:600">Corte y recarga</text>
+<text class="dg-tiny" x="20" y="146" text-anchor="start">la clave sobrevive en sessionStorage</text>
+<rect class="hb-a" x="250" y="110" width="76" height="28" rx="6"/>
+<text class="dg-small dg-mono" x="288" y="129" text-anchor="middle" style="fill:var(--label)">K</text>
+<text class="dg-tiny" x="288" y="154" text-anchor="middle">sin respuesta</text>
+<path class="dg-edge" d="M330 124 H354" marker-end="url(#f393ca)"/>
+<rect class="hb-a" x="358" y="110" width="76" height="28" rx="6"/>
+<text class="dg-small dg-mono" x="396" y="129" text-anchor="middle" style="fill:var(--label)">K</text>
+<text class="dg-tiny" x="396" y="154" text-anchor="middle">tras recargar</text>
+<path class="dg-feedback" d="M440 124 H576" style="fill:none"/>
+<rect class="dg-ok" x="580" y="108" width="170" height="32" rx="7"/>
+<text class="dg-small" x="665" y="129" text-anchor="middle" style="fill:var(--label)">1 orden, 1 pago</text>
+<path class="dg-frame" d="M20 166 H750" style="fill:none"/>
+<text class="dg-small" x="20" y="194" text-anchor="start" style="fill:var(--label);font-weight:600">Segunda compra igual</text>
+<text class="dg-tiny" x="20" y="212" text-anchor="start">la anterior se borró con su 201</text>
+<rect class="hb-a" x="250" y="176" width="76" height="28" rx="6"/>
+<text class="dg-small dg-mono" x="288" y="195" text-anchor="middle" style="fill:var(--label)">K</text>
+<text class="dg-tiny" x="288" y="220" text-anchor="middle">201, se borra</text>
+<path class="dg-edge" d="M330 190 H354" marker-end="url(#f393ca)"/>
+<rect class="hb-b" x="358" y="176" width="76" height="28" rx="6"/>
+<text class="dg-small dg-mono" x="396" y="195" text-anchor="middle" style="fill:var(--label)">K2</text>
+<text class="dg-tiny" x="396" y="220" text-anchor="middle">clave nueva</text>
+<path class="dg-feedback" d="M440 190 H576" style="fill:none"/>
+<rect class="dg-ok" x="580" y="174" width="170" height="32" rx="7"/>
+<text class="dg-small" x="665" y="195" text-anchor="middle" style="fill:var(--label)">2 órdenes legítimas</text>
+<path class="dg-frame" d="M20 232 H750" style="fill:none"/>
+<text class="dg-small" x="20" y="260" text-anchor="start" style="fill:var(--label);font-weight:600">Clave = hash del carrito</text>
+<text class="dg-tiny" x="20" y="278" text-anchor="start">antipatrón</text>
+<rect class="hb-b" x="250" y="242" width="76" height="28" rx="6"/>
+<text class="dg-small dg-mono" x="288" y="261" text-anchor="middle" style="fill:var(--label)">H</text>
+<text class="dg-tiny" x="288" y="286" text-anchor="middle">201</text>
+<path class="dg-edge" d="M330 256 H354" marker-end="url(#f393ca)"/>
+<rect class="hb-b" x="358" y="242" width="76" height="28" rx="6"/>
+<text class="dg-small dg-mono" x="396" y="261" text-anchor="middle" style="fill:var(--label)">H</text>
+<text class="dg-tiny" x="396" y="286" text-anchor="middle">mismo hash</text>
+<path class="dg-feedback" d="M440 256 H576" style="fill:none"/>
+<rect class="dg-bad" x="580" y="240" width="170" height="32" rx="7"/>
+<text class="dg-small" x="665" y="261" text-anchor="middle" style="fill:var(--label)">compra bloqueada</text>
+<path class="dg-frame" d="M20 298 H750" style="fill:none"/>
+<text class="dg-small" x="20" y="326" text-anchor="start" style="fill:var(--label);font-weight:600">Clave nueva por reintento</text>
+<text class="dg-tiny" x="20" y="344" text-anchor="start">antipatrón</text>
+<rect class="hb-a" x="250" y="308" width="76" height="28" rx="6"/>
+<text class="dg-small dg-mono" x="288" y="327" text-anchor="middle" style="fill:var(--label)">K1</text>
+<text class="dg-tiny" x="288" y="352" text-anchor="middle">sin respuesta</text>
+<path class="dg-edge" d="M330 322 H354" marker-end="url(#f393ca)"/>
+<rect class="hb-b" x="358" y="308" width="76" height="28" rx="6"/>
+<text class="dg-small dg-mono" x="396" y="327" text-anchor="middle" style="fill:var(--label)">K2</text>
+<text class="dg-tiny" x="396" y="352" text-anchor="middle">otra clave</text>
+<path class="dg-feedback" d="M440 322 H576" style="fill:none"/>
+<rect class="dg-bad" x="580" y="306" width="170" height="32" rx="7"/>
+<text class="dg-small" x="665" y="327" text-anchor="middle" style="fill:var(--label)">2 órdenes, 2 cobros</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 39.3c.</b> Las tres primeras filas usan la regla y terminan bien, incluida la segunda compra, que no queda bloqueada. Las dos últimas son los antipatrones: una clave que no cambia nunca bloquea y una que cambia siempre duplica.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Lo que pasó</th><th>La clave</th><th>Por qué</th></tr></thead>
+    <tbody>
+      <tr><td>Sin respuesta: timeout o red caída</td><td>La misma</td><td>No sabes si se ejecutó; la fila del servidor lo sabe</td></tr>
+      <tr><td><code>5xx</code></td><td>La misma</td><td>Si hubo efectos, el servidor guardó la respuesta o retoma desde su <code>recovery_point</code></td></tr>
+      <tr><td><code>409 IDEMPOTENCY_IN_PROGRESS</code></td><td>La misma, tras el <code>Retry-After</code></td><td>La primera sigue viva; una clave nueva arrancaría una segunda operación <span class="badge badge--doc">Documentado</span></td></tr>
+      <tr><td><code>201</code>, o su repetición con <code>Idempotent-Replayed</code></td><td>Se borra</td><td>La intención terminó; la próxima compra es otra</td></tr>
+      <tr><td><code>400</code> o un <code>409</code> de negocio (<code>SEAT_UNAVAILABLE</code>)</td><td>Se borra</td><td>No hubo efecto y el servidor no lo guardó; lo que el usuario cambie es otra intención</td></tr>
+      <tr><td><code>422 IDEMPOTENCY_KEY_REUSED</code></td><td>Se borra y se reporta</td><td>Es un bug del cliente: cambió el body sin cambiar la clave</td></tr>
+      <tr><td>Cambió el carrito con una request en duda</td><td>Consultar, después una nueva</td><td>Rotar sin preguntar puede dejar la orden vieja y la nueva <span class="badge badge--doc">Documentado</span></td></tr>
+      <tr><td>Pasó la ventana de una hora</td><td>Consultar, no reintentar</td><td>Se acerca el borrado del servidor, y después de él un reintento ejecuta otra vez</td></tr>
+      <tr><td>Tarjeta rechazada en el formulario del PSP</td><td>No la toca</td><td>La orden ya existe; pagar de nuevo es otra acción, con su propia clave</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>La fila de «consultar» es la que más se olvida. Stripe la escribe así: si necesitas cambiar los parámetros, primero establece que la operación original no tuvo éxito y no sigue en curso, y recién entonces usa una clave nueva <span class="badge badge--doc">Documentado</span>. En el comercio, la consulta es un <code>GET /v1/orders?cart_id=…</code>: si la orden de la clave vieja existe, se le muestra al usuario («tienes un pedido de 1 tarjeta en curso, ¿lo cambiamos por 2?») en lugar de crear otra.</p>
+
+<p><b>Dos pestañas</b> son el caso que la clave no puede resolver. Cada pestaña tiene su propio <code>sessionStorage</code>, así que son dos claves, y para el servidor dos intenciones. ¿Ana quería dos compras o una? Lo decide una regla de negocio en la base, no la clave: en las guías, un índice único parcial de «una orden abierta por carrito» (<code>UNIQUE (cart_id) WHERE status IN ('awaiting_payment', 'processing')</code>), y en el cine, la restricción de <a href="#rangos">39.9</a>. La segunda pestaña recibe un 409 que le muestra el pedido en curso. Compartir la clave entre pestañas con <code>localStorage</code> parece arreglarlo, pero las dos pueden leer «no hay clave» en el mismo instante, y una clave vieja olvidada ahí bloquea la compra de mañana.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Stripe documenta dos estrategias: una clave aleatoria (UUID v4) o una derivada de un objeto del usuario, como el id del carrito, que protege del doble envío de forma directa <span class="badge badge--doc">Documentado</span>. La derivada funciona si el carrito se consume al comprar (la próxima compra tiene otro id) y si incluye su versión, para que editarlo dé otra clave: <code>cart_91:v3</code>. Lo que nunca funciona es derivarla del <b>contenido</b>: un hash de los ítems es igual en la segunda compra del mismo producto, y la bloquea durante 24 horas. La aleatoria con la regla de la huella no depende de cómo modeles el carrito; la derivada ahorra el <code>sessionStorage</code> y sobrevive a otra pestaña.</p>
+</aside>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Los errores del cliente, con su síntoma: generar la clave dentro del bucle de reintentos (dos cobros tras cada timeout); guardarla después del <code>fetch</code> (una recarga a mitad del envío la pierde); no borrarla con el 201 (la segunda compra recibe la respuesta de la primera); borrarla con un timeout (el reintento duplica); y mostrar «falló» ante un timeout (el usuario vuelve a pagar con otra intención). El mapa de <a href="#recorrido">39.18</a> recorre varios de estos casos paso a paso.</p>
 </aside>
 
 <h2 id="fases"><span class="sec-num">39.5</span>Nunca una transacción abierta durante la llamada al proveedor</h2>
@@ -1407,7 +1672,8 @@ WHERE e.type = 'payment.succeeded' AND e.received_at &lt; now() - interval '10 m
     <thead><tr><th>Pregunta</th><th>Respuesta que buscas</th><th>Sección</th></tr></thead>
     <tbody>
       <tr><td>¿Qué invariantes tiene y dónde vive cada una?</td><td>Escritas, y las caras en la base</td><td><a href="#invariantes">39.1</a></td></tr>
-      <tr><td>¿Dónde nace la clave de idempotencia?</td><td>En el cliente, al abrir la intención, y sobrevive a los reintentos</td><td><a href="#idempotencia">39.4</a></td></tr>
+      <tr><td>¿Dónde nace la clave de idempotencia?</td><td>En el cliente, al abrir la intención, guardada antes de enviar, y sobrevive a los reintentos</td><td><a href="#idem-cliente">39.4</a></td></tr>
+      <tr><td>¿Cuándo cambia la clave en el cliente?</td><td>Con una respuesta definitiva o una huella nueva, después de consultar; nunca en un reintento</td><td><a href="#idem-rotar">39.4</a></td></tr>
       <tr><td>¿Hay alguna transacción abierta durante una llamada externa?</td><td>Ninguna: fases con su commit</td><td><a href="#fases">39.5</a></td></tr>
       <tr><td>¿Las claves hacia el proveedor son deterministas?</td><td>Derivadas de tus ids; los parámetros con tiempo, guardados</td><td><a href="#fases-claves">39.5</a></td></tr>
       <tr><td>¿Cada transición exige su estado de origen?</td><td><code>UPDATE … WHERE status = …</code>; cero filas no es error</td><td><a href="#estados">39.6</a></td></tr>
@@ -1433,6 +1699,36 @@ WHERE e.type = 'payment.succeeded' AND e.received_at &lt; now() - interval '10 m
   <li><a href="../proyectos/a28-cine.html">A28. Cien asientos con la base como árbitro</a>: rangos con exclusion constraint y autorizar antes de capturar (39.9).</li>
 </ul>
 
+<h2 id="recorrido"><span class="sec-num">39.18</span>Todo junto: el viaje de un pago</h2>
+
+<p>Cada sección de este módulo miró una pieza por separado. Este mapa las junta en un solo sistema: el navegador de Ana con su clave, la API con sus fases, las cinco tablas, el proveedor con sus webhooks, el worker, el barrido, la entrega y la conciliación. Cada escenario es la misma compra de 49.00 USD con una falla distinta, y cada salto recorre una flecha real del mapa, con el SQL o la request HTTP que viaja en ese momento.</p>
+
+<div data-map="m39-flujo"></div>
+
+<p>Elige un escenario y aprieta Reproducir, o avanza paso a paso con Siguiente. El panel explica cada paso y muestra el payload; «Qué hace cada pieza» lista los nodos, y un clic en cualquiera abre sus cinco pestañas (responsabilidad, endpoints, esquema, fallos y números). Un escenario se puede enlazar directo, por ejemplo <a href="#scenario=caida">#scenario=caida</a>.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Escenario</th><th>Qué muestra</th><th>Dónde se explica</th></tr></thead>
+    <tbody>
+      <tr><td>Compra de punta a punta</td><td>La clave nace y se guarda antes de enviar; TX1 crea clave, orden e intento; el PSP cobra; el inbox guarda el evento; el worker relee, avanza la orden y escribe el outbox en una transacción</td><td><a href="#idem-cliente">39.4</a>, <a href="#fases">39.5</a>, <a href="#webhooks">39.11</a></td></tr>
+      <tr><td>La API muere a mitad</td><td>El pago existe afuera y no adentro; el reintento con la misma clave encuentra el lease vencido y repite la llamada con la misma clave hacia el PSP</td><td><a href="#idem-exclusion">39.4</a>, <a href="#fases-claves">39.5</a></td></tr>
+      <tr><td>Doble clic y dos pestañas</td><td>El 409 en curso y la respuesta repetida; dos pestañas son dos claves, y la segunda orden la frena un índice único</td><td><a href="#idem-rotar">39.4</a>, <a href="#tablas-restricciones">39.3</a></td></tr>
+      <tr><td>Una compra nueva no queda bloqueada</td><td>La clave anterior se borró con su 201; la segunda compra igual recibe clave, orden y pago propios</td><td><a href="#idem-rotar">39.4</a></td></tr>
+      <tr><td>Cambiar el carrito con un pago en duda</td><td>Huella nueva, pero primero se consulta qué pasó con la clave vieja</td><td><a href="#idem-rotar">39.4</a></td></tr>
+      <tr><td>Tarjeta rechazada</td><td>Se guarda la intención, no el intento: la orden sigue viva con su monto congelado y nace un segundo intento con su propia clave hacia el PSP</td><td><a href="#tablas-intento">39.3</a>, <a href="#estados">39.6</a></td></tr>
+      <tr><td>El webhook no llega</td><td>Tres caminos a la misma función <code>fulfill</code>: el regreso del cliente, el barrido y el webhook tardío, que encuentra cero filas</td><td><a href="#embudo">39.12</a></td></tr>
+      <tr><td>Webhooks duplicados, viejos y falsos</td><td>La clave primaria del inbox, la relectura del pago y la firma</td><td><a href="#webhooks">39.11</a></td></tr>
+      <tr><td>Conciliación</td><td>Un cobro huérfano que ningún camino vio vuelve al embudo; un monto distinto va a una persona</td><td><a href="#detectar">39.16</a></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Si tuvieras que quedarte con una sola idea del recorrido: <b>cada paso que habla con algo de afuera deja antes una fila que dice qué iba a hacer y con qué clave</b>. La clave del cliente en <code>sessionStorage</code>, la fila de <code>idempotency_keys</code> en <code>started</code>, el intento en <code>creating</code> con su <code>psp_idem_key</code>, el evento en el inbox antes de procesarlo y el efecto en el outbox antes de enviarlo. Por eso cualquier pieza puede morir en cualquier momento y otra retoma donde quedó, sin cobrar dos veces ni entregar dos veces.</p>
+</aside>
+
 <h2 id="comprueba">Comprueba lo aprendido</h2>
 
 <div data-quiz="m39"></div>
@@ -1454,11 +1750,14 @@ WHERE e.type = 'payment.succeeded' AND e.received_at &lt; now() - interval '10 m
 <script src="../assets/js/data/glossary.data.js"></script>
 <script src="../assets/js/data/quizzes/m39.data.js"></script>
 <script src="../assets/js/data/exercises/m39.data.js"></script>
+<script src="../assets/js/data/maps/m39-flujo.data.js"></script>
 <script src="../assets/js/core/progress.js"></script>
 <script src="../assets/js/core/nav.js"></script>
 <script src="../assets/js/core/glossary.js"></script>
 <script src="../assets/js/core/quiz.js"></script>
 <script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/map/map-engine.js"></script>
+<script src="../assets/js/map/flow-sim.js"></script>
 <script src="../assets/js/widgets/sim-pay.js"></script>
 </body>
 </html>

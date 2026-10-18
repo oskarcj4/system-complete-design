@@ -141,7 +141,7 @@
   SD.fmt = { num: num, sig: sig, words: words, bytes: bytes, bitrate: bitrate, pct: pct, nines: nines, duration: duration };
 
   /* ---------------------------------------------------------------------------
-     Resaltado mínimo para <pre data-lang="json|http|sse|sql|python|shell">.
+     Resaltado mínimo para <pre data-lang="json|http|sse|sql|python|shell|js">. Las guías de proyectos resaltan "javascript" con su propio resaltador (project-guide.js).
      --------------------------------------------------------------------------- */
   function span(cls, text) { return '<span class="' + cls + '">' + SD.escape(text) + '</span>'; }
 
@@ -232,6 +232,26 @@
     return out + SD.escape(src.slice(last));
   }
 
+  /* JavaScript del navegador: cadenas (también plantillas), comentarios, números, palabras clave y llamadas */
+  var JS_KW = /^(const|let|var|function|return|if|else|for|while|of|in|new|try|catch|finally|throw|async|await|class|extends|typeof|break|continue|null|undefined|true|false|this|delete|import|export|default)$/;
+  function hlJS(src) {
+    var re = /(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b)|([A-Za-z_$][\w$]*)(\s*\()?/g;
+    var out = '', last = 0, m;
+    while ((m = re.exec(src))) {
+      out += SD.escape(src.slice(last, m.index));
+      if (m[4]) {
+        if (JS_KW.test(m[4])) out += span('c-m', m[4]);
+        else if (m[5]) out += span('c-k', m[4]);
+        else out += SD.escape(m[4]);
+        if (m[5]) out += SD.escape(m[5]);
+      } else if (m[1]) out += span('c-s', m[1]);
+      else if (m[2]) out += span('c-c', m[2]);
+      else out += span('c-n', m[3]);
+      last = re.lastIndex;
+    }
+    return out + SD.escape(src.slice(last));
+  }
+
   /* Comandos y archivos de configuración (sshd_config, nftables, sysctl): comentarios con #, el prompt $ y cadenas */
   function hlShell(src) {
     var re = /(^|\s)(#[^\n]*)|(^\$(?= ))|("(?:\\.|[^"\\\n])*"|'[^'\n]*')/gm;
@@ -246,7 +266,7 @@
     return out + SD.escape(src.slice(last));
   }
 
-  var HL = { json: hlJSON, http: hlHTTP, sse: hlSSE, sql: hlSQL, python: hlPython, shell: hlShell };
+  var HL = { json: hlJSON, http: hlHTTP, sse: hlSSE, sql: hlSQL, python: hlPython, shell: hlShell, js: hlJS };
 
   SD.highlight = function (root) {
     (root || document).querySelectorAll('pre[data-lang]').forEach(function (pre) {
