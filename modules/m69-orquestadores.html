@@ -1,0 +1,813 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M69. Orquestadores: agentes que lanzan agentes</title>
+<meta name="description" content="Cómo funciona por dentro un programa que reparte un trabajo grande entre muchos agentes: el harness como proceso, la unidad de trabajo, el estado, la concurrencia, el presupuesto, la segunda opinión, el aislamiento y CI, con DeepSec de punta a punta.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/map.css">
+</head>
+<body data-root="../" data-module="m69">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Orquestadores: agentes que lanzan agentes</h1>
+        <p class="lead">Un agente revisa un archivo. Revisar un repositorio entero, cada noche, sin pagar dos veces lo mismo y sin darle tu clave a un código que no conoces, es otro problema: un sistema distribuido cuyos workers son agentes.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M69</dd></div>
+          <div><dt>Parte</dt><dd>VIII. AI Engineering: modelos, harnesses y agentes</dd></div>
+          <div><dt>Duración</dt><dd>130 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M25, M62</dd></div>
+          <div><dt>Estado</dt><dd data-status="m69">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Decidir cuándo un trabajo necesita un <span class="no-autolink">orquestador</span> y no un agente con más contexto.</li>
+    <li>Usar un harness como un proceso o como una librería: qué entra, qué sale, qué flags importan y cuáles engañan.</li>
+    <li>Elegir la unidad de trabajo, guardar su estado para retomar y reclamar tareas sin pagar dos veces.</li>
+    <li>Calcular la concurrencia que aguanta tu límite de requests y el gasto real de una corrida con tope.</li>
+    <li>Validar, deduplicar y revalidar hallazgos, y aislar cada agente con la credencial fuera de la caja.</li>
+    <li>Leer DeepSec pieza por pieza y llevar el mismo diseño a CI.</li>
+  </ul>
+</section>
+
+<h2 id="por-que"><span class="sec-num">69.1</span>Cuándo un agente no alcanza</h2>
+
+<p>En <a href="m62-pila-agente.html#orquestadores">M62</a> viste qué es un <dfn data-term="orquestador-agentes">orquestador de agentes</dfn>: un programa que vive fuera de los harnesses, los lanza uno por tarea y junta lo que devuelven. Aquí se abre por dentro. La pregunta previa es cuándo hace falta, porque la alternativa obvia (un solo agente con una ventana de contexto enorme) suena más simple.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f691t f691d">
+<title id="f691t">Un agente para todo contra un agente por lote</title>
+<desc id="f691d">Izquierda: una sola sesión de agente revisa todo el repositorio; su ventana de contexto se llena con cada archivo, lo del principio se compacta y se pierde, una falla tarde pierde todo y no se reparte. Derecha: seis sesiones chicas, una por lote, cada una con su propio contexto; una falla repite solo su lote y varias corren a la vez.</desc>
+<defs><marker id="f691a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="14" width="360" height="222" rx="10"/>
+<rect class="dg-frame" x="396" y="14" width="360" height="222" rx="10"/>
+<text class="dg-label" x="194" y="40" text-anchor="middle">Un agente para todo el repositorio</text>
+<text class="dg-label" x="576" y="40" text-anchor="middle">Un agente por lote</text>
+<rect class="dg-box" x="34" y="58" width="320" height="34" rx="6"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="38.0" y="62" width="35" height="26" rx="4"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="77.5" y="62" width="35" height="26" rx="4"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="117.0" y="62" width="35" height="26" rx="4"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="156.5" y="62" width="35" height="26" rx="4"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="196.0" y="62" width="35" height="26" rx="4"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="235.5" y="62" width="35" height="26" rx="4"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="275.0" y="62" width="35" height="26" rx="4"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="314.5" y="62" width="35" height="26" rx="4"/>
+<rect class="dg-warnbox" x="34" y="54" width="162" height="42" rx="6" style="fill:none;stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="115" y="112" text-anchor="middle">compactado: detalles perdidos</text>
+<text class="dg-tiny" x="275" y="112" text-anchor="middle">archivos recientes</text>
+<text class="dg-small" x="34" y="150" text-anchor="start">Lo leído al principio se resume y se olvida</text>
+<text class="dg-small" x="34" y="176" text-anchor="start">Una falla en la hora 3 pierde las 3 horas</text>
+<text class="dg-small" x="34" y="202" text-anchor="start">Una sola sesión: no se reparte</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="416" y="58" width="100" height="36" rx="8"/>
+<text class="dg-small" x="466.0" y="72.5" text-anchor="middle">lote 1</text>
+<text class="dg-tiny" x="466.0" y="87.5" text-anchor="middle">contexto propio</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="528" y="58" width="100" height="36" rx="8"/>
+<text class="dg-small" x="578.0" y="72.5" text-anchor="middle">lote 2</text>
+<text class="dg-tiny" x="578.0" y="87.5" text-anchor="middle">contexto propio</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="640" y="58" width="100" height="36" rx="8"/>
+<text class="dg-small" x="690.0" y="72.5" text-anchor="middle">lote 3</text>
+<text class="dg-tiny" x="690.0" y="87.5" text-anchor="middle">contexto propio</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="416" y="104" width="100" height="36" rx="8"/>
+<text class="dg-small" x="466.0" y="118.5" text-anchor="middle">lote 4</text>
+<text class="dg-tiny" x="466.0" y="133.5" text-anchor="middle">contexto propio</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="528" y="104" width="100" height="36" rx="8"/>
+<text class="dg-small" x="578.0" y="118.5" text-anchor="middle">lote 5</text>
+<text class="dg-tiny" x="578.0" y="133.5" text-anchor="middle">contexto propio</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="640" y="104" width="100" height="36" rx="8"/>
+<text class="dg-small" x="690.0" y="118.5" text-anchor="middle">lote 6</text>
+<text class="dg-tiny" x="690.0" y="133.5" text-anchor="middle">contexto propio</text>
+<text class="dg-small" x="416" y="176" text-anchor="start">Cada sesión empieza limpia y enfocada</text>
+<text class="dg-small" x="416" y="198" text-anchor="start">Una falla repite solo su lote</text>
+<text class="dg-small" x="416" y="220" text-anchor="start">N a la vez, con tope de concurrencia</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 69.1.</b> El mismo trabajo, de dos formas. Un agente para todo acumula contexto hasta que tiene que compactarlo y olvidar; muchos agentes chicos empiezan limpios, fallan por separado y corren a la vez.</figcaption>
+</figure>
+
+
+<p>Un agente solo deja de alcanzar por cuatro razones, y cualquiera basta:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Razón</th><th>Qué pasa con un agente solo</th><th>Qué hace el <span class="no-autolink">orquestador</span></th></tr></thead>
+    <tbody>
+      <tr><td>Contexto</td><td>Cada archivo leído queda en la ventana. Al llenarse, el harness compacta y lo primero que se pierde son los detalles (<a href="m25-agentes.html#contexto">M25.7</a>)</td><td>Cada tarea tiene su propia ventana, y solo con lo que necesita</td></tr>
+      <tr><td>Duración</td><td>Una sesión de horas que falla en la hora 3 pierde las 3 horas</td><td>Guarda el resultado de cada tarea; un corte cuesta una tarea</td></tr>
+      <tr><td>Paralelismo</td><td>Una sesión es secuencial</td><td>N tareas a la vez, con el tope que permite tu límite</td></tr>
+      <tr><td>Repetibilidad</td><td>Qué miró y qué no depende de lo que el modelo decidió en el camino</td><td>La lista de tareas sale de un paso sin IA: se sabe qué se revisó</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Dicho de otra forma: un <span class="no-autolink">orquestador</span> es un sistema distribuido cuyos workers son agentes. Todo lo que aprendiste en la Parte I sobre colas, estado, reintentos, leases y topes aplica tal cual, con dos diferencias que cambian los números: cada tarea dura minutos y cuesta dólares, no milisegundos y fracciones de centavo, y el worker no es determinista.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una auditoría contable grande no la hace una persona leyendo todos los libros de corrido. Un jefe de equipo arma la lista de cuentas a revisar con un filtro simple, reparte carpetas entre auditores, anota en una planilla qué carpeta tiene cada uno y cuál está terminada, fija cuántas horas puede facturar el trabajo, y al final un socio revisa los hallazgos graves antes de firmar. El jefe no audita nada: reparte, limita, guarda y junta.</p>
+</aside>
+
+<h2 id="headless"><span class="sec-num">69.2</span>El harness como proceso</h2>
+
+<p>La pieza que hace posible todo esto es el <dfn data-term="modo-headless">modo headless</dfn>: el mismo harness que usas en la terminal, corriendo como un proceso más, con un contrato de entrada y salida que un programa puede leer.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f692t f692d">
+<title id="f692t">El contrato de un harness headless</title>
+<desc id="f692d">Cuatro entradas a la izquierda: el prompt, los flags, las variables de entorno y el directorio de trabajo. En el centro, el harness corriendo sin interfaz. Tres salidas a la derecha: stdout con JSON o JSONL, el exit code y el transcript de la sesión en disco, que se puede retomar por su session_id.</desc>
+<defs><marker id="f692a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="20" width="210" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="125.0" y="38.5" text-anchor="middle">prompt</text>
+<text class="dg-tiny" x="125.0" y="53.5" text-anchor="middle">argumento o stdin</text>
+<path class="dg-edge" d="M230 42 L296 130" marker-end="url(#f692a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="78" width="210" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="125.0" y="96.5" text-anchor="middle">flags</text>
+<text class="dg-tiny" x="125.0" y="111.5" text-anchor="middle">herramientas, modo, turnos, gasto</text>
+<path class="dg-edge" d="M230 100 L296 130" marker-end="url(#f692a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="136" width="210" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="125.0" y="154.5" text-anchor="middle">entorno</text>
+<text class="dg-tiny" x="125.0" y="169.5" text-anchor="middle">credencial, URL base</text>
+<path class="dg-edge" d="M230 158 L296 130" marker-end="url(#f692a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="194" width="210" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="125.0" y="212.5" text-anchor="middle">cwd</text>
+<text class="dg-tiny" x="125.0" y="227.5" text-anchor="middle">el repositorio o un lote</text>
+<path class="dg-edge" d="M230 216 L296 130" marker-end="url(#f692a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="300" y="92" width="170" height="76" rx="8"/>
+<text class="dg-label dg-mono" x="385.0" y="119.0" text-anchor="middle">claude -p</text>
+<text class="dg-small dg-mono" x="385.0" y="134.0" text-anchor="middle">codex exec</text>
+<text class="dg-small dg-mono" x="385.0" y="149.0" text-anchor="middle">sin interfaz</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="540" y="36" width="210" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="645.0" y="55.5" text-anchor="middle">stdout</text>
+<text class="dg-tiny" x="645.0" y="70.5" text-anchor="middle">JSON: resultado, costo, turnos</text>
+<path class="dg-edge" d="M470 130 L538 59" marker-end="url(#f692a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="540" y="108" width="210" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="645.0" y="127.5" text-anchor="middle">exit code</text>
+<text class="dg-tiny" x="645.0" y="142.5" text-anchor="middle">0 bien, otro valor si falló</text>
+<path class="dg-edge" d="M470 130 L538 131" marker-end="url(#f692a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="540" y="180" width="210" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="645.0" y="199.5" text-anchor="middle">transcript</text>
+<text class="dg-tiny" x="645.0" y="214.5" text-anchor="middle">en disco, por session_id</text>
+<path class="dg-edge" d="M470 130 L538 203" marker-end="url(#f692a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 69.2.</b> El contrato de un harness headless. Entran el prompt, los flags, el entorno y el directorio; salen un JSON por stdout, un exit code y el transcript en disco, que se puede retomar.</figcaption>
+</figure>
+
+
+<h3 id="headless-claude">Claude Code con <code>-p</code></h3>
+
+<p>Con <code>-p</code>, Claude Code corre el bucle completo sin interfaz y termina. Una investigación de un <span class="no-autolink">orquestador</span> se ve así <span class="badge badge--doc">Documentado</span>:</p>
+
+<pre data-lang="shell"><code># Una investigación, sin interfaz. --bare necesita ANTHROPIC_API_KEY en el entorno.
+claude --bare -p "Investiga si src/api/auth.ts:42 es explotable. Sigue los datos hasta su origen." \
+  --output-format json \
+  --json-schema "$(cat hallazgo.schema.json)" \
+  --disallowedTools "Bash,Edit,Write" \
+  --permission-mode dontAsk \
+  --max-turns 30 \
+  --max-budget-usd 3</code></pre>
+
+<p>Y esto es lo que vuelve por stdout. Los campos son los del mensaje de resultado del SDK; los valores, de ejemplo <span class="badge badge--doc">Documentado</span>:</p>
+
+<pre data-lang="json"><code>{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "num_turns": 23,
+  "duration_ms": 361000,
+  "total_cost_usd": 1.42,
+  "session_id": "4f1c…",
+  "result": "La consulta concatena el id…",
+  "structured_output": { "vulnerable": true, "severidad": "alta", "razon": "…" }
+}</code></pre>
+
+<p>Cinco cosas de ese comando no son obvias y cada una evita una falla real:</p>
+
+<ol class="steps">
+  <li><span class="step-title"><code>--bare</code> no es un detalle de velocidad</span>Sin él, <code>claude -p</code> carga lo mismo que una sesión interactiva: los hooks de <code>.claude/settings.json</code> y los servidores de <code>.mcp.json</code> del proyecto, sin el diálogo de confianza ni la aprobación de cada servidor <span class="badge badge--doc">Documentado</span>. Si tu <span class="no-autolink">orquestador</span> escanea repositorios de terceros, sin <code>--bare</code> el repositorio decide qué código corre en tu máquina. Con <code>--bare</code> se ignoran, y también los <code>CLAUDE.md</code> y la memoria: el resultado no depende de la máquina. La documentación lo recomienda para scripts y anuncia que será el valor por defecto de <code>-p</code>.</li>
+  <li><span class="step-title"><code>--allowedTools</code> aprueba, no restringe</span>Lista herramientas que se usan sin preguntar; no impide las demás <span class="badge badge--doc">Documentado</span>. Lo que da solo lectura en este comando es <code>--disallowedTools</code>, que quita Bash y las de edición, más <code>--permission-mode dontAsk</code>, que niega todo lo que pediría permiso. En headless nadie aprueba: lo que no está resuelto por las reglas se niega.</li>
+  <li><span class="step-title">La salida estructurada puede faltar</span>Con <code>--json-schema</code>, el resultado validado llega en <code>structured_output</code>. Si la corrida termina sin una salida válida (por ejemplo, porque el modelo se negó), ese campo no está <span class="badge badge--doc">Documentado</span>. Un <span class="no-autolink">orquestador</span> que lo interpreta como "sin hallazgos" marca como revisado algo que nadie revisó.</li>
+  <li><span class="step-title">El costo es una estimación</span><code>total_cost_usd</code> lo calcula el cliente y puede diferir de la factura <span class="badge badge--doc">Documentado</span>. Sirve para topes y para comparar corridas; la conciliación con lo que cobra el proveedor es otra cosa (<a href="m21-metering.html#conciliacion">M21</a>).</li>
+  <li><span class="step-title">Cómo termina importa</span>El exit code es 0 si la corrida salió bien y distinto de 0 si falló. Un SIGTERM sale con 143 y deja el turno en curso sin resultado; para terminar el turno, se manda SIGINT antes <span class="badge badge--doc">Documentado</span>. Un <span class="no-autolink">orquestador</span> que mata procesos por timeout tiene que saber cuál de las dos cosas hizo.</li>
+</ol>
+
+<p>El transcript queda en disco y se retoma con <code>--resume &lt;session_id&gt;</code> <span class="badge badge--doc">Documentado</span>. Para un <span class="no-autolink">orquestador</span> eso es útil para depurar una tarea concreta, no para reintentar: reintentar sobre una sesión que falló arrastra su contexto, y casi siempre conviene empezar limpio.</p>
+
+<h3 id="headless-codex">Codex con <code>codex exec</code></h3>
+
+<p>Codex tiene el mismo contrato con otros nombres <span class="badge badge--doc">Documentado</span>:</p>
+
+<pre data-lang="shell"><code># La clave solo para este comando, no para todo el job
+CODEX_API_KEY="$CLAVE_CODEX" codex exec --json \
+  --output-schema hallazgo.schema.json \
+  -o resultado.json \
+  "Investiga si src/api/auth.ts:42 es explotable. Sigue los datos hasta su origen."</code></pre>
+
+<ul>
+  <li><b>Sandbox por defecto:</b> <code>codex exec</code> corre en modo de solo lectura salvo que pidas otro con <code>--sandbox</code>. En Claude Code la restricción la ponen los flags de herramientas; en Codex, además, el sandbox del sistema operativo (<a href="m62-pila-agente.html#capas-harness">M62.10</a>).</li>
+  <li><b>Eventos:</b> con <code>--json</code>, stdout es JSONL con <code>thread.started</code>, <code>turn.started</code>, <code>item.*</code>, <code>turn.completed</code>, <code>turn.failed</code> y <code>error</code>.</li>
+  <li><b>Salida:</b> <code>--output-schema</code> fija el esquema de la respuesta final y <code>-o</code> la escribe en un archivo.</li>
+  <li><b>Credencial en CI:</b> <code>CODEX_API_KEY</code> en línea, para un solo comando. La documentación advierte que no se ponga como variable de todo el job si el job corre código del repositorio, porque otros pasos podrían leerla.</li>
+  <li><b>Retomar:</b> <code>codex exec resume --last</code> o con el id de la sesión.</li>
+</ul>
+
+<h2 id="sdk"><span class="sec-num">69.3</span>Proceso, SDK o API</h2>
+
+<p>Lanzar un proceso por tarea es la forma más simple de usar un harness desde un programa, pero no la única. El <dfn data-term="agent-sdk">Agent SDK</dfn> es el mismo harness como librería: el bucle, las herramientas y el manejo del contexto de Claude Code, que se llaman desde Python o TypeScript y devuelven mensajes tipados en lugar de texto <span class="badge badge--doc">Documentado</span>. Codex tiene su equivalente. DeepSec no lanza <code>claude -p</code>: usa <code>@anthropic-ai/claude-agent-sdk</code> o <code>@openai/codex-sdk</code> según el agente elegido <span class="badge badge--doc">Documentado</span>.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th></th><th>Proceso (<code>claude -p</code>, <code>codex exec</code>)</th><th>SDK del harness</th><th>API del modelo directa</th></tr></thead>
+    <tbody>
+      <tr><td>El bucle y las herramientas</td><td>Los trae</td><td>Los trae</td><td>Los escribes tú (<a href="m62-pila-agente.html#propio">M62.6</a>)</td></tr>
+      <tr><td>Control por tarea</td><td>Flags y un JSON al final</td><td>Opciones, callbacks de permiso, hooks y cada mensaje mientras ocurre</td><td>Total</td></tr>
+      <tr><td>Aislamiento</td><td>Un proceso por tarea, fácil de meter en un contenedor</td><td>Dentro de tu proceso, salvo que lo separes</td><td>El que construyas</td></tr>
+      <tr><td>Lenguaje</td><td>Cualquiera que lance procesos</td><td>Python o TypeScript</td><td>Cualquiera con HTTP</td></tr>
+      <tr><td>Cuándo</td><td>Scripts, CI, un <span class="no-autolink">orquestador</span> chico</td><td>Un <span class="no-autolink">orquestador</span> propio que necesita ver cada paso</td><td>Tareas que no son agentes: clasificar, resumir, triage</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Este es el worker de un <span class="no-autolink">orquestador</span> con el SDK de Python: investiga un lote y devuelve lo que el resto del sistema necesita guardar. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<pre data-lang="python"><code>import asyncio
+from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
+
+ESQUEMA = {"type": "object", "required": ["hallazgos"], "properties": {"hallazgos": {"type": "array", "items": {
+    "type": "object", "required": ["archivo", "linea", "slug", "severidad", "fragmento", "razon"],
+    "properties": {"archivo": {"type": "string"}, "linea": {"type": "integer"}, "slug": {"type": "string"},
+                   "severidad": {"enum": ["alta", "media", "baja"]}, "fragmento": {"type": "string"},
+                   "razon": {"type": "string"}}}}}}
+
+async def investigar(lote: list[str], repo: str) -&gt; dict:
+    opciones = ClaudeAgentOptions(
+        cwd=repo,                                        # (1) el agente ve este directorio
+        setting_sources=[],                              # (2) nada de la configuración del repositorio
+        disallowed_tools=["Bash", "Edit", "Write"],      # (3) solo lectura
+        permission_mode="dontAsk",
+        max_turns=40, max_budget_usd=3.0,                # (4) topes de esta tarea
+        output_format={"type": "json_schema", "schema": ESQUEMA})
+    prompt = "Investiga estos archivos y reporta solo vulnerabilidades explotables:\n" + "\n".join(lote)
+    async for m in query(prompt=prompt, options=opciones):
+        if isinstance(m, ResultMessage):                 # (5) el último mensaje trae el resultado
+            ok = m.subtype == "success" and m.structured_output is not None
+            return {"ok": ok, "subtype": m.subtype, "costo": m.total_cost_usd or 0.0,
+                    "turnos": m.num_turns, "sesion": m.session_id, "salida": m.structured_output}
+    return {"ok": False, "subtype": "sin_resultado", "costo": 0.0}</code></pre>
+
+<ol class="code-key">
+  <li><code>cwd</code> es el directorio de trabajo del agente. En un <span class="no-autolink">orquestador</span> serio es la copia del repositorio dentro de una caja (69.10), no tu checkout.</li>
+  <li><code>setting_sources=[]</code> desactiva la configuración del sistema de archivos: ni la tuya ni la del repositorio. Es lo mismo que pide <code>--bare</code> por la misma razón.</li>
+  <li>Bash y edición fuera, y <code>dontAsk</code> para que nada quede esperando una aprobación que no va a llegar.</li>
+  <li><code>max_budget_usd</code> corta la tarea cuando la estimación llega a ese valor, pero la estimación puede pasarlo: la documentación pide dejar margen <span class="badge badge--doc">Documentado</span>. Es el tope por tarea; el de la corrida está en 69.7.</li>
+  <li>El último mensaje es un <code>ResultMessage</code>. Su <code>subtype</code> dice cómo terminó: <code>success</code>, <code>error_max_turns</code>, <code>error_max_budget_usd</code>, <code>error_during_execution</code> o <code>error_max_structured_output_retries</code> <span class="badge badge--doc">Documentado</span>. Solo <code>success</code> con <code>structured_output</code> cuenta como tarea hecha.</li>
+</ol>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Python de por medio</p>
+  <p><code>async def</code> y <code>async for</code> son la forma de Python de esperar respuestas de red sin bloquear: <code>query()</code> va entregando mensajes a medida que el agente trabaja. Para correr varias tareas a la vez se lanzan con <code>asyncio.gather</code> y se limita cuántas hay en vuelo con un <code>asyncio.Semaphore</code>.</p>
+</aside>
+
+<h2 id="unidad"><span class="sec-num">69.4</span>La unidad de trabajo</h2>
+
+<p>La primera decisión de diseño es qué recibe cada agente. En el mínimo de <a href="m62-pila-agente.html#orquestadores-piezas">M62</a> era un candidato: una línea sospechosa. DeepSec usa otra unidad: el archivo, agrupado en lotes de <code>--batch-size</code> archivos, con <code>--concurrency</code> lotes en vuelo; con 5 y 5 hay 25 archivos investigándose a la vez <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f694t f694d">
+<title id="f694t">Qué es una tarea: candidato, archivo o lote</title>
+<desc id="f694d">Tres filas con el mismo repositorio de 3 000 candidatos en 1 200 archivos. Por candidato salen 3 000 sesiones; por archivo, 1 200; por lote de 5 archivos, 240. Cada sesión paga un costo fijo de arranque, y cuanto más grande la tarea, más contexto comparte y menos aislada queda.</desc>
+<defs><marker id="f694a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="170" y="48" text-anchor="end">Por candidato</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="186.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="198.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="210.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="222.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="234.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="246.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="258.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="270.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="282.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="294.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="306.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="318.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="330.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="342.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="354.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="366.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="378.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="390.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="402.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="414.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="426.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="438.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="450.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="462.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="474.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="486.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="498.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="510.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="522.0" y="26" width="9.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="534.0" y="26" width="9.0" height="34" rx="3"/>
+<text class="dg-small" x="560" y="48" text-anchor="start">3 000 sesiones</text>
+<text class="dg-small" x="170" y="110" text-anchor="end">Por archivo</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="186.0" y="88" width="27.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="216.0" y="88" width="27.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="246.0" y="88" width="27.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="276.0" y="88" width="27.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="306.0" y="88" width="27.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="336.0" y="88" width="27.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="366.0" y="88" width="27.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="396.0" y="88" width="27.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="426.0" y="88" width="27.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="456.0" y="88" width="27.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="486.0" y="88" width="27.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="516.0" y="88" width="27.0" height="34" rx="3"/>
+<text class="dg-small" x="560" y="110" text-anchor="start">1 200 sesiones</text>
+<text class="dg-small" x="170" y="172" text-anchor="end">Por lote de 5 archivos</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="186.0" y="150" width="117.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="306.0" y="150" width="117.0" height="34" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="426.0" y="150" width="117.0" height="34" rx="3"/>
+<text class="dg-small" x="560" y="172" text-anchor="start">240 sesiones</text>
+<text class="dg-tiny" x="186" y="214" text-anchor="start">Cada rectángulo es una sesión de agente; el largo total es el mismo trabajo.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 69.3.</b> El mismo trabajo partido de tres formas. La unidad decide cuántas sesiones se pagan, cuánto contexto comparte cada una y cuánto se repite si una falla.</figcaption>
+</figure>
+
+
+<p>La razón es el costo fijo de cada sesión. Antes de leer una línea de tu código, cada sesión manda el system prompt del harness, la descripción de las herramientas y la del proyecto. Supón 15&#8239;000 tokens de arranque y 3 USD por millón de tokens de entrada (los dos son supuestos; mide los tuyos):</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Unidad</th><th class="r">Sesiones</th><th class="r">Tokens de arranque</th><th class="r">Costo solo de arrancar</th></tr></thead>
+    <tbody>
+      <tr><td>Un candidato</td><td class="r">3&#8239;000</td><td class="r">45 millones</td><td class="r">135 USD</td></tr>
+      <tr><td>Un archivo</td><td class="r">1&#8239;200</td><td class="r">18 millones</td><td class="r">54 USD</td></tr>
+      <tr><td>Un lote de 5 archivos</td><td class="r">240</td><td class="r">3.6 millones</td><td class="r">10.80 USD</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>La cuenta es sesiones × 15&#8239;000 × 3 ÷ 1&#8239;000&#8239;000. El prompt caching baja ese costo (el prefijo es el mismo en todas las sesiones, <a href="m16-context-windows.html">M16</a>), pero no la latencia de arranque ni las vueltas que el agente gasta en orientarse.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Una unidad más grande paga menos arranques y deja que el agente vea relaciones entre archivos del mismo lote. A cambio, llena más rápido su ventana, una falla repite más trabajo y un hallazgo se atribuye peor. Una unidad más chica aísla mejor y se reintenta barato, pero paga muchos arranques. Los lotes funcionan mejor cuando agrupan archivos que se relacionan (el mismo módulo, el mismo endpoint) que cuando se arman por orden alfabético.</p>
+</aside>
+
+<h2 id="estado"><span class="sec-num">69.5</span>Estado en disco y reanudación</h2>
+
+<p>Una corrida completa dura horas. Si el estado viviera en la memoria del <span class="no-autolink">orquestador</span>, cualquier corte (un Ctrl-C, la laptop que se duerme, el runner de CI que se recicla) obligaría a empezar de cero y a pagar todo otra vez. DeepSec guarda un JSON por archivo fuente, el <code>FileRecord</code>, y uno por corrida, el <code>RunMeta</code>, bajo <code>.deepsec/data/</code> <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f695t f695d">
+<title id="f695t">La vida de un FileRecord</title>
+<desc id="f695d">Cuatro estados. scan deja el archivo en pending. Un run lo reclama y pasa a processing con lockedByRunId. Si el agente termina, queda en analyzed con una AnalysisEntry nueva; si falla, en error. Volver a correr process retoma los error y los pending. Abajo, la pregunta que deja abierta: qué pasa si el worker muere con el lock puesto; la respuesta general es un lease con vencimiento.</desc>
+<defs><marker id="f695a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="20" y="70" width="140" height="56" rx="8"/>
+<text class="dg-label dg-mono" x="90.0" y="94.5" text-anchor="middle">pending</text>
+<text class="dg-tiny" x="90.0" y="109.5" text-anchor="middle">lo dejó scan</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="270" y="70" width="180" height="56" rx="8"/>
+<text class="dg-label dg-mono" x="360.0" y="94.5" text-anchor="middle">processing</text>
+<text class="dg-tiny dg-mono" x="360.0" y="109.5" text-anchor="middle">lockedByRunId = run</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="590" y="20" width="160" height="56" rx="8"/>
+<text class="dg-label dg-mono" x="670.0" y="44.5" text-anchor="middle">analyzed</text>
+<text class="dg-tiny" x="670.0" y="59.5" text-anchor="middle">+ AnalysisEntry</text>
+<rect class="dg-bad" x="590" y="124" width="160" height="56" rx="8"/>
+<text class="dg-label dg-mono" x="670.0" y="148.5" text-anchor="middle">error</text>
+<text class="dg-tiny" x="670.0" y="163.5" text-anchor="middle">el agente falló</text>
+<path class="dg-edge" d="M160 98 L268 98" marker-end="url(#f695a)"/>
+<text class="dg-tiny" x="214.0" y="91.0" text-anchor="middle">un run lo reclama</text>
+<path class="dg-edge" d="M450 88 L588 50" marker-end="url(#f695a)"/>
+<text class="dg-tiny" x="520" y="58" text-anchor="middle">terminó</text>
+<path class="dg-edge" d="M450 110 L588 150" marker-end="url(#f695a)"/>
+<text class="dg-tiny" x="520" y="146" text-anchor="middle">falló</text>
+<path class="dg-edge" d="M670 180 L670 200 L360 200 L360 128" marker-end="url(#f695a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="515" y="193" text-anchor="middle">process de nuevo</text>
+<text class="dg-tiny" x="385" y="236" text-anchor="middle">¿Y si el worker muere con el lock puesto? Lease con vencimiento (M04, M06.1)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 69.4.</b> Los estados de un FileRecord. Volver a correr process retoma lo que quedó en error o en pending y salta lo analizado.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Campo</th><th>Para qué</th></tr></thead>
+    <tbody>
+      <tr><td><code>status</code></td><td><code>pending</code>, <code>processing</code>, <code>analyzed</code> o <code>error</code></td></tr>
+      <tr><td><code>lockedByRunId</code></td><td>Qué corrida tiene el archivo; se limpia al terminar</td></tr>
+      <tr><td><code>candidates</code></td><td>Lo que encontraron los matchers, con su slug y sus líneas</td></tr>
+      <tr><td><code>findings</code></td><td>El último juego de hallazgos; revalidate y triage los anotan sin reemplazarlos</td></tr>
+      <tr><td><code>analysisHistory</code></td><td>Una entrada por análisis, que solo se agrega: corrida, agente, modelo, <code>costUsd</code>, <code>durationMs</code>, uso de tokens y, si pasó, la negativa del modelo</td></tr>
+      <tr><td><code>fileHash</code></td><td>SHA-256 del contenido en el último scan: dice si el archivo cambió</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Tres propiedades de ese diseño son las que hacen barato reintentar. El historial solo se agrega, así que un análisis repetido no borra el anterior. El reclamo es atómico, así que dos workers no investigan el mismo archivo. Y el estado describe el trabajo, no al proceso que lo hace: cualquier corrida nueva sabe qué falta leyendo el disco. Es la ejecución durable de <a href="m25-agentes.html#durable">M25.8</a> con la granularidad de un archivo.</p>
+
+<h3 id="estado-lease">El lock huérfano</h3>
+
+<p>La documentación de DeepSec describe el lock pero no qué pasa si el proceso que lo tiene muere sin escribir <code>error</code> (un <code>kill -9</code>, un corte de luz): el archivo quedaría en <code>processing</code> para siempre. Es el problema clásico del lock sin plazo, y la respuesta clásica es un <a href="m04-cache.html#leases">lease</a>: el reclamo vence solo. En un <span class="no-autolink">orquestador</span> propio, el <dfn data-term="claim-tarea">claim de una tarea</dfn> se puede hacer en SQLite con dos sentencias. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<pre data-lang="sql"><code>CREATE TABLE tareas (
+  id        INTEGER PRIMARY KEY,
+  archivos  TEXT    NOT NULL,                    -- el lote, como JSON
+  estado    TEXT    NOT NULL DEFAULT 'pending',  -- pending | processing | analyzed | error
+  intentos  INTEGER NOT NULL DEFAULT 0,
+  run_id    TEXT,                                -- quién la tiene
+  vence     REAL                                 -- hasta cuándo (lease)
+);</code></pre>
+
+<pre data-lang="sql"><code>-- (1) Reclamar: una tarea libre, fallida o con el lease vencido
+UPDATE tareas
+   SET estado = 'processing', run_id = :run, vence = :ahora + 900, intentos = intentos + 1
+ WHERE id = (SELECT id FROM tareas
+              WHERE (estado IN ('pending', 'error') OR (estado = 'processing' AND vence &lt; :ahora))
+                AND intentos &lt; 3
+              ORDER BY id LIMIT 1)
+RETURNING id, archivos;
+
+-- (2) Cerrar: solo si la tarea sigue siendo de este run
+UPDATE tareas SET estado = 'analyzed', vence = NULL
+ WHERE id = :id AND run_id = :run;</code></pre>
+
+<ol class="code-key">
+  <li>El <code>UPDATE … RETURNING</code> reclama y devuelve en una sola sentencia, así que dos workers no pueden tomar la misma fila. Una tarea con el lease vencido vuelve a estar disponible, y <code>intentos &lt; 3</code> evita que un lote que siempre rompe al agente se reintente para siempre: después de tres, queda para mirarlo a mano, como en una <a href="m07-mensajeria.html#dlq">DLQ</a>.</li>
+  <li>El cierre comprueba <code>run_id</code>. Si este worker tardó tanto que su lease venció y otro tomó la tarea, su escritura no afecta a nada: el <code>run_id</code> hace de fencing token (<a href="m061-teoria-distribuida-a-fondo.html#leases">M06.1</a>).</li>
+</ol>
+
+<p>Con leases, una misma tarea puede terminar dos veces: el worker lento y el que la retomó. Es entrega "al menos una vez" (<a href="m07-mensajeria.html#semanticas">M07</a>), y la consecuencia es la misma de siempre: lo que se escribe al terminar tiene que ser idempotente. Guardar un hallazgo con una clave estable (69.8) lo es; mandar un comentario al PR desde el worker no lo es.</p>
+
+<h2 id="concurrencia"><span class="sec-num">69.6</span>Concurrencia y límites</h2>
+
+<p>Más agentes a la vez terminan antes, hasta que choca contra el límite de requests por minuto de tu clave (<a href="m18-cuotas-tokens.html">M18</a>). Cada lote en vuelo no hace una request: hace decenas, una por vuelta del bucle. Con las cifras de ejemplo de la primera corrida (40 llamadas al modelo en 6 minutos por lote), un lote pide unas 6.7 requests por minuto, y la cuenta es la ley de Little al revés:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Lotes en vuelo</th><th class="r">Requests por minuto</th><th>Con un límite de 50</th></tr></thead>
+    <tbody>
+      <tr><td>5</td><td class="r">33</td><td>Entra, con margen para reintentos</td></tr>
+      <tr><td>7</td><td class="r">47</td><td>El máximo: 50 ÷ 6.7 = 7.5</td></tr>
+      <tr><td>20</td><td class="r">133</td><td>429 constantes: los agentes reintentan con backoff y la corrida no termina antes</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Pasado el límite, subir la concurrencia no acelera nada: las requests que sobran vuelven con 429, cada agente espera su backoff (<a href="m08-resiliencia.html#reintentos">M08</a>) y el throughput queda en lo que el límite permite. Peor: los reintentos de muchos agentes a la vez se sincronizan y forman la tormenta de <a href="m08-resiliencia.html#tormenta">M08</a>. La concurrencia correcta se calcula con el límite y se deja un margen; los tokens por minuto se calculan igual, con los tokens de cada vuelta.</p>
+
+<div data-calc="orqrun"></div>
+
+<h2 id="presupuesto"><span class="sec-num">69.7</span>Presupuesto por tarea y por corrida</h2>
+
+<p>Hay dos topes y protegen de cosas distintas. El de la tarea (<code>max_turns</code>, <code>max_budget_usd</code> o <code>--max-budget-usd</code>) protege de un agente que se pierde: un bucle que relee los mismos archivos, una herramienta que devuelve algo gigante (<a href="m25-agentes.html#presupuestos">M25.6</a>). El de la corrida protege de tu propio error de cálculo: un matcher demasiado amplio, un repositorio más grande de lo que pensabas.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f696t f696d">
+<title id="f696t">Por qué el gasto pasa del tope</title>
+<desc id="f696d">El gasto acumulado de una corrida sube por escalones, uno por lote que termina. Una línea horizontal marca el tope de 20 USD. Cuando el gasto lo cruza, el orquestador deja de lanzar lotes nuevos, pero los 4 que estaban en vuelo terminan y el gasto final queda en unos 25 USD.</desc>
+<defs><marker id="f696a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="sim-axis" d="M70 210 H710 M70 210 V40"/>
+<text class="dg-tiny" x="710" y="230" text-anchor="end">tiempo</text>
+<text class="dg-tiny" x="62" y="44" text-anchor="end">USD</text>
+<path class="dg-feedback" d="M70 88.6 H710"/>
+<text class="dg-tiny" x="76" y="82.57142857142858" text-anchor="start">tope: 20 USD</text>
+<path class="dg-edge" d="M70.0 210.0 L104.0 210.0 L104.0 202.4 L138.0 202.4 L138.0 194.8 L172.0 194.8 L172.0 187.2 L206.0 187.2 L206.0 179.6 L240.0 179.6 L240.0 172.1 L274.0 172.1 L274.0 164.5 L308.0 164.5 L308.0 156.9 L342.0 156.9 L342.0 149.3 L376.0 149.3 L376.0 141.7 L410.0 141.7 L410.0 134.1 L444.0 134.1 L444.0 126.5 L478.0 126.5 L478.0 118.9 L512.0 118.9 L512.0 111.3 L546.0 111.3 L546.0 103.8 L580.0 103.8 L580.0 96.2 L614.0 96.2 L614.0 88.6 L640.0 88.6 L640.0 81.0 L666.0 81.0 L666.0 73.4 L692.0 73.4 L692.0 65.8 L718.0 65.8 L718.0 58.2" style="fill:none"/>
+<path class="dg-feedback" d="M614 210 V58.6"/>
+<text class="dg-tiny" x="608" y="52.571428571428584" text-anchor="end">se deja de lanzar</text>
+<text class="dg-small" x="722" y="50.21428571428572" text-anchor="end">25 USD</text>
+<text class="dg-tiny" x="622" y="204" text-anchor="start">4 lotes en vuelo terminan</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 69.5.</b> Un tope que se revisa al terminar cada lote. Cuando el gasto lo alcanza, se deja de lanzar, pero los lotes en vuelo terminan: el gasto final queda por encima.</figcaption>
+</figure>
+
+
+<p>El sobrepaso tiene una cota: como mucho, (lotes en vuelo − 1) × el costo máximo de un lote. Con 5 en vuelo y 1.50 USD por lote son 6 USD sobre un tope de 20, un 30&#8239;%. Si eso no es aceptable, se hace lo mismo que con las cuotas de tokens de <a href="m18-cuotas-tokens.html#reservar">M18</a> y los créditos de <a href="m21-metering.html#creditos-reserva">M21</a>: reservar el máximo de cada tarea antes de lanzarla y cerrar con lo real. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<pre data-lang="python"><code>import threading
+
+class Presupuesto:
+    """Tope de una corrida con reservas: nunca se lanza un lote que podría pasarlo."""
+    def __init__(self, tope_usd: float):
+        self.tope, self.gastado, self.reservado = tope_usd, 0.0, 0.0
+        self.lock = threading.Lock()
+
+    def reservar(self, maximo: float) -&gt; bool:          # (1) antes de lanzar
+        with self.lock:
+            if self.gastado + self.reservado + maximo &gt; self.tope:
+                return False
+            self.reservado += maximo
+            return True
+
+    def cerrar(self, maximo: float, real: float):       # (2) cuando termina
+        with self.lock:
+            self.reservado -= maximo
+            self.gastado += real</code></pre>
+
+<ol class="code-key">
+  <li>Se reserva el tope de la tarea, el mismo valor que se pasa como <code>max_budget_usd</code>. Si no entra, no se lanza: la corrida termina de forma ordenada y lo que falta queda en <code>pending</code>.</li>
+  <li>Al terminar se libera la reserva y se suma el costo real, que casi siempre es menor. Como <code>max_budget_usd</code> puede pasarse un poco, el tope de la tarea que se reserva lleva margen.</li>
+</ol>
+
+<p>Con reservas, el gasto de la corrida nunca pasa del tope, al precio de dejar lotes sin lanzar aunque al final hubieran entrado. El tercer tope es el del tiempo (<code>--max-duration</code> en DeepSec <span class="badge badge--doc">Documentado</span>): en CI, un escaneo que no termina antes que el resto del pipeline no sirve.</p>
+
+<h2 id="salida"><span class="sec-num">69.8</span>Salida estructurada y deduplicación</h2>
+
+<p>Un agente que responde en prosa obliga a un segundo modelo a interpretarlo. Por eso todos los agentes de DeepSec reciben el mismo prompt y devuelven el mismo esquema, sea Codex o Claude, y los hallazgos de backends distintos se mezclan en el mismo proyecto <span class="badge badge--doc">Documentado</span>. Cada hallazgo trae severidad, slug de la vulnerabilidad, título, descripción, líneas, recomendación y confianza.</p>
+
+<p>Pedir un esquema no es lo mismo que recibirlo. Las <a href="m17-api-streaming.html#estructuradas">salidas estructuradas</a> garantizan la forma cuando hay salida, pero una tarea puede terminar sin ella: por turnos, por presupuesto o porque el modelo se negó. La regla para el <span class="no-autolink">orquestador</span> es simple: sin <code>structured_output</code> la tarea quedó en <code>error</code>, no en "sin hallazgos". DeepSec guarda la negativa en la entrada del historial, para que se vea.</p>
+
+<p>El segundo problema es el mismo hallazgo visto dos veces: en dos corridas, en dos lotes que comparten una función, o por dos backends. DeepSec deduplica por slug y título <span class="badge badge--doc">Documentado</span>. En un diseño propio conviene una clave que sobreviva a que el archivo cambie: los números de línea se mueven con cada commit, el fragmento de código no. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<pre data-lang="python"><code>import hashlib, re
+
+def clave(h: dict) -&gt; str:
+    # El mismo problema conserva su clave aunque se muevan los números de línea
+    fragmento = re.sub(r"\s+", " ", h["fragmento"]).strip()
+    return hashlib.sha256(f'{h["archivo"]}|{h["slug"]}|{fragmento}'.encode()).hexdigest()[:16]</code></pre>
+
+<p>Con esa clave, guardar un hallazgo es un upsert idempotente: repetir la tarea, o que dos workers la terminen, deja un solo registro. Y "hallazgos nuevos" para el PR es una diferencia de conjuntos entre las claves de hoy y las ya conocidas.</p>
+
+<h2 id="segunda"><span class="sec-num">69.9</span>Segunda opinión y triage</h2>
+
+<p>Los agentes que buscan vulnerabilidades encuentran muchas que no lo son: una entrada que parece del usuario pero ya se validó tres llamadas antes, un código que nunca se ejecuta. DeepSec ataca esos falsos positivos con una <dfn data-term="revalidacion">revalidación de hallazgos</dfn>: otro agente relee el código de cada hallazgo, consulta el historial de git para ver si ya se arregló y emite un veredicto: <code>true-positive</code>, <code>false-positive</code>, <code>fixed</code> o <code>uncertain</code> <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f697t f697d">
+<title id="f697t">El embudo de un escaneo</title>
+<desc id="f697d">Barras que se achican: 12 000 archivos en el repositorio, 1 200 con candidatos después del scan sin IA, 180 hallazgos después de process, 70 verdaderos positivos después de revalidate y 25 priorizados como P0 o P1 por triage. A la derecha, cuánto cuesta cada etapa: nada, mucho, parecido a process y poco. Las cifras son un ejemplo.</desc>
+<defs><marker id="f697a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="214" y="41" text-anchor="end">Archivos del repositorio</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="224" y="20" width="358" height="30" rx="5"/>
+<text class="dg-small" x="590.3243441940772" y="40" text-anchor="start">12 000</text>
+<text class="dg-tiny" x="760" y="40" text-anchor="end">sin costo</text>
+<text class="dg-small" x="214" y="85" text-anchor="end">Con candidatos (scan)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="224" y="64" width="278" height="30" rx="5"/>
+<text class="dg-small" x="509.83653931602834" y="84" text-anchor="start">1 200</text>
+<text class="dg-tiny" x="760" y="84" text-anchor="end">sin IA</text>
+<text class="dg-small" x="214" y="129" text-anchor="end">Con hallazgos (process)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="224" y="108" width="212" height="30" rx="5"/>
+<text class="dg-small" x="443.52193333758316" y="128" text-anchor="start">180</text>
+<text class="dg-tiny" x="760" y="128" text-anchor="end">$$$: un agente por lote</text>
+<text class="dg-small" x="214" y="173" text-anchor="end">Verdaderos positivos (revalidate)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="224" y="152" width="179" height="30" rx="5"/>
+<text class="dg-small" x="410.5078910255378" y="172" text-anchor="start">70</text>
+<text class="dg-tiny" x="760" y="172" text-anchor="end">$$: segunda opinión</text>
+<text class="dg-small" x="214" y="217" text-anchor="end">P0 y P1 (triage)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="224" y="196" width="143" height="30" rx="5"/>
+<text class="dg-small" x="374.5171226492128" y="216" text-anchor="start">25</text>
+<text class="dg-tiny" x="760" y="216" text-anchor="end">$: modelo más barato</text>
+<text class="dg-tiny" x="224" y="240" text-anchor="start">Escala logarítmica. Cifras de ejemplo: mide las tuyas.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 69.6.</b> Cada etapa achica la lista para la siguiente, y las etapas caras corren sobre listas cada vez más cortas. Las cifras son un ejemplo.</figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Por qué otro contexto:</b> el revalidador recibe el hallazgo, no la conversación que lo produjo. Si heredara el razonamiento del primero, heredaría sus errores. Es la misma idea que un <a href="m22-operar-modelos.html#juez">juez</a> separado del modelo que se evalúa.</li>
+  <li><b>Cuánto cuesta:</b> parecido a investigar, porque relee el código. La documentación recomienda usarlo en severidad alta o más, y reporta que baja los falsos positivos en más del 50&#8239;% en la mayoría de los repositorios <span class="badge badge--doc">Documentado</span>.</li>
+  <li><b>Triage:</b> clasifica en P0, P1 y P2 con un modelo más barato, sin una investigación completa <span class="badge badge--doc">Documentado</span>. No decide si algo es real; decide qué mira primero una persona.</li>
+  <li><b>Lo que no hace:</b> ninguna de las dos etapas encuentra lo que el scan no marcó. El techo de recall lo ponen los matchers, y una revalidación perfecta solo mejora la precisión.</li>
+</ul>
+
+<h2 id="aislamiento"><span class="sec-num">69.10</span>Aislamiento por tarea</h2>
+
+<p>Un <span class="no-autolink">orquestador</span> de seguridad tiene una propiedad incómoda: su trabajo es leer código que no es de confianza. Ese código puede traer instrucciones escritas para el agente que lo lee, la <a href="m25-agentes.html#injection">injection indirecta</a> de M25. Un buen modelo suele ignorarlas; el diseño supone que alguna vez no lo hace.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 860 300" role="img" aria-labelledby="f698t f698d">
+<title id="f698t">Dónde vive cada cosa cuando el agente corre aislado</title>
+<desc id="f698d">Cuatro columnas. El host tiene el CLI y la credencial del modelo. La microVM tiene el agente y una copia del código sin el directorio .git, y ninguna credencial. La salida controlada agrega la credencial solo a las requests que van al proveedor del modelo. En internet, la API del modelo recibe la request; cualquier otro host, como el de un atacante, queda bloqueado.</desc>
+<defs><marker id="f698a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="14" width="200" height="272" rx="10"/>
+<text class="dg-label" x="114.0" y="38" text-anchor="middle">Host</text>
+<rect class="dg-frame" x="232" y="14" width="200" height="272" rx="10"/>
+<text class="dg-label" x="332.0" y="38" text-anchor="middle">MicroVM por lote</text>
+<rect class="dg-frame" x="450" y="14" width="170" height="272" rx="10"/>
+<text class="dg-label" x="535.0" y="38" text-anchor="middle">Salida controlada</text>
+<rect class="dg-frame" x="638" y="14" width="208" height="272" rx="10"/>
+<text class="dg-label" x="742.0" y="38" text-anchor="middle">Internet</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="34" y="60" width="160" height="50" rx="8"/>
+<text class="dg-small" x="114.0" y="81.5" text-anchor="middle">CLI del orquestador</text>
+<text class="dg-tiny" x="114.0" y="96.5" text-anchor="middle">cola, estado, topes</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="34" y="180" width="160" height="50" rx="8"/>
+<text class="dg-small" x="114.0" y="201.5" text-anchor="middle">Credencial del modelo</text>
+<text class="dg-tiny" x="114.0" y="216.5" text-anchor="middle">nunca entra a la caja</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="252" y="60" width="160" height="50" rx="8"/>
+<text class="dg-small" x="332.0" y="81.5" text-anchor="middle">Agente</text>
+<text class="dg-tiny" x="332.0" y="96.5" text-anchor="middle">SDK, sin credenciales</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="252" y="180" width="160" height="50" rx="8"/>
+<text class="dg-small" x="332.0" y="201.5" text-anchor="middle">Copia del código</text>
+<text class="dg-tiny" x="332.0" y="216.5" text-anchor="middle">tar sin .git</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="460" y="100" width="150" height="64" rx="8"/>
+<text class="dg-small" x="535.0" y="121.0" text-anchor="middle">Proxy de salida</text>
+<text class="dg-tiny" x="535.0" y="136.0" text-anchor="middle">agrega la credencial</text>
+<text class="dg-tiny" x="535.0" y="151.0" text-anchor="middle">solo hacia el modelo</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="658" y="60" width="168" height="50" rx="8"/>
+<text class="dg-small" x="742.0" y="81.5" text-anchor="middle">API del modelo</text>
+<text class="dg-tiny" x="742.0" y="96.5" text-anchor="middle">recibe la request</text>
+<rect class="dg-bad" x="658" y="180" width="168" height="50" rx="8"/>
+<text class="dg-small" x="742.0" y="201.5" text-anchor="middle">evil.example</text>
+<text class="dg-tiny" x="742.0" y="216.5" text-anchor="middle">bloqueado</text>
+<path class="dg-edge" d="M194 85 L250 85" marker-end="url(#f698a)"/>
+<text class="dg-tiny" x="222.0" y="78.0" text-anchor="middle">lote</text>
+<path class="dg-edge" d="M194 205 L250 205" marker-end="url(#f698a)"/>
+<text class="dg-tiny" x="222.0" y="198.0" text-anchor="middle">tar</text>
+<path class="dg-edge" d="M332 110 L332 178" marker-end="url(#f698a)"/>
+<text class="dg-tiny" x="338" y="148" text-anchor="start">Read, Grep</text>
+<path class="dg-edge" d="M412 85 L458 118" marker-end="url(#f698a)"/>
+<path class="dg-feedback" d="M60 230 L60 262 L474 262 L474 166" marker-end="url(#f698a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="68" y="254" text-anchor="start">directo a la salida</text>
+<path class="dg-edge" d="M610 120 L656 90" marker-end="url(#f698a)"/>
+<path class="dg-edge" d="M412 205 L656 205" marker-end="url(#f698a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny dg-fail-text" x="484" y="224" text-anchor="start">sin ruta a evil.example</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 69.7.</b> En modo sandbox, cada lote corre en una microVM con una copia del código y sin credenciales. La única salida agrega la clave y solo llega a los hosts del modelo.</figcaption>
+</figure>
+
+
+<p>En modo sandbox, DeepSec reparte el trabajo en microVMs de Vercel Sandbox: empaqueta el árbol local sin <code>.git</code>, lo sube a cada caja, mantiene las credenciales del modelo en el host y las inyecta solo en el host de salida elegido, y limita la salida de la caja a los hosts de los agentes de código <span class="badge badge--doc">Documentado</span>. Cada decisión cierra un camino distinto:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Decisión</th><th>Qué cierra</th></tr></thead>
+    <tbody>
+      <tr><td>Una microVM por lote, desechable</td><td>Lo que un agente rompa o deje (un archivo, un proceso) no afecta al siguiente ni a tu máquina</td></tr>
+      <tr><td>Copia sin <code>.git</code></td><td>El historial, los remotos y sus credenciales no entran</td></tr>
+      <tr><td>La credencial fuera de la caja</td><td>Una injection que lee el entorno no encuentra nada que robar</td></tr>
+      <tr><td>Salida solo hacia el modelo</td><td>Aunque el agente obedezca, no tiene adónde mandar lo que lee</td></tr>
+      <tr><td><code>--bare</code> o <code>setting_sources=[]</code></td><td>El repositorio no decide qué hooks ni qué servidores MCP corren</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Sin modo sandbox, los agentes corren en el host con lo que el host tenga. Para tu propio repositorio, en tu laptop, puede ser aceptable; para el código de un tercero, no. Las capas de control (pesos, proveedor, harness y sistema operativo) son las de <a href="m62-pila-agente.html#capas">M62.10</a>; cómo se arma la caja con bubblewrap, Seatbelt, contenedores o microVMs es M66.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>La caja protege tu máquina, no lo que ya está en el código. Un secreto versionado en el repositorio entra en la copia como cualquier otro archivo y el agente lo lee; si la salida permite algún host genérico (un almacenamiento de objetos, un pastebin), puede salir por ahí. Los secretos se buscan con otra herramienta antes (<a href="m55-appsec.html#secretos">M55</a>) y la lista de hosts permitidos se mantiene tan corta como sea posible.</p>
+</aside>
+
+<h2 id="ci"><span class="sec-num">69.11</span>En CI</h2>
+
+<p>El mismo <span class="no-autolink">orquestador</span> se usa de dos formas. El escaneo completo del repositorio se corre aparte, con tope, cada tanto. En cada pull request se corre solo sobre lo que cambió (<code>process --diff</code> <span class="badge badge--doc">Documentado</span>): pocos lotes, pocos dólares, y una respuesta antes de que alguien apruebe el merge.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 170" role="img" aria-labelledby="f699t f699d">
+<title id="f699t">Un escaneo en cada pull request</title>
+<desc id="f699d">Cinco pasos de izquierda a derecha: se abre un pull request; el job de CI corre el escaneo solo sobre el diff; los agentes investigan los archivos cambiados; el exit code decide si el check pasa; y un comentario con los hallazgos nuevos se publica en el pull request.</desc>
+<defs><marker id="f699a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="50" width="134" height="60" rx="8"/>
+<text class="dg-small" x="81.0" y="76.5" text-anchor="middle">PR abierto</text>
+<text class="dg-tiny" x="81.0" y="91.5" text-anchor="middle">diff: 14 archivos</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="166" y="50" width="134" height="60" rx="8"/>
+<text class="dg-small" x="233.0" y="76.5" text-anchor="middle">Job de CI</text>
+<text class="dg-tiny" x="233.0" y="91.5" text-anchor="middle">clave en un paso</text>
+<path class="dg-edge" d="M148 80 L164 80" marker-end="url(#f699a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="318" y="50" width="134" height="60" rx="8"/>
+<text class="dg-small" x="385.0" y="76.5" text-anchor="middle">process --diff</text>
+<text class="dg-tiny" x="385.0" y="91.5" text-anchor="middle">solo lo cambiado</text>
+<path class="dg-edge" d="M300 80 L316 80" marker-end="url(#f699a)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="470" y="50" width="134" height="60" rx="8"/>
+<text class="dg-small" x="537.0" y="76.5" text-anchor="middle">Exit code</text>
+<text class="dg-tiny" x="537.0" y="91.5" text-anchor="middle">0 pasa, 1 falla</text>
+<path class="dg-edge" d="M452 80 L468 80" marker-end="url(#f699a)"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="622" y="50" width="134" height="60" rx="8"/>
+<text class="dg-small" x="689.0" y="76.5" text-anchor="middle">Comentario</text>
+<text class="dg-tiny" x="689.0" y="91.5" text-anchor="middle">comment.md</text>
+<path class="dg-edge" d="M604 80 L620 80" marker-end="url(#f699a)"/>
+<text class="dg-tiny" x="385" y="150" text-anchor="middle">Un PR de 14 archivos cuesta unos pocos lotes; el repositorio entero se escanea aparte, con tope.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 69.8.</b> Un escaneo por pull request. El exit code convierte los hallazgos nuevos en un check que falla.</figcaption>
+</figure>
+
+
+<pre data-lang="shell"><code>on: pull_request
+
+jobs:
+  deepsec:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: pnpm install --frozen-lockfile
+      # Solo PR del mismo repositorio: un fork no recibe la clave
+      - name: Escaneo del diff
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          MODELO_API_KEY: ${{ secrets.MODELO_API_KEY }}
+        run: pnpm deepsec process --diff</code></pre>
+
+<p>Tres decisiones de ese job son de seguridad, no de comodidad <span class="badge badge--ref">Diseño de referencia</span>:</p>
+<ul>
+  <li><b>Permisos mínimos del token del job:</b> leer el código y comentar en el PR, nada más.</li>
+  <li><b>La clave solo en el paso que la usa.</b> <code>pnpm install</code> corre scripts de dependencias; si la clave fuera una variable de todo el job, esos scripts podrían leerla. Es la misma advertencia que hace la documentación de Codex para <code>CODEX_API_KEY</code> <span class="badge badge--doc">Documentado</span>. <code>MODELO_API_KEY</code> es el nombre que hayas configurado con <code>--ai-api-key-env</code>: DeepSec guarda el nombre de la variable, nunca la clave <span class="badge badge--doc">Documentado</span>.</li>
+  <li><b>Los forks no reciben la clave.</b> Un PR desde un fork trae código de un tercero; escanearlo con tu clave es darle la clave a ese código. Ese escaneo va en un job aparte que una persona aprueba, o con el modo sandbox.</li>
+</ul>
+
+<p>Dónde encaja en el pipeline respecto del SAST tradicional está en <a href="m55-appsec.html#pipeline">M55.8</a>: el SAST es rápido, determinista y barato, y corre siempre; el escaneo con agentes es lento y caro, encuentra fallas de lógica que el SAST no ve, y corre sobre el diff.</p>
+
+<h2 id="mapa"><span class="sec-num">69.12</span>DeepSec de punta a punta</h2>
+
+<p>Todo lo anterior, junto. Elige un escenario y avanza paso a paso: cada uno recorre las mismas piezas con una situación distinta (la primera corrida, un agente que se cae, una injection, un PR, el tope y la segunda opinión). Haz clic en cualquier pieza para ver qué hace, qué guarda, cómo falla y sus números.</p>
+
+<div data-map="m69-deepsec"></div>
+
+<h2 id="fallas"><span class="sec-num">69.13</span>Qué falla</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+      <tr><td>La corrida costó diez veces lo planeado</td><td>Matchers demasiado amplios y sin tope de corrida</td><td>Primera corrida con <code>--limit</code>; tope con reservas (69.7); en CI, solo el diff</td></tr>
+      <tr><td>Terminó antes de lo esperado con "0 hallazgos"</td><td>Las tareas sin <code>structured_output</code> se contaron como limpias</td><td>Sin salida válida, la tarea queda en <code>error</code> (69.8)</td></tr>
+      <tr><td>Todo se llena de 429 y la corrida no avanza</td><td>Concurrencia por encima de lo que admite el límite</td><td>Calcularla con el límite y dejar margen (69.6)</td></tr>
+      <tr><td>Archivos en <code>processing</code> que nadie toca</td><td>Un worker murió con el lock puesto</td><td>Lease con vencimiento y cierre condicionado al run (69.5)</td></tr>
+      <tr><td>El mismo hallazgo comentado en cada push</td><td>Sin deduplicar contra lo ya conocido</td><td>Clave estable y diferencia de conjuntos (69.8)</td></tr>
+      <tr><td>Un escaneo ejecutó un hook del repositorio</td><td><code>claude -p</code> sin <code>--bare</code> sobre código de terceros</td><td><code>--bare</code> o <code>setting_sources=[]</code> (69.2)</td></tr>
+      <tr><td>Resultados distintos en tu máquina y en CI</td><td>Se cargaron configuraciones, memoria o MCP de cada máquina</td><td>Modo bare y toda la configuración por flags</td></tr>
+      <tr><td>El equipo dejó de leer los informes</td><td>Demasiados falsos positivos</td><td>Revalidar severidad alta y priorizar con triage (69.9)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Antes de escalar un <span class="no-autolink">orquestador</span>, mide tres números con una corrida acotada: costo y minutos por tarea, tasa de tareas que terminan en error y tasa de falsos positivos después de revalidar. Con esos tres, el widget de 69.6 te dice la duración y la factura de la corrida completa, y sabes si el resultado vale lo que cuesta. Construir uno de punta a punta sobre una víctima con vulnerabilidades sembradas es la guía IA08 (propuesta).</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m69"></div>
+<div data-exercise="m69-orq"></div>
+<div data-checkpoint="m69"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m69.data.js"></script>
+<script src="../assets/js/data/exercises/m69.data.js"></script>
+<script src="../assets/js/data/maps/m69-deepsec.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/map/map-engine.js"></script>
+<script src="../assets/js/map/flow-sim.js"></script>
+<script src="../assets/js/widgets/sim-orq.js"></script>
+</body>
+</html>

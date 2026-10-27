@@ -1,0 +1,1005 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M62. La pila de un agente</title>
+<meta name="description" content="Qué es cada pieza cuando usas un agente de IA: los pesos, el servidor de inferencia, los dialectos de API, el harness y la interfaz; el bucle mensaje por mensaje, un harness de 40 líneas, Claude Code contra Codex, OpenCode y Cursor, extensiones contra orquestadores como DeepSec, las cuatro capas de control y los modelos locales.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m62">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>La pila de un agente</h1>
+        <p class="lead">Kimi, Claude Code, Ollama, MCP y DeepSec no son cinco versiones de lo mismo: cada uno es una capa distinta de la pila. Cuando sabes cuál es cuál, puedes cambiar una sin romper las otras, y dejas de usar agentes por intuición.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M62</dd></div>
+          <div><dt>Parte</dt><dd>VIII. AI Engineering: modelos, harnesses y agentes</dd></div>
+          <div><dt>Duración</dt><dd>120 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M12, M17, M25</dd></div>
+          <div><dt>Estado</dt><dd data-status="m62">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Nombrar las <b>cinco capas</b> de la pila (pesos, servidor de inferencia, dialecto, harness e interfaz) y decir en cuál vive Kimi, Ollama, Claude Code, MCP y DeepSec.</li>
+    <li>Leer una conversación en los <b>dos dialectos</b> de API y saber cuándo basta cambiar una URL y cuándo hace falta un traductor.</li>
+    <li>Escribir un <b>harness</b> de 40 líneas y decir qué le falta para parecerse a Claude Code.</li>
+    <li>Distinguir una <b>extensión</b> (MCP, skill, hook) de un <b><span class="no-autolink">orquestador</span></b> que lanza harnesses, y explicar cómo trabaja uno por dentro.</li>
+    <li>Ubicar cada restricción en su <b>capa</b> y dar autonomía a un agente sin poner en riesgo tu máquina.</li>
+  </ul>
+</section>
+
+<p>En <a href="m25-agentes.html#numeros">M25</a> viste un agente desde la operación: cuánto cuesta, cómo se le pone presupuesto, cómo se aprueba lo que hace. Este módulo abre la caja desde el otro lado, el de quien lo usa y lo arma todos los días. La confusión típica es tratar "Claude Code", "Kimi" y "Ollama" como alternativas entre sí. No lo son: uno es un harness, otro es un modelo y el tercero es un servidor. Se combinan.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un restaurante. Los <b>pesos</b> son el talento del chef: saber cocinar, sin manos ni cocina. El <b>servidor de inferencia</b> es la cocina donde el chef trabaja. El <b>dialecto de API</b> es el idioma de las comandas. El <b>harness</b> es el jefe de sala: toma tu pedido, le pasa la comanda al chef, va a la despensa cuando el chef pide un ingrediente y decide qué no se sirve. La <b>interfaz</b> es el salón. Cambiar de chef no cambia al jefe de sala, y un mismo chef rinde distinto con un jefe de sala torpe.</p>
+</aside>
+
+<h2 id="lamina">Lámina 62.A: la pila completa</h2>
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f62lt f62ld">
+<title id="f62lt">La pila de un agente</title>
+<desc id="f62ld">Cinco capas apiladas: interfaz, harness con sus herramientas y extensiones, dialecto de API, servidor de inferencia y pesos. A la izquierda, un orquestador que lanza varios harnesses. Alrededor del harness y sus herramientas, la caja del sandbox.</desc>
+<defs><marker id="f62la" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="200" y="62" width="556" height="190" rx="12" style="stroke-dasharray:6 4"/>
+<text class="dg-tiny" x="740" y="80" text-anchor="end">sandbox (sistema operativo)</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="220" y="14" width="516" height="40" rx="8"/>
+<text class="dg-small" x="478.0" y="38.0" text-anchor="middle">Interfaz: terminal, IDE o app</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="220" y="92" width="330" height="64" rx="8"/>
+<text class="dg-small" x="385.0" y="120.5" text-anchor="middle">Harness</text>
+<text class="dg-tiny" x="385.0" y="135.5" text-anchor="middle">bucle, prompt, permisos, contexto</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="566" y="92" width="170" height="64" rx="8"/>
+<text class="dg-small" x="651.0" y="120.5" text-anchor="middle">Herramientas</text>
+<text class="dg-tiny" x="651.0" y="135.5" text-anchor="middle">bash, archivos, MCP</text>
+<path class="dg-edge" d="M550 124 L564 124" marker-end="url(#f62la)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="220" y="176" width="516" height="52" rx="8"/>
+<text class="dg-small" x="478.0" y="206.0" text-anchor="middle">Extensiones: MCP, skills, hooks, subagentes, memoria</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="220" y="272" width="516" height="40" rx="8"/>
+<text class="dg-small dg-mono" x="478.0" y="296.0" text-anchor="middle">Dialecto de API: /v1/messages o /v1/chat/completions</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="220" y="322" width="250" height="52" rx="8"/>
+<text class="dg-small" x="345.0" y="344.5" text-anchor="middle">Servidor de inferencia</text>
+<text class="dg-tiny" x="345.0" y="359.5" text-anchor="middle">Ollama, vLLM, API en la nube</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="486" y="322" width="250" height="52" rx="8"/>
+<text class="dg-small" x="611.0" y="344.5" text-anchor="middle">Pesos</text>
+<text class="dg-tiny" x="611.0" y="359.5" text-anchor="middle">Claude, GPT, Kimi, Qwen</text>
+<path class="dg-edge" d="M470 348 L484 348" marker-end="url(#f62la)"/>
+<path class="dg-edge" d="M385 158 L385 174"/>
+<path class="dg-edge" d="M385 230 L385 270" marker-end="url(#f62la)"/>
+<path class="dg-edge" d="M345 312 L345 320" marker-end="url(#f62la)"/>
+<path class="dg-edge" d="M385 56 L385 90" marker-end="url(#f62la)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="14" y="92" width="160" height="136" rx="8"/>
+<text class="dg-small" x="94.0" y="149.0" text-anchor="middle">Orquestador</text>
+<text class="dg-tiny" x="94.0" y="164.0" text-anchor="middle">DeepSec, un bot de CI</text>
+<text class="dg-tiny" x="94.0" y="179.0" text-anchor="middle">lanza harnesses</text>
+<path class="dg-edge" d="M174 124 L218 124" marker-end="url(#f62la)"/>
+<path class="dg-edge" d="M174 160 L218 160" marker-end="url(#f62la)" style="stroke-dasharray:5 4"/>
+<g class="pl-pin"><circle cx="232" cy="24" r="11"/><text x="232" y="28" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="232" cy="104" r="11"/><text x="232" y="108" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="578" cy="104" r="11"/><text x="578" y="108" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="232" cy="188" r="11"/><text x="232" y="192" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="232" cy="282" r="11"/><text x="232" y="286" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="232" cy="334" r="11"/><text x="232" y="338" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="498" cy="334" r="11"/><text x="498" y="338" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="26" cy="104" r="11"/><text x="26" y="108" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="212" cy="72" r="11"/><text x="212" y="76" text-anchor="middle">9</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 62.A.</b> Las capas de un agente de programación. Las marcas siguen el orden de la clave.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Interfaz</b><span>Dónde lo ves: terminal, IDE o app. Cursor junta interfaz y harness en un producto. <a href="#piezas">62.1</a></span></li>
+  <li><b>Harness</b><span>El programa que convierte un modelo en un agente: arma el prompt, ejecuta herramientas, pide permisos, gestiona el contexto y repite. <a href="#harness">62.4</a></span></li>
+  <li><b>Herramientas</b><span>Lo que el harness ejecuta cuando el modelo lo pide: bash, leer y editar archivos, buscar, tools de MCP. <a href="#bucle">62.5</a></span></li>
+  <li><b>Extensiones</b><span>MCP, skills, hooks, subagentes y archivos de memoria: viven dentro del harness. <a href="#extensiones">62.8</a></span></li>
+  <li><b>Dialecto de API</b><span>El formato de las requests: el de OpenAI o el de Anthropic. Si coinciden, basta cambiar una URL. <a href="#inferencia">62.3</a></span></li>
+  <li><b>Servidor de inferencia</b><span>El programa que carga los pesos y expone la API: Ollama, vLLM o la nube de un proveedor. <a href="#inferencia">62.3</a></span></li>
+  <li><b>Pesos</b><span>El modelo: un archivo de números que, dada una secuencia de tokens, predice el siguiente. <a href="#modelo">62.2</a></span></li>
+  <li><b><span class="no-autolink">Orquestador</span></b><span>Un programa que lanza harnesses sin interfaz, uno por tarea, y junta los resultados, como DeepSec. <a href="#orquestadores">62.9</a></span></li>
+  <li><b>Sandbox</b><span>La caja del sistema operativo donde corren el harness y sus herramientas. Es la última capa de control. <a href="#capas">62.10</a></span></li>
+</ol>
+
+<h2 id="piezas"><span class="sec-num">62.1</span>Cinco piezas que se confunden</h2>
+
+<p>Cuando escribes en Claude Code "arregla el test", intervienen cinco programas o archivos distintos, y cada uno lo hace otra organización o lo eliges tú:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Capa</th><th>Qué es</th><th>Ejemplos</th><th>Qué cambia si la cambias</th></tr></thead>
+    <tbody>
+      <tr><td>Pesos</td><td>Un archivo con miles de millones de números</td><td>Claude, GPT, Kimi, Qwen, DeepSeek, Llama</td><td>La inteligencia: qué entiende, qué tan bien usa herramientas, qué rechaza</td></tr>
+      <tr><td>Servidor de inferencia</td><td>El programa que carga los pesos en GPU o RAM y expone HTTP</td><td>Ollama, vLLM, llama.cpp, LM Studio; las APIs de Anthropic, OpenAI y Moonshot</td><td>Velocidad, costo, dónde quedan tus datos</td></tr>
+      <tr><td>Dialecto</td><td>El formato JSON de la API</td><td><code>/v1/chat/completions</code> o <code>/v1/messages</code></td><td>Qué harness puede hablar con qué servidor sin traductor</td></tr>
+      <tr><td>Harness</td><td>El programa del bucle</td><td>Claude Code, Codex CLI, OpenCode, Aider, Cline, Goose; el tuyo</td><td>Cómo trabaja el agente: herramientas, permisos, contexto, extensiones</td></tr>
+      <tr><td>Interfaz</td><td>Dónde lo ves y lo controlas</td><td>Terminal, VS Code, Cursor, una app de escritorio, ninguna (modo headless)</td><td>Comodidad; casi nada de la calidad</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Una regla práctica para no mezclar: <b>el modelo decide, el harness hace</b>. Todo lo que pasa en tu máquina (leer un archivo, correr un comando, pedirte permiso) lo hace el harness. El modelo nunca toca tu disco.</p>
+
+<h2 id="modelo"><span class="sec-num">62.2</span>El modelo: un archivo de pesos</h2>
+
+<p>Un modelo es un archivo (o varios) con los parámetros de una red neuronal. Por sí solo no hace nada: un programa le pasa una secuencia de tokens, hace un <a href="m12-llm-por-dentro.html#prefill-decode">forward pass</a> y obtiene una distribución de probabilidad sobre el siguiente token. Eso es todo lo que sabe hacer. No tiene memoria entre una llamada y otra, no tiene red, no tiene reloj y no puede ejecutar nada.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f621t f621d">
+<title id="f621t">El modelo es una función</title>
+<desc id="f621d">A la izquierda entra una secuencia de tokens. En el centro, el archivo de pesos hace un forward pass. A la derecha sale una distribución de probabilidad sobre el siguiente token. Debajo, lo que el modelo no tiene: memoria entre llamadas, red, disco ni reloj.</desc>
+<defs><marker id="f621a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="40" width="200" height="70" rx="8"/>
+<text class="dg-small" x="114.0" y="71.5" text-anchor="middle">Tokens de entrada</text>
+<text class="dg-tiny" x="114.0" y="86.5" text-anchor="middle">system + mensajes + tools</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="284" y="30" width="200" height="90" rx="8"/>
+<text class="dg-small" x="384.0" y="64.0" text-anchor="middle">Pesos</text>
+<text class="dg-tiny" x="384.0" y="79.0" text-anchor="middle">miles de millones de números</text>
+<text class="dg-tiny" x="384.0" y="94.0" text-anchor="middle">un forward pass</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="556" y="40" width="200" height="70" rx="8"/>
+<text class="dg-small" x="656.0" y="71.5" text-anchor="middle">Siguiente token</text>
+<text class="dg-tiny" x="656.0" y="86.5" text-anchor="middle">p("ls")=0.41, p("cat")=0.22…</text>
+<path class="dg-edge" d="M214 75 L282 75" marker-end="url(#f621a)"/>
+<path class="dg-edge" d="M484 75 L554 75" marker-end="url(#f621a)"/>
+<path class="dg-edge" d="M656 112 L656 130 L656 136" marker-end="url(#f621a)" style="stroke-dasharray:5 4"/>
+<path class="dg-feedback" d="M656 136 L114 136 L114 114"/>
+<text class="dg-tiny" x="385" y="152" text-anchor="middle">el servidor repite: el token elegido se suma a la entrada (M12)</text>
+<rect class="dg-bad" x="14" y="168" width="742" height="40" rx="8"/>
+<text class="dg-small dg-fail-text" x="385.0" y="192.0" text-anchor="middle">Lo que no tiene: memoria entre llamadas, red, disco, reloj ni permisos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 62.1.</b> Lo único que hace un modelo. La "memoria" de una conversación es el harness reenviando todos los mensajes en cada llamada; el "uso de herramientas" es el modelo escribiendo un JSON que otro programa ejecuta.</figcaption>
+</figure>
+
+
+<p>Los modelos se reparten en dos grupos por cómo se consiguen:</p>
+<ul>
+  <li><dfn data-term="open-weights">Open weights</dfn>: el laboratorio publica los pesos y puedes descargarlos y servirlos tú. Kimi (Moonshot AI), Qwen (Alibaba), DeepSeek, Llama (Meta) y gpt-oss (OpenAI) están en este grupo. "Open weights" no es lo mismo que open source: casi nunca publican los datos ni el código de entrenamiento, y cada uno trae su licencia.</li>
+  <li><b>Cerrados</b>: solo se usan por la API de quien los entrena o de sus socios. Claude y los GPT principales están aquí.</li>
+</ul>
+
+<p>Kimi K2 es un buen ejemplo de por qué el tamaño engaña. Es un <a href="m15-motores-inferencia.html#paralelismo">MoE</a> con un billón de parámetros en total y 32 mil millones activos por token <span class="badge badge--doc">Documentado</span>. Por token calcula como un modelo de 32B, pero para servirlo hay que tener cargados todos los expertos: la memoria es la de un billón. Lo vas a ver con la cuenta en <a href="#local">62.11</a>.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Por qué unos modelos son mejores agentes</p>
+  <p>Llamar herramientas no es un extra del harness: el modelo se entrena para emitir llamadas bien formadas, para leer el resultado y decidir el paso siguiente, con miles de trayectorias de ejemplo. Por eso un modelo de 8B que conversa bien puede fallar como agente (inventa argumentos, repite la misma llamada, no sabe cuándo parar), y por eso Moonshot anuncia Kimi como un modelo entrenado para tareas agénticas <span class="badge badge--doc">Documentado</span>. Cómo se ve esto por dentro (chat templates, tokens especiales, decodificación restringida) es tema de M63.</p>
+</aside>
+
+<p class="more-link">Para repasar: cómo genera un token un LLM, en <a href="m12-llm-por-dentro.html#prefill-decode">M12</a>; los formatos de los pesos, en <a href="m14-cuantizacion.html#formatos">M14</a>.</p>
+
+<h2 id="inferencia"><span class="sec-num">62.3</span>El servidor de inferencia y los dos dialectos</h2>
+
+<p>Un <dfn data-term="servidor-inferencia">servidor de inferencia</dfn> carga los pesos en memoria, recibe requests HTTP, arma los batches y devuelve tokens. En tu máquina son <b>Ollama</b>, <b>llama.cpp</b> (<code>llama-server</code>), <b>LM Studio</b> o <b>vLLM</b>. En la nube, las APIs de Anthropic, OpenAI o Moonshot son lo mismo con una flota detrás, como la que viste en <a href="m15-motores-inferencia.html#motor">M15</a> y <a href="m19-router-flota.html">M19</a>. Un agregador como <b>OpenRouter</b> pone una sola API delante de muchos proveedores.</p>
+
+<h3 id="inferencia-dialectos">Dos dialectos</h3>
+
+<p>Casi todos los servidores hablan uno de dos formatos, o los dos. Les vamos a llamar <dfn data-term="dialecto-api">dialectos</dfn>: el de OpenAI (<code>POST /v1/chat/completions</code>, y su sucesor, la Responses API) y el de Anthropic (<code>POST /v1/messages</code>). La idea es la misma, una lista de mensajes y una lista de herramientas, pero la forma cambia, y un harness escrito para uno no entiende el otro.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f622t f622d">
+<title id="f622t">Los dos dialectos de una misma conversación</title>
+<desc id="f622d">La misma conversación con una llamada a una herramienta, en los dos formatos. En el de OpenAI, el system es un mensaje más, la llamada va en tool_calls y el resultado es un mensaje con rol tool. En el de Anthropic, system va aparte, la llamada es un bloque tool_use dentro del contenido y el resultado es un bloque tool_result en un mensaje del usuario.</desc>
+<defs><marker id="f622a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small dg-mono" x="190" y="20" text-anchor="middle">OpenAI: POST /v1/chat/completions</text>
+<text class="dg-small dg-mono" x="580" y="20" text-anchor="middle">Anthropic: POST /v1/messages</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="36" width="340" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="190.0" y="55.5" text-anchor="middle">role: system</text>
+<text class="dg-tiny dg-mono" x="190.0" y="70.5" text-anchor="middle">instrucciones</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="92" width="340" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="190.0" y="111.5" text-anchor="middle">role: user</text>
+<text class="dg-tiny dg-mono" x="190.0" y="126.5" text-anchor="middle">"¿qué hay en src?"</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="148" width="340" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="190.0" y="167.5" text-anchor="middle">role: assistant</text>
+<text class="dg-tiny dg-mono" x="190.0" y="182.5" text-anchor="middle">tool_calls: [bash {cmd: ls src}]</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="20" y="204" width="340" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="190.0" y="223.5" text-anchor="middle">role: tool</text>
+<text class="dg-tiny dg-mono" x="190.0" y="238.5" text-anchor="middle">tool_call_id + "main.py util.py"</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="260" width="340" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="190.0" y="279.5" text-anchor="middle">role: assistant</text>
+<text class="dg-tiny dg-mono" x="190.0" y="294.5" text-anchor="middle">"Hay dos archivos…"</text>
+<rect class="dg-box" x="410" y="36" width="340" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="580.0" y="55.5" text-anchor="middle">system (campo aparte)</text>
+<text class="dg-tiny dg-mono" x="580.0" y="70.5" text-anchor="middle">instrucciones</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="410" y="92" width="340" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="580.0" y="111.5" text-anchor="middle">role: user</text>
+<text class="dg-tiny dg-mono" x="580.0" y="126.5" text-anchor="middle">"¿qué hay en src?"</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="410" y="148" width="340" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="580.0" y="167.5" text-anchor="middle">role: assistant</text>
+<text class="dg-tiny dg-mono" x="580.0" y="182.5" text-anchor="middle">content: [tool_use bash {cmd: ls src}]</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="410" y="204" width="340" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="580.0" y="223.5" text-anchor="middle">role: user</text>
+<text class="dg-tiny dg-mono" x="580.0" y="238.5" text-anchor="middle">content: [tool_result tool_use_id …]</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="410" y="260" width="340" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="580.0" y="279.5" text-anchor="middle">role: assistant</text>
+<text class="dg-tiny dg-mono" x="580.0" y="294.5" text-anchor="middle">content: [text "Hay dos…"]</text>
+<path class="dg-feedback" d="M362 207 L408 207" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="385" y="199" text-anchor="middle">cambia</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 62.2.</b> La misma conversación en los dos dialectos. Lo que cambia: dónde va el system, cómo se marca la llamada y en qué rol vuelve el resultado. Los detalles de cada API están en <a href="m17-api-streaming.html#tres-apis">M17</a>.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Servidor</th><th>Dialecto de OpenAI</th><th>Dialecto de Anthropic</th></tr></thead>
+    <tbody>
+      <tr><td>API de Anthropic</td><td>Capa de compatibilidad con el SDK de OpenAI, para probar <span class="badge badge--doc">Documentado</span></td><td>Nativo</td></tr>
+      <tr><td>Moonshot (Kimi)</td><td><code>https://api.moonshot.ai/v1</code></td><td><code>https://api.moonshot.ai/anthropic</code> <span class="badge badge--doc">Documentado</span></td></tr>
+      <tr><td>Ollama</td><td><code>http://localhost:11434/v1</code> <span class="badge badge--doc">Documentado</span></td><td><code>http://localhost:11434</code>, desde la versión 0.14.0 <span class="badge badge--doc">Documentado</span></td></tr>
+      <tr><td>llama.cpp</td><td><code>llama-server</code> <span class="badge badge--doc">Documentado</span></td><td><code>llama-server</code> también expone Messages <span class="badge badge--doc">Documentado</span></td></tr>
+      <tr><td>OpenAI, OpenRouter</td><td>Nativo</td><td>Revisa su documentación: algunos agregadores ofrecen ambos</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="inferencia-traductor">Directo o con traductor</h3>
+
+<p>Por eso Claude Code puede usar Kimi: Moonshot expone un endpoint en el dialecto de Anthropic, y a Claude Code le basta con que le cambies la URL base. Cuando el servidor no habla el dialecto del harness, se pone en medio un <dfn data-term="gateway-llm">gateway de LLM</dfn> que traduce, como <b>LiteLLM</b>: recibe Messages, llama con Chat Completions y convierte la respuesta de vuelta. Un gateway sirve además para otras cosas que ya conoces del curso: claves por equipo, topes de gasto (<a href="m21-metering.html">M21</a>), logs y routing entre proveedores.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f623t f623d">
+<title id="f623t">Directo o con traductor</title>
+<desc id="f623d">Arriba, Claude Code habla Messages y Moonshot ofrece un endpoint en ese dialecto: la conexión es directa. Abajo, Claude Code contra un servidor que solo habla Chat Completions: un proxy como LiteLLM traduce en los dos sentidos.</desc>
+<defs><marker id="f623a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="30" width="150" height="54" rx="8"/>
+<text class="dg-small" x="89.0" y="53.5" text-anchor="middle">Claude Code</text>
+<text class="dg-tiny" x="89.0" y="68.5" text-anchor="middle">habla Messages</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="586" y="30" width="170" height="54" rx="8"/>
+<text class="dg-small" x="671.0" y="53.5" text-anchor="middle">Moonshot</text>
+<text class="dg-tiny dg-mono" x="671.0" y="68.5" text-anchor="middle">/anthropic</text>
+<path class="dg-edge" d="M164 57 L584 57" marker-end="url(#f623a)"/>
+<text class="dg-tiny dg-mono" x="374.0" y="50.0" text-anchor="middle">POST /v1/messages</text>
+<text class="dg-tiny" x="374" y="80" text-anchor="middle">mismo dialecto: solo cambia ANTHROPIC_BASE_URL</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="140" width="150" height="54" rx="8"/>
+<text class="dg-small" x="89.0" y="163.5" text-anchor="middle">Claude Code</text>
+<text class="dg-tiny" x="89.0" y="178.5" text-anchor="middle">habla Messages</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="300" y="140" width="170" height="54" rx="8"/>
+<text class="dg-small" x="385.0" y="163.5" text-anchor="middle">LiteLLM</text>
+<text class="dg-tiny" x="385.0" y="178.5" text-anchor="middle">proxy traductor</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="586" y="140" width="170" height="54" rx="8"/>
+<text class="dg-small" x="671.0" y="163.5" text-anchor="middle">Servidor</text>
+<text class="dg-tiny" x="671.0" y="178.5" text-anchor="middle">solo chat/completions</text>
+<path class="dg-edge" d="M164 160 L298 160" marker-end="url(#f623a)"/>
+<text class="dg-tiny dg-mono" x="231.0" y="153.0" text-anchor="middle">messages</text>
+<path class="dg-edge" d="M470 160 L584 160" marker-end="url(#f623a)"/>
+<text class="dg-tiny dg-mono" x="527.0" y="153.0" text-anchor="middle">chat/completions</text>
+<path class="dg-edge" d="M298 178 L166 178" marker-end="url(#f623a)" style="stroke-dasharray:5 4"/>
+<path class="dg-edge" d="M584 178 L472 178" marker-end="url(#f623a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="385" y="218" text-anchor="middle">cada traducción puede perder campos: razonamiento, caché, herramientas del servidor</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 62.3.</b> Arriba, mismo dialecto: la conexión es directa. Abajo, un traductor en medio. La traducción no es gratis: lo que existe en un dialecto y no en el otro (bloques de razonamiento, marcas de caché, herramientas que corren en el servidor) se pierde o se aproxima.</figcaption>
+</figure>
+
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Los errores típicos de conectar un harness a otro servidor son de esta capa, no del modelo: la URL termina en <code>/v1</code> cuando el harness espera la raíz del dialecto de Anthropic (o al revés), el id del modelo no existe en ese proveedor, o el harness usa un segundo modelo "rápido" para tareas de fondo y ese id tampoco existe. La lista completa está en <a href="#fallas">62.13</a>.</p>
+</aside>
+
+<p>Prueba combinaciones con el widget: elige un harness y un servidor y mira si hace falta traductor, qué hay que configurar y a dónde va tu código.</p>
+
+<div data-sim="stack"></div>
+
+<h2 id="harness"><span class="sec-num">62.4</span>El harness: lo que convierte un modelo en un agente</h2>
+
+<p>Un <dfn data-term="harness">harness</dfn> es el programa que envuelve al modelo y lo pone a trabajar en un bucle. En <a href="m25-agentes.html#bucle">M25.2</a> viste el bucle como idea; aquí van las responsabilidades concretas, porque son las que diferencian un harness de otro:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f624t f624d">
+<title id="f624t">Lo que hace un harness</title>
+<desc id="f624d">En el centro, el bucle. Alrededor, siete responsabilidades: armar el prompt, describir las herramientas, ejecutar lo que pide el modelo, decidir qué requiere permiso, recortar y compactar el contexto, guardar el estado de la sesión y extenderse con MCP, skills y hooks.</desc>
+<defs><marker id="f624a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="300" y="104" width="170" height="72" rx="8"/>
+<text class="dg-label" x="385.0" y="136.5" text-anchor="middle">El bucle</text>
+<text class="dg-tiny" x="385.0" y="151.5" text-anchor="middle">pedir, ejecutar, devolver</text>
+<rect class="dg-box" x="30" y="20" width="170" height="52" rx="8"/>
+<text class="dg-small" x="115.0" y="42.5" text-anchor="middle">Armar el prompt</text>
+<text class="dg-tiny" x="115.0" y="57.5" text-anchor="middle">system y memoria</text>
+<rect class="dg-box" x="300" y="14" width="170" height="52" rx="8"/>
+<text class="dg-small" x="385.0" y="36.5" text-anchor="middle">Describir herramientas</text>
+<text class="dg-tiny" x="385.0" y="51.5" text-anchor="middle">JSON Schema de cada una</text>
+<rect class="dg-box" x="570" y="20" width="170" height="52" rx="8"/>
+<text class="dg-small" x="655.0" y="42.5" text-anchor="middle">Ejecutar</text>
+<text class="dg-tiny" x="655.0" y="57.5" text-anchor="middle">bash, archivos, red</text>
+<rect class="dg-box" x="570" y="112" width="170" height="52" rx="8"/>
+<text class="dg-small" x="655.0" y="134.5" text-anchor="middle">Permisos</text>
+<text class="dg-tiny" x="655.0" y="149.5" text-anchor="middle">allow, ask, deny</text>
+<rect class="dg-box" x="570" y="204" width="170" height="52" rx="8"/>
+<text class="dg-small" x="655.0" y="226.5" text-anchor="middle">Contexto</text>
+<text class="dg-tiny" x="655.0" y="241.5" text-anchor="middle">recortar y compactar</text>
+<rect class="dg-box" x="300" y="214" width="170" height="52" rx="8"/>
+<text class="dg-small" x="385.0" y="236.5" text-anchor="middle">Sesión</text>
+<text class="dg-tiny" x="385.0" y="251.5" text-anchor="middle">historia, reanudar</text>
+<rect class="dg-box" x="30" y="204" width="170" height="52" rx="8"/>
+<text class="dg-small" x="115.0" y="226.5" text-anchor="middle">Extensiones</text>
+<text class="dg-tiny" x="115.0" y="241.5" text-anchor="middle">MCP, skills, hooks</text>
+<rect class="dg-box" x="30" y="112" width="170" height="52" rx="8"/>
+<text class="dg-small" x="115.0" y="134.5" text-anchor="middle">Streaming e interfaz</text>
+<text class="dg-tiny" x="115.0" y="149.5" text-anchor="middle">mostrar y cancelar</text>
+<path class="dg-feedback" d="M200 46 L300 110"/>
+<path class="dg-feedback" d="M385 66 L385 102"/>
+<path class="dg-feedback" d="M570 46 L470 110"/>
+<path class="dg-feedback" d="M570 138 L472 140"/>
+<path class="dg-feedback" d="M570 230 L470 172"/>
+<path class="dg-feedback" d="M385 212 L385 178"/>
+<path class="dg-feedback" d="M200 230 L300 172"/>
+<path class="dg-feedback" d="M200 138 L298 140"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 62.4.</b> Las ocho cosas que hace un harness alrededor del bucle. Ninguna la hace el modelo.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Responsabilidad</th><th>Qué decide</th><th>Por qué cambia la calidad</th></tr></thead>
+    <tbody>
+      <tr><td>Armar el prompt</td><td>Qué va en el system: el rol, las reglas, la fecha, el sistema operativo, tus archivos de memoria</td><td>Un system prompt bien hecho le ahorra al modelo decenas de pasos exploratorios</td></tr>
+      <tr><td>Describir herramientas</td><td>Qué herramientas existen y con qué descripción y esquema</td><td>"Editar por reemplazo exacto" funciona mejor que "reescribe el archivo entero": menos tokens, menos errores</td></tr>
+      <tr><td>Ejecutar</td><td>Cómo corre cada herramienta: timeout, directorio, codificación</td><td>Un <code>npm install</code> sin timeout cuelga la sesión</td></tr>
+      <tr><td>Permisos</td><td>Qué corre solo, qué pregunta y qué se bloquea</td><td>La diferencia entre un agente útil y uno peligroso (<a href="#capas">62.10</a>)</td></tr>
+      <tr><td>Contexto</td><td>Recortar salidas largas, resumir cuando la ventana se llena, qué reenviar</td><td>Un log de 200&#8239;000 tokens pegado entero llena la ventana y lo demás se pierde (<a href="m25-agentes.html#contexto">M25.7</a>)</td></tr>
+      <tr><td>Sesión</td><td>Guardar la historia, reanudar, deshacer</td><td>Retomar mañana sin rehacer la exploración</td></tr>
+      <tr><td>Extensiones</td><td>MCP, skills, hooks, subagentes</td><td>Lo que tu equipo agrega sin tocar el harness (<a href="#extensiones">62.8</a>)</td></tr>
+      <tr><td>Interfaz y streaming</td><td>Mostrar tokens a medida que llegan, cancelar, aprobar</td><td>Poder frenar a tiempo un comando equivocado</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Por eso el mismo modelo rinde distinto en dos harnesses. No es una intuición: los benchmarks de agentes de programación publican resultados por combinación de modelo y harness, y las diferencias entre harnesses con el mismo modelo pueden ser grandes. Cómo se mide eso con tus propias tareas queda para M65 y M72.</p>
+
+<h2 id="bucle"><span class="sec-num">62.5</span>El bucle, mensaje por mensaje</h2>
+
+<p>Una aclaración antes del diagrama: un agente <b>no es una forma de</b> <a href="m16-context-windows.html#rag">RAG</a>. RAG es buscar documentos y pegarlos en el prompt antes de generar, una sola vez. Un agente es un modelo dentro de un bucle que decide qué herramienta usar y cuándo parar. Un agente puede usar una búsqueda como herramienta, y muchos agentes de programación prefieren <code>grep</code> antes que un índice vectorial, pero lo que lo define es el bucle.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 546" role="img" aria-labelledby="f625t f625d">
+<title id="f625t">El bucle de un agente, mensaje por mensaje</title>
+<desc id="f625d">Tú haces una pregunta al harness. El harness manda al modelo el system, las herramientas y los mensajes. El modelo responde con una llamada a bash; el harness decide el permiso, ejecuta pytest en tu sistema y devuelve el resultado. El modelo pide leer un archivo, el harness lo lee y lo devuelve. El modelo responde con texto sin llamadas y el harness te muestra la respuesta.</desc>
+<defs><marker id="f625-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f625-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f625-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f625-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Tú</text>
+<path class="dg-frame" d="M70.0 40 V536"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Harness</text>
+<path class="dg-frame" d="M280.0 40 V536"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">Modelo</text>
+<path class="dg-frame" d="M490.0 40 V536"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Tu sistema</text>
+<path class="dg-frame" d="M700.0 40 V536"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#f625-a)"/>
+<rect x="86.5" y="55" width="177.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">&quot;¿por qué falla el test?&quot;</text>
+<path class="dg-edge" d="M283.0 106 L485.0 106" marker-end="url(#f625-a)"/>
+<rect x="296.5" y="89" width="177.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">system + tools + mensajes</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 140 L285.0 140" marker-end="url(#f625-r)"/>
+<rect x="296.5" y="123" width="177.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="134" text-anchor="middle">tool_use bash &quot;pytest -x&quot;</text>
+<rect x="290.0" y="160" width="202" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="300.0" y="176">permiso: ask, allow o deny</text>
+<path class="dg-edge" d="M283.0 208 L695.0 208" marker-end="url(#f625-a)"/>
+<rect x="427.9" y="191" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="202" text-anchor="middle">ejecuta pytest -x</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 242 L285.0 242" marker-end="url(#f625-r)"/>
+<rect x="394.9" y="225" width="190.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="236" text-anchor="middle">stdout + stderr (recortado)</text>
+<path class="dg-edge" d="M283.0 276 L485.0 276" marker-end="url(#f625-a)"/>
+<rect x="280.0" y="259" width="210.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">todo lo anterior + tool_result</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 310 L285.0 310" marker-end="url(#f625-r)"/>
+<rect x="286.6" y="293" width="196.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="304" text-anchor="middle">tool_use read_file &quot;util.py&quot;</text>
+<path class="dg-edge" d="M283.0 344 L695.0 344" marker-end="url(#f625-a)"/>
+<rect x="447.7" y="327" width="84.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="338" text-anchor="middle">lee util.py</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 378 L285.0 378" marker-end="url(#f625-r)"/>
+<rect x="451.0" y="361" width="78.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="372" text-anchor="middle">120 líneas</text>
+<path class="dg-edge" d="M283.0 412 L485.0 412" marker-end="url(#f625-a)"/>
+<rect x="280.0" y="395" width="210.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="406" text-anchor="middle">todo lo anterior + tool_result</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 446 L285.0 446" marker-end="url(#f625-r)"/>
+<rect x="299.8" y="429" width="170.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="440" text-anchor="middle">texto, sin tool_use: fin</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 480 L75.0 480" marker-end="url(#f625-r)"/>
+<rect x="112.9" y="463" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="474" text-anchor="middle">&quot;El test espera…&quot;</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 62.5.</b> Una tarea de tres llamadas al modelo. Cada llamada reenvía todo lo anterior: por eso el costo crece con cada paso (<a href="m25-agentes.html#numeros-tarea">M25.1</a>) y por eso el prefijo en caché importa (<a href="m16-context-windows.html#prompt-caching">M16</a>).</figcaption>
+</figure>
+
+
+<p>El <a href="m17-api-streaming.html#herramientas">tool calling</a> es el contrato de este bucle: el modelo escribe <code>{"name": "bash", "input": {"cmd": "pytest -x"}}</code>, la API lo marca como una llamada y el harness la ejecuta. El modelo "cree" que actuó, pero todo el poder, y todo el riesgo, está en el harness. Un modelo que escribe <code>rm -rf /</code> no borra nada; un harness que lo ejecuta sin preguntar, sí.</p>
+
+<h2 id="propio"><span class="sec-num">62.6</span>Un harness en 40 líneas</h2>
+
+<p>La mejor forma de entender un harness es escribir uno. Este habla el dialecto de OpenAI, así que sirve con Ollama, con Moonshot (<code>BASE_URL=https://api.moonshot.ai/v1</code>), con OpenRouter o con OpenAI. Tiene una sola herramienta, bash, y una política de permisos mínima. Si nunca usaste Python o Ollama, <a href="../proyectos/ia00-laboratorio.html#ae-tool-calling">IA00</a> presenta las dos cosas desde cero. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<pre data-lang="python"><code>import json, os, subprocess
+from openai import OpenAI
+
+# (1) El servidor: cualquier API con el dialecto de OpenAI
+client = OpenAI(base_url=os.environ.get("BASE_URL", "http://localhost:11434/v1"),
+                api_key=os.environ.get("API_KEY", "ollama"))
+MODEL = os.environ.get("MODEL", "qwen3:8b")
+
+# (2) Las herramientas: el modelo solo ve esta descripción
+TOOLS = [{"type": "function", "function": {
+    "name": "bash", "description": "Ejecuta un comando de shell en el proyecto y devuelve su salida.",
+    "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}}}]
+
+DENY = ("rm -rf", "sudo", "curl", "wget")           # (3) una política mínima
+
+def permitido(cmd: str) -&gt; bool:
+    if any(p in cmd for p in DENY):
+        return False
+    return input(f"¿Ejecutar `{cmd}`? [s/N] ").strip().lower() == "s"
+
+def ejecutar(cmd: str) -&gt; str:
+    p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+    salida = p.stdout + p.stderr
+    return salida[-4000:] or f"(sin salida, código {p.returncode})"   # (4) recortar
+
+messages = [{"role": "system", "content": "Eres un agente de programación. Usa bash para explorar antes de responder."},
+            {"role": "user", "content": input("Tarea: ")}]
+
+for turno in range(25):                              # (5) el bucle, con tope
+    r = client.chat.completions.create(model=MODEL, messages=messages, tools=TOOLS)
+    msg = r.choices[0].message
+    messages.append(msg.model_dump(exclude_none=True))
+    if not msg.tool_calls:                           # (6) sin llamadas: terminó
+        print(msg.content)
+        break
+    for call in msg.tool_calls:
+        cmd = json.loads(call.function.arguments)["cmd"]
+        out = ejecutar(cmd) if permitido(cmd) else "El usuario rechazó el comando."
+        messages.append({"role": "tool", "tool_call_id": call.id, "content": out})   # (7)
+else:
+    print("Se acabaron los 25 turnos sin respuesta final.")</code></pre>
+
+<ol class="code-key">
+  <li>El servidor sale de variables de entorno: el mismo código habla con un modelo local o con uno en la nube. Por defecto apunta a Ollama.</li>
+  <li>El modelo no ve tu código Python, solo esta descripción en JSON Schema. Una descripción ambigua produce llamadas malas.</li>
+  <li>Una lista de prohibidos es la política más débil que existe (<code>/bin/rm -rf</code> no contiene <code>"rm -rf"</code> con ese espacio exacto, y <code>python -c</code> lo hace todo): sirve para el ejemplo, no para producción. En 62.10 verás por qué el control de verdad está en el sandbox.</li>
+  <li>Recortar la salida es la gestión de contexto más básica: sin esto, un comando ruidoso llena la ventana.</li>
+  <li>El bucle es el agente. El tope de 25 turnos es el presupuesto más simple (<a href="m25-agentes.html#presupuestos">M25.6</a>).</li>
+  <li>Sin llamadas a herramientas, el modelo dio su respuesta final.</li>
+  <li>El resultado vuelve como un mensaje con rol <code>tool</code> y el id de la llamada: así el modelo sabe qué respuesta corresponde a qué llamada.</li>
+</ol>
+
+<p>En el dialecto de Anthropic el bucle es el mismo y cambian tres detalles:</p>
+
+<pre data-lang="python"><code># El mismo bucle en el dialecto de Anthropic: cambian tres cosas
+r = client.messages.create(model=MODEL, max_tokens=4096, system=SYSTEM,     # system va aparte
+                           messages=messages, tools=[{"name": "bash", "description": "...",
+                           "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}}])
+messages.append({"role": "assistant", "content": r.content})
+if r.stop_reason != "tool_use":                     # el fin se lee en stop_reason
+    ...
+resultados = [{"type": "tool_result", "tool_use_id": b.id, "content": ejecutar(b.input["cmd"])}
+              for b in r.content if b.type == "tool_use"]
+messages.append({"role": "user", "content": resultados})                    # vuelve como user</code></pre>
+
+<p>Todo lo que tienen Claude Code u OpenCode son mejoras sobre estas líneas, y cada una responde a una falla real del harness mínimo:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Falla del harness mínimo</th><th>Lo que agregan los harnesses de verdad</th></tr></thead>
+    <tbody>
+      <tr><td>Para editar un archivo, el modelo lo reescribe entero con <code>cat &gt;</code></td><td>Herramientas de edición por reemplazo exacto o por diff, que fallan si el texto no coincide</td></tr>
+      <tr><td>La lista de prohibidos se esquiva con otra forma de escribir el comando</td><td>Reglas que entienden subcomandos y redirecciones, hooks y un sandbox del sistema operativo</td></tr>
+      <tr><td>Una sesión larga llena la ventana y la API responde con error</td><td>Compactación: resumir lo viejo y seguir</td></tr>
+      <tr><td>Cada llamada reenvía todo y la factura crece</td><td>Prompt caching del prefijo estable</td></tr>
+      <tr><td>No sabe nada de tu proyecto al empezar</td><td>Archivos de memoria (<code>CLAUDE.md</code>, <code>AGENTS.md</code>) en el system prompt</td></tr>
+      <tr><td>Una tarea grande ensucia el contexto con exploración</td><td>Subagentes con contexto propio que devuelven solo el resumen</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Construir esta versión paso a paso, con pruebas sin modelo y medido con Claude y con un modelo local, es la guía IA07 (propuesta).</p>
+
+<h2 id="comparados"><span class="sec-num">62.7</span>Los harnesses comparados</h2>
+
+<p>Todos hacen lo mismo con decisiones de diseño distintas. Esta tabla es una foto de octubre de 2026; los nombres de flags y archivos cambian entre versiones, así que confírmalos con <code>--help</code>. <span class="badge badge--doc">Documentado</span></p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th></th><th>Claude Code</th><th>Codex CLI</th><th>OpenCode</th><th>Cursor</th></tr></thead>
+    <tbody>
+      <tr><td>Quién</td><td>Anthropic</td><td>OpenAI, open source</td><td>Comunidad, open source</td><td>Anysphere</td></tr>
+      <tr><td>Forma</td><td>CLI, extensiones de IDE, apps, SDK</td><td>CLI, app, extensión de IDE</td><td>TUI en la terminal</td><td>IDE (derivado de VS Code)</td></tr>
+      <tr><td>Dialecto</td><td>Anthropic; otros servidores por <code>ANTHROPIC_BASE_URL</code></td><td>OpenAI; otros por <code>model_providers</code></td><td>Muchos proveedores</td><td>Los modelos que ofrece la app</td></tr>
+      <tr><td>Configuración</td><td><code>~/.claude/settings.json</code>, <code>.claude/settings.json</code>, <code>CLAUDE.md</code></td><td><code>~/.codex/config.toml</code>, <code>AGENTS.md</code></td><td><code>opencode.json</code>, <code>AGENTS.md</code></td><td>Ajustes de la app y reglas del proyecto</td></tr>
+      <tr><td>Permisos</td><td>Reglas allow, ask y deny, modos, hooks, sandbox opcional</td><td>Sandbox del sistema operativo (Seatbelt, bubblewrap) más una política de aprobación</td><td>allow, ask o deny por herramienta y patrón</td><td>Ajustes de la app</td></tr>
+      <tr><td>Fuerte en</td><td>Extensiones: hooks, skills, subagentes, MCP, plugins</td><td>Aislamiento por defecto del sistema operativo</td><td>Libertad de proveedor, código abierto que puedes leer y cambiar</td><td>La experiencia dentro del editor</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>En la misma categoría están Aider, Cline, Goose, Kilo Code y los harnesses propios de varios laboratorios. Cómo elegir entre ellos para un caso concreto está en <a href="#elegir">62.12</a>, y a fondo en M65.</p>
+
+<h2 id="extensiones"><span class="sec-num">62.8</span>Extensiones y <span class="no-autolink">orquestadores</span></h2>
+
+<p>Alrededor de un harness hay dos familias de cosas que se confunden porque todas "agregan capacidades". La diferencia es dónde viven: unas viven <b>dentro</b> del harness y lo extienden; otras viven <b>fuera</b> y lo usan como pieza.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f626t f626d">
+<title id="f626t">Extensiones y orquestadores</title>
+<desc id="f626d">A la izquierda, dentro del harness: herramientas nativas, MCP, skills, hooks, subagentes y archivos de memoria. A la derecha, fuera: un orquestador que lanza varios harnesses en modo headless, cada uno con una tarea, y junta los resultados.</desc>
+<defs><marker id="f626a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="30" width="400" height="256" rx="12"/>
+<text class="dg-tiny" x="24" y="22" text-anchor="start">Dentro del harness (lo extienden)</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="28" y="44" width="180" height="64" rx="8"/>
+<text class="dg-small" x="118.0" y="72.5" text-anchor="middle">Tools nativas</text>
+<text class="dg-tiny" x="118.0" y="87.5" text-anchor="middle">bash, leer, editar, web</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="220" y="44" width="180" height="64" rx="8"/>
+<text class="dg-small" x="310.0" y="72.5" text-anchor="middle">MCP</text>
+<text class="dg-tiny" x="310.0" y="87.5" text-anchor="middle">tools de un servidor externo</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="28" y="124" width="180" height="64" rx="8"/>
+<text class="dg-small" x="118.0" y="152.5" text-anchor="middle">Skills</text>
+<text class="dg-tiny" x="118.0" y="167.5" text-anchor="middle">instrucciones a demanda</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="220" y="124" width="180" height="64" rx="8"/>
+<text class="dg-small" x="310.0" y="152.5" text-anchor="middle">Hooks</text>
+<text class="dg-tiny" x="310.0" y="167.5" text-anchor="middle">código tuyo en un evento</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="28" y="204" width="180" height="64" rx="8"/>
+<text class="dg-small" x="118.0" y="232.5" text-anchor="middle">Subagentes</text>
+<text class="dg-tiny" x="118.0" y="247.5" text-anchor="middle">contexto limpio</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="220" y="204" width="180" height="64" rx="8"/>
+<text class="dg-small" x="310.0" y="232.5" text-anchor="middle">Memoria</text>
+<text class="dg-tiny" x="310.0" y="247.5" text-anchor="middle">CLAUDE.md, AGENTS.md</text>
+<rect class="dg-frame" x="446" y="30" width="310" height="256" rx="12"/>
+<text class="dg-tiny" x="456" y="22" text-anchor="start">Fuera (lo usan como pieza)</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="466" y="44" width="270" height="52" rx="8"/>
+<text class="dg-small" x="601.0" y="66.5" text-anchor="middle">Orquestador</text>
+<text class="dg-tiny" x="601.0" y="81.5" text-anchor="middle">reparte tareas y junta resultados</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="466" y="150" width="86" height="52" rx="8"/>
+<text class="dg-small" x="509.0" y="172.5" text-anchor="middle">harness</text>
+<text class="dg-tiny" x="509.0" y="187.5" text-anchor="middle">headless</text>
+<path class="dg-edge" d="M601 96 L509 148" marker-end="url(#f626a)"/>
+<path class="dg-edge" d="M509 202 L509 222" marker-end="url(#f626a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="558" y="150" width="86" height="52" rx="8"/>
+<text class="dg-small" x="601.0" y="172.5" text-anchor="middle">harness</text>
+<text class="dg-tiny" x="601.0" y="187.5" text-anchor="middle">headless</text>
+<path class="dg-edge" d="M601 96 L601 148" marker-end="url(#f626a)"/>
+<path class="dg-edge" d="M601 202 L601 222" marker-end="url(#f626a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="650" y="150" width="86" height="52" rx="8"/>
+<text class="dg-small" x="693.0" y="172.5" text-anchor="middle">harness</text>
+<text class="dg-tiny" x="693.0" y="187.5" text-anchor="middle">headless</text>
+<path class="dg-edge" d="M601 96 L693 148" marker-end="url(#f626a)"/>
+<path class="dg-edge" d="M693 202 L693 222" marker-end="url(#f626a)"/>
+<rect class="dg-box" x="466" y="224" width="270" height="48" rx="8"/>
+<text class="dg-small" x="601.0" y="252.0" text-anchor="middle">Hallazgos en JSON o Markdown</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 62.6.</b> Extensiones dentro del harness, <span class="no-autolink">orquestadores</span> fuera. DeepSec no es una skill ni un servidor MCP: es un programa que lanza harnesses.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Pieza</th><th>Qué es</th><th>Quién la ejecuta</th><th>Ejemplo</th></tr></thead>
+    <tbody>
+      <tr><td>Tools nativas</td><td>Las herramientas que trae el harness</td><td>El harness</td><td>Read, Edit, Bash, WebFetch</td></tr>
+      <tr><td><a href="m25-agentes.html#mcp">MCP</a></td><td>Un protocolo para conectar herramientas externas a cualquier harness compatible</td><td>Un servidor aparte, por stdio o HTTP</td><td>"Consultar Postgres", "leer un ticket de Jira"</td></tr>
+      <tr><td>Skills</td><td>Carpetas de instrucciones y scripts que el agente carga cuando la tarea lo amerita</td><td>El modelo las lee; los scripts los corre el harness</td><td>"Cómo se publica un módulo de este curso"</td></tr>
+      <tr><td>Hooks</td><td>Código tuyo que el harness corre en un evento, sin pasar por el modelo</td><td>El harness, de forma determinista</td><td>"Antes de bash, valida el comando"; "después de editar, corre el linter"</td></tr>
+      <tr><td><a href="m25-agentes.html#patrones-multi">Subagentes</a></td><td>Otra instancia del agente con contexto limpio para una subtarea</td><td>El mismo harness</td><td>"Busca dónde se define X y devuélveme solo la ruta"</td></tr>
+      <tr><td>Memoria</td><td>Instrucciones permanentes que entran en el system prompt</td><td>El harness las inyecta</td><td><code>CLAUDE.md</code>, <code>AGENTS.md</code></td></tr>
+      <tr><td><span class="no-autolink">Orquestador</span></td><td>Un programa que lanza harnesses sin interfaz y combina sus resultados</td><td>Tu proceso, fuera del harness</td><td>DeepSec, un bot de code review en CI, un sistema de evals</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Cuándo usar cada extensión, cómo se escriben y cómo se combinan es tema de M67.</p>
+
+<h2 id="orquestadores"><span class="sec-num">62.9</span>Cómo trabaja un <span class="no-autolink">orquestador</span> por dentro</h2>
+
+<p>Un <dfn data-term="orquestador-agentes">orquestador de agentes</dfn> resuelve un problema que un agente solo no puede: una tarea demasiado grande para una sesión (revisar un repositorio entero buscando vulnerabilidades), que se parte en muchas tareas chicas, cada una con su propio agente y su propio contexto. Para eso usa el <dfn data-term="modo-headless">modo headless</dfn> de un harness: se lanza como un proceso más, sin interfaz, con el prompt como argumento, y devuelve el resultado en JSON (<code>claude -p … --output-format json</code>, <code>codex exec …</code>).</p>
+
+<h3 id="orquestadores-por-que">Por qué reutiliza un harness y no llama al modelo</h3>
+
+<p>Investigar si una línea es explotable exige leer archivos, seguir una función hasta donde se llama, buscar si hay validación más arriba. Eso es un agente completo: herramientas de lectura, bucle, manejo de contexto. Reescribirlo sería rehacer Claude Code o Codex. El <span class="no-autolink">orquestador</span> delega todo eso y se queda con lo que ningún harness hace solo: <b>repartir, limitar, guardar y juntar</b>.</p>
+
+<h3 id="orquestadores-deepsec">DeepSec, etapa por etapa</h3>
+
+<p>DeepSec es un escáner de seguridad de código abierto de Vercel (licencia Apache 2.0) que trabaja así <span class="badge badge--doc">Documentado</span>. Hay además un build distinto con el mismo nombre en la infraestructura e-INFRA CZ (CERIT-SC), que sirve sus propios modelos, entre ellos Kimi K2.6, y exige pasar <code>--model</code> siempre <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f627t f627d">
+<title id="f627t">Cómo trabaja DeepSec</title>
+<desc id="f627d">Seis etapas: init escribe el modelo de amenazas y los matchers; scan corre los matchers sin IA y crea candidatos; process lanza un agente por lote de archivos con candidatos, varios lotes en paralelo y con presupuesto; revalidate vuelve a revisar los hallazgos con otro agente; triage los prioriza sin releer el código; export escribe un Markdown por hallazgo. Debajo, el estado en disco, cuyo historial solo se agrega.</desc>
+<defs><marker id="f627a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="40" width="112" height="60" rx="8"/>
+<text class="dg-small dg-mono" x="70.0" y="59.0" text-anchor="middle">init</text>
+<text class="dg-tiny" x="70.0" y="74.0" text-anchor="middle">INFO.md</text>
+<text class="dg-tiny" x="70.0" y="89.0" text-anchor="middle">matchers</text>
+<text class="dg-tiny" x="70" y="118" text-anchor="middle">sin IA</text>
+<path class="dg-edge" d="M126 70 L142 70" marker-end="url(#f627a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="142" y="40" width="112" height="60" rx="8"/>
+<text class="dg-small dg-mono" x="198.0" y="66.5" text-anchor="middle">scan</text>
+<text class="dg-tiny" x="198.0" y="81.5" text-anchor="middle">regex, sin IA</text>
+<text class="dg-tiny" x="198" y="118" text-anchor="middle">sin IA</text>
+<path class="dg-edge" d="M254 70 L270 70" marker-end="url(#f627a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="270" y="40" width="112" height="60" rx="8"/>
+<text class="dg-small dg-mono" x="326.0" y="59.0" text-anchor="middle">process</text>
+<text class="dg-tiny" x="326.0" y="74.0" text-anchor="middle">un agente</text>
+<text class="dg-tiny" x="326.0" y="89.0" text-anchor="middle">por lote</text>
+<text class="dg-tiny" x="326" y="118" text-anchor="middle">con IA</text>
+<path class="dg-edge" d="M382 70 L398 70" marker-end="url(#f627a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="398" y="40" width="112" height="60" rx="8"/>
+<text class="dg-small dg-mono" x="454.0" y="66.5" text-anchor="middle">revalidate</text>
+<text class="dg-tiny" x="454.0" y="81.5" text-anchor="middle">segunda opinión</text>
+<text class="dg-tiny" x="454" y="118" text-anchor="middle">con IA</text>
+<path class="dg-edge" d="M510 70 L526 70" marker-end="url(#f627a)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="526" y="40" width="112" height="60" rx="8"/>
+<text class="dg-small dg-mono" x="582.0" y="66.5" text-anchor="middle">triage</text>
+<text class="dg-tiny" x="582.0" y="81.5" text-anchor="middle">P0, P1, P2, skip</text>
+<text class="dg-tiny" x="582" y="118" text-anchor="middle">con IA</text>
+<path class="dg-edge" d="M638 70 L654 70" marker-end="url(#f627a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="654" y="40" width="112" height="60" rx="8"/>
+<text class="dg-small dg-mono" x="710.0" y="59.0" text-anchor="middle">export</text>
+<text class="dg-tiny" x="710.0" y="74.0" text-anchor="middle">un .md</text>
+<text class="dg-tiny" x="710.0" y="89.0" text-anchor="middle">por hallazgo</text>
+<text class="dg-tiny" x="710" y="118" text-anchor="middle">sin IA</text>
+<text class="dg-tiny" x="14" y="26" text-anchor="start">Cada etapa lee y escribe en .deepsec/data/&lt;proyecto&gt;/</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="222" y="156" width="62" height="46" rx="8"/>
+<text class="dg-tiny dg-mono" x="253.0" y="175.5" text-anchor="middle">claude</text>
+<text class="dg-tiny dg-mono" x="253.0" y="190.5" text-anchor="middle">-p</text>
+<path class="dg-edge" d="M326 102 L253 154" marker-end="url(#f627a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="292" y="156" width="62" height="46" rx="8"/>
+<text class="dg-tiny dg-mono" x="323.0" y="175.5" text-anchor="middle">claude</text>
+<text class="dg-tiny dg-mono" x="323.0" y="190.5" text-anchor="middle">-p</text>
+<path class="dg-edge" d="M326 102 L323 154" marker-end="url(#f627a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="362" y="156" width="62" height="46" rx="8"/>
+<text class="dg-tiny dg-mono" x="393.0" y="175.5" text-anchor="middle">claude</text>
+<text class="dg-tiny dg-mono" x="393.0" y="190.5" text-anchor="middle">-p</text>
+<path class="dg-edge" d="M326 102 L393 154" marker-end="url(#f627a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="432" y="156" width="62" height="46" rx="8"/>
+<text class="dg-tiny dg-mono" x="463.0" y="175.5" text-anchor="middle">claude</text>
+<text class="dg-tiny dg-mono" x="463.0" y="190.5" text-anchor="middle">-p</text>
+<path class="dg-edge" d="M326 102 L463 154" marker-end="url(#f627a)"/>
+<text class="dg-tiny" x="512" y="172" text-anchor="start">N agentes a la vez (concurrencia)</text>
+<text class="dg-tiny dg-mono" x="512" y="190" text-anchor="start">--max-cost-usd, --max-duration</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="230" width="742" height="40" rx="8"/>
+<text class="dg-small" x="385.0" y="254.0" text-anchor="middle">Estado en disco: candidatos, hallazgos y un historial que solo se agrega (modelo, agente, tiempo, costo)</text>
+<path class="dg-edge" d="M385 204 L385 228" marker-end="url(#f627a)"/>
+<rect class="dg-box" x="14" y="282" width="742" height="36" rx="8"/>
+<text class="dg-tiny" x="385.0" y="304.0" text-anchor="middle">Exit code en CI: 0 sin hallazgos nuevos, 1 con al menos uno, otro valor si falló</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 62.7.</b> La tubería de DeepSec. Solo tres etapas gastan tokens, y la más cara (process) corre sobre una lista que ya filtró la etapa sin IA.</figcaption>
+</figure>
+
+
+<ol class="steps">
+  <li><span class="step-title">init</span>Escribe en <code>.deepsec/</code> un modelo de amenazas del proyecto (<code>INFO.md</code>), un inventario de la superficie y los <b>matchers</b>: patrones de código sospechoso adaptados al stack.</li>
+  <li><span class="step-title">scan</span>Corre los matchers sin IA y crea un <b>candidato</b> por coincidencia. Es barato, determinista y repetible: la misma versión del código da los mismos candidatos.</li>
+  <li><span class="step-title">process</span>Agrupa los archivos pendientes en lotes (<code>--batch-size</code>) y lanza un agente por lote, varios a la vez (<code>--concurrency</code>), con el SDK de Codex (el agente por defecto) o el de Claude (<code>--agent claude</code>). Cada agente sigue los datos entre archivos, busca defensas y escribe un hallazgo con severidad. Corre varios a la vez, con topes de costo y de tiempo (<code>--max-cost-usd</code>, <code>--max-duration</code>, <code>--limit</code>), y acepta <code>--diff</code> para revisar solo lo que cambió en un PR.</li>
+  <li><span class="step-title">revalidate</span>Otro agente revisa cada hallazgo como segunda opinión, para bajar los falsos positivos. Aun así, quien lo documentó reporta una tasa de falsos positivos notable.</li>
+  <li><span class="step-title">triage</span>Prioriza (P0, P1, P2 o skip) sin releer el código: más barato que revalidar.</li>
+  <li><span class="step-title">export</span>Escribe un Markdown por hallazgo y un <code>comment.md</code> para el PR si hay hallazgos nuevos. En CI, el exit code es 0 sin hallazgos nuevos y 1 con al menos uno.</li>
+</ol>
+
+<h3 id="orquestadores-piezas">Las piezas de cualquier <span class="no-autolink">orquestador</span></h3>
+
+<p>Saca DeepSec de la ecuación y quedan las mismas piezas que ya conoces de la Parte I, aplicadas a agentes:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Pieza</th><th>Qué hace</th><th>En DeepSec</th><th>Lo viste en</th></tr></thead>
+    <tbody>
+      <tr><td>Generador de tareas sin IA</td><td>Reduce el universo a lo que vale la pena mirar</td><td>scan con matchers</td><td>El embudo de <a href="m42-ml-system-design.html">M42</a>: lo barato filtra antes de lo caro</td></tr>
+      <tr><td>Cola y estado</td><td>Cada tarea tiene estado (pendiente, procesada, revalidada) y se guarda en disco</td><td><code>.deepsec/data/</code>; el historial solo se agrega</td><td>Ejecución durable, <a href="m25-agentes.html#durable">M25.8</a></td></tr>
+      <tr><td>Pool de workers</td><td>N agentes a la vez, ni uno más</td><td>Concurrencia configurable</td><td>Colas y consumidores, <a href="m07-mensajeria.html">M07</a></td></tr>
+      <tr><td>Presupuesto</td><td>Topes por tarea y por corrida</td><td><code>--max-cost-usd</code>, <code>--max-duration</code></td><td><a href="m25-agentes.html#presupuestos">M25.6</a></td></tr>
+      <tr><td>Salida estructurada</td><td>Cada agente devuelve JSON que se valida</td><td>Hallazgo con severidad</td><td><a href="m17-api-streaming.html#estructuradas">M17</a></td></tr>
+      <tr><td>Segunda opinión</td><td>Otro agente o modelo revisa lo que salió</td><td>revalidate</td><td>LLM como juez, <a href="m22-operar-modelos.html#juez">M22.7</a></td></tr>
+      <tr><td>Aislamiento por tarea</td><td>Cada agente en su caja; la credencial real se queda fuera</td><td><code>sandbox process</code> en microVMs; el host agrega la clave solo a las requests al proveedor</td><td><a href="m25-agentes.html#sandbox">M25.10</a></td></tr>
+      <tr><td>Contrato con CI</td><td>Exit codes y un artefacto que otro sistema lee</td><td>0, 1 y <code>comment.md</code></td><td><a href="m55-appsec.html">M55</a></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Un <span class="no-autolink">orquestador</span> mínimo cabe en una pantalla. Este hace lo esencial de DeepSec sin revalidar ni aislar: candidatos con regex, un <code>claude -p</code> por candidato con herramientas de solo lectura, cuatro a la vez y un tope de gasto por corrida. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<pre data-lang="python"><code>import json, re, subprocess, pathlib
+from concurrent.futures import ThreadPoolExecutor
+
+TOPE_USD, gastado = 5.0, 0.0
+SOSPECHOSO = re.compile(r"execute\(f\"|subprocess\..*shell=True|pickle\.loads")
+
+# (1) Candidatos sin IA: barato, determinista, repetible
+candidatos = [(str(p), n) for p in pathlib.Path("src").rglob("*.py")
+              for n, linea in enumerate(p.read_text(errors="ignore").splitlines(), 1)
+              if SOSPECHOSO.search(linea)]
+
+PROMPT = ("Investiga si {f}:{n} es explotable. Sigue los datos hasta su origen y busca defensas. "
+          'Responde solo JSON: {{"vulnerable": bool, "severidad": "alta|media|baja", "razon": str}}')
+
+def investigar(cand):
+    f, n = cand
+    # (2) Un harness headless por candidato, solo con herramientas de lectura
+    p = subprocess.run(["claude", "-p", PROMPT.format(f=f, n=n), "--output-format", "json",
+                        "--disallowedTools", "Bash,Edit,Write", "--permission-mode", "dontAsk",
+                        "--max-turns", "15"],
+                       capture_output=True, text=True, timeout=600)
+    return cand, json.loads(p.stdout)
+
+with ThreadPoolExecutor(max_workers=4) as pool, open("hallazgos.jsonl", "a") as out:
+    for (f, n), r in pool.map(investigar, candidatos):           # (3) fan-out con tope de concurrencia
+        gastado += r.get("total_cost_usd", 0)
+        out.write(json.dumps({"archivo": f, "linea": n, "resultado": r.get("result")}) + "\n")
+        if gastado &gt; TOPE_USD:                                    # (4) presupuesto por corrida
+            print(f"Tope de {TOPE_USD} USD alcanzado: se corta aquí")
+            break</code></pre>
+
+<ol class="code-key">
+  <li>Los candidatos salen de una regex: cero tokens. Cuanto mejor filtra esta etapa, menos paga la siguiente.</li>
+  <li>Cada investigación es un proceso aparte con su propio contexto. <code>--disallowedTools</code> quita Bash y las herramientas de edición, y <code>dontAsk</code> niega todo lo que pediría permiso: en modo headless no hay nadie para aprobar nada. Ojo: <code>--allowedTools</code> no serviría para esto, porque solo aprueba sin preguntar las herramientas que lista y no bloquea las demás (<a href="m69-orquestadores.html#headless">M69.2</a>).</li>
+  <li><code>max_workers=4</code> es el tope de concurrencia: protege tu límite de requests por minuto (<a href="m18-cuotas-tokens.html">M18</a>) y tu factura.</li>
+  <li>El tope se revisa al llegar cada resultado. Las investigaciones que ya estaban en vuelo terminan igual, así que el gasto real puede pasar un poco del tope: es el mismo problema de las reservas de <a href="m21-metering.html">M21</a>.</li>
+</ol>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Una advertencia sobre el costo: cada investigación es una sesión de agente entera, con decenas de llamadas al modelo. Un repositorio grande puede dar miles de candidatos, y una corrida completa puede costar desde cientos hasta decenas de miles de dólares <span class="badge badge--doc">Documentado</span>. Por eso la primera corrida va siempre con <code>--limit</code> y un tope de gasto, y en CI se revisa solo el diff.</p>
+</aside>
+
+<p>Qué le falta a este mínimo para producción (reanudar a mitad de corrida, deduplicar hallazgos repetidos, aislar cada agente sin darle la clave, revalidar) es <a href="m69-orquestadores.html">M69</a>, y construirlo de punta a punta sobre una víctima con vulnerabilidades sembradas es la guía IA08 (propuesta).</p>
+
+<h2 id="capas"><span class="sec-num">62.10</span>Dónde vive cada restricción</h2>
+
+<p>"Quiero un harness con menos restricciones" suele mezclar cuatro cosas distintas, y solo dos están en tus manos:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f628t f628d">
+<title id="f628t">Dónde vive cada restricción</title>
+<desc id="f628d">Cuatro capas de arriba abajo: los pesos (lo que el modelo aprendió en el entrenamiento), el proveedor (políticas y clasificadores de su API), el harness (permisos, hooks y modos) y el sistema operativo (sandbox, contenedor, credenciales). A la derecha, quién controla cada una: las dos de arriba no las cambias tú; las dos de abajo, sí.</desc>
+<defs><marker id="f628a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="14" y="18" width="500" height="56" rx="8"/>
+<text class="dg-small" x="264.0" y="42.5" text-anchor="middle">Pesos</text>
+<text class="dg-tiny" x="264.0" y="57.5" text-anchor="middle">lo aprendido en el entrenamiento: qué rechaza, cómo razona</text>
+<rect class="dg-box" x="540" y="18" width="216" height="56" rx="8"/>
+<text class="dg-tiny" x="648.0" y="50.0" text-anchor="middle">el laboratorio que lo entrenó</text>
+<path class="dg-feedback" d="M514 46 L538 46"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="86" width="500" height="56" rx="8"/>
+<text class="dg-small" x="264.0" y="110.5" text-anchor="middle">Proveedor</text>
+<text class="dg-tiny" x="264.0" y="125.5" text-anchor="middle">términos de uso, clasificadores, límites de la API</text>
+<rect class="dg-box" x="540" y="86" width="216" height="56" rx="8"/>
+<text class="dg-tiny" x="648.0" y="118.0" text-anchor="middle">quien sirve el modelo</text>
+<path class="dg-feedback" d="M514 114 L538 114"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="154" width="500" height="56" rx="8"/>
+<text class="dg-small" x="264.0" y="178.5" text-anchor="middle">Harness</text>
+<text class="dg-tiny" x="264.0" y="193.5" text-anchor="middle">reglas allow, ask y deny, modos, hooks</text>
+<rect class="dg-ok" x="540" y="154" width="216" height="56" rx="8"/>
+<text class="dg-tiny" x="648.0" y="186.0" text-anchor="middle">tú: settings.json, config.toml</text>
+<path class="dg-feedback" d="M514 182 L538 182"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="222" width="500" height="56" rx="8"/>
+<text class="dg-small" x="264.0" y="246.5" text-anchor="middle">Sistema operativo</text>
+<text class="dg-tiny" x="264.0" y="261.5" text-anchor="middle">sandbox, contenedor, red, credenciales</text>
+<rect class="dg-ok" x="540" y="222" width="216" height="56" rx="8"/>
+<text class="dg-tiny" x="648.0" y="254.0" text-anchor="middle">tú: Docker, VM, devcontainer</text>
+<path class="dg-feedback" d="M514 250 L538 250"/>
+<text class="dg-tiny" x="385" y="296" text-anchor="middle">jailbreak: intenta torcer las dos de arriba · configuración: mueve las dos de abajo</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 62.8.</b> Las cuatro capas de control. Un harness solo mueve la tercera; un contenedor, la cuarta. Ninguna configuración cambia lo que el modelo aprendió.</figcaption>
+</figure>
+
+
+<h3 id="capas-harness">La capa del harness: permisos</h3>
+
+<p>Es lo que casi siempre se quiere decir con "menos restricción": que el agente no pregunte por cada comando. Se configura, y conviene hacerlo con precisión en lugar de apagarlo todo. En Claude Code, las reglas se evalúan en orden <b>deny, después ask, después allow</b>, y la primera que coincide decide: un deny amplio como <code>Bash(aws *)</code> gana sobre un allow más específico como <code>Bash(aws s3 ls)</code> <span class="badge badge--doc">Documentado</span>. Las impone el harness, no el modelo: lo que escribas en <code>CLAUDE.md</code> cambia lo que el modelo intenta, no lo que el harness permite.</p>
+
+<div class="tabs" data-tabs="Permisos por harness">
+  <section data-tab="Claude Code">
+    <pre data-lang="json"><code>{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": ["Bash(npm run test *)", "Bash(git diff *)", "Bash(git status)"],
+    "ask":   ["Bash(git push *)"],
+    "deny":  ["Read(./.env)", "Read(./secrets/**)", "Bash(curl *)"]
+  }
+}</code></pre>
+    <p>Va en <code>.claude/settings.json</code> (el proyecto, se versiona), <code>.claude/settings.local.json</code> (tuyo, no se versiona) o <code>~/.claude/settings.json</code> (todos tus proyectos). Los modos son <code>default</code>, <code>acceptEdits</code>, <code>plan</code>, <code>auto</code> (un clasificador revisa cada acción en lugar de preguntarte), <code>dontAsk</code> y <code>bypassPermissions</code>, que equivale a <code>--dangerously-skip-permissions</code>. <span class="badge badge--doc">Documentado</span></p>
+  </section>
+  <section data-tab="Codex CLI">
+    <pre data-lang="shell"><code># ~/.codex/config.toml o .codex/config.toml del proyecto
+sandbox_mode    = "workspace-write"    # read-only | workspace-write | danger-full-access
+approval_policy = "on-request"         # on-request | never</code></pre>
+    <p>Codex separa dos preguntas: <b>qué permite el sistema operativo</b> (<code>sandbox_mode</code>, impuesto con Seatbelt en macOS, bubblewrap en Linux y el sandbox nativo en Windows) y <b>cuándo se detiene a preguntarte</b> (<code>approval_policy</code>). Los flags equivalentes son <code>--sandbox</code> y <code>--ask-for-approval</code>, y <code>/permissions</code> los cambia en la sesión. <span class="badge badge--doc">Documentado</span></p>
+  </section>
+  <section data-tab="OpenCode">
+    <pre data-lang="json"><code>{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "edit": "allow",
+    "bash": { "*": "ask", "git status": "allow", "git diff *": "allow", "rm *": "deny" }
+  }
+}</code></pre>
+    <p>Cada herramienta lleva <code>allow</code>, <code>ask</code> o <code>deny</code>, y bash acepta un mapa de patrones. Es una política, no un sandbox: una regla que niega leer un archivo no impide que el agente lo lea con <code>python3 -c</code> si bash está permitido. <span class="badge badge--doc">Documentado</span></p>
+  </section>
+</div>
+
+<h3 id="capas-caja">La capa del sistema operativo: la caja</h3>
+
+<p>La regla de oro: <b>si quitas los permisos del harness, mete el agente en una caja</b>. Un agente sin preguntas en tu máquina principal puede borrar algo por un malentendido, o seguir una <a href="m25-agentes.html#injection">prompt injection</a> escondida en un README o en un issue que leyó. Así trabaja quien da autonomía total: dentro de un contenedor, una VM o un devcontainer, con solo el repositorio montado y sin tus credenciales reales.</p>
+
+<pre data-lang="shell"><code># Autonomía total, pero dentro de una caja desechable:
+# solo el repositorio montado, sin tu $HOME, sin capabilities,
+# y una clave propia de la caja, con tope de gasto (no la tuya)
+docker run --rm -it \
+  -v "$PWD":/work -w /work \
+  --cap-drop ALL --pids-limit 512 --memory 4g \
+  -e ANTHROPIC_BASE_URL -e ANTHROPIC_AUTH_TOKEN \
+  imagen-con-claude claude --dangerously-skip-permissions</code></pre>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Aun dentro del contenedor, la clave de API que le pasas es la que el agente puede filtrar: un comando como <code>env</code> la imprime y una injection puede mandarla fuera. Usa una clave propia de la caja, con tope de gasto y que puedas revocar, o haz como DeepSec: deja la clave fuera y que un proxy en el host la agregue solo a las requests hacia el proveedor. Si además cortas la red de salida salvo ese proxy, cerraste la "comunicación externa" de la <a href="m25-agentes.html#injection-regla">trifecta</a>.</p>
+</aside>
+
+<h3 id="capas-modelo">Las capas de arriba: el modelo y el proveedor</h3>
+
+<p>Las dos capas de arriba no las mueve ningún harness. Si un modelo se niega a algo, es porque lo aprendió en el entrenamiento, y cambiar de harness o de system prompt no lo altera de forma confiable. Si usas una API, rigen además los términos de ese proveedor y sus clasificadores. Intentar torcer esas capas con texto es lo que se llama un <b>jailbreak</b>, y es un problema de seguridad del lado del que defiende: cómo funcionan las familias de ataque documentadas, por qué un sistema bien diseñado no depende de que el modelo resista, y cómo se mide, es M71.</p>
+
+<p>Para trabajo legítimo, como lo que hace DeepSec, los modelos actuales colaboran sin trucos si das contexto claro: "este es mi repositorio, busca vulnerabilidades para corregirlas". El contexto honesto es la vía que funciona.</p>
+
+<h2 id="local"><span class="sec-num">62.11</span>Modelos locales y open weights</h2>
+
+<p>Con <a href="../proyectos/ia00-laboratorio.html#ae-ollama">Ollama</a>, un modelo local es un servidor más en <code>localhost:11434</code>, en los dos dialectos. Lo que decide si sirve como agente es la memoria y la calidad. La cuenta de la memoria de los pesos es la de <a href="m13-gpus.html#sizing">M13</a>: parámetros por bytes por parámetro. En 4 bits (<a href="m14-cuantizacion.html#formatos">M14</a>) son unos 0.5 bytes por parámetro.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Modelo</th><th>Cuenta</th><th class="r">Pesos en 4 bits</th><th>¿Entra en 24 GB?</th></tr></thead>
+    <tbody>
+      <tr><td>8B denso</td><td>8 × 10<sup>9</sup> × 0.5 B</td><td class="r">4 GB</td><td>Sí, con lugar para el KV cache</td></tr>
+      <tr><td>32B denso</td><td>32 × 10<sup>9</sup> × 0.5 B</td><td class="r">16 GB</td><td>Justo: quedan unos 8 GB para el contexto</td></tr>
+      <tr><td>MoE de 1 billón con 32B activos (como Kimi K2)</td><td>10<sup>12</sup> × 0.5 B</td><td class="r">500 GB</td><td>No: los expertos inactivos también ocupan memoria</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f629t f629d">
+<title id="f629t">Cuánta memoria piden los pesos</title>
+<desc id="f629d">Barras de memoria solo para los pesos en 4 bits (medio byte por parámetro): un modelo de 8 mil millones pide unos 4 GB, uno de 32 mil millones unos 16 GB y un MoE de un billón de parámetros unos 500 GB, aunque solo active 32 mil millones por token; esa barra está cortada. La línea vertical marca 24 GB, una GPU de consumo grande.</desc>
+<defs><marker id="f629a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="160" y="63" text-anchor="end">8B denso</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="170" y="40" width="48" height="34" rx="6"/>
+<text class="dg-small" x="226" y="62" text-anchor="start">4 GB</text>
+<text class="dg-small" x="160" y="121" text-anchor="end">32B denso</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="170" y="98" width="192" height="34" rx="6"/>
+<text class="dg-small" x="370" y="120" text-anchor="start">16 GB</text>
+<text class="dg-small" x="160" y="179" text-anchor="end">MoE 1T (32B activos)</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="170" y="156" width="540" height="34" rx="6"/>
+<path class="dg-edge" d="M640 152 L632 194 M652 152 L644 194"/>
+<text class="dg-small" x="718" y="178" text-anchor="start">500 GB</text>
+<path class="dg-feedback" d="M458 32 L458 210"/>
+<text class="dg-tiny" x="464" y="26" text-anchor="start">24 GB: GPU de consumo grande</text>
+<text class="dg-tiny" x="14" y="236" text-anchor="start">Solo los pesos en 4 bits; el KV cache va aparte (M13). La barra de 500 GB está cortada.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 62.9.</b> La memoria de los pesos crece con los parámetros totales, no con los activos. Por eso Kimi o DeepSeek completos se usan por API (Moonshot, OpenRouter u otros que los sirven) aunque sus pesos sean públicos.</figcaption>
+</figure>
+
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Local te da privacidad total y costo cero por token. A cambio, los modelos que entran en una GPU de consumo (de 7B a 32B) son agentes claramente más flojos que los grandes: se pierden en tareas largas, repiten llamadas y llaman herramientas con argumentos mal formados. Para un harness como Claude Code, Ollama recomienda además un contexto de al menos 32K tokens <span class="badge badge--doc">Documentado</span>. Un uso sensato: el modelo local para lo que no puede salir de tu máquina y para experimentar sin gastar; uno grande por API para lo difícil.</p>
+</aside>
+
+<p>Servir modelos open weights con vLLM o llama.cpp, el formato GGUF, cuánta memoria piden de verdad los MoE y cómo se enruta por costo entre proveedores es M70.</p>
+
+<h2 id="elegir"><span class="sec-num">62.12</span>Cómo elegir: la primera pasada</h2>
+
+<p>No hay un "mejor harness" en abstracto; hay uno mejor para un caso. Estas preguntas descartan rápido, en este orden: <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Pregunta</th><th>Si la respuesta es sí</th></tr></thead>
+    <tbody>
+      <tr><td>¿El código no puede salir de tu red?</td><td>Un harness que hable con un servidor local o propio (OpenCode, Aider, Claude Code o Codex contra Ollama o vLLM), y modelos open weights</td></tr>
+      <tr><td>¿Necesitas varios proveedores o cambiar de modelo seguido?</td><td>Un harness multi-proveedor (OpenCode) o un gateway delante de cualquiera</td></tr>
+      <tr><td>¿Va a correr sin nadie mirando (CI, un <span class="no-autolink">orquestador</span>)?</td><td>Uno con modo headless, salida JSON y permisos declarativos: Claude Code (<code>-p</code>, Agent SDK) o Codex (<code>exec</code>)</td></tr>
+      <tr><td>¿Tu equipo necesita políticas comunes y auditables?</td><td>Uno con configuración versionada en el repositorio y hooks: reglas en <code>.claude/settings.json</code> o <code>.codex/config.toml</code></td></tr>
+      <tr><td>¿Quieres aislamiento por defecto sin montar contenedores?</td><td>Codex, con su sandbox del sistema operativo, o el sandbox opcional de Claude Code</td></tr>
+      <tr><td>¿Vives dentro del editor?</td><td>Cursor o la extensión de IDE de tu harness</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Después de esa pasada quedan dos o tres candidatos, y ahí la única respuesta honesta es medir: el mismo set de tareas tuyas, con cada combinación de harness y modelo, repetido varias veces (<a href="../proyectos/ia00-laboratorio.html#ae-pass-k">pass^k</a>). Cómo armar ese set y leer los resultados es M65.</p>
+
+<h2 id="fallas"><span class="sec-num">62.13</span>Qué falla</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Capa</th><th>Causa y arreglo</th></tr></thead>
+    <tbody>
+      <tr><td>Configuraste Moonshot y la factura llega de Anthropic</td><td>Harness</td><td>Hay otra credencial en juego. En Claude Code, <code>ANTHROPIC_AUTH_TOKEN</code> gana sobre <code>ANTHROPIC_API_KEY</code>, pero un login previo, un <code>apiKeyHelper</code> o una URL base que no se exportó cambian el resultado. Revisa <code>/status</code>: muestra la URL base y qué credencial está en uso <span class="badge badge--doc">Documentado</span></td></tr>
+      <tr><td><code>404</code> en todas las requests</td><td>Dialecto</td><td>La URL base es la del otro dialecto: <code>/v1</code> cuando el harness habla Messages, o al revés</td></tr>
+      <tr><td>Funciona el chat pero fallan las tareas de fondo</td><td>Harness</td><td>El harness usa un segundo modelo, más chico, para títulos o resúmenes, y ese id no existe en el proveedor. Configura también las variables de esos modelos</td></tr>
+      <tr><td>El id del modelo "no existe"</td><td>Servidor</td><td>Los ids cambian entre proveedores y versiones. Cópialo de la consola del proveedor, no de un blog</td></tr>
+      <tr><td>El agente local repite la misma llamada o inventa argumentos</td><td>Pesos</td><td>Modelo chico o cuantizado de más para tareas agénticas, o contexto demasiado corto. Sube el contexto; si sigue, cambia de modelo</td></tr>
+      <tr><td>El agente leyó <code>.env</code> aunque lo negaste</td><td>Harness y SO</td><td>La regla cubría la herramienta de lectura pero el agente usó otro camino. Las reglas no son un sandbox: deja los secretos fuera de la caja</td></tr>
+      <tr><td>Una corrida de <span class="no-autolink">orquestador</span> costó diez veces lo esperado</td><td><span class="no-autolink">Orquestador</span></td><td>Sin <code>--limit</code> ni tope de gasto, sobre miles de candidatos. Primera corrida siempre acotada; en CI, solo el diff</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Mandar tu código a un proveedor es publicarlo para ese proveedor: lo procesa bajo sus términos y su jurisdicción. Antes de apuntar un harness a una API nueva con un repositorio sensible, lee qué guarda, cuánto tiempo y si entrena con eso (<a href="m22-operar-modelos.html#datos-proveedor">M22</a>). Y ten presente que los proveedores de harnesses no dan soporte a endpoints de terceros: si algo falla con un modelo ajeno, el diagnóstico es tuyo.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m62"></div>
+<div data-exercise="m62-pila"></div>
+<div data-checkpoint="m62"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m62.data.js"></script>
+<script src="../assets/js/data/exercises/m62.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-harness.js"></script>
+</body>
+</html>

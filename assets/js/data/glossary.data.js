@@ -2787,5 +2787,28 @@ SD.defineGlossary([
   { id: 'sigstore', term: 'Sigstore', en: 'Sigstore', cat: 'seguridad', mods: ['m56'],
     deep: 'm56#firmas', aliases: ['cosign'],
     short: 'Firma de artefactos sin llaves de larga vida: Fulcio emite un certificado de minutos atado a una identidad OIDC, cosign firma y Rekor registra la firma en un registro de transparencia.',
-    related: ['provenance', 'firma-digital'] }
+    related: ['provenance', 'firma-digital'] },
+  /* ---------- M62: la pila de un agente ---------- */
+  { id: 'harness', term: 'Harness', en: 'Agent harness', cat: 'ia', mods: ['m62'], deep: 'm62#harness', aliases: ['harnesses'],
+    short: 'El programa que convierte un modelo en un agente: arma el prompt, describe las herramientas, ejecuta lo que el modelo pide, decide qué requiere permiso, gestiona el contexto y repite el bucle. Claude Code, Codex CLI y OpenCode son harnesses.', related: ['agente-ia', 'tool-calling', 'orquestador-agentes'] },
+  { id: 'servidor-inferencia', term: 'Servidor de inferencia', en: 'Inference server', cat: 'ia', mods: ['m62'], deep: 'm62#inferencia', aliases: ['servidores de inferencia'],
+    short: 'El programa que carga los pesos de un modelo en GPU o RAM y expone una API HTTP: Ollama, vLLM o llama.cpp en tu máquina, o la API de un proveedor en la nube.', related: ['dialecto-api', 'open-weights'] },
+  { id: 'open-weights', term: 'Open weights', en: 'Open-weight model', cat: 'ia', mods: ['m62'], deep: 'm62#modelo', aliases: ['pesos abiertos'],
+    short: 'Un modelo cuyos pesos se publican y se pueden descargar y servir, como Kimi, Qwen, DeepSeek o Llama. No implica código ni datos de entrenamiento abiertos, y cada uno trae su licencia.', related: ['servidor-inferencia', 'moe'] },
+  { id: 'dialecto-api', term: 'Dialecto de API', en: 'API dialect', cat: 'ia', mods: ['m62'], deep: 'm62#inferencia-dialectos', noauto: true, aliases: ['dialectos'],
+    short: 'El formato de las requests a un modelo. Casi todos los servidores hablan el de OpenAI (/v1/chat/completions) o el de Anthropic (/v1/messages). Si harness y servidor coinciden, basta cambiar la URL base.', related: ['gateway-llm', 'servidor-inferencia'] },
+  { id: 'gateway-llm', term: 'Gateway de LLM', en: 'LLM gateway', cat: 'ia', mods: ['m62'], deep: 'm62#inferencia-traductor', aliases: ['gateway de LLMs', 'proxy traductor'],
+    short: 'Un proxy entre las aplicaciones y los proveedores de modelos que traduce entre dialectos y suma claves por equipo, topes de gasto, logs y routing. LiteLLM es un ejemplo.', related: ['dialecto-api'] },
+  { id: 'orquestador-agentes', term: 'Orquestador de agentes', en: 'Agent orchestrator', cat: 'ia', mods: ['m62', 'm69'], deep: 'm69#por-que', aliases: ['orquestadores de agentes'],
+    short: 'Un programa que vive fuera de los harnesses y los lanza en modo headless, uno por tarea, con cola, estado, concurrencia, presupuesto y aislamiento, y junta los resultados. DeepSec es uno.', related: ['harness', 'modo-headless'] },
+  { id: 'modo-headless', term: 'Modo headless', en: 'Headless mode', cat: 'ia', mods: ['m62', 'm69'], deep: 'm69#headless', aliases: ['headless'],
+    short: 'Correr un harness sin interfaz, como un proceso más: el prompt entra como argumento y el resultado sale en texto o JSON, como claude -p o codex exec. Es lo que usan CI y los orquestadores.', related: ['orquestador-agentes'] },
+
+  /* ---------- M69: orquestadores ---------- */
+  { id: 'agent-sdk', term: 'Agent SDK', en: 'Agent SDK', cat: 'ia', mods: ['m69'], deep: 'm69#sdk', aliases: ['SDK del harness', 'Claude Agent SDK'],
+    short: 'El bucle, las herramientas y el manejo del contexto de un harness como librería de Python o TypeScript: se llama desde un programa y devuelve mensajes tipados en lugar de texto.', related: ['modo-headless', 'orquestador-agentes'] },
+  { id: 'claim-tarea', term: 'Claim de una tarea', en: 'Task claim', cat: 'ia', mods: ['m69'], deep: 'm69#estado-lease', aliases: ['reclamo de una tarea'],
+    short: 'Marcar de forma atómica que un worker tomó una tarea, para que ningún otro la investigue a la vez. Con un plazo (lease) que vence solo, una tarea de un worker muerto vuelve a estar disponible.', related: ['orquestador-agentes'] },
+  { id: 'revalidacion', term: 'Revalidación de hallazgos', en: 'Finding revalidation', cat: 'ia', mods: ['m69'], deep: 'm69#segunda', aliases: ['segunda opinión'],
+    short: 'Otro agente, con otro contexto, relee el código de un hallazgo y dice si es real, falso, ya arreglado o incierto. Baja los falsos positivos a un costo parecido al de investigar.', related: ['orquestador-agentes'] }
 ]);

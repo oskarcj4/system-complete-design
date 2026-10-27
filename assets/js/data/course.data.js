@@ -192,6 +192,36 @@ window.SD.course = {
         { id: 'cpg', num: 'CP-G', kind: 'checkpoint', title: 'Checkpoint G: el blue team de una startup', short: 'Checkpoint G', mins: 90, href: 'modules/checkpoint-g.html', status: 'soon',
           summary: 'Examen de la Parte VII y el programa de seguridad del primer año de una startup: threat model, pipeline, vulnerabilidades, detecciones y respuesta.' }
       ]
+    },
+    {
+      id: 'p8', label: 'Parte VIII', title: 'AI Engineering: modelos, harnesses y agentes', line: '--line-p8',
+      intro: 'La Parte II mira un LLM desde el proveedor y M25 explica qué es un agente. Esta parte es del lado de quien construye con ellos: qué pieza hace qué en la pila, cómo funciona un harness por dentro, cómo se elige y se configura, cómo se le da autonomía sin riesgo, cómo se orquestan muchos agentes, cómo se ataca y se defiende un modelo y cómo se mide un agente.',
+      items: [
+        { id: 'm62', num: 'M62', title: 'La pila de un agente', short: 'La pila de un agente', mins: 120, href: 'modules/m62-pila-agente.html', status: 'ready',
+          summary: 'Pesos, servidor de inferencia, harness e interfaz; los dialectos de OpenAI y Anthropic; el bucle mensaje por mensaje; un harness de 40 líneas; Claude Code, Codex, OpenCode y Cursor; extensiones contra orquestadores como DeepSec; las cuatro capas de control.' },
+        { id: 'm63', num: 'M63', title: 'Tool calling por dentro', short: 'Tool calling', mins: 100, href: 'modules/m63-tool-calling.html', status: 'soon',
+          summary: 'Chat templates, JSON Schema, decodificación restringida, llamadas en paralelo, stop reasons, streaming de argumentos y por qué unos modelos son mejores agentes.' },
+        { id: 'm64', num: 'M64', title: 'Anatomía de un harness', short: 'Anatomía de un harness', mins: 120, href: 'modules/m64-anatomia-harness.html', status: 'soon',
+          summary: 'System prompt por capas, herramientas de un agente de código, gestión del contexto, memoria y subagentes, con Claude Code, Codex, OpenCode y Aider como decisiones de diseño.' },
+        { id: 'm65', num: 'M65', title: 'Elegir un harness', short: 'Elegir un harness', mins: 90, href: 'modules/m65-elegir-harness.html', status: 'soon',
+          summary: 'Criterios, la matriz harness por modelo, cómo se evalúa con tareas propias y pass^k, y el árbol de decisión por caso.' },
+        { id: 'm66', num: 'M66', title: 'Permisos, sandbox y autonomía', short: 'Permisos y sandbox', mins: 120, href: 'modules/m66-permisos-sandbox.html', status: 'soon',
+          summary: 'Las cuatro capas de control, reglas y modos de permiso, Seatbelt y bubblewrap, devcontainers, egress, credenciales fuera de la caja y autonomía total dentro de una caja desechable.' },
+        { id: 'm67', num: 'M67', title: 'Extender un harness', short: 'Extender un harness', mins: 110, href: 'modules/m67-extender-harness.html', status: 'soon',
+          summary: 'MCP a fondo, skills, hooks, subagentes y plugins: qué es cada uno, cuándo conviene y cómo se combinan.' },
+        { id: 'm68', num: 'M68', title: 'Context engineering y memoria', short: 'Context engineering', mins: 100, href: 'modules/m68-context-engineering.html', status: 'soon',
+          summary: 'Qué entra en la ventana y en qué orden, búsqueda agéntica contra RAG, memoria entre sesiones, compactación y caché de prefijo.' },
+        { id: 'm69', num: 'M69', title: 'Orquestadores: agentes que lanzan agentes', short: 'Orquestadores', mins: 130, href: 'modules/m69-orquestadores.html', status: 'ready',
+          summary: 'Modo headless, Agent SDK, candidatos, fan-out, revalidación, cola y estado, presupuesto, aislamiento por tarea y DeepSec a fondo, con mapa.' },
+        { id: 'm70', num: 'M70', title: 'Modelos open weights y serving propio', short: 'Open weights', mins: 110, href: 'modules/m70-open-weights.html', status: 'soon',
+          summary: 'Ollama, llama.cpp y vLLM, GGUF, MoE como Kimi y DeepSeek, cuánta VRAM hace falta, gateways y routing por costo.' },
+        { id: 'm71', num: 'M71', title: 'Jailbreak, injection y red teaming', short: 'Jailbreak y red teaming', mins: 120, href: 'modules/m71-jailbreak-red-teaming.html', status: 'soon',
+          summary: 'Jailbreak contra prompt injection, las familias documentadas y por qué funcionan, defensas por capas, cómo se mide y el red teaming como proceso.' },
+        { id: 'm72', num: 'M72', title: 'Evals de agentes', short: 'Evals de agentes', mins: 100, href: 'modules/m72-evals-agentes.html', status: 'soon',
+          summary: 'Trayectorias, SWE-bench Verified y Terminal-Bench, pass^k, separar harness de modelo y el set de tareas propio.' },
+        { id: 'cph', num: 'CP-H', kind: 'checkpoint', title: 'Checkpoint H: la plataforma de agentes de un equipo', short: 'Checkpoint H', mins: 90, href: 'modules/checkpoint-h.html', status: 'soon',
+          summary: 'Examen de la Parte VIII y el diseño de la plataforma de agentes de un equipo: harness, modelos, permisos, extensiones, un orquestador de revisión, evals y presupuesto.' }
+      ]
     }
 
   ]

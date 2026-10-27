@@ -12,6 +12,7 @@ Curso web en español de diseño de sistemas reales:
 - **Parte IV:** ciberseguridad (M32–M38 y el Checkpoint E): firewalls, hardening de Linux, operación de SysAdmin, seguridad en bases de datos, criptografía, nube segura y Active Directory. Publicados M32 (firewalls), M33 (hardening de Linux), M34 (operación de SysAdmin), M35 (seguridad en bases de datos), M36 (criptografía desde cero), M37 (arquitecturas seguras en la nube) y M38 (Active Directory, cómo se ataca y cómo se defiende), más el Checkpoint E, que cierra la parte. La Parte IV está completa. Cuenta para el progreso. Plan detallado en `PLAN_SEGURIDAD.md`. Currículo en `PLAN.md`.
 - **Parte V:** manejo de pagos (M39 en adelante), del lado del comercio que cobra: las intuiciones de diseño (tablas, idempotencia, locks, webhooks, implementación propia y seguridad), no el código, que está en las guías A15, A27 y A28. Publicado M39 (manejo de pagos); M40 y M41 están propuestos en `PLAN.md`. Cuenta para el progreso.
 - **Parte VI:** ML System Design, sistemas de recomendación (M42–M53 y el Checkpoint F): método y métricas, datos, modelos clásicos, recuperación, ranking, exploración, grafos y amigos, experimentos, serving, engagement responsable y dos casos con mapa. Va al final de la ruta, después de la Fase 2, y cuenta para el progreso. Publicados M42 (el método de ML System Design), M43 (datos, eventos y features), M44 (modelos clásicos: popularidad, contenido y filtrado colaborativo), M45 (recuperación a escala: dos torres y búsqueda vectorial) y M46 (ranking: del modelo lineal al multi-tarea); el resto está como `soon`. Plan en `PLAN_ML_SYSTEM_DESIGN.md`, guías prácticas ML00–ML09 en `PLAN_ML_GUIAS.md` (como `mlTracks`): publicadas ML00 (el laboratorio de recomendación) y ML01 (la línea base: lo popular, bien medido), las demás `proposed`. Siguen las reglas de los tutoriales de AI Engineering, sin los dos modelos a la par: cada guía se mide con el laboratorio de ML00 contra la línea base de ML01.
+- **Parte VIII:** AI Engineering, modelos, harnesses y agentes (M62–M72 y el Checkpoint H): la pila de un agente, tool calling por dentro, anatomía y elección de un harness, permisos y sandbox, extensiones, context engineering, orquestadores (DeepSec), open weights, jailbreak y red teaming (solo conceptual y defensivo) y evals de agentes. Publicados M62 (la pila de un agente) y M69 (orquestadores: agentes que lanzan agentes); el resto está como `soon`. Plan en `PLAN_AI_ENGINEERING.md`, con las guías IA07 e IA08 propuestas. Cuenta para el progreso.
 - **Aplicación de conocimiento** (`proyectos.html` y `proyectos/`): tutoriales en Java y Spring Boot para construir lo de cada módulo, y al final de la página los tutoriales de AI Engineering, en Python (IA00, IA01, IA02…). Cada guía es una página en `proyectos/`, generada con `tools/mkguide.py`. Las reglas están en "De las guías de proyectos" y "De los tutoriales de AI Engineering".
 
 Es un sitio estático de HTML, CSS y JS vanilla, sin build ni dependencias. Funciona con doble clic (`file://`) y se publica en GitHub Pages con cada push a `main` (`.github/workflows/static.yml`).
@@ -389,7 +390,7 @@ SD.defineExercise('m06-planificador', {
 
 - Los scripts: `data/exercises/<id>.data.js` después de los datos del quiz, y `core/exercise.js` después de `core/quiz.js` (usa `SD.quizKit`). Con `mkpage.py`, alcanza con `"exercises": true` en el META; en una página existente se agregan a mano (así está en M18).
 - El glosario no enlaza dentro de `[data-exercise]`: los términos se explican en el texto del módulo.
-- Ejercicios publicados: uno en M02, siete en M06.1 (los datos siguen en `exercises/m06.data.js`), uno en M18, uno en M19, uno en M21, cinco en M22 (incidentes), uno en M23, uno en M24, uno en M25, uno en M12.1 (diagnóstico de una réplica lenta), uno en M33, uno en M34 (diagnosticar un servidor lento), uno en M36 (criptografía de una API con datos sensibles), uno en M37 (endurecer la arquitectura de un SaaS en la nube), uno en M38 (auditar un dominio y cerrar sus rutas a tier 0), uno en M39 (`m39-festival`, la venta de entradas de un festival), uno en M31 (`m31-clase`, las clases del clon de Docs) uno en M42 (`m42-metricas`, las métricas de "personas que quizás conozcas") uno en M43 (`m43-eventos`, el registro de "comprados juntos"), uno en M44 (`m44-comprados`, el modelo de "comprados juntos"), uno en M45 (`m45-indice`, el índice de vecinos) y uno en M46 (`m46-pesos`, el ranker del feed).
+- Ejercicios publicados: uno en M02, siete en M06.1 (los datos siguen en `exercises/m06.data.js`), uno en M18, uno en M19, uno en M21, cinco en M22 (incidentes), uno en M23, uno en M24, uno en M25, uno en M12.1 (diagnóstico de una réplica lenta), uno en M33, uno en M34 (diagnosticar un servidor lento), uno en M36 (criptografía de una API con datos sensibles), uno en M37 (endurecer la arquitectura de un SaaS en la nube), uno en M38 (auditar un dominio y cerrar sus rutas a tier 0), uno en M39 (`m39-festival`, la venta de entradas de un festival), uno en M31 (`m31-clase`, las clases del clon de Docs) uno en M42 (`m42-metricas`, las métricas de "personas que quizás conozcas") uno en M43 (`m43-eventos`, el registro de "comprados juntos"), uno en M44 (`m44-comprados`, el modelo de "comprados juntos"), uno en M45 (`m45-indice`, el índice de vecinos) uno en M46 (`m46-pesos`, el ranker del feed) uno en M62 (`m62-pila`, la pila de agentes de un equipo) y uno en M69 (`m69-orq`, un bot que revisa los PR de 40 repositorios).
 
 ### Quiz y checkpoint
 
@@ -434,9 +435,9 @@ Categorías (`SD.catNames` en `glossary.js`): `metodo`, `redes`, `datos`, `distr
   - cada nodo tiene cinco pestañas: `info.resp`, `info.api`, `info.data`, `info.fail` e `info.nums`, y puede llevar `brief`, una frase de qué hace, que aparece en su detalle y como tooltip en el lienzo (sin `brief`, el tooltip muestra `sub`);
   - `scenarios` con `steps` de la forma `{from, to | at, kind, tag, ms, title, text, code, lang, down, up}`;
   - enlaces directos: `#node=<id>&scenario=<id>&step=<n>`.
-  - `stepPanel: true` en la definición hace que el panel lateral explique el escenario y el paso actual (ruta entre nodos, texto, payload y la lista de pasos) en lugar de la ayuda del mapa; abajo queda solo el título del paso. Lo usan M09 (`m09-objetos`), M10 (`m10-identidad`), M19 (`m19-flota`), M21 (`m21-metering`), M24 (`m24-voz`), M27 (`m27-pagos`), M39 (`m39-flujo`) y el mapa de ChatGPT (`chatgpt`). Con `stepPanel`, el detalle de un nodo trae "← Volver al escenario", y en pantalla completa con el panel al costado se oculta también el título del paso de abajo, para que el lienzo gane alto.
+  - `stepPanel: true` en la definición hace que el panel lateral explique el escenario y el paso actual (ruta entre nodos, texto, payload y la lista de pasos) en lugar de la ayuda del mapa; abajo queda solo el título del paso. Lo usan M09 (`m09-objetos`), M10 (`m10-identidad`), M19 (`m19-flota`), M21 (`m21-metering`), M24 (`m24-voz`), M27 (`m27-pagos`), M39 (`m39-flujo`), M69 (`m69-deepsec`) y el mapa de ChatGPT (`chatgpt`). Con `stepPanel`, el detalle de un nodo trae "← Volver al escenario", y en pantalla completa con el panel al costado se oculta también el título del paso de abajo, para que el lienzo gane alto.
   - Con `stepPanel`, el panel muestra arriba el título del mapa y "Escenario N de M". Campos opcionales para nivel Jr: `why` en cada nodo (HTML, "Por qué existe": qué pasaría sin la pieza; va arriba de las pestañas), `goal` en cada escenario ("Qué vas a ver") y `why` en cada paso ("Por qué así"). Lo usa M21 (`m21-metering`).
-  - `pieces: true` suma al panel la lista plegable "Qué hace cada pieza": los nodos agrupados según el grupo que contiene su centro, cada uno con su `brief`. Marca las piezas del paso actual, resalta el nodo en el lienzo al pasar el mouse o con el foco, abre su detalle con un clic y recuerda si el lector la abrió o la cerró. Lo usan M19, M21, M24, M27, M39 y el mapa de ChatGPT.
+  - `pieces: true` suma al panel la lista plegable "Qué hace cada pieza": los nodos agrupados según el grupo que contiene su centro, cada uno con su `brief`. Marca las piezas del paso actual, resalta el nodo en el lienzo al pasar el mouse o con el foco, abre su detalle con un clic y recuerda si el lector la abrió o la cerró. Lo usan M19, M21, M24, M27, M39, M69 y el mapa de ChatGPT.
 - Deja pasillos de unos 150 px entre columnas de nodos para que las etiquetas de las aristas no se pisen.
 - El encuadre (`fit` y `home`) reserva 104 px abajo cuando el lienzo mide más de 640 px de ancho, para que el minimapa y la ayuda no tapen nodos. En pantalla completa con menos de 1000 px de ancho, el panel va debajo: el lienzo mide `max(320px, 64vh)` y el resto se desplaza.
 - **Mapa gigante de ChatGPT:** `maps/chatgpt.html` es la primera página de mapa suelta (no embebida en un módulo), en la carpeta `maps/`. Se arma como un módulo pero sin quiz ni checkpoint (`data-module="map-chatgpt"`, `data-root="../"`, scripts `map/map-engine.js` y `map/flow-sim.js`); sus datos están en `assets/js/data/maps/chatgpt.data.js` (24 nodos, 27 aristas y 9 escenarios: cliente y borde a la izquierda, chatapi al centro, inferencia a la derecha, datos y colas abajo, con Kafka sola en su fila, e imágenes en el extremo derecho). Es `kind: 'map'` en `course.data.js`, así que no cuenta para el progreso. Regla de sus escenarios: cada salto usa una arista real y la vuelta reusa la misma arista (`both: true`); no hay saltos sin arista.
@@ -498,6 +499,8 @@ Categorías (`SD.catNames` en `glossary.js`): `metodo`, `redes`, `datos`, `distr
 | `data-sim="leakage"`, `"posbias"` | `widgets/sim-events.js` | Fuga del futuro: el mismo modelo logístico entrenado con la feature point-in-time y con la del mes entero, con su AUC offline y "en producción" según las impresiones por ítem y día (datos sintéticos con semilla); y el sesgo de posición con el modelo de examen, el CTR observado y el corregido por propensión; lógica en `SD.eventsCore`; estilos `.ev-chart` (M43) |
 | `data-sim="hnsw"`, `data-calc="annsize"` | `widgets/sim-ann.js` | Un HNSW de juguete con 60 puntos y tres pisos: la búsqueda golosa piso por piso con efSearch y M elegibles, las distancias calculadas y el vecino exacto; y cuánto ocupa un índice de N vectores de d dimensiones (plano, HNSW, IVF e IVF-PQ) y cuánto lee cada consulta; lógica en `SD.annCore` (M45) |
 | `data-sim="ndcg"`, `"calib"`, `data-calc="multiobj"` | `widgets/sim-rank.js` | NDCG, precisión y recall en k sobre una lista que se reordena con flechas y relevancias editables; calibración con 6 000 impresiones sintéticas (tres modelos, cuatro correcciones, ECE, log loss y AUC, con el diagrama de fiabilidad); y cinco probabilidades combinadas en un puntaje con tres juegos de pesos (los de Twitter de 2023); lógica en `SD.rankCore`; estilos `.rk-plot`, `.rk-table` y `.rk-bar` (M46) |
+| `data-sim="stack"` | `widgets/sim-harness.js` | Arma una pila con un harness (Claude Code, Codex CLI, OpenCode o uno propio) y un servidor (Anthropic, Moonshot en los dos dialectos, OpenAI, Ollama, OpenRouter): dibuja el camino, dice si la conexión es directa o necesita traductor, a dónde va el código y la configuración; lógica en `SD.harnessCore`; estilos `.hs-*` (M62) |
+| `data-calc="orqrun"` | `widgets/sim-orq.js` | Cuánto dura y cuánto cuesta una corrida de un orquestador: archivos, tamaño de lote, lotes a la vez, minutos, USD y llamadas por lote, límite de requests por minuto y tope de gasto; calcula la concurrencia que aguanta el límite, la duración, el gasto con el sobrepaso de los lotes en vuelo y cuántos archivos se revisan; cuatro presets; lógica en `SD.orqCore` (M69) |
 | `data-calc="bom" data-preset="m21\|m23\|m24\|m25\|m27\|m28\|m29\|m30\|m31"`, `data-calc="gateways"` | `widgets/sim-infra.js` | Factura mensual en AWS y dimensionamiento de gateways (módulos a fondo y casos de estudio) |
 
 Para escribir un widget nuevo:
@@ -552,6 +555,7 @@ ia-system-desing
 │   glosario.html
 │   index.html
 │   PLAN.md
+│   PLAN_AI_ENGINEERING.md
 │   PLAN_ML_GUIAS.md
 │   PLAN_ML_SYSTEM_DESIGN.md
 │   PROGRESO.md
@@ -611,6 +615,8 @@ ia-system-desing
 │       │   │       m44.data.js
 │       │   │       m45.data.js
 │       │   │       m46.data.js
+│       │   │       m62.data.js
+│       │   │       m69.data.js
 │       │   │
 │       │   ├───maps
 │       │   │       chatgpt.data.js
@@ -626,6 +632,7 @@ ia-system-desing
 │       │   │       m30-twitter.data.js
 │       │   │       m31-docs.data.js
 │       │   │       m39-flujo.data.js
+│       │   │       m69-deepsec.data.js
 │       │   │
 │       │   ├───projects
 │       │   │       a00.data.js
@@ -705,6 +712,8 @@ ia-system-desing
 │       │           m44.data.js
 │       │           m45.data.js
 │       │           m46.data.js
+│       │           m62.data.js
+│       │           m69.data.js
 │       │
 │       ├───map
 │       │       flow-sim.js
@@ -736,6 +745,7 @@ ia-system-desing
 │               sim-crypto.js
 │               sim-firewall.js
 │               sim-harden.js
+│               sim-harness.js
 │               sim-gpu.js
 │               sim-http.js
 │               sim-infra.js
@@ -748,6 +758,7 @@ ia-system-desing
 │               sim-meter.js
 │               sim-modelops.js
 │               sim-obs.js
+│               sim-orq.js
 │               sim-pay.js
 │               sim-quant.js
 │               sim-quota.js
@@ -824,6 +835,8 @@ ia-system-desing
 │       m44-modelos-clasicos.html
 │       m45-recuperacion.html
 │       m46-ranking.html
+│       m62-pila-agente.html
+│       m69-orquestadores.html
 │
 ├───proyectos
 │       a00-laboratorio.html

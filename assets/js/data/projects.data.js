@@ -207,7 +207,15 @@ SD.data.projects = {
         { id: 'ia06', num: 'IA06', title: 'Un agente de voz', tier: 'extra', status: 'proposed', repo: '', mods: ['m24', 'm25'], front: false,
           excuse: 'Una línea que agenda citas por teléfono.',
           learn: 'STT, modelo y TTS en streaming, fin de turno, interrupciones con truncado, herramientas con aprobación y el presupuesto de latencia medido de punta a punta.',
-          stack: ['WebRTC', 'STT y TTS', 'LangGraph'] }
+          stack: ['WebRTC', 'STT y TTS', 'LangGraph'] },
+        { id: 'ia07', num: 'IA07', title: 'Tu propio harness', tier: 'core', status: 'proposed', repo: '', mods: ['m62', 'm25'], front: false,
+          excuse: 'Las 40 líneas de M62, convertidas en un harness de verdad.',
+          learn: 'Herramientas para leer y editar por reemplazo exacto, permisos allow, ask y deny, recorte y compactación del contexto, los dos dialectos de API y todo dentro de un contenedor; probado con un modelo falso y medido con Claude y con un modelo de Ollama.',
+          stack: ['Python 3.13', 'uv', 'Claude', 'Ollama', 'Docker', 'pytest'] },
+        { id: 'ia08', num: 'IA08', title: 'Un mini-DeepSec', tier: 'core', status: 'proposed', repo: '', mods: ['m62', 'm25', 'm55'], front: false,
+          excuse: 'Un orquestador que lanza un agente por cada línea sospechosa de tu código.',
+          learn: 'Candidatos con regex, una cola en SQLite, un harness headless por candidato dentro de Docker con la credencial fuera, presupuesto por corrida, reanudación, revalidación y exportación a Markdown, sobre una víctima con vulnerabilidades sembradas.',
+          stack: ['Python 3.13', 'Claude Code headless', 'Docker', 'SQLite'] }
       ]
     }
   ],

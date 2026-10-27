@@ -221,6 +221,25 @@ Va al final de la ruta, después de la Parte VI. **Cuenta para el progreso.** Co
 | M61 | **Seguridad de red y del correo** | Zeek y Suricata, DNS como señal, JA4, SPF, DKIM, DMARC, MTA-STS |
 | **CP-G** | **Checkpoint G** | Examen y el programa de seguridad del primer año de una startup |
 
+### Parte VIII: AI Engineering, modelos, harnesses y agentes
+
+Plan detallado en `PLAN_AI_ENGINEERING.md` (fuentes verificadas, regla de seguridad de la parte y las guías IA07 e IA08).
+
+| Módulo | Título | Contenido |
+|---|---|---|
+| M62 | **La pila de un agente** | Pesos, servidor de inferencia, dialectos, harness e interfaz; el bucle; un harness de 40 líneas; harnesses comparados; extensiones contra orquestadores (DeepSec); las cuatro capas de control; modelos locales |
+| M63 | **Tool calling por dentro** | Chat templates, JSON Schema, decodificación restringida, llamadas en paralelo, stop reasons, por qué unos modelos son mejores agentes |
+| M64 | **Anatomía de un harness** | System prompt por capas, herramientas de un agente de código, contexto, memoria y subagentes |
+| M65 | **Elegir un harness** | Criterios, matriz harness por modelo, evaluar con tareas propias y pass^k, árbol de decisión |
+| M66 | **Permisos, sandbox y autonomía** | Cuatro capas, reglas y modos, Seatbelt y bubblewrap, devcontainers, egress, credenciales fuera de la caja |
+| M67 | **Extender un harness** | MCP a fondo, skills, hooks, subagentes y plugins |
+| M68 | **Context engineering y memoria** | Qué entra en la ventana, búsqueda agéntica contra RAG, memoria, compactación, caché de prefijo |
+| M69 | **Orquestadores** | Headless, Agent SDK, candidatos, fan-out, cola y estado, presupuesto, aislamiento por tarea, DeepSec a fondo; con mapa |
+| M70 | **Open weights y serving propio** | Ollama, llama.cpp, vLLM, GGUF, MoE, VRAM, gateways y routing |
+| M71 | **Jailbreak, injection y red teaming** | Familias documentadas, por qué funcionan, defensas por capas, cómo se mide; sin prompts que funcionen |
+| M72 | **Evals de agentes** | Trayectorias, SWE-bench Verified, Terminal-Bench, pass^k, separar harness de modelo |
+| **CP-H** | **Checkpoint H** | La plataforma de agentes de un equipo |
+
 ---
 
 ## 3. Checkpoints de construcción
@@ -246,6 +265,7 @@ En cada checkpoint **me detengo** para que abras el sitio en el navegador y lo r
 | **CP13** | Parte IV: Ciberseguridad (M32–M38 + Checkpoint E). Publicados M32–M38 y el Checkpoint E; la Parte IV está completa | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 | **CP14** | Parte V: Manejo de pagos (M39 en adelante). Publicado M39; M40 y M41 propuestos | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 | **CP15** | Parte VII: Blue Team y DevSecOps (M54–M61 + Checkpoint G) y la serie SEC00–SEC08 | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
+| **CP16** | Parte VIII: AI Engineering (M62–M72 + Checkpoint H) y las guías IA07 e IA08. Publicado M62 | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 
 ---
 
