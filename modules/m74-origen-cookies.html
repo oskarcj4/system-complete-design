@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M74. Origen, sitio y cookies</title>
+<meta name="description" content="Las dos fronteras que usa el navegador para decidir: el origen (qué puede leer tu JavaScript) y el sitio (qué cookies viajan). La Same-Origin Policy, cada atributo de una cookie, SameSite, los prefijos __Host- y cómo se escribe todo con setcookie en PHP.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m74">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Origen, sitio y cookies</h1>
+        <p class="lead">El navegador no confía en nadie por defecto, pero tampoco bloquea todo: deja enviar y no deja leer, y manda tus cookies según de dónde salga la request. Casi todo CORS, CSRF y el robo de sesiones sale de estas dos reglas.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M74</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>90 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M73</dd></div>
+          <div><dt>Estado</dt><dd data-status="m74">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Decir si dos URL son del mismo origen y del mismo sitio, y por qué la diferencia importa.</li>
+    <li>Explicar qué bloquea la Same-Origin Policy (leer) y qué deja pasar (enviar e incrustar).</li>
+    <li>Leer un <code>Set-Cookie</code> atributo por atributo y predecir a qué requests se agrega la cookie.</li>
+    <li>Elegir entre <code>SameSite=Strict</code>, <code>Lax</code> y <code>None</code>, y usar los prefijos <code>__Host-</code> y <code>__Secure-</code>.</li>
+    <li>Escribir la cookie de sesión de un sistema en PHP con <code>setcookie</code> y encontrar los errores típicos.</li>
+  </ul>
+</section>
+
+<p>En <a href="m73-navegador.html#viaje">M73</a> viste que el <code>fetch</code> del frontend lleva la cookie de la sesión sin que tu código la agregue. Este módulo explica cómo decide eso el navegador. Usa dos fronteras distintas que suenan parecidas: el <b>origen</b>, que decide qué puede <i>leer</i> tu JavaScript, y el <b>sitio</b>, que decide qué cookies <i>viajan</i>. Confundirlas es la causa de la mitad de los malentendidos sobre CORS y CSRF.</p>
+
+<h2 id="origen"><span class="sec-num">74.1</span>El origen: esquema, host y puerto</h2>
+<p>El <dfn data-term="origen-web">origen</dfn> de una URL son tres piezas: el esquema (<code>http</code> o <code>https</code>), el host y el puerto. Dos URL son del mismo origen si las tres coinciden. La ruta, la consulta y el fragmento no cuentan <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 200" role="img" aria-labelledby="f741t f741d">
+<title id="f741t">Las partes de una URL que forman el origen</title>
+<desc id="f741d">La URL https://app.practicas.edu.gt:443/ofertas?id=7 partida en esquema, host, puerto, ruta y consulta. Las tres primeras forman el origen; la ruta y la consulta no cuentan.</desc>
+<defs><marker id="f741a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="40" width="120" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="74.0" y="67.0" text-anchor="middle">https://</text>
+<text class="dg-tiny" x="74.0" y="106" text-anchor="middle">esquema</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="138" y="40" width="236" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="256.0" y="67.0" text-anchor="middle">app.practicas.edu.gt</text>
+<text class="dg-tiny" x="256.0" y="106" text-anchor="middle">host</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="378" y="40" width="70" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="413.0" y="67.0" text-anchor="middle">:443</text>
+<text class="dg-tiny" x="413.0" y="106" text-anchor="middle">puerto</text>
+<rect class="dg-box" x="452" y="40" width="150" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="527.0" y="67.0" text-anchor="middle">/ofertas</text>
+<text class="dg-tiny" x="527.0" y="106" text-anchor="middle">ruta</text>
+<rect class="dg-box" x="606" y="40" width="150" height="46" rx="8"/>
+<text class="dg-small dg-mono" x="681.0" y="67.0" text-anchor="middle">?id=7</text>
+<text class="dg-tiny" x="681.0" y="106" text-anchor="middle">consulta</text>
+<path class="dg-feedback" d="M14 122 L14 132 L448 132 L448 122"/>
+<text class="dg-small" x="231" y="152" text-anchor="middle">origen: esquema + host + puerto</text>
+<path class="dg-feedback" d="M452 122 L452 132 L756 132 L756 122"/>
+<text class="dg-small" x="604" y="152" text-anchor="middle">no forman parte del origen</text>
+<text class="dg-tiny" x="385" y="186" text-anchor="middle">si falta el puerto, se usa el del esquema: 80 para http, 443 para https</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 74.1.</b> Una URL en partes. El origen es lo azul, verde y naranja; <code>/ofertas?id=7</code> no cambia el origen.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Comparada con <code>http://localhost/SistemaControlPracticas/</code></th><th>¿Mismo origen?</th><th>Por qué</th></tr></thead>
+    <tbody>
+      <tr><td><code>http://localhost/SistemaControlPracticas/api/endpoints/roles.php</code></td><td>Sí</td><td>Solo cambia la ruta</td></tr>
+      <tr><td><code>https://localhost/SistemaControlPracticas/</code></td><td>No</td><td>Otro esquema (y otro puerto, 443)</td></tr>
+      <tr><td><code>http://localhost:8080/</code></td><td>No</td><td>Otro puerto</td></tr>
+      <tr><td><code>http://127.0.0.1/SistemaControlPracticas/</code></td><td>No</td><td>Otro host, aunque sea la misma máquina</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>El último caso sorprende: <code>localhost</code> y <code>127.0.0.1</code> llegan al mismo Apache, pero para el navegador son orígenes distintos, con cookies y almacenamiento separados. Por eso, si inicias sesión en uno y pruebas en el otro, "se pierde" la sesión.</p>
+
+<h2 id="sitio"><span class="sec-num">74.2</span>El sitio: el dominio que se registra</h2>
+<p>El <dfn data-term="mismo-sitio">sitio</dfn> es una frontera más ancha. Es el esquema más el dominio registrable: la parte del host que alguien compra, también llamada eTLD+1. <code>app.practicas.edu.gt</code> y <code>api.practicas.edu.gt</code> son orígenes distintos pero el mismo sitio, <code>https://practicas.edu.gt</code> <span class="badge badge--doc">Documentado</span>.</p>
+<p>¿Cómo sabe el navegador que el dominio registrable es <code>practicas.edu.gt</code> y no <code>edu.gt</code>? Por la <dfn data-term="public-suffix-list">Public Suffix List</dfn>: una lista pública de sufijos bajo los cuales cualquiera registra nombres (<code>com</code>, <code>edu.gt</code>, <code>co.uk</code>, y también <code>github.io</code> o <code>vercel.app</code>). El sitio es el sufijo público más una etiqueta <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f742t f742d">
+<title id="f742t">Origen contra sitio</title>
+<desc id="f742d">El sitio https://practicas.edu.gt contiene tres orígenes: app, api y el dominio sin subdominio, todos por https. Fuera queda http://app.practicas.edu.gt, que tiene otro esquema, y beto.github.io, que es otro sitio porque github.io es un sufijo público.</desc>
+<defs><marker id="f742a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="30" width="520" height="190" rx="12"/>
+<text class="dg-small" x="274" y="52" text-anchor="middle">sitio: https://practicas.edu.gt (edu.gt es sufijo público)</text>
+<rect class="dg-box" x="34" y="70" width="480" height="38" rx="8"/>
+<text class="dg-small dg-mono" x="274.0" y="93.0" text-anchor="middle">https://app.practicas.edu.gt</text>
+<rect class="dg-box" x="34" y="118" width="480" height="38" rx="8"/>
+<text class="dg-small dg-mono" x="274.0" y="141.0" text-anchor="middle">https://api.practicas.edu.gt</text>
+<rect class="dg-box" x="34" y="166" width="480" height="38" rx="8"/>
+<text class="dg-small dg-mono" x="274.0" y="189.0" text-anchor="middle">https://practicas.edu.gt</text>
+<rect class="dg-bad" x="560" y="40" width="196" height="60" rx="8"/>
+<text class="dg-tiny dg-mono" x="658.0" y="66.5" text-anchor="middle">http://app.practicas…</text>
+<text class="dg-tiny" x="658.0" y="81.5" text-anchor="middle">otro esquema: otro sitio</text>
+<rect class="dg-bad" x="560" y="130" width="196" height="60" rx="8"/>
+<text class="dg-tiny dg-mono" x="658.0" y="156.5" text-anchor="middle">https://beto.github.io</text>
+<text class="dg-tiny" x="658.0" y="171.5" text-anchor="middle">github.io es sufijo público</text>
+<text class="dg-tiny" x="274" y="246" text-anchor="middle">mismo origen: esquema, host y puerto iguales</text>
+<text class="dg-tiny" x="274" y="266" text-anchor="middle">mismo sitio: mismo esquema y mismo dominio registrable (eTLD+1)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 74.2.</b> Un sitio con tres orígenes. <code>beto.github.io</code> no es "un subdominio de github.io": como <code>github.io</code> está en la lista, cada usuario es su propio sitio.</figcaption>
+</figure>
+
+<p>Desde 2020 la definición incluye el esquema (<i>schemeful same-site</i>): <code>http://app.practicas.edu.gt</code> y <code>https://app.practicas.edu.gt</code> son sitios distintos en Chrome <span class="badge badge--doc">Documentado</span>. Y dos detalles de tu máquina: <code>localhost</code> no tiene sufijo público, así que <code>http://localhost</code> y <code>http://localhost:8080</code> son <b>el mismo sitio</b> aunque sean orígenes distintos (el puerto no cuenta para el sitio). Una aplicación en otro puerto de tu máquina no es "otro sitio" para las cookies. Por eso la guía WEB00 monta el sitio atacante del laboratorio con otro nombre de host, no con otro puerto.</p>
+<p class="more-link">Lo que decide cada frontera: el origen, en la Same-Origin Policy (74.3) y en CORS (<a href="m75-cors.html#por-que">M75</a>); el sitio, en SameSite (74.6) y en CSRF (M76).</p>
+
+<h2 id="sop"><span class="sec-num">74.3</span>La Same-Origin Policy: enviar sí, leer no</h2>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es el correo postal. Cualquiera puede mandar una carta a cualquier dirección, y el cartero la entrega. Lo que no puede es abrir el buzón de otra casa y leer lo que llegó ahí.</p>
+</aside>
+<p>La <dfn data-term="same-origin-policy">Same-Origin Policy</dfn> es la regla base del navegador: el JavaScript de un origen no puede <b>leer</b> lo que pertenece a otro origen, ni sus respuestas, ni su DOM, ni su almacenamiento <span class="badge badge--doc">Documentado</span>. Lo que la política <b>no</b> impide es enviar: una página de otro sitio puede mandar un formulario a tu API, incrustar tus imágenes o hacer un <code>fetch</code> que sale y llega a tu servidor.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f743t f743d">
+<title id="f743t">Qué bloquea la Same-Origin Policy</title>
+<desc id="f743d">A la izquierda, lo que una página de otro origen sí puede hacer: enviar requests, mandar formularios, incrustar imágenes, scripts, estilos e iframes, y navegar. A la derecha, lo que no puede sin permiso: leer la respuesta de un fetch, leer el DOM de un iframe de otro origen, leer los bytes de una imagen y leer el almacenamiento de otro origen.</desc>
+<defs><marker id="f743a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="14" y="20" width="360" height="220" rx="8"/>
+<text class="dg-small" x="194" y="44" text-anchor="middle">Se puede: enviar e incrustar</text>
+<text class="dg-tiny" x="34" y="78" text-anchor="start">✓ mandar un formulario a otro origen</text>
+<text class="dg-tiny" x="34" y="108" text-anchor="start">✓ hacer un fetch (sale, con cookies si viajan)</text>
+<text class="dg-tiny" x="34" y="138" text-anchor="start">✓ incrustar &lt;img&gt;, &lt;script&gt;, &lt;link&gt;, &lt;iframe&gt;</text>
+<text class="dg-tiny" x="34" y="168" text-anchor="start">✓ navegar a otro origen con un enlace</text>
+<text class="dg-tiny" x="34" y="198" text-anchor="start">✓ mandar un postMessage a otra ventana</text>
+<rect class="dg-bad" x="396" y="20" width="360" height="220" rx="8"/>
+<text class="dg-small dg-fail-text" x="576" y="44" text-anchor="middle">No se puede sin permiso: leer</text>
+<text class="dg-tiny" x="416" y="78" text-anchor="start">✕ leer la respuesta de un fetch</text>
+<text class="dg-tiny" x="416" y="108" text-anchor="start">✕ leer el DOM de un iframe de otro origen</text>
+<text class="dg-tiny" x="416" y="138" text-anchor="start">✕ leer los bytes de una imagen de otro origen</text>
+<text class="dg-tiny" x="416" y="168" text-anchor="start">✕ leer localStorage o cookies de otro origen</text>
+<text class="dg-tiny" x="576" y="214" text-anchor="middle">el permiso para leer lo da CORS (M75)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 74.3.</b> Lo que la Same-Origin Policy deja y lo que bloquea. La columna izquierda es la razón de ser de CSRF; la derecha, la de CORS.</figcaption>
+</figure>
+
+<p>Esta asimetría es la idea más importante del módulo. Un <code>fetch</code> de otro origen hacia tu API <b>sale</b>, llega al servidor y el servidor lo ejecuta; el navegador solo esconde la respuesta al JavaScript que la pidió. Si esa request cambia algo (crea una postulación, borra una oferta), el cambio ya ocurrió. La Same-Origin Policy protege la <i>confidencialidad</i> de tus respuestas, no la <i>integridad</i> de tu servidor. Para eso están las defensas de M76.</p>
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un error típico es leer "CORS bloqueó la request" en la consola y concluir que el servidor no la recibió. La recibió. Mira el log de Apache: la línea del <code>POST</code> está ahí, con su código 200. Lo que se bloqueó es la lectura (<a href="m75-cors.html#simple">M75</a>).</p>
+</aside>
+
+<h2 id="cookies"><span class="sec-num">74.4</span>Qué es una cookie y cómo viaja</h2>
+<p>Una cookie es un par nombre y valor que el servidor le pide al navegador guardar, con la cabecera <code>Set-Cookie</code>. Desde ahí, el navegador la agrega sola, en la cabecera <code>Cookie</code>, a cada request que cumpla sus reglas. Tu código no la pone: la pone el navegador, y eso es tanto la comodidad como el riesgo.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 444" role="img" aria-labelledby="f744t f744d">
+<title id="f744t">Una cookie viaja sola</title>
+<desc id="f744d">El servidor responde al login con Set-Cookie. El navegador la guarda asociada al sitio. Después la agrega sola a cada request a ese sitio: la del propio frontend y también la que dispara un formulario de otro sitio, según su atributo SameSite.</desc>
+<defs><marker id="f744-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f744-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f744-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f744-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador</text>
+<path class="dg-frame" d="M70.0 40 V434"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Almacén de cookies</text>
+<path class="dg-frame" d="M280.0 40 V434"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">API (localhost)</text>
+<path class="dg-frame" d="M490.0 40 V434"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Otro sitio</text>
+<path class="dg-frame" d="M700.0 40 V434"/>
+<path class="dg-edge" d="M73.0 72 L485.0 72" marker-end="url(#f744-a)"/>
+<rect x="155.2" y="55" width="249.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="66" text-anchor="middle">POST login.php (usuario, contraseña)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 106 L75.0 106" marker-end="url(#f744-r)"/>
+<rect x="109.0" y="89" width="342.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="100" text-anchor="middle">200 + Set-Cookie: sesion=…; HttpOnly; SameSite=Lax</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M73.0 140 L275.0 140" marker-end="url(#f744-q)"/>
+<rect x="66.7" y="123" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="134" text-anchor="middle">guarda la cookie para localhost</text>
+<path class="dg-edge" d="M73.0 174 L485.0 174" marker-end="url(#f744-a)"/>
+<rect x="122.20000000000002" y="157" width="315.59999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="168" text-anchor="middle">fetch GET oportunidades.php + Cookie: sesion=…</text>
+<rect x="187.0" y="194" width="293" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="197.0" y="210">el servidor la verifica con hash_equals</text>
+<path d="M20 240 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="229" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="244" text-anchor="middle" style="fill:var(--fail)">el usuario abre otra pestaña</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 276 L75.0 276" marker-end="url(#f744-r)"/>
+<rect x="256.9" y="259" width="256.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">página con un formulario hacia la API</text>
+<path class="dg-edge" d="M73.0 310 L275.0 310" marker-end="url(#f744-a)"/>
+<rect x="63.400000000000006" y="293" width="223.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="304" text-anchor="middle">¿la cookie viaja a este destino?</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 344 L75.0 344" marker-end="url(#f744-r)"/>
+<rect x="83.2" y="327" width="183.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="338" text-anchor="middle">depende de SameSite (74.6)</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M73.0 378 L485.0 378" marker-end="url(#f744-f)"/>
+<rect x="151.9" y="361" width="256.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="372" text-anchor="middle">POST postulaciones.php (¿con cookie?)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 74.4.</b> Una cookie desde que se fija hasta que viaja. En la segunda mitad la request sale de otra pestaña, de otro sitio; si la cookie va o no lo decide su atributo <code>SameSite</code>.</figcaption>
+</figure>
+
+<p>La respuesta del login fija la cookie:</p>
+<pre data-lang="http"><code>HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Set-Cookie: __Host-sesion=eyJpZCI6N30|9f2c…; Path=/; Max-Age=3600; Secure; HttpOnly; SameSite=Lax</code></pre>
+<p>Y cada request posterior la lleva, sin atributos: el servidor solo ve el nombre y el valor.</p>
+<pre data-lang="http"><code>GET /SistemaControlPracticas/api/endpoints/oportunidades.php HTTP/1.1
+Host: localhost
+Cookie: __Host-sesion=eyJpZCI6N30|9f2c…</code></pre>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Atributo</th><th>Qué decide</th><th>Si lo omites</th></tr></thead>
+    <tbody>
+      <tr><td><code>Expires</code> / <code>Max-Age</code></td><td>Hasta cuándo se guarda</td><td>Cookie de sesión: se borra al cerrar el navegador (que a veces restaura sesiones y no la borra)</td></tr>
+      <tr><td><code>Domain</code></td><td>A qué hosts viaja</td><td>Solo al host que la fijó, sin subdominios (host-only)</td></tr>
+      <tr><td><code>Path</code></td><td>A qué rutas viaja</td><td>El directorio de la URL que la fijó</td></tr>
+      <tr><td><code>Secure</code></td><td>Solo viaja por https</td><td>Viaja también por http, donde cualquiera en la red la lee</td></tr>
+      <tr><td><code>HttpOnly</code></td><td>El JavaScript de la página no la lee</td><td><code>document.cookie</code> la muestra, y un XSS la puede robar</td></tr>
+      <tr><td><code>SameSite</code></td><td>Si viaja en requests que salen de otro sitio</td><td>Depende del navegador (74.6): escríbelo siempre</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>Chrome y Firefox tratan <code>http://localhost</code> como un contexto seguro: aceptan <code>Secure</code> ahí aunque no haya https <span class="badge badge--doc">Documentado</span>. Por eso tu laboratorio puede usar los mismos atributos que producción.</p>
+
+<h2 id="alcance"><span class="sec-num">74.5</span>Domain y Path: a quién llega</h2>
+<p><code>Domain</code> <b>agranda</b> el alcance, no lo achica. Sin él, la cookie es host-only: viaja solo a <code>app.practicas.edu.gt</code>. Con <code>Domain=practicas.edu.gt</code>, viaja también a <code>api.</code>, a <code>blog.</code> y a cualquier subdominio que exista hoy o mañana. Para una cookie de sesión, casi siempre lo correcto es omitirlo <span class="badge badge--doc">Documentado</span>.</p>
+<p><code>Path</code> sirve para organizar, no para proteger. Una página de <code>/blog/</code> no recibe la cookie con <code>Path=/admin</code>, pero sí puede abrir <code>/admin/</code> en un iframe del mismo origen y leer su DOM: la Same-Origin Policy no mira rutas <span class="badge badge--doc">Documentado</span>. Si dos aplicaciones no se deben ver, van en orígenes distintos.</p>
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Una sesión compartida entre <code>app.</code> y <code>api.</code> parece cómoda con <code>Domain</code>. A cambio, cualquier subdominio comprometido o mal configurado recibe la sesión de todos los usuarios. La alternativa es que el frontend y la API vivan en el mismo origen (un proxy en <code>/api</code>), que es lo que hace hoy el sistema de prácticas al estar todo bajo <code>localhost</code>.</p>
+</aside>
+
+<h2 id="samesite"><span class="sec-num">74.6</span>SameSite: cuándo viaja desde otro sitio</h2>
+<p><dfn data-term="samesite">SameSite</dfn> decide si la cookie se agrega a una request que <b>sale de una página de otro sitio</b>. Mira el sitio de la página que la inicia, no el origen <span class="badge badge--doc">Documentado</span>.</p>
+<ul>
+  <li><b><code>Strict</code></b>: nunca viaja desde otro sitio. Si alguien llega a tu sistema por un enlace en su correo, la primera página carga sin sesión, como si no hubiera iniciado.</li>
+  <li><b><code>Lax</code></b>: viaja desde otro sitio solo en una navegación de nivel superior con un método seguro (un enlace, un <code>GET</code> que cambia la barra de direcciones). No viaja en un formulario <code>POST</code>, un <code>fetch</code>, una imagen ni un iframe.</li>
+  <li><b><code>None</code></b>: viaja siempre, y exige <code>Secure</code>. Es para lo que de verdad se incrusta en otros sitios (un widget de pagos, un chat).</li>
+</ul>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f745t f745d">
+<title id="f745t">Qué tipo de request lleva cada cookie cuando viene de otro sitio</title>
+<desc id="f745d">Una tabla de cinco tipos de request que salen de otro sitio hacia tu sitio, contra los tres valores de SameSite. Strict no viaja en ninguna. Lax viaja solo en la navegación GET de nivel superior. None viaja en todas, si el navegador permite cookies de terceros.</desc>
+<defs><marker id="f745a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small dg-mono" x="396" y="30" text-anchor="middle">Strict</text>
+<text class="dg-small dg-mono" x="536" y="30" text-anchor="middle">Lax</text>
+<text class="dg-small dg-mono" x="676" y="30" text-anchor="middle">None; Secure</text>
+<text class="dg-small" x="14" y="30" text-anchor="start">Request que sale de otro sitio</text>
+<text class="dg-small" x="14" y="70" text-anchor="start">Enlace: navegar con GET</text>
+<rect class="dg-bad" x="330" y="46" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="396.0" y="67.0" text-anchor="middle">✕ no viaja</text>
+<rect class="dg-ok" x="470" y="46" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="536.0" y="67.0" text-anchor="middle">✓ viaja</text>
+<rect class="dg-ok" x="610" y="46" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="676.0" y="67.0" text-anchor="middle">✓ viaja</text>
+<text class="dg-small" x="14" y="116" text-anchor="start">Formulario POST</text>
+<rect class="dg-bad" x="330" y="92" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="396.0" y="113.0" text-anchor="middle">✕ no viaja</text>
+<rect class="dg-bad" x="470" y="92" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="536.0" y="113.0" text-anchor="middle">✕ no viaja</text>
+<rect class="dg-ok" x="610" y="92" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="676.0" y="113.0" text-anchor="middle">✓ viaja</text>
+<text class="dg-small" x="14" y="162" text-anchor="start">fetch desde JavaScript</text>
+<rect class="dg-bad" x="330" y="138" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="396.0" y="159.0" text-anchor="middle">✕ no viaja</text>
+<rect class="dg-bad" x="470" y="138" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="536.0" y="159.0" text-anchor="middle">✕ no viaja</text>
+<rect class="dg-ok" x="610" y="138" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="676.0" y="159.0" text-anchor="middle">✓ viaja</text>
+<text class="dg-small" x="14" y="208" text-anchor="start">&lt;img&gt; o &lt;script&gt;</text>
+<rect class="dg-bad" x="330" y="184" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="396.0" y="205.0" text-anchor="middle">✕ no viaja</text>
+<rect class="dg-bad" x="470" y="184" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="536.0" y="205.0" text-anchor="middle">✕ no viaja</text>
+<rect class="dg-ok" x="610" y="184" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="676.0" y="205.0" text-anchor="middle">✓ viaja</text>
+<text class="dg-small" x="14" y="254" text-anchor="start">&lt;iframe&gt;</text>
+<rect class="dg-bad" x="330" y="230" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="396.0" y="251.0" text-anchor="middle">✕ no viaja</text>
+<rect class="dg-bad" x="470" y="230" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="536.0" y="251.0" text-anchor="middle">✕ no viaja</text>
+<rect class="dg-ok" x="610" y="230" width="132" height="34" rx="8"/>
+<text class="dg-tiny" x="676.0" y="251.0" text-anchor="middle">✓ viaja</text>
+<text class="dg-tiny" x="385" y="288" text-anchor="middle">Desde el mismo sitio, las tres viajan siempre. Sin atributo, Chrome trata la cookie como Lax.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 74.5.</b> Requests que salen de otro sitio contra cada valor de <code>SameSite</code>. <code>Lax</code> solo deja la navegación con <code>GET</code>: por eso un <code>GET</code> nunca debe cambiar datos.</figcaption>
+</figure>
+
+<p>Chrome trata una cookie sin <code>SameSite</code> como <code>Lax</code> desde 2020, con una excepción de dos minutos para los <code>POST</code> de nivel superior recién fijada la cookie (pensada para los logins con redirección) <span class="badge badge--doc">Documentado</span>. Firefox y Safari no aplican ese valor por defecto de la misma forma. No escribas código que dependa de él: pon el atributo siempre.</p>
+<p>Prueba los casos de tu sistema y otros que conviene conocer:</p>
+<div data-sim="origins"></div>
+<p>Tres lecturas del simulador. Con <code>Lax</code>, un formulario <code>POST</code> desde otro sitio llega <b>sin</b> la cookie: ya frena la forma clásica de CSRF. Con otro puerto en <code>localhost</code> es el mismo sitio, así que ni <code>Strict</code> ayuda. Y entre subdominios es el mismo sitio: si <code>blog.</code> queda comprometido, para SameSite es "de la casa". Por eso SameSite es una capa, no la defensa completa de CSRF (M76).</p>
+
+<h2 id="prefijos"><span class="sec-num">74.7</span>Los prefijos __Host- y __Secure-</h2>
+<p>Una cookie no dice quién la fijó. Si un subdominio comprometido fija una cookie <code>sesion</code> con <code>Domain=practicas.edu.gt</code>, la app recibe dos cookies con el mismo nombre y puede quedarse con la del atacante. Eso se llama cookie tossing, y la variante en que la víctima termina usando una sesión del atacante es la fijación de sesión (M81).</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f746t f746d">
+<title id="f746t">Una cookie plantada desde un subdominio</title>
+<desc id="f746d">Un subdominio comprometido, blog.practicas.edu.gt, fija una cookie con Domain=practicas.edu.gt. El navegador la manda también a app.practicas.edu.gt, que puede confundirla con la suya. Con el prefijo __Host-, la cookie de la app no admite Domain y solo la puede fijar el propio host por https.</desc>
+<defs><marker id="f746a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-bad" x="14" y="30" width="230" height="64" rx="8"/>
+<text class="dg-small dg-mono" x="129.0" y="58.5" text-anchor="middle">blog.practicas.edu.gt</text>
+<text class="dg-tiny" x="129.0" y="73.5" text-anchor="middle">comprometido</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="270" y="30" width="230" height="64" rx="8"/>
+<text class="dg-small" x="385.0" y="58.5" text-anchor="middle">Navegador</text>
+<text class="dg-tiny" x="385.0" y="73.5" text-anchor="middle">guarda sesion= para todo el dominio</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="526" y="30" width="230" height="64" rx="8"/>
+<text class="dg-small dg-mono" x="641.0" y="58.5" text-anchor="middle">app.practicas.edu.gt</text>
+<text class="dg-tiny" x="641.0" y="73.5" text-anchor="middle">recibe dos cookies sesion</text>
+<path class="dg-edge" d="M244 62 L268 62" marker-end="url(#f746a)"/>
+<path class="dg-edge" d="M500 62 L524 62" marker-end="url(#f746a)"/>
+<text class="dg-tiny dg-mono" x="385" y="118" text-anchor="middle">Set-Cookie: sesion=del-atacante; Domain=practicas.edu.gt</text>
+<rect class="dg-ok" x="14" y="146" width="742" height="84" rx="8"/>
+<text class="dg-small" x="385" y="172" text-anchor="middle">Con el prefijo __Host- la cookie exige Secure, Path=/ y ningún Domain</text>
+<text class="dg-tiny dg-mono" x="385" y="196" text-anchor="middle">Set-Cookie: __Host-sesion=…; Secure; HttpOnly; Path=/; SameSite=Lax</text>
+<text class="dg-tiny" x="385" y="216" text-anchor="middle">el blog no puede fijar una cookie con ese nombre para la app</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 74.6.</b> Una cookie plantada desde un subdominio, y el prefijo que lo impide.</figcaption>
+</figure>
+
+<p>Los <dfn data-term="cookie-prefijos">prefijos de cookie</dfn> son reglas que el navegador impone según el nombre <span class="badge badge--doc">Documentado</span>:</p>
+<ul>
+  <li><b><code>__Secure-</code></b>: la cookie solo se acepta si viene con <code>Secure</code> desde https.</li>
+  <li><b><code>__Host-</code></b>: además, exige <code>Path=/</code> y prohíbe <code>Domain</code>. Queda atada a un solo host, y ningún subdominio puede fijarla ni pisarla.</li>
+</ul>
+<p>Para la cookie de sesión de un sistema como el tuyo, <code>__Host-</code> es la opción por defecto: no cuesta nada y cierra una clase entera de ataques.</p>
+
+<h2 id="terceros"><span class="sec-num">74.8</span>Cookies de terceros y particionadas</h2>
+<p>Una cookie es de terceros cuando viaja a un sitio distinto del que está en la barra de direcciones: el iframe de un anuncio, un widget incrustado. Son la base del rastreo entre sitios, y los navegadores las restringen: Safari las bloquea por defecto y Firefox las aísla por sitio con Total Cookie Protection <span class="badge badge--doc">Documentado</span>. En 2025 Google anunció que Chrome seguirá permitiéndolas por defecto, con controles para el usuario <span class="badge badge--doc">Documentado</span>.</p>
+<p>Para lo que sí necesita estado dentro de un iframe, existe el atributo <code>Partitioned</code> (CHIPS): la cookie se guarda en un frasco separado por cada sitio de nivel superior. El mismo chat incrustado en dos sitios tiene dos cookies que no se ven entre sí <span class="badge badge--doc">Documentado</span>. Para tu sistema no hace falta: nada de él se incrusta en otros sitios.</p>
+
+<h2 id="almacen"><span class="sec-num">74.9</span>Cookies, localStorage y dónde guardar una sesión</h2>
+<p><code>localStorage</code> y <code>sessionStorage</code> son por origen, no por sitio, y nunca viajan solos: tu código los lee y los manda. Eso evita CSRF, pero cualquier script que corra en la página los lee. Una cookie <code>HttpOnly</code> es al revés: ningún script la lee, pero viaja sola.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="f747t f747d">
+<title id="f747t">Qué alcanza un script inyectado</title>
+<desc id="f747d">Un script que logró correr en la página lee localStorage, sessionStorage y las cookies sin HttpOnly, y puede mandarlos a otro servidor. No lee la cookie HttpOnly, pero sí puede hacer requests a la API que la llevan.</desc>
+<defs><marker id="f747a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-bad" x="14" y="30" width="220" height="180" rx="8"/>
+<text class="dg-small dg-fail-text" x="124.0" y="116.5" text-anchor="middle">Script inyectado</text>
+<text class="dg-tiny" x="124.0" y="131.5" text-anchor="middle">corre con los permisos de la página</text>
+<rect class="dg-bad" x="330" y="24" width="426" height="42" rx="8"/>
+<text class="dg-tiny" x="543.0" y="49.0" text-anchor="middle">localStorage, sessionStorage: lo lee y lo manda afuera</text>
+<path class="dg-edge" d="M234 120 L328 45" marker-end="url(#f747a)"/>
+<rect class="dg-bad" x="330" y="74" width="426" height="42" rx="8"/>
+<text class="dg-tiny" x="543.0" y="99.0" text-anchor="middle">cookie sin HttpOnly: document.cookie la muestra</text>
+<path class="dg-edge" d="M234 120 L328 95" marker-end="url(#f747a)"/>
+<rect class="dg-ok" x="330" y="124" width="426" height="42" rx="8"/>
+<text class="dg-tiny" x="543.0" y="149.0" text-anchor="middle">cookie con HttpOnly: no la lee…</text>
+<path class="dg-edge" d="M234 120 L328 145" marker-end="url(#f747a)"/>
+<rect class="dg-warnbox" x="330" y="174" width="426" height="42" rx="8"/>
+<text class="dg-tiny" x="543.0" y="199.0" text-anchor="middle">…pero fetch a la API: la cookie viaja igual</text>
+<path class="dg-edge" d="M234 120 L328 195" marker-end="url(#f747a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 74.7.</b> Lo que alcanza un script inyectado. <code>HttpOnly</code> evita que se lleve la sesión, no que la use mientras la página está abierta.</figcaption>
+</figure>
+
+<pre data-lang="js"><code>// En la consola de DevTools, en la pestaña del frontend
+document.cookie
+// Con HttpOnly, la cookie de sesión no aparece en este string.
+// Sin HttpOnly, aparece, y un script inyectado (M77) la puede mandar afuera.</code></pre>
+<p>La recomendación para una aplicación como la tuya: la sesión en una cookie <code>__Host-</code>, <code>HttpOnly</code>, <code>Secure</code> y <code>SameSite=Lax</code>, más un token anti-CSRF (M76). Un token en <code>localStorage</code> no es más seguro: cambia el riesgo de CSRF por el de que cualquier XSS se lleve la sesión a otra máquina. Ninguna de las dos opciones te salva de un XSS; eso es M77 y M78.</p>
+
+<h2 id="php"><span class="sec-num">74.10</span>Cookies en PHP con setcookie</h2>
+<p>Desde PHP 7.3, <code>setcookie</code> acepta un arreglo de opciones con todos los atributos, <code>samesite</code> incluido <span class="badge badge--doc">Documentado</span>. Así fija hoy la sesión tu <code>login.php</code>:</p>
+<pre data-lang="php"><code>// api/models/login.php, tal como está en tu repositorio en este momento (extracto)
+setcookie(
+  COOKIE_NAME,
+  $cookieValue,
+  [
+    'expires' =&gt; COOKIE_LIFETIME,   // (1)
+    'domain' =&gt; COOKIE_DOMAIN,      // (2)
+    'secure' =&gt; COOKIE_SECURE,      // (3)
+    'httponly' =&gt; COOKIE_HTTPONLY,  // (3)
+    'samesite' =&gt; COOKIE_SAMESITE   // (3)
+  ]                                 // (4) no hay 'path'
+);</code></pre>
+<ol class="steps">
+  <li><span class="step-title">expires es un instante</span><code>expires</code> espera un timestamp de Unix. Si <code>COOKIE_LIFETIME</code> es una duración como <code>3600</code>, la cookie vence a la primera hora del 1 de enero de 1970: el navegador la borra en cuanto llega. Va <code>time() + $lifetime</code>.</li>
+  <li><span class="step-title">domain agranda</span>Si <code>COOKIE_DOMAIN</code> tiene un valor, la cookie viaja a todos los subdominios (74.5). Vacío es host-only, que es lo que quieres.</li>
+  <li><span class="step-title">El .env trae strings</span><code>Env::get</code> devuelve texto. PHP convierte cualquier string no vacío distinto de <code>"0"</code> en verdadero, así que <code>"false"</code> activa la opción. Convierte con <code>filter_var(…, FILTER_VALIDATE_BOOLEAN)</code>, o no lo hagas configurable: <code>secure</code> y <code>httponly</code> van en <code>true</code> siempre.</li>
+  <li><span class="step-title">Sin path</span>La cookie queda limitada al directorio de la URL que hizo el login. Funciona mientras todas las llamadas estén debajo, y deja de funcionar sin aviso cuando cambias una ruta. Pon <code>'path' =&gt; '/'</code>.</li>
+</ol>
+<p>La versión de referencia, con el prefijo <code>__Host-</code> <span class="badge badge--ref">Diseño de referencia</span>:</p>
+<pre data-lang="php"><code>&lt;?php
+// Diseño de referencia: la cookie de sesión del sistema de prácticas
+function envBool(string $v): bool
+{
+    return filter_var($v, FILTER_VALIDATE_BOOLEAN);   // "false" da false, no true
+}
+
+$lifetime = (int) COOKIE_LIFETIME;                   // segundos: el .env trae un string
+setcookie('__Host-sesion', $cookieValue, [
+    'expires'  =&gt; time() + $lifetime,                // un instante, no una duración
+    'path'     =&gt; '/',                               // __Host- exige Path=/
+    'secure'   =&gt; true,                              // __Host- exige Secure
+    'httponly' =&gt; true,                              // document.cookie no la ve
+    'samesite' =&gt; 'Lax',                             // escrito siempre, sin depender del navegador
+]);                                                  // sin 'domain': __Host- lo prohíbe</code></pre>
+<p>Para cerrar sesión, se fija la misma cookie, con el mismo nombre y los mismos <code>Path</code> y <code>Domain</code>, con un instante pasado. Si alguno de los dos difiere, el navegador la trata como otra cookie y la sesión sigue ahí:</p>
+<pre data-lang="php"><code>&lt;?php
+// Borrar es fijar la misma cookie (mismo nombre, Path y Domain) con un instante pasado
+setcookie('__Host-sesion', '', [
+    'expires' =&gt; time() - 3600, 'path' =&gt; '/', 'secure' =&gt; true,
+    'httponly' =&gt; true, 'samesite' =&gt; 'Lax',
+]);</code></pre>
+<p>Borrar la cookie solo la saca del navegador. Si alguien copió el valor antes, sigue sirviendo hasta su vencimiento, salvo que el servidor la revoque. Esa es la sesión revocable de M81 y la guía WEB02.</p>
+<p>Si usas la sesión nativa de PHP (<code>$_SESSION</code>), sus atributos se fijan antes de <code>session_start()</code>:</p>
+<pre data-lang="php"><code>&lt;?php
+// Si usas la sesión nativa de PHP, sus opciones van antes de session_start()
+session_set_cookie_params([
+    'lifetime' =&gt; 0,            // hasta cerrar el navegador
+    'path'     =&gt; '/',
+    'secure'   =&gt; true,
+    'httponly' =&gt; true,
+    'samesite' =&gt; 'Lax',
+]);
+session_name('__Host-PHPSESSID');
+session_start();</code></pre>
+<p>Tu <code>configuration.php</code> hoy hace las dos cosas: llama a <code>session_start()</code> con su propia cookie <code>Strict</code>, y además el login fija la cookie firmada. Son dos sesiones paralelas y solo una se usa. La guía WEB02 deja una sola.</p>
+
+<h2 id="fallas"><span class="sec-num">74.11</span>Fallas típicas y cómo reconocerlas</h2>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+      <tr><td>El login responde bien pero la siguiente request no tiene sesión</td><td><code>expires</code> con una duración en lugar de un instante: la cookie llega vencida</td><td><code>time() + $lifetime</code>; confírmalo en Application, columna Expires</td></tr>
+      <tr><td>La sesión funciona en <code>localhost</code> y no en <code>127.0.0.1</code></td><td>Son orígenes distintos con cookies separadas</td><td>Usar siempre el mismo host</td></tr>
+      <tr><td>La sesión se pierde al llegar desde un enlace en un correo</td><td><code>SameSite=Strict</code></td><td><code>Lax</code> para la sesión; <code>Strict</code> solo para cookies de acciones sensibles</td></tr>
+      <tr><td>Cerrar sesión no cierra sesión</td><td>La cookie de borrado tiene otro <code>Path</code> o <code>Domain</code></td><td>Mismos atributos que al fijarla</td></tr>
+      <tr><td>Dos cookies con el mismo nombre en Application</td><td>Una con <code>Domain</code> y otra host-only, o con rutas distintas</td><td>Prefijo <code>__Host-</code></td></tr>
+      <tr><td><code>document.cookie</code> muestra la sesión</td><td>Falta <code>HttpOnly</code></td><td><code>'httponly' =&gt; true</code></td></tr>
+      <tr><td>La consola dice que CORS bloqueó un <code>POST</code>, pero el registro se creó</td><td>La Same-Origin Policy bloquea leer, no enviar</td><td>Proteger el endpoint contra CSRF (M76) y configurar CORS (<a href="m75-cors.html#php">M75</a>)</td></tr>
+    </tbody>
+  </table>
+</div>
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Revisa las cookies de un sistema en Application, columna por columna: <code>Expires</code>, <code>Domain</code>, <code>Path</code>, <code>Secure</code>, <code>HttpOnly</code>, <code>SameSite</code> y <code>Partitioned</code>. Cada columna vacía es una decisión que tomó el navegador por ti. La siguiente pregunta es qué pasa cuando tu frontend y tu API están en orígenes distintos y el JavaScript necesita leer la respuesta: eso es CORS (<a href="m75-cors.html#credenciales">M75</a>).</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m74"></div>
+<div data-exercise="m74-cookie"></div>
+<div data-checkpoint="m74"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m74.data.js"></script>
+<script src="../assets/js/data/exercises/m74.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>

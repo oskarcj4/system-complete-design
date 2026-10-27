@@ -12,7 +12,9 @@ Curso web en español de diseño de sistemas reales:
 - **Parte IV:** ciberseguridad (M32–M38 y el Checkpoint E): firewalls, hardening de Linux, operación de SysAdmin, seguridad en bases de datos, criptografía, nube segura y Active Directory. Publicados M32 (firewalls), M33 (hardening de Linux), M34 (operación de SysAdmin), M35 (seguridad en bases de datos), M36 (criptografía desde cero), M37 (arquitecturas seguras en la nube) y M38 (Active Directory, cómo se ataca y cómo se defiende), más el Checkpoint E, que cierra la parte. La Parte IV está completa. Cuenta para el progreso. Plan detallado en `PLAN_SEGURIDAD.md`. Currículo en `PLAN.md`.
 - **Parte V:** manejo de pagos (M39 en adelante), del lado del comercio que cobra: las intuiciones de diseño (tablas, idempotencia, locks, webhooks, implementación propia y seguridad), no el código, que está en las guías A15, A27 y A28. Publicado M39 (manejo de pagos); M40 y M41 están propuestos en `PLAN.md`. Cuenta para el progreso.
 - **Parte VI:** ML System Design, sistemas de recomendación (M42–M53 y el Checkpoint F): método y métricas, datos, modelos clásicos, recuperación, ranking, exploración, grafos y amigos, experimentos, serving, engagement responsable y dos casos con mapa. Va al final de la ruta, después de la Fase 2, y cuenta para el progreso. Publicados M42 (el método de ML System Design), M43 (datos, eventos y features), M44 (modelos clásicos: popularidad, contenido y filtrado colaborativo), M45 (recuperación a escala: dos torres y búsqueda vectorial) y M46 (ranking: del modelo lineal al multi-tarea); el resto está como `soon`. Plan en `PLAN_ML_SYSTEM_DESIGN.md`, guías prácticas ML00–ML09 en `PLAN_ML_GUIAS.md` (como `mlTracks`): publicadas ML00 (el laboratorio de recomendación) y ML01 (la línea base: lo popular, bien medido), las demás `proposed`. Siguen las reglas de los tutoriales de AI Engineering, sin los dos modelos a la par: cada guía se mide con el laboratorio de ML00 contra la línea base de ML01.
-- **Parte VIII:** AI Engineering, modelos, harnesses y agentes (M62–M72 y el Checkpoint H): la pila de un agente, tool calling por dentro, anatomía y elección de un harness, permisos y sandbox, extensiones, context engineering, orquestadores (DeepSec), open weights, jailbreak y red teaming (solo conceptual y defensivo) y evals de agentes. Publicados M62 (la pila de un agente) y M69 (orquestadores: agentes que lanzan agentes); el resto está como `soon`. Plan en `PLAN_AI_ENGINEERING.md`, con las guías IA07 e IA08 propuestas. Cuenta para el progreso.
+- **Parte VII:** Blue Team y DevSecOps (M54–M61 y el Checkpoint G): threat modeling, AppSec en el ciclo de vida, cadena de suministro, contenedores y Kubernetes, gestión de vulnerabilidades, detection engineering y el SOC, respuesta a incidentes y forense, y seguridad de red y del correo, todo defensivo y sobre un mismo sistema de ejemplo, "Tienda Norte". Publicados M54 a M61; falta el Checkpoint G. Va después de la Parte VI y cuenta para el progreso. Plan en `PLAN_DEVSECOPS.md`, con la serie de guías SEC00–SEC08 propuesta.
+- **Parte VIII:** AI Engineering, modelos, harnesses y agentes (M62–M72 y el Checkpoint H): la pila de un agente, tool calling por dentro, anatomía y elección de un harness, permisos y sandbox, extensiones, context engineering, orquestadores (DeepSec), open weights, jailbreak y red teaming (solo conceptual y defensivo) y evals de agentes. Publicados M62 (la pila de un agente), M63 (tool calling por dentro), M64 (anatomía de un harness), M65 (elegir un harness) y M69 (orquestadores: agentes que lanzan agentes); el resto está como `soon`. Plan en `PLAN_AI_ENGINEERING.md`, con las guías IA07 e IA08 propuestas. Cuenta para el progreso.
+- **Parte IX:** seguridad web, del navegador al servidor (M73–M85 y el Checkpoint I): el navegador por dentro, origen y cookies, CORS, CSRF, XSS, CSP y cabeceras, inyecciones, control de acceso, sesiones, archivos y SSRF, otros ataques, renderizado y Next.js, y WebAssembly, con ejemplos en PHP sobre el proyecto del usuario (`C:\xampp\htdocs\SistemaControlPracticas`). Publicados M73 (el navegador por dentro), M74 (origen, sitio y cookies) y M75 (CORS a fondo); el resto está como `soon`. Plan, auditoría del proyecto y guías WEB00–WEB10 en `PLAN_SEGURIDAD_WEB.md` (WEB11 y WEB12 no están aprobadas). Regla: todo se prueba solo contra el laboratorio propio en localhost, con payloads mínimos, sin evasión de WAF, y cada ataque termina en su mitigación. Cuenta para el progreso.
 - **Aplicación de conocimiento** (`proyectos.html` y `proyectos/`): tutoriales en Java y Spring Boot para construir lo de cada módulo, y al final de la página los tutoriales de AI Engineering, en Python (IA00, IA01, IA02…). Cada guía es una página en `proyectos/`, generada con `tools/mkguide.py`. Las reglas están en "De las guías de proyectos" y "De los tutoriales de AI Engineering".
 
 Es un sitio estático de HTML, CSS y JS vanilla, sin build ni dependencias. Funciona con doble clic (`file://`) y se publica en GitHub Pages con cada push a `main` (`.github/workflows/static.yml`).
@@ -284,10 +286,10 @@ Va justo después del `h2` y anticipa la sección sin reemplazarla. Lo llevan to
 ### Código
 
 ```html
-<pre data-lang="python"><code>…</code></pre>      <!-- json | http | sse | sql | python | shell | js -->
+<pre data-lang="python"><code>…</code></pre>      <!-- json | http | sse | sql | python | shell | js | java | php | html -->
 ```
 
-`sd.js` resalta el código solo. `js` es JavaScript en los módulos (las guías de `proyectos/` usan `javascript`, que resalta `project-guide.js`). `shell` sirve para comandos y archivos de configuración (`sshd_config`, nftables, sysctl): resalta los comentarios con `#`, el prompt `$` y las cadenas. Dentro de `<code>` hay que escapar `&`, `<` y `>`.
+`sd.js` resalta el código solo (`php` y `html` se sumaron con la Parte IX). `js` es JavaScript en los módulos (las guías de `proyectos/` usan `javascript`, que resalta `project-guide.js`). `shell` sirve para comandos y archivos de configuración (`sshd_config`, nftables, sysctl): resalta los comentarios con `#`, el prompt `$` y las cadenas. Dentro de `<code>` hay que escapar `&`, `<` y `>`.
 
 ### Figuras SVG
 
@@ -390,7 +392,7 @@ SD.defineExercise('m06-planificador', {
 
 - Los scripts: `data/exercises/<id>.data.js` después de los datos del quiz, y `core/exercise.js` después de `core/quiz.js` (usa `SD.quizKit`). Con `mkpage.py`, alcanza con `"exercises": true` en el META; en una página existente se agregan a mano (así está en M18).
 - El glosario no enlaza dentro de `[data-exercise]`: los términos se explican en el texto del módulo.
-- Ejercicios publicados: uno en M02, siete en M06.1 (los datos siguen en `exercises/m06.data.js`), uno en M18, uno en M19, uno en M21, cinco en M22 (incidentes), uno en M23, uno en M24, uno en M25, uno en M12.1 (diagnóstico de una réplica lenta), uno en M33, uno en M34 (diagnosticar un servidor lento), uno en M36 (criptografía de una API con datos sensibles), uno en M37 (endurecer la arquitectura de un SaaS en la nube), uno en M38 (auditar un dominio y cerrar sus rutas a tier 0), uno en M39 (`m39-festival`, la venta de entradas de un festival), uno en M31 (`m31-clase`, las clases del clon de Docs) uno en M42 (`m42-metricas`, las métricas de "personas que quizás conozcas") uno en M43 (`m43-eventos`, el registro de "comprados juntos"), uno en M44 (`m44-comprados`, el modelo de "comprados juntos"), uno en M45 (`m45-indice`, el índice de vecinos) uno en M46 (`m46-pesos`, el ranker del feed) uno en M62 (`m62-pila`, la pila de agentes de un equipo) y uno en M69 (`m69-orq`, un bot que revisa los PR de 40 repositorios).
+- Ejercicios publicados: uno en M02, siete en M06.1 (los datos siguen en `exercises/m06.data.js`), uno en M18, uno en M19, uno en M21, cinco en M22 (incidentes), uno en M23, uno en M24, uno en M25, uno en M12.1 (diagnóstico de una réplica lenta), uno en M33, uno en M34 (diagnosticar un servidor lento), uno en M36 (criptografía de una API con datos sensibles), uno en M37 (endurecer la arquitectura de un SaaS en la nube), uno en M38 (auditar un dominio y cerrar sus rutas a tier 0), uno en M39 (`m39-festival`, la venta de entradas de un festival), uno en M31 (`m31-clase`, las clases del clon de Docs) uno en M42 (`m42-metricas`, las métricas de "personas que quizás conozcas") uno en M43 (`m43-eventos`, el registro de "comprados juntos"), uno en M44 (`m44-comprados`, el modelo de "comprados juntos"), uno en M45 (`m45-indice`, el índice de vecinos) uno en M46 (`m46-pesos`, el ranker del feed), uno en M54 (`m54-stride`, el export de pedidos por correo), uno en M55 (`m55-pipeline`), uno en M56 (`m56-cadena`, un token de npm filtrado por un gusano), uno en M57 (`m57-cluster`), uno en M58 (`m58-backlog`, el primer escaneo de la tienda), uno en M59 (`m59-reglas`, las primeras reglas de Tienda Norte), uno en M60 (`m60-incidente`), uno en M61 (`m61-dominio`) uno en M62 (`m62-pila`, la pila de agentes de un equipo), uno en M63 (`m63-local`, llevar un harness de Claude a un modelo local), uno en M64 (`m64-monorepo`, el harness de un monorepo grande), uno en M65 (`m65-elegir`, el harness de una fintech de 12 personas), uno en M69 (`m69-orq`, un bot que revisa los PR de 40 repositorios), uno en M73 (`m73-frontera`), uno en M74 (`m74-cookie`) y uno en M75 (`m75-politica`).
 
 ### Quiz y checkpoint
 
@@ -435,9 +437,9 @@ Categorías (`SD.catNames` en `glossary.js`): `metodo`, `redes`, `datos`, `distr
   - cada nodo tiene cinco pestañas: `info.resp`, `info.api`, `info.data`, `info.fail` e `info.nums`, y puede llevar `brief`, una frase de qué hace, que aparece en su detalle y como tooltip en el lienzo (sin `brief`, el tooltip muestra `sub`);
   - `scenarios` con `steps` de la forma `{from, to | at, kind, tag, ms, title, text, code, lang, down, up}`;
   - enlaces directos: `#node=<id>&scenario=<id>&step=<n>`.
-  - `stepPanel: true` en la definición hace que el panel lateral explique el escenario y el paso actual (ruta entre nodos, texto, payload y la lista de pasos) en lugar de la ayuda del mapa; abajo queda solo el título del paso. Lo usan M09 (`m09-objetos`), M10 (`m10-identidad`), M19 (`m19-flota`), M21 (`m21-metering`), M24 (`m24-voz`), M27 (`m27-pagos`), M39 (`m39-flujo`), M69 (`m69-deepsec`) y el mapa de ChatGPT (`chatgpt`). Con `stepPanel`, el detalle de un nodo trae "← Volver al escenario", y en pantalla completa con el panel al costado se oculta también el título del paso de abajo, para que el lienzo gane alto.
+  - `stepPanel: true` en la definición hace que el panel lateral explique el escenario y el paso actual (ruta entre nodos, texto, payload y la lista de pasos) en lugar de la ayuda del mapa; abajo queda solo el título del paso. Lo usan M09 (`m09-objetos`), M10 (`m10-identidad`), M19 (`m19-flota`), M21 (`m21-metering`), M24 (`m24-voz`), M27 (`m27-pagos`), M39 (`m39-flujo`), M60 (`m60-incidente`), M69 (`m69-deepsec`) y el mapa de ChatGPT (`chatgpt`). Con `stepPanel`, el detalle de un nodo trae "← Volver al escenario", y en pantalla completa con el panel al costado se oculta también el título del paso de abajo, para que el lienzo gane alto.
   - Con `stepPanel`, el panel muestra arriba el título del mapa y "Escenario N de M". Campos opcionales para nivel Jr: `why` en cada nodo (HTML, "Por qué existe": qué pasaría sin la pieza; va arriba de las pestañas), `goal` en cada escenario ("Qué vas a ver") y `why` en cada paso ("Por qué así"). Lo usa M21 (`m21-metering`).
-  - `pieces: true` suma al panel la lista plegable "Qué hace cada pieza": los nodos agrupados según el grupo que contiene su centro, cada uno con su `brief`. Marca las piezas del paso actual, resalta el nodo en el lienzo al pasar el mouse o con el foco, abre su detalle con un clic y recuerda si el lector la abrió o la cerró. Lo usan M19, M21, M24, M27, M39, M69 y el mapa de ChatGPT.
+  - `pieces: true` suma al panel la lista plegable "Qué hace cada pieza": los nodos agrupados según el grupo que contiene su centro, cada uno con su `brief`. Marca las piezas del paso actual, resalta el nodo en el lienzo al pasar el mouse o con el foco, abre su detalle con un clic y recuerda si el lector la abrió o la cerró. Lo usan M19, M21, M24, M27, M39, M60, M69 y el mapa de ChatGPT.
 - Deja pasillos de unos 150 px entre columnas de nodos para que las etiquetas de las aristas no se pisen.
 - El encuadre (`fit` y `home`) reserva 104 px abajo cuando el lienzo mide más de 640 px de ancho, para que el minimapa y la ayuda no tapen nodos. En pantalla completa con menos de 1000 px de ancho, el panel va debajo: el lienzo mide `max(320px, 64vh)` y el resto se desplaza.
 - **Mapa gigante de ChatGPT:** `maps/chatgpt.html` es la primera página de mapa suelta (no embebida en un módulo), en la carpeta `maps/`. Se arma como un módulo pero sin quiz ni checkpoint (`data-module="map-chatgpt"`, `data-root="../"`, scripts `map/map-engine.js` y `map/flow-sim.js`); sus datos están en `assets/js/data/maps/chatgpt.data.js` (24 nodos, 27 aristas y 9 escenarios: cliente y borde a la izquierda, chatapi al centro, inferencia a la derecha, datos y colas abajo, con Kafka sola en su fila, e imágenes en el extremo derecho). Es `kind: 'map'` en `course.data.js`, así que no cuenta para el progreso. Regla de sus escenarios: cada salto usa una arista real y la vuelta reusa la misma arista (`both: true`); no hay saltos sin arista.
@@ -500,7 +502,14 @@ Categorías (`SD.catNames` en `glossary.js`): `metodo`, `redes`, `datos`, `distr
 | `data-sim="hnsw"`, `data-calc="annsize"` | `widgets/sim-ann.js` | Un HNSW de juguete con 60 puntos y tres pisos: la búsqueda golosa piso por piso con efSearch y M elegibles, las distancias calculadas y el vecino exacto; y cuánto ocupa un índice de N vectores de d dimensiones (plano, HNSW, IVF e IVF-PQ) y cuánto lee cada consulta; lógica en `SD.annCore` (M45) |
 | `data-sim="ndcg"`, `"calib"`, `data-calc="multiobj"` | `widgets/sim-rank.js` | NDCG, precisión y recall en k sobre una lista que se reordena con flechas y relevancias editables; calibración con 6 000 impresiones sintéticas (tres modelos, cuatro correcciones, ECE, log loss y AUC, con el diagrama de fiabilidad); y cinco probabilidades combinadas en un puntaje con tres juegos de pesos (los de Twitter de 2023); lógica en `SD.rankCore`; estilos `.rk-plot`, `.rk-table` y `.rk-bar` (M46) |
 | `data-sim="stack"` | `widgets/sim-harness.js` | Arma una pila con un harness (Claude Code, Codex CLI, OpenCode o uno propio) y un servidor (Anthropic, Moonshot en los dos dialectos, OpenAI, Ollama, OpenRouter): dibuja el camino, dice si la conexión es directa o necesita traductor, a dónde va el código y la configuración; lógica en `SD.harnessCore`; estilos `.hs-*` (M62) |
+| `data-sim="stride"`, `"appsecpipe"`, `"supplychain"`, `"podsec"` | `widgets/sim-devsecops.js` | El DFD de Tienda Norte con 11 elementos clicables y las amenazas STRIDE de cada uno con su mitigación (M54); ocho fallas plantadas contra ocho herramientas del pipeline, con la etapa que atrapa cada una y su costo relativo marcado como supuesto (M55); seis eslabones de la cadena de suministro, siete ataques y ocho controles (M56); y un pod contra los Pod Security Standards: nueve campos del securityContext y tres presets, si cumple baseline y restricted, qué falta, hasta dónde llega quien entre y el YAML resultante (M57); lógica en `SD.devsecCore`; estilos `.ds-*` y `.ps-*` |
+| `data-sim="vulnprio"`, `"dmarc"` | `widgets/sim-blueteam.js` | Veinte hallazgos sintéticos con CVSS, EPSS, KEV, exposición, alcanzabilidad y criticidad, tres políticas (solo CVSS, KEV primero, riesgo combinado) y la capacidad de arreglo por semana, con el riesgo cerrado y los KEV abiertos (M58); y un mensaje contra SPF, DKIM y DMARC con registros editables, la alineación, la disposición y la línea del reporte `rua`, en seis casos (M61); lógica en `SD.blueCore`; estilos `.vp-*` y `.dm-*` |
+| `data-sim="detrule"` | `widgets/sim-detect.js` | Una regla contra 40 inicios de sesión fallidos sintéticos con dos ataques (password spraying y fuerza bruta lenta): agrupar, umbral, ventana, cuentas distintas y exclusiones; muestra la línea de tiempo, las alertas verdaderas y falsas, la precisión y los minutos de triaje; lógica en `SD.detectCore`; estilos `.dr-*` (M59) |
+| `data-sim="toolfmt"`, `"constrained"` | `widgets/sim-toolcall.js` | La misma llamada a herramienta en cinco formatos (Anthropic, OpenAI, y el texto del chat template de Qwen, Llama 3.1 y Kimi K2) en tres casos (una llamada, dos en paralelo, resultado con error); y la decodificación restringida token por token sobre el esquema de `leer_archivo`, con la máscara encendida o apagada; estilos `.tc-*` (M63) |
+| `data-sim="editexact"`, `data-calc="ctxbudget"` | `widgets/sim-anatomy.js` | Una edición por reemplazo exacto con cinco casos (único, ambiguo, con contexto, espacios distintos, archivo cambiado), `replace_all` y el diff resultante; y el contexto de una sesión turno a turno (prefijo fijo, historial, umbral de compactación, resumen) con el costo con y sin caché del prefijo y cuatro escenarios; lógica en `SD.ctxCore`; estilos `.ae-*` (M64) |
+| `data-sim="harnesspick"`, `data-calc="passk"` | `widgets/sim-pick.js` | Matriz ponderada de cinco harnesses en siete criterios con pesos, criterios eliminatorios y cuatro casos (puntajes de diseño de referencia); y pass@k contra pass^k para dos combinaciones con el intervalo del 95&#8239;% de la diferencia según las tareas del set; lógica en `SD.pickCore` y `SD.passCore`; estilos `.pk-*` (M65) |
 | `data-calc="orqrun"` | `widgets/sim-orq.js` | Cuánto dura y cuánto cuesta una corrida de un orquestador: archivos, tamaño de lote, lotes a la vez, minutos, USD y llamadas por lote, límite de requests por minuto y tope de gasto; calcula la concurrencia que aguanta el límite, la duración, el gasto con el sobrepaso de los lotes en vuelo y cuántos archivos se revisan; cuatro presets; lógica en `SD.orqCore` (M69) |
+| `data-sim="domparse"`, `"origins"`, `"cors"` | `widgets/sim-web.js` | Un string de HTML convertido en árbol del DOM con DOMParser sobre un documento inerte, con seis correcciones del parser (M73); dos URL con su origen, su sitio (recorte de la Public Suffix List) y qué cookies viajan según SameSite en cinco tipos de request (M74); y una request contra seis políticas de CORS, con el preflight, si llega a PHP, si lleva la cookie y si el JavaScript lee la respuesta (M75); lógica en `SD.webCore`; estilos `.wb-*` |
 | `data-calc="bom" data-preset="m21\|m23\|m24\|m25\|m27\|m28\|m29\|m30\|m31"`, `data-calc="gateways"` | `widgets/sim-infra.js` | Factura mensual en AWS y dimensionamiento de gateways (módulos a fondo y casos de estudio) |
 
 Para escribir un widget nuevo:
@@ -615,8 +624,22 @@ ia-system-desing
 │       │   │       m44.data.js
 │       │   │       m45.data.js
 │       │   │       m46.data.js
+│       │   │       m54.data.js
+│       │   │       m55.data.js
+│       │   │       m56.data.js
+│       │   │       m57.data.js
+│       │   │       m58.data.js
+│       │   │       m59.data.js
+│       │   │       m60.data.js
+│       │   │       m61.data.js
 │       │   │       m62.data.js
+│       │   │       m63.data.js
+│       │   │       m64.data.js
+│       │   │       m65.data.js
 │       │   │       m69.data.js
+│       │   │       m73.data.js
+│       │   │       m74.data.js
+│       │   │       m75.data.js
 │       │   │
 │       │   ├───maps
 │       │   │       chatgpt.data.js
@@ -632,6 +655,7 @@ ia-system-desing
 │       │   │       m30-twitter.data.js
 │       │   │       m31-docs.data.js
 │       │   │       m39-flujo.data.js
+│       │   │       m60-incidente.data.js
 │       │   │       m69-deepsec.data.js
 │       │   │
 │       │   ├───projects
@@ -653,6 +677,7 @@ ia-system-desing
 │       │   │       a15.data.js
 │       │   │       a27.data.js
 │       │   │       a28.data.js
+│       │   │       a29.data.js
 │       │   │       ia00.data.js
 │       │   │       ia01.data.js
 │       │   │       ia02.data.js
@@ -712,8 +737,22 @@ ia-system-desing
 │       │           m44.data.js
 │       │           m45.data.js
 │       │           m46.data.js
+│       │           m54.data.js
+│       │           m55.data.js
+│       │           m56.data.js
+│       │           m57.data.js
+│       │           m58.data.js
+│       │           m59.data.js
+│       │           m60.data.js
+│       │           m61.data.js
 │       │           m62.data.js
+│       │           m63.data.js
+│       │           m64.data.js
+│       │           m65.data.js
 │       │           m69.data.js
+│       │           m73.data.js
+│       │           m74.data.js
+│       │           m75.data.js
 │       │
 │       ├───map
 │       │       flow-sim.js
@@ -729,10 +768,12 @@ ia-system-desing
 │               calculators.js
 │               sim-ad.js
 │               sim-agent.js
+│               sim-anatomy.js
 │               sim-ann.js
 │               sim-api.js
 │               sim-cache.js
 │               sim-cachepat.js
+│               sim-blueteam.js
 │               sim-cloud.js
 │               sim-collab.js
 │               sim-consist.js
@@ -743,6 +784,8 @@ ia-system-desing
 │               sim-engine.js
 │               sim-feed.js
 │               sim-crypto.js
+│               sim-detect.js
+│               sim-devsecops.js
 │               sim-firewall.js
 │               sim-harden.js
 │               sim-harness.js
@@ -760,6 +803,7 @@ ia-system-desing
 │               sim-obs.js
 │               sim-orq.js
 │               sim-pay.js
+│               sim-pick.js
 │               sim-quant.js
 │               sim-quota.js
 │               sim-rank.js
@@ -772,12 +816,14 @@ ia-system-desing
 │               sim-signurl.js
 │               sim-slowstart.js
 │               sim-sse.js
+│               sim-toolcall.js
 │               sim-traceprop.js
 │               sim-fwd.js
 │               sim-train.js
 │               sim-triage.js
 │               sim-vision.js
 │               sim-voice.js
+│               sim-web.js
 │
 ├───maps
 │       chatgpt.html
@@ -835,8 +881,22 @@ ia-system-desing
 │       m44-modelos-clasicos.html
 │       m45-recuperacion.html
 │       m46-ranking.html
+│       m54-threat-modeling.html
+│       m55-appsec.html
+│       m56-supply-chain.html
+│       m57-contenedores-k8s.html
+│       m58-vulnerabilidades.html
+│       m59-deteccion.html
+│       m60-respuesta-forense.html
+│       m61-red-correo.html
 │       m62-pila-agente.html
+│       m63-tool-calling.html
+│       m64-anatomia-harness.html
+│       m65-elegir-harness.html
 │       m69-orquestadores.html
+│       m73-navegador.html
+│       m74-origen-cookies.html
+│       m75-cors.html
 │
 ├───proyectos
 │       a00-laboratorio.html
@@ -857,6 +917,7 @@ ia-system-desing
 │       a15-pagos.html
 │       a27-cine.html
 │       a28-cine.html
+│       a29-servidor-seguro.html
 │       ia00-laboratorio.html
 │       ia01-agente-guardia.html
 │       ia02-analista.html

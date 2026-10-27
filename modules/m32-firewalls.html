@@ -56,6 +56,7 @@
           <li>Combinar security groups y NACL en una VPC, y ubicar una DMZ, la segmentación y los NGFW en una arquitectura.</li>
           <li>Reconocer los dos agujeros más comunes en servidores reales: los puertos que Docker publica por fuera de UFW y las reglas que solo existen para IPv4.</li>
           <li>Clasificar cómo se evita un firewall o un reverse proxy (túneles de salida, la capa que no se inspecciona, saltarse el WAF, el acceso de confianza y el propio equipo de borde), detectarlo con señales de salida y responder suponiendo la brecha.</li>
+          <li>Ubicar el firewall, el WAF y el API gateway en una arquitectura, decidir si comparten servidor y mantenerlos disponibles con un par activo-pasivo o una flota detrás de un balanceador.</li>
         </ul>
       </section>
 
@@ -141,7 +142,7 @@
         <li><b>Un servicio mal configurado.</b> Si la base escucha en todas las interfaces, el firewall es lo único que la protege; basta un error en una regla para exponerla. La defensa del propio servidor, sin contar con el firewall, es el tema de <a href="m33-hardening-linux.html#sin-firewall">M33</a>.</li>
       </ul>
 
-      <p>Estos cuatro caminos no son casos raros: son la forma habitual en que un atacante con oficio evita un perímetro. La <a href="#evasion">§&#8239;32.10</a> los retoma uno por uno, con la señal que delata cada uno y el control que lo cierra.</p>
+      <p>Estos cuatro caminos no son casos raros: son la forma habitual en que un atacante con oficio evita un perímetro. La <a href="#evasion">§&#8239;32.11</a> los retoma uno por uno, con la señal que delata cada uno y el control que lo cierra.</p>
 
       <h3 id="drop-reject">Descartar o rechazar</h3>
 
@@ -160,7 +161,7 @@
 
       <h2 id="stateless-stateful"><span class="sec-num">32.2</span>Sin estado y con estado</h2>
 
-      <p>Un filtro <b>sin estado</b> evalúa cada paquete aislado, sin memoria. El problema aparece con las respuestas. Cuando un navegador abre una conexión a tu puerto 443, lo hace desde un <a href="m01-viaje-request.html#puertos">puerto efímero</a> suyo, por ejemplo el 51234. Tu respuesta sale desde el 443 hacia el 51234. Si el filtro de salida solo permite lo que tú decidiste, esa respuesta no tiene regla y se descarta. Para que funcione hay que permitir "salida desde el 443 hacia cualquier puerto alto", y con eso cualquier paquete que diga venir del 443 pasa, sea o no una respuesta.</p>
+      <p>Un filtro <b>sin estado</b> evalúa cada paquete aislado, sin memoria. El problema aparece con las respuestas. Cuando un navegador abre una conexión a tu puerto 443, lo hace desde un puerto efímero suyo, por ejemplo el 51234. Tu respuesta sale desde el 443 hacia el 51234. Si el filtro de salida solo permite lo que tú decidiste, esa respuesta no tiene regla y se descarta. Para que funcione hay que permitir "salida desde el 443 hacia cualquier puerto alto", y con eso cualquier paquete que diga venir del 443 pasa, sea o no una respuesta.</p>
 
       <p>Un <dfn data-term="stateful-firewall">firewall con estado</dfn> resuelve eso recordando las conexiones. En Linux lo hace el módulo de seguimiento de conexiones del kernel, <b>conntrack</b>: cuando un paquete permitido abre una conexión, anota la tupla de origen, destino, puertos y protocolo, y desde ese momento clasifica cada paquete en uno de estos estados:</p>
 
@@ -425,7 +426,7 @@ $ sudo firewall-cmd --reload</code></pre>
           <thead><tr><th>Herramienta</th><th>Cuándo conviene</th><th>Lo que hay que saber</th></tr></thead>
           <tbody>
             <tr><td><b>nftables directo</b></td><td>Reglas versionadas como código, filtrado de salida fino, routers y hosts con mucho tráfico</td><td>Tú escribes y ordenas todo; nadie te protege de una regla mal puesta</td></tr>
-            <tr><td><b>UFW</b></td><td>Un servidor Ubuntu o Debian con pocos servicios</td><td>La salida queda abierta por defecto, y Docker se salta sus reglas (32.9)</td></tr>
+            <tr><td><b>UFW</b></td><td>Un servidor Ubuntu o Debian con pocos servicios</td><td>La salida queda abierta por defecto, y Docker se salta sus reglas (32.10)</td></tr>
             <tr><td><b>firewalld</b></td><td>RHEL y Fedora, máquinas con varias interfaces y redes de distinta confianza</td><td>Si cambias algo sin <code>--permanent</code>, desaparece en el próximo reinicio o recarga</td></tr>
           </tbody>
         </table>
@@ -585,7 +586,305 @@ $ sudo firewall-cmd --reload</code></pre>
         </table>
       </div>
 
-      <h2 id="docker"><span class="sec-num">32.9</span>Docker, el firewall e IPv6</h2>
+      <h2 id="ubicacion"><span class="sec-num">32.9</span>Firewall, WAF y API gateway: dónde va cada uno</h2>
+
+      <p>Hasta aquí viste cada capa por separado. En una aplicación real están todas a la vez, y las preguntas que importan son de arquitectura. ¿En qué orden van? ¿Cuál conviene si solo puedes poner una? ¿Comparten máquina o va cada una en la suya? ¿Y cómo se mantiene arriba una pieza que, por estar en el camino de todo el tráfico, es la primera en caerse? Esta sección arma la respuesta sobre una API con un <a href="m03-balanceo-gateways.html#gateway">API gateway</a> delante, y la guía <a href="../proyectos/a29-servidor-seguro.html">A29</a> la construye de punta a punta: primero todo en una sola VM, después separada en una red con subredes y al final en Kubernetes.</p>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 478" role="img" aria-labelledby="f32u1t f32u1d">
+<title id="f32u1t">Las capas de una API, de internet a la base</title>
+<desc id="f32u1d">Siete filas de arriba hacia abajo: internet, la mitigación de DDoS del proveedor, el filtro de red (NACL, security group o firewall de red), el balanceador que termina TLS con el WAF, el API gateway, los servicios con su firewall de host y la base de datos. Para cada capa se indica con qué datos decide y qué corta. Cada una frena lo que puede ver y deja pasar lo demás a la siguiente.</desc>
+<defs><marker id="f32u1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="22" text-anchor="start">Capa</text>
+<text class="dg-group" x="350" y="22" text-anchor="start">Decide con</text>
+<text class="dg-group" x="570" y="22" text-anchor="start">Corta</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="36" width="300" height="46" rx="7"/>
+<text class="dg-label" x="170" y="56" text-anchor="middle">Internet</text>
+<text class="dg-tiny" x="170" y="73" text-anchor="middle">clientes, bots y atacantes</text>
+<text class="dg-small" x="350" y="64">Nada todavía</text>
+<text class="dg-small" x="570" y="64">Nada todavía</text>
+<path class="dg-edge" d="M170 84 V96" marker-end="url(#f32u1a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="100" width="300" height="46" rx="7"/>
+<text class="dg-label" x="170" y="120" text-anchor="middle">0. Mitigación de DDoS</text>
+<text class="dg-tiny" x="170" y="137" text-anchor="middle">del proveedor: anycast y scrubbing</text>
+<text class="dg-small" x="350" y="119">Volumen, origen, patrón</text>
+<text class="dg-small" x="350" y="136">de paquetes L3 y L4</text>
+<text class="dg-small" x="570" y="119">Inundaciones antes de que</text>
+<text class="dg-small" x="570" y="136">saturen tu enlace</text>
+<path class="dg-edge" d="M170 148 V160" marker-end="url(#f32u1a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="164" width="300" height="46" rx="7"/>
+<text class="dg-label" x="170" y="184" text-anchor="middle">1. Filtro de red</text>
+<text class="dg-tiny" x="170" y="201" text-anchor="middle">NACL, security group o firewall de red</text>
+<text class="dg-small" x="350" y="183">IP, puerto, protocolo</text>
+<text class="dg-small" x="350" y="200">y estado de la conexión</text>
+<text class="dg-small" x="570" y="183">Todo lo que no sea 443</text>
+<text class="dg-small" x="570" y="200">hacia el balanceador</text>
+<path class="dg-edge" d="M170 212 V224" marker-end="url(#f32u1a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="228" width="300" height="46" rx="7"/>
+<text class="dg-label" x="170" y="248" text-anchor="middle">2. Balanceador + TLS + WAF</text>
+<text class="dg-tiny" x="170" y="265" text-anchor="middle">aquí la request queda en claro</text>
+<text class="dg-small" x="350" y="247">Ruta, cabeceras y cuerpo</text>
+<text class="dg-small" x="350" y="264">de la request HTTP</text>
+<text class="dg-small" x="570" y="247">Inyecciones, CVE conocidos,</text>
+<text class="dg-small" x="570" y="264">ráfagas por IP</text>
+<path class="dg-edge" d="M170 276 V288" marker-end="url(#f32u1a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="292" width="300" height="46" rx="7"/>
+<text class="dg-label" x="170" y="312" text-anchor="middle">3. API gateway</text>
+<text class="dg-tiny" x="170" y="329" text-anchor="middle">identidad, cuota y ruta</text>
+<text class="dg-small" x="350" y="311">Token o API key, cliente,</text>
+<text class="dg-small" x="350" y="328">versión y ruta</text>
+<text class="dg-small" x="570" y="311">Sin credencial (401), cuota</text>
+<text class="dg-small" x="570" y="328">del cliente agotada (429)</text>
+<path class="dg-edge" d="M170 340 V352" marker-end="url(#f32u1a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="356" width="300" height="46" rx="7"/>
+<text class="dg-label" x="170" y="376" text-anchor="middle">4. Servicios + firewall de host</text>
+<text class="dg-tiny" x="170" y="393" text-anchor="middle">la lógica, y nftables en cada máquina</text>
+<text class="dg-small" x="350" y="375">El dueño del recurso</text>
+<text class="dg-small" x="350" y="392">y las reglas del negocio</text>
+<text class="dg-small" x="570" y="375">BOLA y abusos de lógica;</text>
+<text class="dg-small" x="570" y="392">la salida no autorizada</text>
+<path class="dg-edge" d="M170 404 V416" marker-end="url(#f32u1a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="420" width="300" height="46" rx="7"/>
+<text class="dg-label" x="170" y="440" text-anchor="middle">5. Base de datos</text>
+<text class="dg-tiny" x="170" y="457" text-anchor="middle">solo acepta a los servicios</text>
+<text class="dg-small" x="350" y="439">Rol de la conexión</text>
+<text class="dg-small" x="350" y="456">y fila (RLS)</text>
+<text class="dg-small" x="570" y="439">Conexiones de cualquier otro</text>
+<text class="dg-small" x="570" y="456">lado; filas de otro tenant</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 32.5.</b> Cada capa decide con lo que puede ver y deja pasar lo demás. El orden va de lo barato a lo caro: descartar un paquete por puerto cuesta casi nada, inspeccionar un cuerpo HTTP cuesta CPU, y validar un token o consultar una cuota cuesta una ida a Redis. Lo que se puede tirar antes, se tira antes.</figcaption>
+      </figure>
+
+      <h3 id="ubicacion-ddos">El primer filtro no es tuyo</h3>
+
+      <p>La intuición de "primero el firewall, que tira la basura de TCP" es correcta a medias. Tu firewall frena paquetes que llegan hasta él, pero un <dfn data-term="ddos">DDoS</dfn> volumétrico no necesita pasar el firewall: le basta con llenar el enlace que llega a tu red. Si tu salida a internet es de 10&#8239;Gbit/s y te mandan 200, la regla perfecta no sirve, porque el paquete bueno se pierde antes, en la cola del router del proveedor. Por eso la capa 0 vive fuera de tu red: un servicio con <a href="m28-cloudflare.html#ddos">anycast y centros de limpieza</a> (Cloudflare, AWS Shield, el ISP) que absorbe el volumen repartido entre muchos sitios. <span class="badge badge--doc">Documentado</span></p>
+
+      <p>Además, un firewall con estado también se puede atacar. Cada conexión ocupa una entrada en la tabla de <code>conntrack</code> (32.2), y un SYN flood crea entradas a millones de conexiones que nunca terminan. Cuando la tabla se llena, el kernel registra <code>nf_conntrack: table full, dropping packet</code> y empieza a tirar también el tráfico legítimo. Las defensas son tres, y ninguna es "más reglas":</p>
+      <ul>
+        <li><b>Filtrar sin estado antes del estado.</b> Una NACL o una regla en la cadena <code>raw</code> de nftables (prioridad −300, antes de <code>conntrack</code>) descarta los SYN que no van al 443 sin crear entradas.</li>
+        <li><b><a href="m28-cloudflare.html#ddos">SYN cookies</a>.</b> El servidor responde el SYN sin guardar nada y reconstruye el estado cuando llega el ACK. En Linux se activan con <code>net.ipv4.tcp_syncookies = 1</code>, que viene encendido por defecto en la mayoría de las distribuciones.</li>
+        <li><b>No seguir el estado de lo que no lo necesita.</b> Un balanceador que solo publica el 443 puede marcar ese tráfico con <code>notrack</code> y aceptarlo por puerto: pierde las ventajas de la sección 32.2 para esa regla, a cambio de que la tabla no sea un blanco.</li>
+      </ul>
+
+<pre data-lang="shell"><code># Antes de conntrack: los intentos de conexión a otros puertos se tiran sin crear estado.
+table inet borde {
+  chain antes_del_estado {
+    type filter hook prerouting priority raw; policy accept;
+    # Un SYN nuevo solo puede ir al 80 o al 443. Las respuestas a conexiones que abrió
+    # el propio host (apt, DNS) no son SYN y siguen de largo hacia conntrack.
+    iifname "eth0" tcp flags &amp; (fin|syn|rst|ack) == syn tcp dport != { 80, 443 } drop
+  }
+}</code></pre>
+
+      <h3 id="ubicacion-elegir">Firewall o WAF: cuándo pesa cada uno</h3>
+
+      <p>No compiten: ven capas distintas (figura 32.1). La pregunta útil no es cuál elegir, sino qué protege cada uno que el otro no puede.</p>
+
+      <div class="table-wrap">
+        <table class="t">
+          <thead><tr><th>Situación</th><th>Firewall de puertos</th><th>WAF</th></tr></thead>
+          <tbody>
+            <tr><td>Un puerto que no debería estar abierto (SSH, PostgreSQL, Redis)</td><td><b>Imprescindible</b>: es lo único que lo ve</td><td>No lo ve: no es HTTP</td></tr>
+            <tr><td>Tráfico entre servicios internos (este-oeste) y la salida</td><td><b>Imprescindible</b> (32.5 y 32.6)</td><td>Casi nunca está en ese camino</td></tr>
+            <tr><td>Una inyección SQL o un XSS en un parámetro</td><td>No lo ve: va dentro de TLS al 443</td><td><b>Ayuda</b>, como segunda capa del código</td></tr>
+            <tr><td>Un CVE de un producto que aún no parchaste</td><td>Solo si puedes cerrar el puerto</td><td><b>Parche virtual</b> mientras llega el arreglo</td></tr>
+            <tr><td>Código que no controlas (un CMS, un plugin, un producto comprado)</td><td>Lo mismo que para el resto</td><td><b>Pesa más</b>: no puedes arreglar la causa</td></tr>
+            <tr><td>Una norma que lo exige (PCI DSS 6.4.2 para apps web públicas con datos de tarjeta)</td><td>Se exige aparte</td><td><b>Obligatorio</b> o una revisión equivalente <span class="badge badge--doc">Documentado</span></td></tr>
+            <tr><td>Pedir la factura de otro cliente</td><td colspan="2">Ninguno: es una request válida. Lo frena solo la aplicación (<a href="m10-seguridad.html#bola-detalle">M10</a>)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Si solo pudieras poner uno, el firewall va primero, porque sin él cualquier servicio que escuche por error queda expuesto y el WAF ni se entera. Pero en una API pública el WAF no es un lujo: es la única capa que mira el contenido antes de que llegue a tu código.</p>
+
+      <h3 id="ubicacion-waf-gateway">El WAF antes del gateway</h3>
+
+      <p>El WAF va donde termina TLS, que normalmente es el balanceador, y antes del API gateway. Tres razones:</p>
+      <ul>
+        <li><b>Costo.</b> Rechazar una request con <code>' OR 1=1--</code> en el WAF ahorra la validación del token, la consulta de cuota en Redis y el log de auditoría del gateway.</li>
+        <li><b>Contexto.</b> El WAF necesita la request completa y en claro. Si el gateway la reescribe (quita cabeceras, cambia la ruta), el WAF que viene detrás inspecciona otra cosa que la que mandó el cliente.</li>
+        <li><b>Cada límite en su lugar.</b> El <a href="m08-resiliencia.html#rate-limiting">rate limiting</a> grueso por IP ("más de 50 requests por segundo desde una dirección es un bot") va en el WAF, que no sabe quién es el cliente. La cuota fina por cliente o por API key ("este plan tiene 1&#8239;000 requests por minuto") va en el gateway, que sí lo sabe.</li>
+      </ul>
+      <p>Hay productos que juntan las dos cosas en un proceso (Nginx o Envoy con ModSecurity o Coraza, Kong con su plugin de WAF). Es válido: el orden lógico sigue siendo el mismo dentro del proceso, primero las reglas del WAF y después la autenticación y las cuotas.</p>
+
+      <h3 id="ubicacion-patrones">Todo en una máquina o cada uno en la suya</h3>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 412" role="img" aria-labelledby="f32u2t f32u2d">
+<title id="f32u2t">Tres formas de desplegar las capas</title>
+<desc id="f32u2d">Tres columnas. Todo en una VM: nftables, Nginx con WAF y gateway, la aplicación y PostgreSQL dentro de la misma máquina; todo es un punto único de falla. Administrado y separado: mitigación de DDoS del proveedor, balanceador con WAF, una flota de gateways, una flota de la aplicación y una base administrada con réplica en otra zona. Propio y separado: un par de firewalls, un par de balanceadores con WAF, gateways, aplicación y un primario con réplica. En las dos últimas, cada capa escala sola y ninguna es un punto único de falla.</desc>
+<defs><marker id="f32u2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="130" y="22" text-anchor="middle">A. Todo en una VM</text>
+<text class="dg-group" x="385" y="22" text-anchor="middle">B. Administrado y separado</text>
+<text class="dg-group" x="640" y="22" text-anchor="middle">C. Propio y separado</text>
+<rect class="dg-frame" x="20" y="36" width="220" height="318" rx="8"/>
+<text class="dg-tiny" x="34" y="54">una sola VM</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="40" y="64" width="180" height="44" rx="6"/>
+<text class="dg-label" x="130" y="83" text-anchor="middle">nftables</text>
+<text class="dg-tiny" x="130" y="99" text-anchor="middle">solo 22 (VPN), 80 y 443</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="40" y="124" width="180" height="44" rx="6"/>
+<text class="dg-label" x="130" y="143" text-anchor="middle">Nginx</text>
+<text class="dg-tiny" x="130" y="159" text-anchor="middle">TLS + WAF + gateway</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="40" y="184" width="180" height="44" rx="6"/>
+<text class="dg-label" x="130" y="203" text-anchor="middle">Aplicación</text>
+<text class="dg-tiny" x="130" y="219" text-anchor="middle">en 127.0.0.1:8080</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="40" y="244" width="180" height="44" rx="6"/>
+<text class="dg-label" x="130" y="263" text-anchor="middle">PostgreSQL</text>
+<text class="dg-tiny" x="130" y="279" text-anchor="middle">solo socket local</text>
+<path class="dg-edge" d="M130 110 V120" marker-end="url(#f32u2a)"/>
+<path class="dg-edge" d="M130 170 V180" marker-end="url(#f32u2a)"/>
+<path class="dg-edge" d="M130 230 V240" marker-end="url(#f32u2a)"/>
+<text class="dg-tiny" x="130" y="316" text-anchor="middle">el WAF le quita CPU a la app</text>
+<text class="dg-tiny" x="130" y="336" text-anchor="middle">si cae la VM, cae todo</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="295" y="40" width="180" height="44" rx="6"/>
+<text class="dg-label" x="385" y="59" text-anchor="middle">DDoS del proveedor</text>
+<text class="dg-tiny" x="385" y="75" text-anchor="middle">anycast</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="295" y="100" width="180" height="44" rx="6"/>
+<text class="dg-label" x="385" y="119" text-anchor="middle">ALB + WAF</text>
+<text class="dg-tiny" x="385" y="135" text-anchor="middle">en 3 zonas, administrado</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="295" y="160" width="180" height="44" rx="6"/>
+<text class="dg-label" x="385" y="179" text-anchor="middle">Gateway × N</text>
+<text class="dg-tiny" x="385" y="195" text-anchor="middle">subred privada, sg-gw</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="295" y="220" width="180" height="44" rx="6"/>
+<text class="dg-label" x="385" y="239" text-anchor="middle">Aplicación × N</text>
+<text class="dg-tiny" x="385" y="255" text-anchor="middle">solo desde sg-gw</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="295" y="280" width="180" height="44" rx="6"/>
+<text class="dg-label" x="385" y="299" text-anchor="middle">Base administrada</text>
+<text class="dg-tiny" x="385" y="315" text-anchor="middle">réplica en otra zona</text>
+<path class="dg-edge" d="M385 86 V96" marker-end="url(#f32u2a)"/>
+<path class="dg-edge" d="M385 146 V156" marker-end="url(#f32u2a)"/>
+<path class="dg-edge" d="M385 206 V216" marker-end="url(#f32u2a)"/>
+<path class="dg-edge" d="M385 266 V276" marker-end="url(#f32u2a)"/>
+<text class="dg-tiny" x="385" y="346" text-anchor="middle">cada capa escala sola</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="550" y="40" width="180" height="44" rx="6"/>
+<text class="dg-label" x="640" y="59" text-anchor="middle">Firewall × 2</text>
+<text class="dg-tiny" x="640" y="75" text-anchor="middle">VRRP + conntrackd</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="550" y="100" width="180" height="44" rx="6"/>
+<text class="dg-label" x="640" y="119" text-anchor="middle">Balanceador + WAF × 2</text>
+<text class="dg-tiny" x="640" y="135" text-anchor="middle">IP virtual compartida</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="550" y="160" width="180" height="44" rx="6"/>
+<text class="dg-label" x="640" y="179" text-anchor="middle">Gateway × N</text>
+<text class="dg-tiny" x="640" y="195" text-anchor="middle">red de aplicaciones</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="550" y="220" width="180" height="44" rx="6"/>
+<text class="dg-label" x="640" y="239" text-anchor="middle">Aplicación × N</text>
+<text class="dg-tiny" x="640" y="255" text-anchor="middle">o pods en Kubernetes</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="550" y="280" width="180" height="44" rx="6"/>
+<text class="dg-label" x="640" y="299" text-anchor="middle">Primario + réplica</text>
+<text class="dg-tiny" x="640" y="315" text-anchor="middle">red de datos</text>
+<path class="dg-edge" d="M640 86 V96" marker-end="url(#f32u2a)"/>
+<path class="dg-edge" d="M640 146 V156" marker-end="url(#f32u2a)"/>
+<path class="dg-edge" d="M640 206 V216" marker-end="url(#f32u2a)"/>
+<path class="dg-edge" d="M640 266 V276" marker-end="url(#f32u2a)"/>
+<text class="dg-tiny" x="640" y="346" text-anchor="middle">más control, más trabajo</text>
+<text class="dg-small" x="385" y="392" text-anchor="middle">En los tres, cada máquina lleva además su propio firewall de host.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 32.6.</b> Las mismas capas en tres despliegues. La A es un buen comienzo para un servicio chico; la B es lo más común en la nube; la C es la misma idea cuando el hardware es tuyo. Lo que no cambia es el orden ni el firewall en cada host.</figcaption>
+      </figure>
+
+      <p>Juntar todo en una máquina no es un error en sí: es un costo que se paga en tres monedas. Un <a href="m00-metodo.html#slo">SPOF</a>, porque si la VM se cae, se cae el servicio entero. Una pelea por la CPU, porque las expresiones regulares del WAF y la aplicación compiten por los mismos núcleos y un pico de basura frena las requests buenas. Y un radio de explosión total: quien comprometa el Nginx está en la misma máquina que la base. Mientras el servicio es chico, esos costos son aceptables si cada capa está bien configurada; la guía <a href="../proyectos/a29-servidor-seguro.html">A29</a> empieza así.</p>
+
+      <div class="table-wrap">
+        <table class="t">
+          <thead><tr><th>Señal</th><th>Qué separar</th></tr></thead>
+          <tbody>
+            <tr><td>Necesitas que una caída de una máquina no corte el servicio</td><td>Todo lo que está en el camino: al menos dos de cada cosa, en zonas distintas</td></tr>
+            <tr><td>El WAF o TLS consumen CPU que la aplicación necesita</td><td>El borde (balanceador + WAF) de la aplicación</td></tr>
+            <tr><td>Las capas escalan con métricas distintas (requests por segundo en el borde, CPU de bcrypt en la app, conexiones en la base)</td><td>Cada capa en su flota, con su propio autoscaling</td></tr>
+            <tr><td>Equipos distintos cambian las reglas del WAF y las rutas del gateway</td><td>El WAF del gateway, para que una regla rota no tumbe el ruteo</td></tr>
+            <tr><td>Datos sensibles</td><td>La base, sola en su red, que no tenga ruta desde el borde</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Una regla que no depende del patrón: el firewall de host va en cada máquina, aunque haya un firewall de red delante (32.6). Separar las capas multiplica las máquinas, y cada una es una puerta más si no se cierra.</p>
+
+      <h3 id="ubicacion-ha">Alta disponibilidad de una pieza que está en el camino de todo</h3>
+
+      <p>El borde es lo primero que se rompe: recibe todo el tráfico, incluido el hostil, y es lo que más cambia de configuración. La forma de mantenerlo arriba depende de si la pieza guarda estado.</p>
+
+      <ul>
+        <li><b>Sin estado (WAF, proxy, gateway).</b> Cada request se decide sola, así que alcanza con muchas copias detrás de un balanceador, con health checks (<a href="m03-balanceo-gateways.html#health">M03</a>). Un proxy termina la conexión TCP del cliente y abre otra hacia atrás: si una copia muere, sus conexiones abiertas se cortan y el cliente reintenta contra otra. No hay estado que copiar.</li>
+        <li><b>Con estado (un firewall que enruta).</b> Aquí está el problema: la tabla de <code>conntrack</code>. Si el firewall activo muere y el de respaldo no conoce las conexiones abiertas, las respuestas que llegan no coinciden con nada y se descartan. Dos formas de resolverlo, en la figura 32.7.</li>
+      </ul>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f32u3t f32u3d">
+<title id="f32u3t">Activo-pasivo con VRRP contra activo-activo con ECMP</title>
+<desc id="f32u3d">A la izquierda, activo-pasivo: el router manda todo a una IP virtual que tiene el firewall activo; el pasivo escucha los anuncios VRRP y recibe una copia de la tabla de conexiones por conntrackd. Si el activo deja de anunciarse, el pasivo toma la IP virtual y las conexiones siguen. A la derecha, activo-activo: el router reparte por ECMP entre tres firewalls con un hash simétrico, para que la ida y la vuelta de cada conexión pasen por el mismo firewall.</desc>
+<defs><marker id="f32u3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="190" y="22" text-anchor="middle">Activo-pasivo</text>
+<text class="dg-group" x="580" y="22" text-anchor="middle">Activo-activo</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="110" y="38" width="160" height="40" rx="6"/>
+<text class="dg-label" x="190" y="63" text-anchor="middle">Router</text>
+<path class="dg-edge" d="M190 80 V104" marker-end="url(#f32u3a)"/>
+<text class="dg-tiny" x="200" y="96">a la IP virtual .100</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="30" y="110" width="150" height="58" rx="6"/>
+<text class="dg-label" x="105" y="132" text-anchor="middle">fw-a, activo</text>
+<text class="dg-tiny" x="105" y="152" text-anchor="middle">tiene la .100</text>
+<rect class="dg-box" x="200" y="110" width="150" height="58" rx="6"/>
+<text class="dg-label" x="275" y="132" text-anchor="middle">fw-b, pasivo</text>
+<text class="dg-tiny" x="275" y="152" text-anchor="middle">escucha VRRP</text>
+<path class="dg-feedback" d="M182 128 H198" marker-end="url(#f32u3a)"/>
+<path class="dg-feedback" d="M182 152 H198" marker-end="url(#f32u3a)"/>
+<text class="dg-tiny" x="190" y="192" text-anchor="middle">VRRP cada 1 s y la tabla de conexiones (conntrackd)</text>
+<path class="dg-edge" d="M105 170 V230" marker-end="url(#f32u3a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="30" y="236" width="320" height="40" rx="6"/>
+<text class="dg-label" x="190" y="261" text-anchor="middle">Balanceadores y servidores</text>
+<text class="dg-tiny" x="190" y="304" text-anchor="middle">Si fw-a calla unos 3 s, fw-b toma la .100;</text>
+<text class="dg-tiny" x="190" y="320" text-anchor="middle">con la tabla copiada, las conexiones siguen</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="500" y="38" width="160" height="40" rx="6"/>
+<text class="dg-label" x="580" y="63" text-anchor="middle">Router ECMP</text>
+<path class="dg-edge" d="M540 80 L465 106" marker-end="url(#f32u3a)"/>
+<path class="dg-edge" d="M580 80 V106" marker-end="url(#f32u3a)"/>
+<path class="dg-edge" d="M620 80 L695 106" marker-end="url(#f32u3a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="410" y="110" width="110" height="58" rx="6"/>
+<text class="dg-label" x="465" y="134" text-anchor="middle">fw-1</text>
+<text class="dg-tiny" x="465" y="154" text-anchor="middle">un tercio</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="525" y="110" width="110" height="58" rx="6"/>
+<text class="dg-label" x="580" y="134" text-anchor="middle">fw-2</text>
+<text class="dg-tiny" x="580" y="154" text-anchor="middle">un tercio</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="640" y="110" width="110" height="58" rx="6"/>
+<text class="dg-label" x="695" y="134" text-anchor="middle">fw-3</text>
+<text class="dg-tiny" x="695" y="154" text-anchor="middle">un tercio</text>
+<text class="dg-tiny" x="580" y="192" text-anchor="middle">hash simétrico de (origen, destino, puertos):</text>
+<text class="dg-tiny" x="580" y="208" text-anchor="middle">la ida y la vuelta caen en el mismo firewall</text>
+<path class="dg-edge" d="M580 214 V230" marker-end="url(#f32u3a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="420" y="236" width="320" height="40" rx="6"/>
+<text class="dg-label" x="580" y="261" text-anchor="middle">Balanceadores y servidores</text>
+<text class="dg-tiny" x="580" y="304" text-anchor="middle">Si cae fw-2, solo su tercio de conexiones</text>
+<text class="dg-tiny" x="580" y="320" text-anchor="middle">se reabre; el resto ni se entera</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 32.7.</b> En activo-pasivo, la mitad de la capacidad espera sin hacer nada, pero el cambio es invisible si la tabla está copiada. En activo-activo se usa todo, y lo delicado es que la vuelta de cada conexión pase por el mismo firewall que vio la ida.</figcaption>
+      </figure>
+
+      <ul>
+        <li><b>Activo-pasivo.</b> Los dos firewalls comparten una IP virtual con <dfn data-term="vrrp">VRRP</dfn>: el activo se anuncia cada segundo y, si el pasivo deja de escucharlo durante unos tres intervalos, toma la IP. En Linux lo hace <code>keepalived</code>; en pfSense, CARP. Para que las conexiones abiertas sobrevivan, <code>conntrackd</code> copia la tabla de estado del activo al pasivo. Sin esa copia, el cambio de IP funciona y las conexiones abiertas se cortan igual.</li>
+        <li><b>Activo-activo.</b> El router reparte las conexiones entre varios firewalls con ECMP (varias rutas de igual costo). La condición es la simetría: si la ida pasa por <code>fw-1</code> y la vuelta por <code>fw-2</code>, <code>fw-2</code> no tiene la conexión en su tabla y descarta la respuesta. Se resuelve con un hash simétrico o, en AWS, con un Gateway Load Balancer, que mantiene cada flujo pegado al mismo equipo. <span class="badge badge--doc">Documentado</span></li>
+        <li><b>Administrado.</b> Los security groups y las NACL corren distribuidos en el hipervisor de cada host: no hay una caja que se pueda caer. El balanceador administrado vive en varias zonas y el proveedor reemplaza sus nodos. Es la razón práctica para usar lo administrado en el borde.</li>
+      </ul>
+
+      <p>La capacidad se dimensiona para perder una zona. Con tres zonas iguales, si una cae, las otras dos llevan todo el tráfico: cada zona tiene que trabajar como mucho al 2/3 de su capacidad en el pico, es decir, cerca del 66&#8239;%. Con dos zonas, el número baja al 50&#8239;%. El estado que sí tiene un gateway, como los contadores de cuota, va en un Redis replicado; y se decide de antemano qué hace el gateway si Redis no responde: aplicar un límite local aproximado o dejar pasar.</p>
+
+      <h3 id="ubicacion-fallar">Fallar abierto o cerrado, y el cambio que lo tumba todo</h3>
+
+      <p>Cada capa del borde tiene que tener decidido qué hace cuando ella misma falla (<a href="m00-metodo.html#fallos">fail-open o fail-closed</a>). El firewall de red falla cerrado: si no puede decidir, no pasa nada, porque abrir la red entera es peor que una caída. El WAF casi siempre se configura para fallar abierto: si su motor se cuelga, dejar pasar las requests sin inspeccionar mantiene el servicio, y el código de la aplicación sigue siendo la defensa principal. Es una decisión de riesgo, y se escribe.</p>
+
+      <p>La causa más común de caída del borde no es el hardware, es un cambio de configuración. El 2 de julio de 2019, una regla nueva del WAF de Cloudflare con una expresión regular que hacía backtracking excesivo llevó la CPU de sus servidores HTTP al 100&#8239;% en todo el mundo durante 27 minutos. <span class="badge badge--doc">Documentado</span> La regla se había desplegado de una vez en toda la red. De ahí salen las prácticas que valen para cualquier borde:</p>
+      <ul>
+        <li>Cada regla nueva entra primero en modo detección (registra, no bloquea) y se mira cuántas requests legítimas habría bloqueado.</li>
+        <li>Se despliega por partes: una zona, un porcentaje, y después el resto (<a href="m22-operar-modelos.html#canary">canary</a>).</li>
+        <li>La configuración vive en un repositorio, versionada, con una vuelta atrás que no depende de la pieza que se rompió.</li>
+        <li>El origen solo acepta tráfico del borde (<a href="#origen">32.11</a>): separar las capas no sirve si alguien puede llegar directo a la aplicación.</li>
+      </ul>
+
+
+      <h2 id="docker"><span class="sec-num">32.10</span>Docker, el firewall e IPv6</h2>
 
       <p>Este es probablemente el agujero más común en servidores pequeños. Configuras UFW con política de entrada <code>deny</code>, levantas una base con <code>docker run -p 5432:5432 postgres</code> y crees que el puerto está cerrado porque nunca lo abriste en UFW. Está abierto a internet.</p>
 
@@ -629,7 +928,7 @@ $ sudo firewall-cmd --reload</code></pre>
 </svg>
 
         </div>
-        <figcaption><b>Figura 32.5.</b> El paquete al 8080 se redirige al contenedor antes de que UFW lo vea. Las reglas que sí se evalúan están en <code>forward</code>, y la primera cadena ahí es <code>DOCKER-USER</code>, la que Docker deja para ti.</figcaption>
+        <figcaption><b>Figura 32.8.</b> El paquete al 8080 se redirige al contenedor antes de que UFW lo vea. Las reglas que sí se evalúan están en <code>forward</code>, y la primera cadena ahí es <code>DOCKER-USER</code>, la que Docker deja para ti.</figcaption>
       </figure>
 
       <p>Además, Docker publica los puertos en todas las direcciones del host, <code>0.0.0.0</code> y <code>[::]</code>, salvo que digas otra cosa, y su propia documentación advierte que publicar puertos de un contenedor es inseguro por defecto. <span class="badge badge--doc">Documentado</span> Los arreglos, de más simple a más general:</p>
@@ -656,7 +955,7 @@ $ sudo firewall-cmd --reload</code></pre>
 
       <p>La comprobación es simple: desde otra máquina, prueba tus puertos contra la dirección IPv6 del servidor, no solo contra la IPv4.</p>
 
-      <h2 id="evasion"><span class="sec-num">32.10</span>Cuando el firewall no alcanza: cómo se evita un perímetro y cómo se detecta</h2>
+      <h2 id="evasion"><span class="sec-num">32.11</span>Cuando el firewall no alcanza: cómo se evita un perímetro y cómo se detecta</h2>
 
       <p>Un firewall y un reverse proxy son controles, no muros. Un atacante con oficio rara vez "rompe" la pared de frente: busca un camino que el control da por legítimo, o ataca una capa que el control no mira. Esta sección clasifica esos caminos con un solo fin, <b>detectarlos y cerrarlos</b>. Es la contraparte de red de <a href="m33-hardening-linux.html#sin-firewall">M33&#8239;§&#8239;33.10</a>, que endurece el servidor suponiendo que el perímetro ya cedió. No hay recetas de intrusión: hay patrones para reconocer y arreglos para aplicar.</p>
 
@@ -721,7 +1020,7 @@ $ sudo firewall-cmd --reload</code></pre>
 
       <p>Cuando la señal aparece, la respuesta también estaba ensayada o no sirve. Cuatro principios. La <b>defensa en profundidad</b>: ninguna capa se confía a sí misma, de modo que saltar el firewall deja al atacante frente al servidor endurecido, al mínimo privilegio y al egress. <b>Contener sin avisar</b>: aislar el equipo comprometido de la red, pero con cuidado de no espantar al atacante antes de entender qué tocó, igual que en la respuesta a incidentes del curso (<a href="m11-observabilidad.html#incidentes">M11</a>) y en <a href="m33-hardening-linux.html#responder">M33&#8239;§&#8239;33.10</a>. <b>Rotar y reconstruir</b>: dar por quemadas las credenciales que ese equipo podía ver y levantar la máquina de nuevo desde una imagen conocida, porque un atacante bueno deja más de una puerta. Y <b>cerrar el camino</b>, no solo el síntoma: si entró por un servicio expuesto de más, la corrección es quitar la exposición, no bloquear una sola IP. Zero Trust, el WAF administrado y la defensa de borde a escala vuelven en <a href="m37-nube.html#zero-trust">M37</a>.</p>
 
-      <h2 id="fallos"><span class="sec-num">32.11</span>Fallos típicos</h2>
+      <h2 id="fallos"><span class="sec-num">32.12</span>Fallos típicos</h2>
 
       <div class="table-wrap">
         <table class="t">

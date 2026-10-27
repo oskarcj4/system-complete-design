@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M61. Seguridad de red y del correo</title>
+<meta name="description" content="Lo que la red y el correo dicen de un ataque: monitoreo de red con Zeek y Suricata, el DNS como señal, lo que se ve de TLS sin descifrar (SNI y JA4), el phishing como puerta de entrada, SPF, DKIM, DMARC con su despliegue gradual, MTA-STS y BIMI.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m61">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Seguridad de red y del correo</h1>
+        <p class="lead">Casi todo ataque pasa dos veces por la red: al entrar y al hablar con su dueño. Y una buena parte entra por el correo. Este módulo enseña a mirar las dos cosas y a cerrar la puerta más barata de todas: que cualquiera pueda mandar correo con tu nombre.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M61</dd></div>
+          <div><dt>Parte</dt><dd>VII. Blue Team y DevSecOps</dd></div>
+          <div><dt>Duración</dt><dd>100 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M01, M32, M36, M59</dd></div>
+          <div><dt>Estado</dt><dd data-status="m61">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Ubicar un sensor de <b>monitoreo de red</b> y explicar qué escribe Zeek y qué alerta Suricata.</li>
+    <li>Leer el <b>registro de DNS</b> como fuente de detección: dominios generados, túneles y beaconing.</li>
+    <li>Decir qué se ve de una conexión <b>TLS 1.3 sin descifrarla</b> y cómo se arma una huella <b>JA4</b>.</li>
+    <li>Explicar por qué el correo tiene <b>dos remitentes</b> y qué mira cada uno de <b>SPF, DKIM y DMARC</b>.</li>
+    <li>Llevar un dominio de <code>p=none</code> a <code>p=reject</code> <b>sin romper el correo propio</b>, con los reportes como guía.</li>
+    <li>Cerrar el canal entre servidores con <b>MTA-STS</b> y reconocer lo que ningún registro arregla: el dominio parecido.</li>
+  </ul>
+</section>
+
+<p>En <a href="m32-firewalls.html#ngfw-waf">M32</a> el IDS apareció como una pieza del perímetro, y en <a href="m32-firewalls.html#deteccion">la detección de M32</a> la idea de que la salida es la señal más barata. <a href="m59-deteccion.html#fuentes">M59</a> puso "red y DNS" entre las seis fuentes de Tienda Norte, con volumen alto y señal media. Este módulo abre esa fuente: qué se registra, cómo se lee y por qué el DNS, que casi nadie mira, es uno de los registros con mejor relación entre lo que cuesta y lo que dice.</p>
+
+<p>La segunda mitad va al correo. El threat model de <a href="m54-threat-modeling.html#tienda">M54</a> dejó una fila sobre el flujo hacia el servicio de correo, y el correo es además el canal por el que un atacante le habla a la gente de la tienda y a sus clientes. La buena noticia es que la parte más importante, que nadie pueda mandar correo como <code>tiendanorte.example</code>, se resuelve con tres registros de DNS bien desplegados.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un edificio de oficinas. La red es la portería: no abre los paquetes, pero anota quién entra, a qué hora, a qué piso va y cada cuánto vuelve. El correo es la correspondencia: cualquiera puede escribir "Banco Nacional" en el remite de un sobre. SPF es la lista de carteros autorizados, DKIM es el sello lacrado y DMARC es la instrucción al portero: "si el sobre dice que viene de nosotros y no trae ni cartero autorizado ni sello, tíralo".</p>
+</aside>
+
+<h2 id="lamina">La lámina: el vocabulario en una imagen</h2>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 440" role="img" aria-labelledby="f61Lt f61Ld">
+<title id="f61Lt">Lámina 61.A: la red y el correo de Tienda Norte</title>
+<desc id="f61Ld">Arriba, la red: el tráfico entre internet y Tienda Norte pasa por un punto de copia donde un sensor con Zeek y Suricata escribe registros de conexiones, DNS y TLS y alertas de firmas, que van al SIEM de M59. El resolver DNS interno también registra cada consulta. Abajo, el correo: un servidor que envía en nombre de tiendanorte.example entrega al servidor MX del receptor, que consulta en el DNS los registros SPF, DKIM, DMARC y MTA-STS del dominio antes de decidir qué hacer con el mensaje. Doce marcas numeradas señalan el vocabulario.</desc>
+<defs><marker id="f61La" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="14" y="26" text-anchor="start">La red</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="40" width="120" height="50" rx="8"/>
+<text class="dg-label" x="74.0" y="69.0" text-anchor="middle">Internet</text>
+<path class="dg-edge" d="M134 65 L196 65" marker-end="url(#f61La)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="198" y="40" width="120" height="50" rx="8"/>
+<text class="dg-small" x="258.0" y="61.5" text-anchor="middle">Punto de copia</text>
+<text class="dg-tiny" x="258.0" y="76.5" text-anchor="middle">TAP o espejo</text>
+<path class="dg-edge" d="M318 65 L380 65" marker-end="url(#f61La)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="382" y="40" width="150" height="50" rx="8"/>
+<text class="dg-small" x="457.0" y="61.5" text-anchor="middle">Tienda Norte</text>
+<text class="dg-tiny" x="457.0" y="76.5" text-anchor="middle">balanceador y API</text>
+<path class="dg-edge" d="M258 90 L258 128" marker-end="url(#f61La)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="170" y="130" width="176" height="56" rx="8"/>
+<text class="dg-small" x="258.0" y="154.5" text-anchor="middle">Sensor</text>
+<text class="dg-tiny" x="258.0" y="169.5" text-anchor="middle">Zeek y Suricata</text>
+<path class="dg-edge" d="M346 158 L404 158" marker-end="url(#f61La)"/>
+<text class="dg-tiny" x="375" y="148" text-anchor="middle">eventos</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="406" y="130" width="126" height="56" rx="8"/>
+<text class="dg-label" x="469.0" y="154.5" text-anchor="middle">SIEM</text>
+<text class="dg-tiny" x="469.0" y="169.5" text-anchor="middle">de M59</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="586" y="40" width="170" height="50" rx="8"/>
+<text class="dg-small" x="671.0" y="61.5" text-anchor="middle">Resolver DNS</text>
+<text class="dg-tiny" x="671.0" y="76.5" text-anchor="middle">registra cada consulta</text>
+<path class="dg-edge" d="M586 80 L534 140" marker-end="url(#f61La)"/>
+<rect class="dg-box" x="586" y="130" width="170" height="56" rx="8"/>
+<text class="dg-small" x="671.0" y="154.5" text-anchor="middle">ClientHello de TLS</text>
+<text class="dg-tiny" x="671.0" y="169.5" text-anchor="middle">SNI y huella JA4</text>
+<path class="dg-frame" d="M14 214 H756"/>
+<text class="dg-group" x="14" y="240" text-anchor="start">El correo</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="256" width="150" height="56" rx="8"/>
+<text class="dg-small" x="89.0" y="280.5" text-anchor="middle">Servidor que envía</text>
+<text class="dg-tiny" x="89.0" y="295.5" text-anchor="middle">en nombre de la tienda</text>
+<path class="dg-edge" d="M164 284 L276 284" marker-end="url(#f61La)"/>
+<text class="dg-tiny" x="220" y="274" text-anchor="middle">SMTP con STARTTLS</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="278" y="256" width="160" height="56" rx="8"/>
+<text class="dg-small" x="358.0" y="280.5" text-anchor="middle">MX del receptor</text>
+<text class="dg-tiny" x="358.0" y="295.5" text-anchor="middle">Gmail, Outlook…</text>
+<path class="dg-edge" d="M438 284 L510 284" marker-end="url(#f61La)"/>
+<text class="dg-tiny" x="474" y="274" text-anchor="middle">consulta</text>
+<rect class="dg-frame" x="512" y="244" width="244" height="180" rx="10"/>
+<text class="dg-tiny" x="634" y="264" text-anchor="middle">DNS de tiendanorte.example</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="530" y="274" width="208" height="30" rx="8"/>
+<text class="dg-tiny" x="634.0" y="293.0" text-anchor="middle">SPF: qué servidores</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="530" y="310" width="208" height="30" rx="8"/>
+<text class="dg-tiny" x="634.0" y="329.0" text-anchor="middle">DKIM: llave pública</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="530" y="346" width="208" height="30" rx="8"/>
+<text class="dg-tiny" x="634.0" y="365.0" text-anchor="middle">DMARC: política y reportes</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="530" y="382" width="208" height="30" rx="8"/>
+<text class="dg-tiny" x="634.0" y="401.0" text-anchor="middle">MTA-STS: TLS obligatorio</text>
+<rect class="dg-box dg-box--em" x="278" y="350" width="160" height="50" rx="8"/>
+<text class="dg-small" x="358.0" y="371.5" text-anchor="middle">Bandeja, spam</text>
+<text class="dg-tiny" x="358.0" y="386.5" text-anchor="middle">o rechazo</text>
+<path class="dg-edge" d="M358 312 L358 348" marker-end="url(#f61La)"/>
+<rect class="dg-ok" x="14" y="350" width="170" height="50" rx="8"/>
+<text class="dg-small" x="99.0" y="371.5" text-anchor="middle">Reportes DMARC</text>
+<text class="dg-tiny" x="99.0" y="386.5" text-anchor="middle">vuelven a la tienda</text>
+<path class="dg-edge" d="M278 375 L186 375" marker-end="url(#f61La)" style="stroke-dasharray:5 4"/>
+<g class="pl-pin"><circle cx="200" cy="42" r="11"/><text x="200" y="46" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="172" cy="132" r="11"/><text x="172" y="136" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="302" cy="132" r="11"/><text x="302" y="136" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="588" cy="42" r="11"/><text x="588" y="46" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="588" cy="132" r="11"/><text x="588" y="136" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="692" cy="132" r="11"/><text x="692" y="136" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="280" cy="258" r="11"/><text x="280" y="262" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="532" cy="276" r="11"/><text x="532" y="280" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="532" cy="312" r="11"/><text x="532" y="316" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="532" cy="348" r="11"/><text x="532" y="352" text-anchor="middle">10</text></g>
+<g class="pl-pin"><circle cx="16" cy="352" r="11"/><text x="16" y="356" text-anchor="middle">11</text></g>
+<g class="pl-pin"><circle cx="532" cy="384" r="11"/><text x="532" y="388" text-anchor="middle">12</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 61.A.</b> La red y el correo de Tienda Norte. Arriba, lo que se registra del tráfico; abajo, lo que consulta un receptor antes de aceptar un correo con el nombre de la tienda.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Punto de copia</b><span>Un TAP o un puerto espejo que duplica los paquetes hacia el sensor, sin ponerlo en el camino. <a href="#nsm">61.1</a></span></li>
+  <li><b>Monitoreo de red (NSM)</b><span>Registrar y analizar el tráfico para encontrar ataques, no para medir rendimiento. <a href="#nsm">61.1</a></span></li>
+  <li><b>Zeek y Suricata</b><span>Zeek escribe un registro por transacción; Suricata compara contra firmas y alerta. <a href="#nsm">61.1</a></span></li>
+  <li><b>Registro del resolver</b><span>Cada consulta de DNS de cada máquina, con su respuesta. <a href="#dns">61.2</a></span></li>
+  <li><b>SNI</b><span>El nombre del sitio, a la vista en el primer mensaje de TLS. <a href="#tls-meta">61.3</a></span></li>
+  <li><b>JA4</b><span>Una huella del ClientHello que dice qué clase de programa abrió la conexión. <a href="#tls-meta">61.3</a></span></li>
+  <li><b>MX del receptor</b><span>El servidor que recibe el correo de un dominio y decide qué hacer con cada mensaje. <a href="#correo">61.4</a></span></li>
+  <li><b>SPF</b><span>La lista de servidores autorizados a mandar con un dominio en el sobre. <a href="#spf">61.5</a></span></li>
+  <li><b>DKIM</b><span>Una firma del mensaje con una llave publicada en el DNS. <a href="#dkim">61.6</a></span></li>
+  <li><b>DMARC</b><span>La política que une las dos con el remitente visible y pide reportes. <a href="#dmarc">61.7</a></span></li>
+  <li><b>Reportes agregados</b><span>Lo que cada receptor cuenta cada día sobre el correo que dice venir de tu dominio. <a href="#dmarc-despliegue">61.7</a></span></li>
+  <li><b>MTA-STS</b><span>Exige TLS con certificado válido entre servidores de correo. <a href="#mta-sts">61.8</a></span></li>
+</ol>
+
+<h2 id="nsm"><span class="sec-num">61.1</span>Monitoreo de red: Zeek y Suricata</h2>
+
+<p>El <dfn data-term="nsm">monitoreo de seguridad de red</dfn> (NSM) es registrar el tráfico para poder responder después "¿con quién habló esta máquina, cuándo y cuánto?". No se trata de guardar todos los paquetes, que en Tienda Norte serían terabytes por día, sino de guardar un <b>resumen por transacción</b>: cada conexión, cada consulta de DNS, cada handshake de TLS, en una línea.</p>
+
+<p>El sensor no está en el camino. Recibe una <b>copia</b> del tráfico desde un TAP (un aparato que duplica lo que pasa por un cable) o desde un puerto espejo del switch; en la nube, desde el espejo de tráfico de la VPC o los flow logs. Si el sensor se cae, la tienda sigue funcionando. Es un IDS, no un IPS: lo que en <a href="m32-firewalls.html#ngfw-waf">M32</a> se llamó detectar contra bloquear.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f61bt f61bd">
+<title id="f61bt">Dónde va el sensor y qué escribe</title>
+<desc id="f61bd">El sensor recibe una copia del tráfico desde un TAP o un puerto espejo, sin estar en el camino. Zeek escribe un registro por transacción: conn.log, dns.log, ssl.log, http.log y files.log. Suricata compara contra firmas y escribe alertas en eve.json. Las dos salidas van al SIEM. Si el sensor se cae, el tráfico sigue pasando: es un IDS, no un IPS.</desc>
+<defs><marker id="f61ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="40" width="130" height="50" rx="8"/>
+<text class="dg-label" x="79.0" y="69.0" text-anchor="middle">Internet</text>
+<path class="dg-edge" d="M144 65 L300 65" marker-end="url(#f61ba)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="302" y="40" width="150" height="50" rx="8"/>
+<text class="dg-small" x="377.0" y="61.5" text-anchor="middle">Switch o TAP</text>
+<text class="dg-tiny" x="377.0" y="76.5" text-anchor="middle">copia los paquetes</text>
+<path class="dg-edge" d="M452 65 L608 65" marker-end="url(#f61ba)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="610" y="40" width="146" height="50" rx="8"/>
+<text class="dg-small" x="683.0" y="61.5" text-anchor="middle">Servidores</text>
+<text class="dg-tiny" x="683.0" y="76.5" text-anchor="middle">Tienda Norte</text>
+<path class="dg-edge" d="M377 90 L377 126" marker-end="url(#f61ba)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="402" y="112" text-anchor="middle">copia</text>
+<rect class="dg-frame" x="150" y="128" width="454" height="152" rx="10"/>
+<text class="dg-tiny" x="377" y="148" text-anchor="middle">Sensor (fuera del camino)</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="168" y="160" width="200" height="104" rx="8"/>
+<text class="dg-label" x="268.0" y="201.0" text-anchor="middle">Zeek</text>
+<text class="dg-tiny" x="268.0" y="216.0" text-anchor="middle">un registro por transacción</text>
+<text class="dg-tiny" x="268.0" y="231.0" text-anchor="middle">conn, dns, ssl, http, files</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="386" y="160" width="200" height="104" rx="8"/>
+<text class="dg-label" x="486.0" y="201.0" text-anchor="middle">Suricata</text>
+<text class="dg-tiny" x="486.0" y="216.0" text-anchor="middle">firmas de ataques conocidos</text>
+<text class="dg-tiny" x="486.0" y="231.0" text-anchor="middle">alertas en eve.json</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="626" y="186" width="130" height="52" rx="8"/>
+<text class="dg-label" x="691.0" y="208.5" text-anchor="middle">SIEM</text>
+<text class="dg-tiny" x="691.0" y="223.5" text-anchor="middle">M59</text>
+<path class="dg-edge" d="M586 212 L624 212" marker-end="url(#f61ba)"/>
+<text class="dg-tiny" x="14" y="150" text-anchor="start">Registra todo,</text>
+<text class="dg-tiny" x="14" y="166" text-anchor="start">alerte o no.</text>
+<text class="dg-tiny" x="14" y="210" text-anchor="start">Alerta solo</text>
+<text class="dg-tiny" x="14" y="226" text-anchor="start">lo que coincide.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 61.1.</b> El sensor mira una copia. Zeek registra todo lo que pasa; Suricata solo habla cuando algo coincide con una firma.</figcaption>
+</figure>
+
+
+<p>Dentro del sensor corren dos herramientas que se complementan:</p>
+<ul>
+  <li><b><dfn data-term="zeek">Zeek</dfn></b> entiende los protocolos y escribe registros: <code>conn.log</code> (cada conexión, con bytes y duración), <code>dns.log</code>, <code>ssl.log</code>, <code>http.log</code>, <code>files.log</code>. No decide si algo es malo; deja la historia para que una regla del SIEM o una persona lo decida. <span class="badge badge--doc">Documentado</span></li>
+  <li><b>Suricata</b> compara el tráfico contra miles de firmas (ataques conocidos, destinos en listas de bloqueo) y escribe alertas en <code>eve.json</code>. Puede funcionar como IPS si se lo pone en el camino. <span class="badge badge--doc">Documentado</span></li>
+</ul>
+
+<p>Las dos salidas son JSON y llegan al pipeline de <a href="m59-deteccion.html#pipeline-logs">59.3</a>, donde se normalizan como cualquier otra fuente. Así se ve una línea de cada una (campos reales, datos inventados):</p>
+
+<pre data-lang="json"><code>{"ts":"2026-10-20T03:12:44.118Z","uid":"CkQ3Xa2bS1","id.orig_h":"10.0.4.17",
+ "id.resp_h":"10.0.0.2","query":"kq3vzx81hd.example","qtype_name":"A",
+ "rcode_name":"NXDOMAIN","answers":null}</code></pre>
+<pre data-lang="json"><code>{"timestamp":"2026-10-20T03:13:02.551Z","event_type":"alert",
+ "src_ip":"10.0.4.17","dest_ip":"203.0.113.80","dest_port":443,"proto":"TCP",
+ "alert":{"signature_id":2000001,"signature":"Tienda Norte: salida a un destino de la lista de bloqueo",
+          "category":"Potentially Bad Traffic","severity":2}}</code></pre>
+
+<p>Dónde poner el sensor importa más que la herramienta. En el borde ve lo que entra y sale de internet, que es donde viven el centro de mando y la exfiltración. Entre segmentos internos ve el movimiento lateral. Un sensor en el borde y otro entre la red de aplicaciones y la de datos cubren lo que M54 marcó como fronteras de confianza. Dentro del clúster de Kubernetes, el tráfico entre pods casi nunca pasa por un TAP: ahí la señal viene de la NetworkPolicy y de Falco (<a href="m57-contenedores-k8s.html#runtime">57.9</a>).</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Con TLS en todos lados, el sensor ya no ve el contenido de casi nada. Descifrar en el borde (un proxy que rompe TLS) devuelve visibilidad a cambio de una pieza muy delicada que ve todas las contraseñas de todos. La mayoría de los equipos chicos no lo hacen y viven de los metadatos: quién, adónde, cuánto, cuándo y con qué huella. Las dos secciones siguientes muestran que eso alcanza para mucho.</p>
+</aside>
+
+<h2 id="dns"><span class="sec-num">61.2</span>El DNS como señal</h2>
+
+<p>Casi todo programa, legítimo o no, resuelve un nombre antes de conectarse (<a href="m01-viaje-request.html#dns-resolucion">M01</a>). Por eso el registro del resolver interno es una de las mejores fuentes de M59: pesa poco, cada línea dice qué máquina quiso hablar con qué nombre, y el malware tiene que pasar por ahí o hacer algo raro para evitarlo.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f61ct f61cd">
+<title id="f61ct">Tres patrones que el registro de DNS delata</title>
+<desc id="f61cd">Tres paneles con las consultas de un host a lo largo de una hora. Normal: pocos nombres conocidos, casi todos con respuesta. Generación de dominios: cientos de nombres al azar, casi todos con NXDOMAIN, porque el malware prueba hasta encontrar el que su operador registró. Túnel: nombres muy largos con datos codificados en el subdominio, todos bajo un mismo dominio, y muchos de tipo TXT. Abajo, la cuarta señal: consultas a un mismo dominio a intervalos regulares, el beaconing de M32.</desc>
+<defs><marker id="f61ca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-ok" x="14" y="30" width="236" height="40" rx="8"/>
+<text class="dg-small" x="132.0" y="54.0" text-anchor="middle">Normal</text>
+<rect class="dg-box" x="14" y="80" width="236" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="132.0" y="101.0" text-anchor="middle">api.pagos.example</text>
+<rect class="dg-box" x="14" y="122" width="236" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="132.0" y="143.0" text-anchor="middle">cdn.fotos.example</text>
+<text class="dg-tiny" x="132" y="178" text-anchor="middle">Unos 40 nombres, 1 % NXDOMAIN</text>
+<rect class="dg-bad" x="268" y="30" width="236" height="40" rx="8"/>
+<text class="dg-small" x="386.0" y="54.0" text-anchor="middle">Dominios generados</text>
+<rect class="dg-box" x="268" y="80" width="236" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="386.0" y="101.0" text-anchor="middle">kq3vzx81hd.example</text>
+<rect class="dg-box" x="268" y="122" width="236" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="386.0" y="143.0" text-anchor="middle">p0wz7ra2mf.example</text>
+<text class="dg-tiny" x="386" y="178" text-anchor="middle">600 nombres, 97 % NXDOMAIN</text>
+<rect class="dg-warnbox" x="522" y="30" width="236" height="40" rx="8"/>
+<text class="dg-small" x="640.0" y="54.0" text-anchor="middle">Túnel por DNS</text>
+<rect class="dg-box" x="522" y="80" width="236" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="640.0" y="101.0" text-anchor="middle">aGVsbG8gd29y.t.example</text>
+<rect class="dg-box" x="522" y="122" width="236" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="640.0" y="143.0" text-anchor="middle">bGQgZGF0b3Mx.t.example</text>
+<text class="dg-tiny" x="640" y="178" text-anchor="middle">1 dominio, labels de 50 o más</text>
+<text class="dg-small" x="14" y="216" text-anchor="start">Beaconing: un host consulta el mismo dominio cada 60 segundos</text>
+<path class="sim-axis" d="M14 290 H756"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="40" y="246" width="6" height="40" rx="2"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="100" y="246" width="6" height="40" rx="2"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="160" y="246" width="6" height="40" rx="2"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="220" y="246" width="6" height="40" rx="2"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="280" y="246" width="6" height="40" rx="2"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="340" y="246" width="6" height="40" rx="2"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="400" y="246" width="6" height="40" rx="2"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="460" y="246" width="6" height="40" rx="2"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="520" y="246" width="6" height="40" rx="2"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="580" y="246" width="6" height="40" rx="2"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="640" y="246" width="6" height="40" rx="2"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="700" y="246" width="6" height="40" rx="2"/>
+<text class="dg-tiny" x="14" y="312" text-anchor="start">0 min</text>
+<text class="dg-tiny" x="756" y="312" text-anchor="end">12 min</text>
+<text class="dg-tiny" x="385" y="312" text-anchor="middle">Intervalos casi idénticos: una persona no navega así</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 61.2.</b> Lo normal, dos patrones de malware y el ritmo de un beacon, todo visible en el registro de DNS. Los nombres son de ejemplo.</figcaption>
+</figure>
+
+
+<p>Cuatro patrones que vale la pena buscar:</p>
+<ul>
+  <li><b>Muchos NXDOMAIN.</b> Algunos programas maliciosos generan cientos de nombres al día con un algoritmo y prueban hasta encontrar el que su operador registró. Una máquina que en una hora recibe 600 respuestas "ese nombre no existe" no está navegando.</li>
+  <li><b>Nombres largos bajo un mismo dominio.</b> Un túnel por DNS esconde datos en el subdominio (<code>aGVsbG8gd29y.t.example</code>) y recibe la respuesta en registros TXT. Labels de 50 caracteres, muchas consultas TXT y un solo dominio de destino son la firma.</li>
+  <li><b>Ritmo regular.</b> El <a href="m32-firewalls.html#evasion">beaconing</a> de M32 se ve igual en el DNS: el mismo nombre cada 60 segundos, día y noche.</li>
+  <li><b>Dominios recién vistos.</b> Un nombre que ninguna máquina de la tienda consultó nunca, registrado hace tres días, merece una mirada. Es la señal más ruidosa de las cuatro y se usa como contexto, no como alerta sola.</li>
+</ul>
+
+<p>Con <code>dns.log</code> en el SIEM, la primera caza (<a href="m59-deteccion.html#hunting">59.9</a>) es una consulta de diez líneas (sobre la tabla <span class="no-autolink">normalizada</span>; el umbral es un punto de partida, no una verdad):</p>
+
+<pre data-lang="sql"><code>-- Hosts con muchas respuestas NXDOMAIN en una hora (caza de 59.9, sobre dns.log)
+SELECT "id.orig_h" AS host,
+       count(*)                        AS consultas,
+       count(*) FILTER (WHERE rcode_name = 'NXDOMAIN') AS nxdomain,
+       count(DISTINCT query)           AS nombres
+FROM zeek_dns
+WHERE ts &gt;= now() - interval '1 hour'
+GROUP BY 1
+HAVING count(*) FILTER (WHERE rcode_name = 'NXDOMAIN') &gt; 200
+ORDER BY nxdomain DESC;</code></pre>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Todo esto supone que las máquinas usan el resolver de la tienda. Un programa que habla DNS sobre HTTPS (DoH) directo a un resolver público se salta el registro. La regla es simple: los servidores solo pueden resolver por el resolver interno, y el egress de <a href="m32-firewalls.html#entrada-salida">M32</a> bloquea el puerto 53 y los resolvers DoH conocidos hacia afuera. Que alguien lo intente es, en sí, una señal.</p>
+</aside>
+
+<h2 id="tls-meta"><span class="sec-num">61.3</span>Lo que se ve de TLS sin descifrar</h2>
+
+<p>TLS cifra el contenido, pero el saludo inicial viaja en claro. En el ClientHello de <a href="m01-viaje-request.html#tls-handshake">M01</a> van la versión, la lista de cifrados, las extensiones en un orden, el protocolo de aplicación (ALPN) y el <a href="m01-viaje-request.html#sni">SNI</a>, el nombre del sitio. En TLS 1.3 el certificado del servidor ya viaja cifrado; en TLS 1.2 se veía entero. <span class="badge badge--doc">Documentado</span></p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f61dt f61dd">
+<title id="f61dt">Qué se ve de una conexión TLS 1.3 sin descifrarla</title>
+<desc id="f61dd">Dos columnas. A la vista, sin descifrar: las IP y los puertos, el tamaño y el ritmo de los paquetes, el ClientHello completo (versión, cifrados, extensiones y su orden, ALPN) y el SNI, salvo que se use Encrypted Client Hello. Cifrado desde el ServerHello: el certificado del servidor, las rutas, los headers y el cuerpo. JA4 se calcula con lo de la izquierda.</desc>
+<defs><marker id="f61da" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-warnbox" x="14" y="30" width="360" height="40" rx="8"/>
+<text class="dg-small" x="194.0" y="54.0" text-anchor="middle">A la vista de cualquiera en el camino</text>
+<rect class="dg-box" x="14" y="80" width="360" height="32" rx="8"/>
+<text class="dg-tiny" x="194.0" y="100.0" text-anchor="middle">IP de origen y destino, puertos</text>
+<rect class="dg-box" x="14" y="118" width="360" height="32" rx="8"/>
+<text class="dg-tiny" x="194.0" y="138.0" text-anchor="middle">Tamaño y ritmo de los paquetes</text>
+<rect class="dg-box" x="14" y="156" width="360" height="32" rx="8"/>
+<text class="dg-tiny" x="194.0" y="176.0" text-anchor="middle">ClientHello: cifrados, extensiones, ALPN</text>
+<rect class="dg-box" x="14" y="194" width="360" height="32" rx="8"/>
+<text class="dg-tiny" x="194.0" y="214.0" text-anchor="middle">SNI: el nombre del sitio (salvo ECH)</text>
+<rect class="dg-box" x="14" y="232" width="360" height="32" rx="8"/>
+<text class="dg-tiny" x="194.0" y="252.0" text-anchor="middle">JA4: la huella de ese ClientHello</text>
+<rect class="dg-ok" x="396" y="30" width="360" height="40" rx="8"/>
+<text class="dg-small" x="576.0" y="54.0" text-anchor="middle">Cifrado en TLS 1.3</text>
+<rect class="dg-box" x="396" y="80" width="360" height="32" rx="8"/>
+<text class="dg-tiny" x="576.0" y="100.0" text-anchor="middle">Certificado del servidor (en 1.2 viajaba en claro)</text>
+<rect class="dg-box" x="396" y="118" width="360" height="32" rx="8"/>
+<text class="dg-tiny" x="576.0" y="138.0" text-anchor="middle">Ruta y parámetros: /v1/pedidos?id=…</text>
+<rect class="dg-box" x="396" y="156" width="360" height="32" rx="8"/>
+<text class="dg-tiny" x="576.0" y="176.0" text-anchor="middle">Headers: cookies, tokens</text>
+<rect class="dg-box" x="396" y="194" width="360" height="32" rx="8"/>
+<text class="dg-tiny" x="576.0" y="214.0" text-anchor="middle">Cuerpo de la request y de la respuesta</text>
+<text class="dg-tiny" x="576" y="254" text-anchor="middle">Con ECH, el SNI real también viaja cifrado.</text>
+<text class="dg-tiny" x="385" y="288" text-anchor="middle">La mitad de la izquierda es la que analiza un sensor de red sin romper TLS.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 61.3.</b> La columna de la izquierda es todo lo que tiene un sensor sin romper TLS. Alcanza para saber adónde va una máquina y qué clase de programa la lleva.</figcaption>
+</figure>
+
+
+<p>El SNI dice adónde. Para saber <b>quién</b> abre la conexión existe la huella del ClientHello: cada biblioteca de TLS (la de Chrome, la de curl, la de Python, la de un malware hecho en Go) elige cifrados y extensiones a su manera. <dfn data-term="ja4">JA4</dfn> convierte esas elecciones en un texto corto y comparable. <span class="badge badge--doc">Documentado</span></p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f61et f61ed">
+<title id="f61et">Cómo se lee una huella JA4</title>
+<desc id="f61ed">Una huella JA4 con el formato a_b_c. La parte a es legible: t de TCP, 13 de TLS 1.3, d porque hay SNI con un dominio, 15 cifrados, 16 extensiones y h2 como primer ALPN. La parte b es un hash truncado de los cifrados ordenados y la c, de las extensiones ordenadas y los algoritmos de firma. Al ordenar, cambiar el orden de las extensiones en cada conexión ya no cambia la huella, que es lo que rompió a JA3.</desc>
+<defs><marker id="f61ea" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="40" width="230" height="36" rx="8"/>
+<text class="dg-small" x="129.0" y="62.0" text-anchor="middle">Parte a: legible</text>
+<rect class="dg-box dg-box--em" x="14" y="86" width="230" height="40" rx="8"/>
+<text class="dg-label dg-mono" x="129.0" y="110.0" text-anchor="middle">t13d1516h2</text>
+<text class="dg-tiny" x="129" y="144" text-anchor="middle">TCP, TLS 1.3, con SNI</text>
+<text class="dg-tiny" x="129" y="160" text-anchor="middle">15 cifrados, 16 extensiones, ALPN h2</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="270" y="40" width="230" height="36" rx="8"/>
+<text class="dg-small" x="385.0" y="62.0" text-anchor="middle">Parte b: cifrados</text>
+<rect class="dg-box dg-box--em" x="270" y="86" width="230" height="40" rx="8"/>
+<text class="dg-label dg-mono" x="385.0" y="110.0" text-anchor="middle">8daaf6152771</text>
+<text class="dg-tiny" x="385" y="144" text-anchor="middle">SHA-256 de los cifrados ordenados,</text>
+<text class="dg-tiny" x="385" y="160" text-anchor="middle">truncado a 12 caracteres</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="526" y="40" width="230" height="36" rx="8"/>
+<text class="dg-small" x="641.0" y="62.0" text-anchor="middle">Parte c: extensiones</text>
+<rect class="dg-box dg-box--em" x="526" y="86" width="230" height="40" rx="8"/>
+<text class="dg-label dg-mono" x="641.0" y="110.0" text-anchor="middle">e5627efa2ab1</text>
+<text class="dg-tiny" x="641" y="144" text-anchor="middle">SHA-256 de las extensiones ordenadas</text>
+<text class="dg-tiny" x="641" y="160" text-anchor="middle">y los algoritmos de firma</text>
+<text class="dg-tiny" x="385" y="186" text-anchor="middle">JA3 hacía un solo MD5 con las extensiones en el orden en que llegaban.</text>
+<text class="dg-tiny" x="385" y="204" text-anchor="middle">Desde 2023 Chrome las baraja en cada conexión: el JA3 de Chrome cambiaba siempre.</text>
+<text class="dg-tiny" x="385" y="222" text-anchor="middle">Valor de ejemplo con el formato de JA4; no identifica a un cliente concreto.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 61.4.</b> Una huella JA4 tiene tres partes. La primera se lee a simple vista; las otras dos son hashes de listas ordenadas.</figcaption>
+</figure>
+
+
+<p>Su antecesor, JA3, hacía un MD5 de las extensiones en el orden en que llegaban. En 2023 Chrome empezó a barajar ese orden en cada conexión, justamente para que los servidores no dependieran de él, y el JA3 de Chrome pasó a cambiar casi siempre. JA4, publicado por FoxIO en septiembre de 2023, ordena las listas antes de hacer el hash y le devuelve la utilidad. <span class="badge badge--doc">Documentado</span></p>
+
+<p>Cómo se usa en defensa: una huella JA4 identifica una <b>clase de cliente</b>, no una persona. En el panel de soporte, que solo usan navegadores, una conexión con la huella de una biblioteca de scripts es rara. En el egress de los servidores, una huella que no coincide con la de la JVM de la API ni con la de <code>curl</code> del health check merece mirarse. Es contexto para enriquecer un evento (<a href="m59-deteccion.html#pipeline-logs">59.3</a>), no una regla que alerte sola, y un atacante con oficio puede imitar la huella de un navegador.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Encrypted Client Hello (ECH) cifra también el SNI real. A medida que se adopte, el sensor sabrá cada vez menos adónde va una conexión y dependerá más del DNS (si es propio) y de la IP de destino. Por eso el resolver interno de 61.2 importa todavía más.</p>
+</aside>
+
+<h2 id="correo"><span class="sec-num">61.4</span>El correo, la puerta de entrada</h2>
+
+<p>El informe de brechas de Verizon de 2025 (DBIR, unas 12 200 brechas confirmadas) pone tres vías de entrada arriba: credenciales robadas o adivinadas, 22&#8239;%; explotar una vulnerabilidad, 20&#8239;%; phishing, 16&#8239;%. Los propios autores advierten que las dos primeras se mezclan, porque muchas credenciales robadas salieron de un phishing anterior. <span class="badge badge--doc">Documentado</span> En el informe del FBI de 2024, el phishing y la suplantación fueron la denuncia más frecuente (193 407) y el fraude por correo corporativo (BEC: alguien se hace pasar por un proveedor o un jefe y pide una transferencia) sumó 2 770 millones de dólares en pérdidas declaradas. <span class="badge badge--doc">Documentado</span></p>
+
+<p>Para Tienda Norte hay dos problemas distintos:</p>
+<ol class="steps">
+  <li><span class="step-title">Que le llegue phishing a su gente</span>Una persona de soporte recibe un "restablece tu contraseña" falso y entrega la cuenta del panel. Se defiende con MFA resistente a phishing (<a href="m33-hardening-linux.html#ssh-mfa">M33</a>), con el filtro del proveedor de correo y con las detecciones de inicio de sesión de <a href="m59-deteccion.html#tienda">59.10</a>, no con DNS.</li>
+  <li><span class="step-title">Que alguien mande correo como la tienda</span>Un "tu pedido tiene un problema, paga aquí" que dice venir de <code>pedidos@tiendanorte.example</code>. Esto sí se resuelve con DNS, y es lo que sigue.</li>
+</ol>
+
+<p>El origen del problema es que SMTP, el protocolo del correo, es de 1982 y no verifica nada: el servidor que envía declara un remitente y el receptor lo cree. Además, cada correo tiene <b>dos</b> remitentes.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f61ft f61fd">
+<title id="f61ft">El sobre y la carta: dos remitentes en cada correo</title>
+<desc id="f61fd">Un correo tiene dos remitentes. El del sobre, MAIL FROM en la conversación SMTP, es adonde vuelven los rebotes y es lo que mira SPF. El de la carta, el header From:, es lo que ve la persona en su cliente de correo. DKIM firma la carta y declara su propio dominio en d=. DMARC exige que el From: visible coincida con el dominio que pasó SPF o DKIM: sin DMARC, un atacante puede pasar SPF con su propio sobre y poner cualquier From:.</desc>
+<defs><marker id="f61fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="14" y="30" width="360" height="120" rx="8"/>
+<text class="dg-label" x="194" y="58" text-anchor="middle">El sobre (SMTP)</text>
+<text class="dg-tiny dg-mono" x="194" y="96" text-anchor="middle">MAIL FROM:&lt;rebotes@envios.example&gt;</text>
+<text class="dg-tiny" x="194" y="116" text-anchor="middle">lo usa el servidor, no la persona</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="396" y="30" width="360" height="120" rx="8"/>
+<text class="dg-label" x="576" y="58" text-anchor="middle">La carta (headers y cuerpo)</text>
+<text class="dg-tiny dg-mono" x="576" y="90" text-anchor="middle">From: Tienda Norte &lt;pedidos@tiendanorte.example&gt;</text>
+<text class="dg-tiny dg-mono" x="576" y="108" text-anchor="middle">DKIM-Signature: d=tiendanorte.example; s=s1; …</text>
+<text class="dg-tiny" x="576" y="128" text-anchor="middle">lo que ve la persona</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="190" width="230" height="50" rx="8"/>
+<text class="dg-small" x="129.0" y="211.5" text-anchor="middle">SPF</text>
+<text class="dg-tiny" x="129.0" y="226.5" text-anchor="middle">mira el sobre</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="270" y="190" width="230" height="50" rx="8"/>
+<text class="dg-small" x="385.0" y="211.5" text-anchor="middle">DKIM</text>
+<text class="dg-tiny" x="385.0" y="226.5" text-anchor="middle">firma la carta, dominio en d=</text>
+<rect class="dg-box dg-box--em" x="526" y="190" width="230" height="50" rx="8"/>
+<text class="dg-small" x="641.0" y="211.5" text-anchor="middle">DMARC</text>
+<text class="dg-tiny" x="641.0" y="226.5" text-anchor="middle">exige que coincidan con el From:</text>
+<path class="dg-edge" d="M129 188 L129 152" marker-end="url(#f61fa)"/>
+<path class="dg-edge" d="M385 188 L520 152" marker-end="url(#f61fa)"/>
+<path class="dg-edge" d="M641 188 L641 152" marker-end="url(#f61fa)"/>
+<text class="dg-tiny" x="385" y="276" text-anchor="middle">Sin DMARC, pasar SPF con un sobre propio no dice nada del From: que se muestra.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 61.5.</b> El sobre y la carta. SPF mira el sobre, DKIM firma la carta, y DMARC es lo que obliga a que alguno de los dos coincida con lo que ve la persona.</figcaption>
+</figure>
+
+
+<p>El del <b>sobre</b> (<code>MAIL FROM</code> en la conversación SMTP) es adonde vuelven los rebotes y casi nadie lo ve. El de la <b>carta</b> (el header <code>From:</code>) es el que muestra el cliente de correo. Pueden ser distintos con toda legitimidad: un proveedor de envíos suele poner su propio dominio en el sobre. Y esa es la trampa: un atacante puede pasar todos los controles con <b>su</b> sobre y poner <b>tu</b> nombre en la carta.</p>
+
+<h2 id="spf"><span class="sec-num">61.5</span>SPF: quién puede mandar con tu dominio</h2>
+
+<p><dfn data-term="spf">SPF</dfn> (RFC 7208) es un registro TXT que lista qué servidores pueden mandar correo con un dominio en el <b>sobre</b>. El receptor mira la IP que le está hablando, busca el SPF del dominio del <code>MAIL FROM</code> y lo recorre en orden. <span class="badge badge--doc">Documentado</span></p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f61gt f61gd">
+<title id="f61gt">Cómo evalúa SPF un receptor</title>
+<desc id="f61gd">El receptor recibe una conexión desde una IP con MAIL FROM en tiendanorte.example. Busca el registro TXT de SPF de ese dominio y recorre sus mecanismos en orden: include de Google, include del proveedor transaccional. Cada include cuesta consultas al DNS y el total no puede pasar de 10. Si la IP coincide con alguno, el resultado es pass; si llega al final, aplica el all: -all da fail, ~all da softfail. Pasar de 10 consultas da permerror.</desc>
+<defs><marker id="f61ga" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="40" width="170" height="56" rx="8"/>
+<text class="dg-small" x="99.0" y="64.5" text-anchor="middle">Conexión desde</text>
+<text class="dg-tiny" x="99.0" y="79.5" text-anchor="middle">198.51.100.7</text>
+<path class="dg-edge" d="M184 68 L222 68" marker-end="url(#f61ga)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="224" y="40" width="190" height="56" rx="8"/>
+<text class="dg-tiny" x="319.0" y="64.5" text-anchor="middle">TXT de tiendanorte.example</text>
+<text class="dg-tiny" x="319.0" y="79.5" text-anchor="middle">v=spf1 …</text>
+<path class="dg-edge" d="M414 68 L428 68" marker-end="url(#f61ga)"/>
+<rect class="dg-box" x="430" y="30" width="222" height="36" rx="8"/>
+<text class="dg-tiny dg-mono" x="541.0" y="52.0" text-anchor="middle">include:_spf.google.com</text>
+<text class="dg-tiny" x="660" y="52" text-anchor="start">¿IP de Google?</text>
+<rect class="dg-box" x="430" y="76" width="222" height="36" rx="8"/>
+<text class="dg-tiny dg-mono" x="541.0" y="98.0" text-anchor="middle">include:spf.proveedor.example</text>
+<text class="dg-tiny" x="660" y="98" text-anchor="start">¿del proveedor?</text>
+<rect class="dg-box" x="430" y="122" width="222" height="36" rx="8"/>
+<text class="dg-tiny dg-mono" x="541.0" y="144.0" text-anchor="middle">-all</text>
+<text class="dg-tiny" x="660" y="144" text-anchor="start">si nada coincidió</text>
+<rect class="dg-ok" x="14" y="190" width="130" height="44" rx="8"/>
+<text class="dg-small" x="79.0" y="208.5" text-anchor="middle">pass</text>
+<text class="dg-tiny" x="79.0" y="223.5" text-anchor="middle">la IP coincidió</text>
+<rect class="dg-bad" x="160" y="190" width="130" height="44" rx="8"/>
+<text class="dg-small" x="225.0" y="208.5" text-anchor="middle">fail</text>
+<text class="dg-tiny" x="225.0" y="223.5" text-anchor="middle">cayó en -all</text>
+<rect class="dg-warnbox" x="306" y="190" width="130" height="44" rx="8"/>
+<text class="dg-small" x="371.0" y="208.5" text-anchor="middle">softfail</text>
+<text class="dg-tiny" x="371.0" y="223.5" text-anchor="middle">cayó en ~all</text>
+<rect class="dg-bad" x="452" y="190" width="140" height="44" rx="8"/>
+<text class="dg-small" x="522.0" y="208.5" text-anchor="middle">permerror</text>
+<text class="dg-tiny" x="522.0" y="223.5" text-anchor="middle">más de 10 consultas</text>
+<text class="dg-tiny" x="14" y="266" text-anchor="start">Consultas al DNS de este registro: 2 includes que a su vez anidan otros.</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="274" width="24" height="14" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="44" y="274" width="24" height="14" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="74" y="274" width="24" height="14" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="104" y="274" width="24" height="14" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="134" y="274" width="24" height="14" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="164" y="274" width="24" height="14" rx="3"/>
+<rect class="dg-box" x="194" y="274" width="24" height="14" rx="3"/>
+<rect class="dg-box" x="224" y="274" width="24" height="14" rx="3"/>
+<rect class="dg-box" x="254" y="274" width="24" height="14" rx="3"/>
+<rect class="dg-box" x="284" y="274" width="24" height="14" rx="3"/>
+<text class="dg-tiny" x="330" y="286" text-anchor="start">6 de 10 usadas</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 61.6.</b> Cómo evalúa SPF un receptor. Cada <code>include</code> cuesta consultas al DNS, y el límite es 10.</figcaption>
+</figure>
+
+
+<pre data-lang="shell"><code>tiendanorte.example.  TXT  "v=spf1 include:_spf.google.com include:spf.proveedor.example -all"
+novedades.tiendanorte.example.  TXT  "v=spf1 include:spf.marketing.example -all"
+www.tiendanorte.example.  TXT  "v=spf1 -all"      ; no manda correo: nadie está autorizado</code></pre>
+
+<p>Tres detalles que causan casi todos los problemas:</p>
+<ul>
+  <li><b>El límite de 10 consultas.</b> Cada <code>include</code>, <code>a</code>, <code>mx</code> o <code>redirect</code> cuenta, incluidos los que están anidados dentro de los includes de terceros. Pasar de 10 no es un aviso: el resultado es <code>permerror</code> y SPF deja de servir para todo el dominio. <span class="badge badge--doc">Documentado</span> Por eso el marketing va a un subdominio con su propio SPF.</li>
+  <li><b><code>-all</code> contra <code>~all</code>.</b> <code>-all</code> dice "nadie más" (fail); <code>~all</code>, "nadie más, pero no estoy seguro" (softfail). Con DMARC encima, la diferencia importa poco: DMARC trata los dos como "no pasó".</li>
+  <li><b>Se rompe al reenviar.</b> Si una persona reenvía automáticamente su correo a otra cuenta, el que entrega es el servidor de reenvío, cuya IP no está en tu SPF. SPF no puede sobrevivir a eso; DKIM sí.</li>
+</ul>
+
+<p>Y lo más importante: SPF solo habla del sobre. Un atacante con su propio dominio en el sobre pasa SPF y no dice nada sobre el <code>From:</code>.</p>
+
+<p>Los dominios que no mandan correo (<code>www</code>, los de campañas viejas) también se protegen: <code>v=spf1 -all</code> dice "nadie", y el <code>np</code> de DMARC de 61.7 cubre los subdominios que ni existen.</p>
+
+<h2 id="dkim"><span class="sec-num">61.6</span>DKIM: firmar el mensaje</h2>
+
+<p><dfn data-term="dkim">DKIM</dfn> (RFC 6376) es la <a href="m36-criptografia.html#firmas">firma digital de M36</a> aplicada a un correo. El servidor de envío calcula el hash del cuerpo y de algunos headers, lo firma con una llave privada y agrega un header <code>DKIM-Signature</code> que dice con qué dominio (<code>d=</code>) y con qué llave (<code>s=</code>, el selector) firmó. La llave pública está en el DNS. <span class="badge badge--doc">Documentado</span></p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f61ht f61hd">
+<title id="f61ht">DKIM: firmar la carta con una llave del dominio</title>
+<desc id="f61hd">El servidor de envío calcula el hash del cuerpo y de los headers elegidos y lo firma con la llave privada del selector s1. Agrega el header DKIM-Signature con d=tiendanorte.example y s=s1. El receptor busca la llave pública en s1._domainkey.tiendanorte.example y verifica. La firma sobrevive a un reenvío que no toca el mensaje y se rompe si una lista de correo cambia el asunto o agrega un pie.</desc>
+<defs><marker id="f61ha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="40" width="180" height="60" rx="8"/>
+<text class="dg-small" x="104.0" y="66.5" text-anchor="middle">Servidor de envío</text>
+<text class="dg-tiny" x="104.0" y="81.5" text-anchor="middle">llave privada de s1</text>
+<path class="dg-edge" d="M194 70 L262 70" marker-end="url(#f61ha)"/>
+<text class="dg-tiny" x="228" y="60" text-anchor="middle">firma</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="264" y="34" width="240" height="72" rx="8"/>
+<text class="dg-small" x="384.0" y="59.0" text-anchor="middle">Mensaje</text>
+<text class="dg-tiny" x="384.0" y="74.0" text-anchor="middle">DKIM-Signature: d=…; s=s1</text>
+<text class="dg-tiny" x="384.0" y="89.0" text-anchor="middle">bh= hash del cuerpo; b= firma</text>
+<path class="dg-edge" d="M504 70 L572 70" marker-end="url(#f61ha)"/>
+<text class="dg-tiny" x="538" y="60" text-anchor="middle">entrega</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="574" y="40" width="182" height="60" rx="8"/>
+<text class="dg-small" x="665.0" y="66.5" text-anchor="middle">Receptor</text>
+<text class="dg-tiny" x="665.0" y="81.5" text-anchor="middle">verifica la firma</text>
+<path class="dg-edge" d="M665 100 L665 150" marker-end="url(#f61ha)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="506" y="152" width="250" height="56" rx="8"/>
+<text class="dg-tiny dg-mono" x="631.0" y="176.5" text-anchor="middle">s1._domainkey.tiendanorte.example</text>
+<text class="dg-tiny dg-mono" x="631.0" y="191.5" text-anchor="middle">TXT: v=DKIM1; k=rsa; p=MIIB…</text>
+<rect class="dg-ok" x="14" y="152" width="230" height="56" rx="8"/>
+<text class="dg-small" x="129.0" y="176.5" text-anchor="middle">Reenvío sin tocar nada</text>
+<text class="dg-tiny" x="129.0" y="191.5" text-anchor="middle">la firma sigue válida</text>
+<rect class="dg-bad" x="262" y="152" width="230" height="56" rx="8"/>
+<text class="dg-small" x="377.0" y="176.5" text-anchor="middle">Lista que cambia el asunto</text>
+<text class="dg-tiny" x="377.0" y="191.5" text-anchor="middle">la firma se rompe</text>
+<text class="dg-tiny" x="385" y="250" text-anchor="middle">Es la firma digital de M36 aplicada a un mensaje: hash, llave privada, llave pública publicada en el DNS.</text>
+<text class="dg-tiny" x="385" y="270" text-anchor="middle">Rotar es publicar un selector nuevo (s2), firmar con él y retirar s1 después.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 61.7.</b> El receptor busca la llave pública en <code>s1._domainkey</code> del dominio que firmó y verifica. La firma va con el mensaje, no con la IP.</figcaption>
+</figure>
+
+
+<pre data-lang="http"><code>DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=tiendanorte.example; s=tx1;
+    h=from:to:subject:date:message-id; bh=2jUSOH9NhtVGCQWNr9BrIAPreKQjO6Sn7XIkfJVOzv8=;
+    b=AuUoFEfDxTDkHlLXSZEpZj79LICEps6eda7W3deTVFOk4yAUoqOB4nujc7YopdG5dWLSdNg6xNAZpOPr+kHxt1IrE+NahM6L/LbvaHut…</code></pre>
+<pre data-lang="shell"><code>tx1._domainkey.tiendanorte.example.  CNAME  tx1.dkim.proveedor.example.
+google._domainkey.tiendanorte.example.  TXT  "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA…"</code></pre>
+
+<p>Lo que conviene saber para operarlo:</p>
+<ul>
+  <li><b>Sobrevive al reenvío</b> si nadie toca el mensaje, porque no depende de la IP. Se rompe si una lista de correo agrega "[lista]" al asunto o un pie al cuerpo. Para esos casos existe ARC (RFC 8617), que deja que el intermediario declare qué recibió; es experimental y solo algunos receptores grandes lo usan.</li>
+  <li><b>El proveedor firma con tu dominio</b> si se lo pides: publicas un CNAME (como <code>tx1._domainkey</code> arriba) que apunta a la llave que el proveedor administra y rota. Si no lo haces, firma con <code>d=proveedor.example</code>, y eso no te sirve para DMARC.</li>
+  <li><b>Rotar es agregar un selector.</b> Se publica <code>s2</code>, se firma con él y se retira <code>s1</code> semanas después, cuando ya no quedan mensajes en tránsito firmados con la vieja. Llaves RSA de 2048 bits; Gmail exige al menos 1024. <span class="badge badge--doc">Documentado</span></li>
+</ul>
+
+<p>Igual que SPF, DKIM por sí solo no protege el <code>From:</code>: un atacante firma con su propio dominio y la firma es válida. Falta la pieza que los une.</p>
+
+<h2 id="dmarc"><span class="sec-num">61.7</span>DMARC: alinear y decidir</h2>
+
+<p><dfn data-term="dmarc">DMARC</dfn> agrega lo que les faltaba a los otros dos: la <b>alineación</b>. Un mensaje pasa DMARC si pasó SPF <b>o</b> DKIM <b>con un dominio que coincide con el del <code>From:</code></b>. Si no, el receptor aplica la política que el dominio publicó y, pase o no, lo cuenta en un reporte que manda al dueño del dominio. <span class="badge badge--doc">Documentado</span></p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 320" role="img" aria-labelledby="f61it f61id">
+<title id="f61it">DMARC: alineación y política</title>
+<desc id="f61id">El receptor toma el dominio del From: visible. Pregunta si SPF pasó con un dominio alineado con él, o si DKIM pasó con un d= alineado. Basta una de las dos. Si alguna pasa, DMARC pasa y el mensaje sigue su curso. Si ninguna, aplica la política publicada: none entrega y reporta, quarantine manda a spam, reject rechaza en la conversación SMTP. En los dos casos el receptor suma el mensaje al reporte agregado que manda a la dirección rua.</desc>
+<defs><marker id="f61ia" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="30" width="200" height="50" rx="8"/>
+<text class="dg-small" x="114.0" y="51.5" text-anchor="middle">From: visible</text>
+<text class="dg-tiny" x="114.0" y="66.5" text-anchor="middle">tiendanorte.example</text>
+<path class="dg-edge" d="M214 55 L262 55" marker-end="url(#f61ia)"/>
+<rect class="dg-box" x="264" y="20" width="240" height="40" rx="8"/>
+<text class="dg-small" x="384.0" y="44.0" text-anchor="middle">¿SPF pasó y está alineado?</text>
+<rect class="dg-box" x="264" y="70" width="240" height="40" rx="8"/>
+<text class="dg-small" x="384.0" y="94.0" text-anchor="middle">¿DKIM pasó y está alineado?</text>
+<text class="dg-tiny" x="384" y="128" text-anchor="middle">basta una de las dos</text>
+<path class="dg-edge" d="M504 40 L572 55" marker-end="url(#f61ia)"/>
+<path class="dg-edge" d="M504 90 L572 60" marker-end="url(#f61ia)"/>
+<rect class="dg-ok" x="574" y="30" width="182" height="50" rx="8"/>
+<text class="dg-small" x="665.0" y="51.5" text-anchor="middle">DMARC pass</text>
+<text class="dg-tiny" x="665.0" y="66.5" text-anchor="middle">entrega normal</text>
+<path class="dg-edge" d="M384 136 L384 168" marker-end="url(#f61ia)"/>
+<text class="dg-tiny" x="414" y="156" text-anchor="middle">ninguna</text>
+<rect class="dg-bad" x="264" y="170" width="240" height="40" rx="8"/>
+<text class="dg-small dg-fail-text" x="384.0" y="194.0" text-anchor="middle">DMARC fail: aplica p=</text>
+<rect class="dg-box" x="140" y="236" width="150" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="215.0" y="254.5" text-anchor="middle">p=none</text>
+<text class="dg-tiny" x="215.0" y="269.5" text-anchor="middle">entrega y reporta</text>
+<rect class="dg-box" x="308" y="236" width="150" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="383.0" y="254.5" text-anchor="middle">p=quarantine</text>
+<text class="dg-tiny" x="383.0" y="269.5" text-anchor="middle">a spam</text>
+<rect class="dg-box" x="476" y="236" width="150" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="551.0" y="254.5" text-anchor="middle">p=reject</text>
+<text class="dg-tiny" x="551.0" y="269.5" text-anchor="middle">rechaza: 550 5.7.1</text>
+<path class="dg-edge" d="M384 210 L384 234" marker-end="url(#f61ia)"/>
+<rect class="dg-ok" x="14" y="236" width="110" height="44" rx="8"/>
+<text class="dg-small" x="69.0" y="254.5" text-anchor="middle">Reporte rua</text>
+<text class="dg-tiny" x="69.0" y="269.5" text-anchor="middle">cada día</text>
+<text class="dg-tiny" x="385" y="306" text-anchor="middle">Alineado relajado: mismo dominio organizacional (envios.tiendanorte.example sirve). Estricto: el mismo nombre exacto.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 61.8.</b> Basta una de las dos alineadas. Si ninguna lo está, la política decide; en los dos casos el mensaje entra en el reporte.</figcaption>
+</figure>
+
+
+<pre data-lang="shell"><code>_dmarc.tiendanorte.example.  TXT  "v=DMARC1; p=reject; np=reject; adkim=r; aspf=r;
+                                    rua=mailto:dmarc@tiendanorte.example"</code></pre>
+
+<p>Las piezas del registro:</p>
+<ul>
+  <li><b><code>p=</code></b> es la política: <code>none</code> (entrega y reporta), <code>quarantine</code> (a spam) o <code>reject</code> (rechaza en la conversación SMTP). <code>sp=</code> la cambia para subdominios que existen y <code>np=</code> para los que no existen.</li>
+  <li><b><code>adkim=</code> y <code>aspf=</code></b> eligen alineación relajada (<code>r</code>: mismo dominio organizacional, así que <code>envios.tiendanorte.example</code> sirve) o estricta (<code>s</code>: el mismo nombre exacto). Relajada es lo habitual.</li>
+  <li><b><code>rua=</code></b> es adonde llegan los reportes agregados: un XML diario por receptor con cada IP que mandó como tu dominio, cuántos mensajes y qué pasó.</li>
+</ul>
+
+<p>DMARC nació como RFC 7489 en 2015, un documento informativo. En mayo de 2026 lo reemplazaron tres RFC del Standards Track: RFC 9989 (el protocolo), 9990 (los reportes agregados) y 9991 (los de falla). Los registros que empiezan con <code>v=DMARC1</code> siguen funcionando. Lo que cambia para quien despliega: se retira la etiqueta <code>pct=</code> (aplicar la política a un porcentaje), aparece <code>t=y</code> (modo de prueba: el receptor aplica un nivel menos de lo que pide <code>p=</code>), aparecen <code>np=</code> y <code>psd=</code>, y el dominio organizacional ya no se busca en la Public Suffix List sino recorriendo el árbol del DNS. <span class="badge badge--doc">Documentado</span></p>
+
+<p>Pruébalo en el widget: arranca con el registro de Tienda Norte antes de arreglar nada (<code>p=none</code>, SPF con solo Google). Pasa por los seis mensajes de ejemplo y después sube la política a <code>reject</code>.</p>
+
+<div data-sim="dmarc"></div>
+
+<h3 id="dmarc-despliegue">El despliegue gradual</h3>
+
+<p>Publicar <code>p=reject</code> el primer día es la forma más rápida de que la tienda deje de recibir sus propias confirmaciones de pedido en la bandeja de los clientes. El orden correcto empieza por mirar. Tienda Norte manda unos 18 000 mensajes por día (supuesto). La primera semana con <code>p=none</code> y <code>rua</code>, los reportes muestran cuatro fuentes:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Fuente</th><th class="r">Mensajes por día</th><th>SPF alineado</th><th>DKIM alineado</th><th>DMARC</th></tr></thead>
+    <tbody>
+      <tr><td>Google Workspace (personas)</td><td class="r">6 000</td><td>Sí</td><td>Sí</td><td>✓ Pasa</td></tr>
+      <tr><td>Proveedor transaccional (pedidos)</td><td class="r">9 000</td><td>No: sobre de <code>proveedor.example</code></td><td>No: <code>d=proveedor.example</code></td><td>✗ Falla</td></tr>
+      <tr><td>Plataforma de marketing</td><td class="r">3 000</td><td>No</td><td>No</td><td>✗ Falla</td></tr>
+      <tr><td>IP desconocidas</td><td class="r">120</td><td>No</td><td>No</td><td>✗ Falla (bien)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>La cuenta: de 18 000 mensajes legítimos, 9 000 + 3 000 = 12 000 fallan DMARC, el 66.7&#8239;%. Con <code>p=reject</code> ese día, dos de cada tres correos legítimos de la tienda se habrían rechazado. Así se ve la fila del proveedor en el reporte agregado:</p>
+
+<pre data-lang="http"><code>&lt;record&gt;
+  &lt;row&gt;
+    &lt;source_ip&gt;198.51.100.7&lt;/source_ip&gt;
+    &lt;count&gt;9000&lt;/count&gt;
+    &lt;policy_evaluated&gt;&lt;disposition&gt;none&lt;/disposition&gt;
+      &lt;dkim&gt;fail&lt;/dkim&gt;&lt;spf&gt;fail&lt;/spf&gt;&lt;/policy_evaluated&gt;
+  &lt;/row&gt;
+  &lt;identifiers&gt;&lt;header_from&gt;tiendanorte.example&lt;/header_from&gt;&lt;/identifiers&gt;
+  &lt;auth_results&gt;
+    &lt;dkim&gt;&lt;domain&gt;proveedor.example&lt;/domain&gt;&lt;result&gt;pass&lt;/result&gt;&lt;/dkim&gt;
+    &lt;spf&gt;&lt;domain&gt;proveedor.example&lt;/domain&gt;&lt;result&gt;pass&lt;/result&gt;&lt;/spf&gt;
+  &lt;/auth_results&gt;
+&lt;/record&gt;</code></pre>
+
+<p>SPF y DKIM pasan, pero los dos para <code>proveedor.example</code>: no están alineados con el <code>From:</code>. El arreglo no es agregar la IP del proveedor al SPF (el sobre sigue siendo del proveedor), sino pedirle que firme con <code>d=tiendanorte.example</code> (el CNAME de 61.6) y que use <code>envios.tiendanorte.example</code> como sobre. El marketing se muda a <code>novedades.tiendanorte.example</code>, con sus propios SPF, DKIM y DMARC, para que su reputación y sus includes no arrastren al dominio principal.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f61jt f61jd">
+<title id="f61jt">Desplegar DMARC sin romper el correo propio</title>
+<desc id="f61jd">Una línea de tiempo de cinco etapas. Semanas 1 a 4: p=none con reportes; se descubre que el 67 % del correo legítimo no está alineado. Semanas 5 a 8: se arreglan las fuentes, DKIM propio en el proveedor y el marketing a un subdominio. Semanas 9 y 10: p=quarantine con t=y, en modo de prueba. Semanas 11 a 14: p=quarantine. Desde la semana 15: p=reject. La barra de abajo muestra cuánto correo legítimo falla en cada etapa.</desc>
+<defs><marker id="f61ja" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="40" width="136" height="70" rx="8"/>
+<text class="dg-small dg-mono" x="82.0" y="64.0" text-anchor="middle">p=none</text>
+<text class="dg-tiny" x="82.0" y="79.0" text-anchor="middle">sem. 1 a 4</text>
+<text class="dg-tiny" x="82.0" y="94.0" text-anchor="middle">mirar los reportes</text>
+<path class="dg-edge" d="M150 75 L166 75" marker-end="url(#f61ja)"/>
+<text class="dg-tiny" x="82" y="150" text-anchor="middle">falla: 67 %</text>
+<rect class="dg-box" x="166" y="40" width="136" height="70" rx="8"/>
+<text class="dg-small dg-mono" x="234.0" y="64.0" text-anchor="middle">Arreglar</text>
+<text class="dg-tiny" x="234.0" y="79.0" text-anchor="middle">sem. 5 a 8</text>
+<text class="dg-tiny" x="234.0" y="94.0" text-anchor="middle">DKIM y subdominio</text>
+<path class="dg-edge" d="M302 75 L318 75" marker-end="url(#f61ja)"/>
+<text class="dg-tiny" x="234" y="150" text-anchor="middle">falla: 3 %</text>
+<rect class="dg-box" x="318" y="40" width="136" height="70" rx="8"/>
+<text class="dg-small dg-mono" x="386.0" y="64.0" text-anchor="middle">quarantine t=y</text>
+<text class="dg-tiny" x="386.0" y="79.0" text-anchor="middle">sem. 9 y 10</text>
+<text class="dg-tiny" x="386.0" y="94.0" text-anchor="middle">prueba</text>
+<path class="dg-edge" d="M454 75 L470 75" marker-end="url(#f61ja)"/>
+<text class="dg-tiny" x="386" y="150" text-anchor="middle">falla: 0.4 %</text>
+<rect class="dg-box" x="470" y="40" width="136" height="70" rx="8"/>
+<text class="dg-small dg-mono" x="538.0" y="64.0" text-anchor="middle">quarantine</text>
+<text class="dg-tiny" x="538.0" y="79.0" text-anchor="middle">sem. 11 a 14</text>
+<text class="dg-tiny" x="538.0" y="94.0" text-anchor="middle">a spam</text>
+<path class="dg-edge" d="M606 75 L622 75" marker-end="url(#f61ja)"/>
+<text class="dg-tiny" x="538" y="150" text-anchor="middle">falla: 0.2 %</text>
+<rect class="dg-box dg-box--em" x="622" y="40" width="136" height="70" rx="8"/>
+<text class="dg-small dg-mono" x="690.0" y="64.0" text-anchor="middle">reject</text>
+<text class="dg-tiny" x="690.0" y="79.0" text-anchor="middle">desde la 15</text>
+<text class="dg-tiny" x="690.0" y="94.0" text-anchor="middle">rechazo</text>
+<text class="dg-tiny" x="690" y="150" text-anchor="middle">falla: 0.1 %</text>
+<text class="dg-tiny" x="14" y="190" text-anchor="start">Correo legítimo que no pasa DMARC (supuesto de Tienda Norte, 18 000 mensajes por día)</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="54" y="201.7" width="56" height="60.3" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="206" y="259.3" width="56" height="2.7" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="358" y="260.0" width="56" height="2.0" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="510" y="260.0" width="56" height="2.0" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="662" y="260.0" width="56" height="2.0" rx="3"/>
+<path class="sim-axis" d="M14 262 H756"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 61.9.</b> Cinco etapas en unas quince semanas. Cada una se pasa cuando los reportes muestran que lo legítimo ya está alineado. Los porcentajes son supuestos de Tienda Norte.</figcaption>
+</figure>
+
+
+<p>Con RFC 9989 el paso intermedio ya no es <code>pct=10</code> sino <code>t=y</code>: se publica <code>p=quarantine; t=y</code>, los receptores que lo entienden aplican un nivel menos y la tienda ve en los reportes qué habría pasado. <span class="badge badge--doc">Documentado</span> Desde febrero de 2024, Gmail exige a quien manda más de 5 000 mensajes por día SPF, DKIM y un registro DMARC (al menos <code>p=none</code>) con el <code>From:</code> alineado, más la baja con un clic en el correo de marketing; Yahoo anunció requisitos equivalentes. <span class="badge badge--doc">Documentado</span> Tienda Norte pasa ese umbral, así que la primera etapa no es opcional.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un registro DMARC con <code>p=reject</code> y sin <code>rua</code> funciona, pero a ciegas: el día que el proveedor cambia su infraestructura y las confirmaciones empiezan a rebotar, la tienda se entera por los clientes. Los reportes también son una fuente de M59: una IP nueva que manda miles de mensajes como la tienda es una alerta que vale la pena tener.</p>
+</aside>
+
+<h2 id="mta-sts"><span class="sec-num">61.8</span>MTA-STS y BIMI</h2>
+
+<p>SPF, DKIM y DMARC dicen quién mandó. Falta proteger el viaje. Entre servidores de correo, TLS se negocia con STARTTLS: el receptor ofrece cifrar y el emisor acepta. Alguien en el camino puede borrar la oferta y el emisor, sin saberlo, manda en claro. <dfn data-term="mta-sts">MTA-STS</dfn> (RFC 8461) cierra eso: el dominio receptor publica por HTTPS una política que dice "a mis MX solo se entrega con TLS y un certificado válido para estos nombres". <span class="badge badge--doc">Documentado</span></p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f61kt f61kd">
+<title id="f61kt">MTA-STS contra el downgrade de STARTTLS</title>
+<desc id="f61kd">Arriba, sin MTA-STS: el servidor que envía ofrece STARTTLS, alguien en el camino borra la oferta y el correo viaja en claro sin que nadie se entere. Abajo, con MTA-STS: el servidor que envía leyó antes la política del dominio receptor por HTTPS, sabe que TLS es obligatorio con un certificado válido para el MX y, si no lo consigue, no entrega y lo reporta por TLS-RPT.</desc>
+<defs><marker id="f61ka" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="14" y="28" text-anchor="start">Sin MTA-STS</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="40" width="170" height="50" rx="8"/>
+<text class="dg-small" x="99.0" y="69.0" text-anchor="middle">Servidor que envía</text>
+<rect class="dg-bad" x="300" y="40" width="170" height="50" rx="8"/>
+<text class="dg-small dg-fail-text" x="385.0" y="61.5" text-anchor="middle">En el camino</text>
+<text class="dg-tiny" x="385.0" y="76.5" text-anchor="middle">borra STARTTLS</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="586" y="40" width="170" height="50" rx="8"/>
+<text class="dg-small" x="671.0" y="69.0" text-anchor="middle">MX del receptor</text>
+<path class="dg-edge" d="M184 65 L298 65" marker-end="url(#f61ka)"/>
+<text class="dg-tiny" x="241" y="55" text-anchor="middle">en claro</text>
+<path class="dg-edge" d="M470 65 L584 65" marker-end="url(#f61ka)"/>
+<text class="dg-small" x="14" y="150" text-anchor="start">Con MTA-STS</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="162" width="170" height="50" rx="8"/>
+<text class="dg-small" x="99.0" y="183.5" text-anchor="middle">Servidor que envía</text>
+<text class="dg-tiny" x="99.0" y="198.5" text-anchor="middle">conoce la política</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="300" y="162" width="170" height="50" rx="8"/>
+<text class="dg-small" x="385.0" y="183.5" text-anchor="middle">Política por HTTPS</text>
+<text class="dg-tiny" x="385.0" y="198.5" text-anchor="middle">mode: enforce</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="586" y="162" width="170" height="50" rx="8"/>
+<text class="dg-small" x="671.0" y="183.5" text-anchor="middle">MX del receptor</text>
+<text class="dg-tiny" x="671.0" y="198.5" text-anchor="middle">TLS con certificado válido</text>
+<path class="dg-edge" d="M184 187 L298 187" marker-end="url(#f61ka)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="241" y="177" text-anchor="middle">lee y guarda</text>
+<path class="dg-edge" d="M184 200 L584 200" marker-end="url(#f61ka)"/>
+<text class="dg-tiny" x="520" y="222" text-anchor="middle">TLS o nada</text>
+<rect class="dg-ok" x="14" y="240" width="260" height="40" rx="8"/>
+<text class="dg-tiny" x="144.0" y="264.0" text-anchor="middle">Si falla: no entrega y avisa por TLS-RPT</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 61.10.</b> Sin MTA-STS, quitar STARTTLS pasa desapercibido. Con MTA-STS, el emisor ya sabe que TLS es obligatorio y no entrega si no lo consigue.</figcaption>
+</figure>
+
+
+<pre data-lang="shell"><code>_mta-sts.tiendanorte.example.  TXT  "v=STSv1; id=20261020"
+_smtp._tls.tiendanorte.example.  TXT  "v=TLSRPTv1; rua=mailto:tls-rpt@tiendanorte.example"
+
+# https://mta-sts.tiendanorte.example/.well-known/mta-sts.txt
+version: STSv1
+mode: enforce
+mx: aspmx.l.google.com
+mx: *.aspmx.l.google.com
+max_age: 1209600</code></pre>
+
+<p>El registro <code>_mta-sts</code> anuncia la política y su versión (<code>id</code>, que se cambia cada vez que la política cambia). La política vive en <code>https://mta-sts.&lt;dominio&gt;/.well-known/mta-sts.txt</code>. <code>mode: testing</code> solo reporta; <code>enforce</code> exige. TLS-RPT (RFC 8460) manda reportes diarios de las fallas de TLS, igual que <code>rua</code> en DMARC. DANE hace lo mismo con DNSSEC en lugar de HTTPS; es más fuerte, pero exige DNSSEC en los dos lados. <span class="badge badge--doc">Documentado</span></p>
+
+<p><b>BIMI</b> es lo contrario de un control: muestra el logo de la marca junto al mensaje en los clientes que lo soportan. Exige DMARC en <code>quarantine</code> o <code>reject</code> y, en Gmail, un certificado de marca (VMC o CMC). Sirve como premio por haber terminado el despliegue de 61.7, no como defensa. <span class="badge badge--doc">Documentado</span></p>
+
+<h2 id="tienda"><span class="sec-num">61.9</span>El dominio de Tienda Norte</h2>
+
+<p>Juntando todo, este es el estado final del dominio y de la red de la tienda. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f61lt f61ld">
+<title id="f61lt">Quién manda correo como Tienda Norte</title>
+<desc id="f61ld">Tres remitentes legítimos. Google Workspace manda el correo de las personas desde tiendanorte.example. El proveedor transaccional manda confirmaciones de pedido desde tiendanorte.example con DKIM propio (selector tx1) y un sobre en envios.tiendanorte.example. La plataforma de marketing manda desde novedades.tiendanorte.example, con su propio SPF, DKIM y DMARC. El dominio parecido tiendan0rte.example es del atacante: el DMARC de la tienda no lo alcanza.</desc>
+<defs><marker id="f61la" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-tiny" x="14" y="28" text-anchor="start">Quién envía</text>
+<text class="dg-tiny" x="260" y="28" text-anchor="start">From: visible</text>
+<text class="dg-tiny" x="530" y="28" text-anchor="start">Cómo se alinea</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="40" width="220" height="50" rx="8"/>
+<text class="dg-small" x="124.0" y="61.5" text-anchor="middle">Google Workspace</text>
+<text class="dg-tiny" x="124.0" y="76.5" text-anchor="middle">personas</text>
+<path class="dg-edge" d="M234 65 L258 65" marker-end="url(#f61la)"/>
+<rect class="dg-box" x="260" y="40" width="250" height="50" rx="8"/>
+<text class="dg-tiny dg-mono" x="385.0" y="69.0" text-anchor="middle">tiendanorte.example</text>
+<rect class="dg-ok" x="530" y="40" width="226" height="50" rx="8"/>
+<text class="dg-tiny" x="643.0" y="69.0" text-anchor="middle">DKIM s=google</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="104" width="220" height="50" rx="8"/>
+<text class="dg-small" x="124.0" y="125.5" text-anchor="middle">Proveedor transaccional</text>
+<text class="dg-tiny" x="124.0" y="140.5" text-anchor="middle">confirmaciones</text>
+<path class="dg-edge" d="M234 129 L258 129" marker-end="url(#f61la)"/>
+<rect class="dg-box" x="260" y="104" width="250" height="50" rx="8"/>
+<text class="dg-tiny dg-mono" x="385.0" y="133.0" text-anchor="middle">tiendanorte.example</text>
+<rect class="dg-ok" x="530" y="104" width="226" height="50" rx="8"/>
+<text class="dg-tiny" x="643.0" y="133.0" text-anchor="middle">DKIM s=tx1, sobre envios.</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="14" y="168" width="220" height="50" rx="8"/>
+<text class="dg-small" x="124.0" y="189.5" text-anchor="middle">Plataforma de marketing</text>
+<text class="dg-tiny" x="124.0" y="204.5" text-anchor="middle">promociones</text>
+<path class="dg-edge" d="M234 193 L258 193" marker-end="url(#f61la)"/>
+<rect class="dg-box" x="260" y="168" width="250" height="50" rx="8"/>
+<text class="dg-tiny dg-mono" x="385.0" y="197.0" text-anchor="middle">novedades.tiendanorte.example</text>
+<rect class="dg-ok" x="530" y="168" width="226" height="50" rx="8"/>
+<text class="dg-tiny" x="643.0" y="197.0" text-anchor="middle">SPF, DKIM y DMARC propios</text>
+<rect class="dg-bad" x="14" y="240" width="220" height="50" rx="8"/>
+<text class="dg-small dg-fail-text" x="124.0" y="261.5" text-anchor="middle">Atacante</text>
+<text class="dg-tiny" x="124.0" y="276.5" text-anchor="middle">su propio servidor</text>
+<path class="dg-edge" d="M234 265 L258 265" marker-end="url(#f61la)"/>
+<rect class="dg-warnbox" x="260" y="240" width="250" height="50" rx="8"/>
+<text class="dg-tiny dg-mono" x="385.0" y="269.0" text-anchor="middle">tiendan0rte.example</text>
+<rect class="dg-box" x="530" y="240" width="226" height="50" rx="8"/>
+<text class="dg-small" x="643.0" y="261.5" text-anchor="middle">DMARC de la tienda no aplica</text>
+<text class="dg-tiny" x="643.0" y="276.5" text-anchor="middle">se detecta y se da de baja</text>
+<text class="dg-tiny" x="385" y="316" text-anchor="middle">La fila de abajo no se arregla con registros: se vigila (M59) y se responde (M60).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 61.11.</b> Tres remitentes legítimos, cada uno alineado a su manera, y el que ningún registro de la tienda alcanza.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Pieza</th><th>Qué se publica o se instala</th><th>Qué cierra</th></tr></thead>
+    <tbody>
+      <tr><td>SPF del dominio principal</td><td><code>include</code> de Google y del proveedor, <code>-all</code>; 6 de 10 consultas</td><td>Servidores no autorizados en el sobre</td></tr>
+      <tr><td>DKIM</td><td>Selector <code>google</code> y <code>tx1</code> (CNAME al proveedor), 2048 bits</td><td>La firma alineada que sobrevive al reenvío</td></tr>
+      <tr><td>DMARC</td><td><code>p=reject; np=reject</code>, <code>rua</code> a un buzón que se procesa</td><td>Correo con el nombre de la tienda que no viene de ella</td></tr>
+      <tr><td>Marketing</td><td><code>novedades.tiendanorte.example</code> con SPF, DKIM y DMARC propios</td><td>Que el marketing arrastre al dominio principal</td></tr>
+      <tr><td>Dominios que no envían</td><td><code>v=spf1 -all</code> y el <code>np=reject</code></td><td>Suplantar subdominios olvidados</td></tr>
+      <tr><td>MTA-STS y TLS-RPT</td><td><code>mode: enforce</code> después de un mes en <code>testing</code></td><td>Correo entrante leído en el camino</td></tr>
+      <tr><td>Sensor de red</td><td>Zeek y Suricata en el borde y entre aplicaciones y datos</td><td>Conexiones y DNS de cada máquina en el SIEM</td></tr>
+      <tr><td>Resolver interno</td><td>Única salida de DNS; puerto 53 y DoH bloqueados hacia afuera</td><td>Malware que esquiva el registro de DNS</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Cuatro detecciones se suman a las diez de <a href="m59-deteccion.html#tienda">59.10</a>: una máquina con más de 200 NXDOMAIN en una hora; consultas TXT con labels largos hacia un solo dominio; una IP nueva que manda más de 100 mensajes como la tienda en los reportes DMARC; y un certificado nuevo en los registros de Certificate Transparency para un nombre parecido a <code>tiendanorte</code>. Esta última es la que cubre la última fila de la figura: el dominio parecido. DMARC no puede impedir que alguien registre <code>tiendan0rte.example</code> y mande desde ahí con todo en regla; lo que sí se puede es enterarse el día que aparece el certificado, pedir la baja al registrador y avisar a los clientes, que es una respuesta de <a href="m60-respuesta-forense.html#comunicar">60.10</a>. Si una persona de la tienda ya entregó su contraseña, la contención es la de <a href="m60-respuesta-forense.html#contener">60.4</a>: revocar sesiones y tokens, no solo cambiar la contraseña.</p>
+
+<p>Queda la fila del threat model de <a href="m54-threat-modeling.html#tienda">M54</a> sobre el flujo hacia el servicio de correo: la tienda le manda al proveedor transaccional solo el nombre del cliente y el número de pedido, nunca la dirección completa ni el detalle del pago. Los registros de este módulo protegen el nombre de la tienda; esa regla protege los datos de sus clientes si el proveedor cae.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Los reportes DMARC llegan como XML comprimido, decenas por día, de cada receptor. Nadie los lee a mano: se mandan a un servicio que los agrega o a un parser propio que los carga en el SIEM. El buzón de <code>rua</code> sin procesar es tan inútil como no tenerlo.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m61"></div>
+<div data-exercise="m61-dominio"></div>
+<div data-checkpoint="m61"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m61.data.js"></script>
+<script src="../assets/js/data/exercises/m61.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-blueteam.js"></script>
+</body>
+</html>

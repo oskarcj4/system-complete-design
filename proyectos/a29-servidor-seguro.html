@@ -1,0 +1,3359 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A29. Un servidor seguro: de una VM a una VPC</title>
+<meta name="description" content="Una API con todas las defensas en una sola VM (firewall, WAF, gateway, sandbox de systemd, roles de base) y cómo separarla en capas que escalan solas: VMs en redes aisladas con VRRP y, después, Kubernetes con NetworkPolicy.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="a29" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Un servidor seguro: de una VM a una VPC</h1>
+        <p class="lead">Una API de notas con cada defensa puesta en una sola VM, y después la misma API separada en capas: primero en VMs con redes aisladas y una IP virtual, después en Kubernetes, donde cada capa escala por su cuenta.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>A29</dd></div>
+          <div><dt>Plan</dt><dd>Bloque 2</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>6 a 8 h</dd></div>
+          <div><dt>Módulos</dt><dd>M32, M33, M35, M37, M57</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="a29">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+        <h2 class="plain" id="obj">Al terminar podrás</h2>
+        <ul>
+          <li>Endurecer una VM con Ubuntu 24.04 de punta a punta: SSH solo con llave, nftables con entrada y salida filtradas, fail2ban, auditd, parches automáticos y la API dentro de un sandbox de systemd.</li>
+          <li>Poner delante de la API un borde con TLS, ModSecurity con el OWASP CRS, límites de tasa y solo las rutas públicas, y comprobar cada defensa con un script que la ataca.</li>
+          <li>Darle a la API un rol de PostgreSQL que solo toca filas, y correr las migraciones aparte con el rol dueño.</li>
+          <li>Separar el borde, las apps y la base en VMs con redes aisladas, y mantener el borde con dos máquinas y una IP virtual con keepalived.</li>
+          <li>Llevar el borde y las apps a Kubernetes, con el WAF y el gateway separados, NetworkPolicy entre capas y un HPA por capa.</li>
+        </ul>
+      </section>
+
+      <h2 id="excusa">La excusa</h2>
+
+      <p>Una API de notas privadas: te registras, inicias sesión y guardas notas que solo tú puedes leer. Es chica a propósito. Lo que importa es todo lo que la rodea: en esta guía la API casi no cambia, y lo que crece son las capas que la protegen y la forma en que se reparten entre máquinas.</p>
+
+      <p>Empiezas con todo en una VM, que es como arranca casi todo proyecto: una máquina con Nginx, la aplicación y la base. Con todas las defensas puestas, esa VM ya es difícil de atacar. Pero tiene dos límites que ninguna configuración arregla: si se cae, se cae todo; y si alguien toma Nginx, está en la misma máquina que la base. Por eso, después, la separas: primero en cinco VMs con redes que no se ven entre sí, y después en un clúster de Kubernetes, donde el WAF, el gateway y la API escalan cada uno por su lado.</p>
+
+      <aside class="callout callout--fail">
+        <p class="callout-label">Lo que esta guía no promete</p>
+        <p>Un servidor 100&#8239;% seguro no existe. Lo que sí existe es un servidor donde cada ataque común choca contra una defensa que lo detiene, donde un error en una capa no abre todas las demás y donde queda registro de lo que pasó. Eso es lo que construyes aquí, y la sección <a href="#limites">Lo que falta para producción</a> dice lo que queda afuera. Todos los ataques de la guía se hacen contra tu propio laboratorio, en tu máquina, con cargas mínimas, y cada uno termina en la defensa que lo detiene.</p>
+      </aside>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="fa29at fa29ad">
+<title id="fa29at">La misma API en tres etapas</title>
+<desc id="fa29ad">Tres columnas. Etapa 1: una sola VM, todo en una caja, con nftables, Nginx con TLS, WAF y rutas, la API en 127.0.0.1 y PostgreSQL en 127.0.0.1. Etapa 2: cinco VMs en tres redes; dos bordes comparten una IP virtual con keepalived, dos apps en la red dmz y la base sola en la red de datos. Etapa 3: un clúster k3s de tres nodos con pods de WAF, gateway y API separados por NetworkPolicy, y la misma base afuera del clúster.</desc>
+<defs><marker id="fa29aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="14" width="236" height="372" rx="8"/>
+<text class="dg-group" x="26" y="32">Etapa 1: una VM</text>
+<text class="dg-tiny" x="26" y="50" text-anchor="start">192.168.56.10, 2 GB</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" data-part="fw" x="30" y="64" width="204" height="46" rx="6"/>
+<text class="dg-label" x="132" y="83" text-anchor="middle">nftables</text>
+<text class="dg-tiny" x="132" y="102" text-anchor="middle">entra 80 y 443; SSH solo admin</text>
+<path class="dg-edge" d="M132 112 V124" marker-end="url(#fa29aa)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" data-part="borde" x="30" y="128" width="204" height="58" rx="6"/>
+<text class="dg-label" x="132" y="144" text-anchor="middle">Nginx</text>
+<text class="dg-tiny" x="132" y="163" text-anchor="middle">TLS, ModSecurity + CRS</text>
+<text class="dg-tiny" x="132" y="179" text-anchor="middle">límites y rutas</text>
+<path class="dg-edge" d="M132 188 V200" marker-end="url(#fa29aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" data-part="api" x="30" y="204" width="204" height="46" rx="6"/>
+<text class="dg-label" x="132" y="223" text-anchor="middle">API de notas</text>
+<text class="dg-tiny" x="132" y="242" text-anchor="middle">127.0.0.1:8080, usuario notas</text>
+<path class="dg-edge" d="M132 252 V264" marker-end="url(#fa29aa)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" data-part="db" x="30" y="268" width="204" height="46" rx="6"/>
+<text class="dg-label" x="132" y="287" text-anchor="middle">PostgreSQL</text>
+<text class="dg-tiny" x="132" y="306" text-anchor="middle">127.0.0.1:5432, dos roles</text>
+<text class="dg-tiny" x="30" y="340" text-anchor="start">Un solo disco, un solo kernel:</text>
+<text class="dg-tiny" x="30" y="356" text-anchor="start">si cae la VM, cae todo.</text>
+<rect class="dg-frame" x="266" y="14" width="236" height="372" rx="8"/>
+<text class="dg-group" x="278" y="32">Etapa 2: cinco VMs</text>
+<rect class="dg-layer" style="--c: var(--l-client)" data-part="vip" x="330" y="50" width="108" height="40" rx="6"/>
+<text class="dg-label" x="384" y="66" text-anchor="middle">IP virtual</text>
+<text class="dg-tiny" x="384" y="85" text-anchor="middle">.100</text>
+<path class="dg-edge" d="M360 92 V112" marker-end="url(#fa29aa)"/>
+<path class="dg-edge" d="M408 92 V112" marker-end="url(#fa29aa)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" data-part="borde" x="280" y="116" width="100" height="46" rx="6"/>
+<text class="dg-label" x="330" y="135" text-anchor="middle">borde1</text>
+<text class="dg-tiny" x="330" y="154" text-anchor="middle">Nginx + WAF</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" data-part="borde" x="388" y="116" width="100" height="46" rx="6"/>
+<text class="dg-label" x="438" y="135" text-anchor="middle">borde2</text>
+<text class="dg-tiny" x="438" y="154" text-anchor="middle">Nginx + WAF</text>
+<text class="dg-tiny" x="384" y="186" text-anchor="middle">red dmz</text>
+<path class="dg-edge" d="M330 164 V200" marker-end="url(#fa29aa)"/>
+<path class="dg-edge" d="M438 164 V200" marker-end="url(#fa29aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" data-part="api" x="280" y="204" width="100" height="46" rx="6"/>
+<text class="dg-label" x="330" y="223" text-anchor="middle">app1</text>
+<text class="dg-tiny" x="330" y="242" text-anchor="middle">:8080</text>
+<rect class="dg-layer" style="--c: var(--l-service)" data-part="api" x="388" y="204" width="100" height="46" rx="6"/>
+<text class="dg-label" x="438" y="223" text-anchor="middle">app2</text>
+<text class="dg-tiny" x="438" y="242" text-anchor="middle">:8080</text>
+<text class="dg-tiny" x="384" y="274" text-anchor="middle">red datos</text>
+<path class="dg-edge" d="M330 252 V288" marker-end="url(#fa29aa)"/>
+<path class="dg-edge" d="M438 252 V288" marker-end="url(#fa29aa)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" data-part="db" x="310" y="292" width="148" height="46" rx="6"/>
+<text class="dg-label" x="384" y="311" text-anchor="middle">db</text>
+<text class="dg-tiny" x="384" y="330" text-anchor="middle">10.10.2.10:5432</text>
+<text class="dg-tiny" x="280" y="360" text-anchor="start">El borde no tiene ruta a la base.</text>
+<rect class="dg-frame" x="518" y="14" width="238" height="372" rx="8"/>
+<text class="dg-group" x="530" y="32">Etapa 3: k3s y la base</text>
+<rect class="dg-layer" style="--c: var(--l-client)" data-part="vip" x="560" y="50" width="156" height="40" rx="6"/>
+<text class="dg-label" x="638" y="66" text-anchor="middle">ServiceLB</text>
+<text class="dg-tiny" x="638" y="85" text-anchor="middle">443 en cada nodo</text>
+<path class="dg-edge" d="M638 92 V108" marker-end="url(#fa29aa)"/>
+<rect class="dg-frame" x="530" y="104" width="214" height="196" rx="8"/>
+<text class="dg-group" x="542" y="122">namespace notas</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" data-part="borde" x="546" y="130" width="182" height="40" rx="6"/>
+<text class="dg-label" x="637" y="146" text-anchor="middle">WAF × 2 a 4</text>
+<text class="dg-tiny" x="637" y="165" text-anchor="middle">ModSecurity + CRS</text>
+<path class="dg-edge" d="M638 172 V184" marker-end="url(#fa29aa)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" data-part="borde" x="546" y="188" width="182" height="40" rx="6"/>
+<text class="dg-label" x="637" y="204" text-anchor="middle">gateway × 2 a 4</text>
+<text class="dg-tiny" x="637" y="223" text-anchor="middle">rutas, límite por token</text>
+<path class="dg-edge" d="M638 230 V242" marker-end="url(#fa29aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" data-part="api" x="546" y="246" width="182" height="40" rx="6"/>
+<text class="dg-label" x="637" y="262" text-anchor="middle">API × 2 a 6</text>
+<text class="dg-tiny" x="637" y="281" text-anchor="middle">HPA por CPU</text>
+<path class="dg-edge" d="M638 302 V326" marker-end="url(#fa29aa)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" data-part="db" x="560" y="330" width="156" height="40" rx="6"/>
+<text class="dg-label" x="638" y="346" text-anchor="middle">db (VM)</text>
+<text class="dg-tiny" x="638" y="365" text-anchor="middle">10.10.2.10:5432</text>
+</svg>
+
+        </div>
+        <figcaption><b>Figura A29.1.</b> La misma API en tres etapas. Las defensas son las mismas en las tres; lo que cambia es dónde vive cada una y cuántas copias hay. En la etapa 2, el borde ya no tiene ruta hacia la base; en la etapa 3, cada capa tiene su propio autoescalado.</figcaption>
+      </figure>
+
+      <p>La idea que ordena todo es la de <a href="../modules/m32-firewalls.html#ubicacion">M32, 32.9</a>: cada capa detiene una clase de ataque distinta, y ninguna alcanza sola. El firewall no sabe qué es una inyección SQL; el WAF no sabe de quién es una nota; la API no ve un SYN a un puerto que nadie publicó.</p>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="fa29bt fa29bd">
+<title id="fa29bt">Qué detiene cada capa</title>
+<desc id="fa29bd">Una request entra de izquierda a derecha por seis capas: nftables, TLS, el WAF, el gateway, la API y PostgreSQL. Debajo de cada capa, un ejemplo de lo que detiene: un puerto no publicado, el tráfico en claro, una inyección en la query, una ruta interna o una ráfaga, un token ajeno o la nota de otro, y un DROP TABLE.</desc>
+<defs><marker id="fa29ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="40" width="112" height="58" rx="6"/>
+<text class="dg-label" x="70" y="65" text-anchor="middle">nftables</text>
+<text class="dg-tiny" x="70" y="84" text-anchor="middle">policy drop</text>
+<path class="dg-edge" d="M127 69 H138" marker-end="url(#fa29ba)"/>
+<path class="dg-feedback" d="M70 100 V136"/>
+<rect class="dg-box" x="14" y="140" width="112" height="58" rx="6"/>
+<text class="dg-label" x="70" y="165" text-anchor="middle">un SYN al 5432</text>
+<text class="dg-tiny" x="70" y="184" text-anchor="middle">o al 8080</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="140" y="40" width="112" height="58" rx="6"/>
+<text class="dg-label" x="196" y="65" text-anchor="middle">TLS</text>
+<text class="dg-tiny" x="196" y="84" text-anchor="middle">Nginx, 443</text>
+<path class="dg-edge" d="M253 69 H264" marker-end="url(#fa29ba)"/>
+<path class="dg-feedback" d="M196 100 V136"/>
+<rect class="dg-box" x="140" y="140" width="112" height="58" rx="6"/>
+<text class="dg-label" x="196" y="165" text-anchor="middle">HTTP en claro</text>
+<text class="dg-tiny" x="196" y="184" text-anchor="middle">(lo manda a 443)</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="266" y="40" width="112" height="58" rx="6"/>
+<text class="dg-label" x="322" y="65" text-anchor="middle">WAF</text>
+<text class="dg-tiny" x="322" y="84" text-anchor="middle">OWASP CRS</text>
+<path class="dg-edge" d="M379 69 H390" marker-end="url(#fa29ba)"/>
+<path class="dg-feedback" d="M322 100 V136"/>
+<rect class="dg-box" x="266" y="140" width="112" height="58" rx="6"/>
+<text class="dg-label" x="322" y="165" text-anchor="middle">?id=1' OR '1'='1</text>
+<text class="dg-tiny" x="322" y="184" text-anchor="middle">da 403</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="392" y="40" width="112" height="58" rx="6"/>
+<text class="dg-label" x="448" y="65" text-anchor="middle">gateway</text>
+<text class="dg-tiny" x="448" y="84" text-anchor="middle">rutas, límites</text>
+<path class="dg-edge" d="M505 69 H516" marker-end="url(#fa29ba)"/>
+<path class="dg-feedback" d="M448 100 V136"/>
+<rect class="dg-box" x="392" y="140" width="112" height="58" rx="6"/>
+<text class="dg-label" x="448" y="165" text-anchor="middle">/actuator da 404</text>
+<text class="dg-tiny" x="448" y="184" text-anchor="middle">ráfagas dan 429</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="518" y="40" width="112" height="58" rx="6"/>
+<text class="dg-label" x="574" y="65" text-anchor="middle">API</text>
+<text class="dg-tiny" x="574" y="84" text-anchor="middle">token, dueño</text>
+<path class="dg-edge" d="M631 69 H642" marker-end="url(#fa29ba)"/>
+<path class="dg-feedback" d="M574 100 V136"/>
+<rect class="dg-box" x="518" y="140" width="112" height="58" rx="6"/>
+<text class="dg-label" x="574" y="165" text-anchor="middle">sin token da 401</text>
+<text class="dg-tiny" x="574" y="184" text-anchor="middle">nota ajena da 404</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="644" y="40" width="112" height="58" rx="6"/>
+<text class="dg-label" x="700" y="65" text-anchor="middle">PostgreSQL</text>
+<text class="dg-tiny" x="700" y="84" text-anchor="middle">rol notas_app</text>
+<path class="dg-feedback" d="M700 100 V136"/>
+<rect class="dg-box" x="644" y="140" width="112" height="58" rx="6"/>
+<text class="dg-label" x="700" y="165" text-anchor="middle">DROP TABLE</text>
+<text class="dg-tiny" x="700" y="184" text-anchor="middle">da error</text>
+<text class="dg-small" x="14" y="26" text-anchor="start">La request</text>
+<text class="dg-small" x="14" y="232" text-anchor="start">Cada capa detiene una clase de ataque distinta. Ninguna basta sola: el WAF no ve la nota de otro,</text>
+<text class="dg-small" x="14" y="252" text-anchor="start">y la API no ve un SYN a un puerto que nadie publicó.</text>
+</svg>
+
+        </div>
+        <figcaption><b>Figura A29.2.</b> Qué detiene cada capa. El script <code>scripts/ataques.sh</code> prueba una cosa de cada columna, desde afuera, y dice si la capa respondió lo que tenía que responder.</figcaption>
+      </figure>
+
+      <h2 id="endpoints">Los endpoints</h2>
+
+      <div class="table-wrap">
+        <table class="t pj-ep">
+          <thead><tr><th>Método y ruta</th><th>Qué hace</th><th>Respuestas</th></tr></thead>
+          <tbody>
+            <tr><td><span class="ep-method" data-m="POST">POST</span><code>/api/usuarios</code></td><td>Crea un usuario con la clave en bcrypt.</td><td>201, 400, 409</td></tr>
+            <tr><td><span class="ep-method" data-m="POST">POST</span><code>/api/sesiones</code></td><td>Inicia sesión y devuelve un token opaco que dura una hora. Cinco fallos seguidos bloquean la cuenta 15 minutos.</td><td>201, 400, 401</td></tr>
+            <tr><td><span class="ep-method" data-m="GET">GET</span><code>/api/notas</code></td><td>Tus últimas 50 notas, con <code>Authorization: Bearer &lt;token&gt;</code>.</td><td>200, 401</td></tr>
+            <tr><td><span class="ep-method" data-m="POST">POST</span><code>/api/notas</code></td><td>Guarda una nota de hasta 4 000 caracteres.</td><td>201, 400, 401</td></tr>
+            <tr><td><span class="ep-method" data-m="GET">GET</span><code>/api/notas/{id}</code></td><td>Una nota tuya. La de otro usuario da 404, igual que una que no existe.</td><td>200, 401, 404</td></tr>
+            <tr><td><span class="ep-method" data-m="GET">GET</span><code>/actuator/health</code></td><td>Solo en el puerto 8081, que el borde no publica. Lo usan systemd y Kubernetes.</td><td>200, 503</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="endpoint">
+        <div class="ep-head">
+          <span class="ep-method" data-m="POST">POST</span>
+          <code class="ep-path">/api/sesiones</code>
+        </div>
+        <p class="ep-desc">El endpoint más atacado de cualquier API: por aquí entra quien prueba claves. Responde lo mismo, y tarda lo mismo, si el usuario no existe, si la clave está mal o si la cuenta está bloqueada.</p>
+        <div class="ep-body">
+          <p class="ep-sec">Request</p>
+<pre data-lang="http"><code>POST /api/sesiones HTTP/2
+Host: notas.lab
+Content-Type: application/json
+
+{"usuario": "ana", "clave": "clave-de-ana-123"}</code></pre>
+          <p class="ep-sec">Respuesta 201</p>
+<pre data-lang="json"><code>{"token": "&lt;43 caracteres base64url&gt;"}</code></pre>
+          <p class="ep-sec">Códigos de respuesta</p>
+          <ul class="ep-responses">
+            <li><span class="st st--2xx">201</span><span>Sesión creada. En la base queda el SHA-256 del token, no el token.</span></li>
+            <li><span class="st st--4xx">400</span><span>Usuario fuera de <code>[a-z0-9_.-]{3,32}</code>, o clave de menos de 12 caracteres o de más de 72 bytes.</span></li>
+            <li><span class="st st--4xx">401</span><span>No existe, clave incorrecta o cuenta bloqueada: la misma respuesta para las tres, para no decirle al atacante cuál es.</span></li>
+            <li><span class="st st--4xx">429</span><span>Lo responde el borde, no la API: más de 1 intento por segundo desde la misma IP, con una ráfaga de 5.</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <h2 id="dependencias">Dependencias</h2>
+
+      <div class="table-wrap">
+        <table class="t">
+          <thead><tr><th>Dependencia</th><th>Para qué</th></tr></thead>
+          <tbody>
+            <tr><td><code>spring-boot-starter-webmvc</code>, <code>spring-boot-starter-validation</code></td><td>La API, <code>@Pattern</code> y <code>@Size</code> en el cuerpo, y los errores con ProblemDetail, sin stack traces.</td></tr>
+            <tr><td><code>spring-boot-starter-actuator</code></td><td>La salud en un puerto aparte (8081), que el borde no publica.</td></tr>
+            <tr><td><code>spring-boot-starter-jdbc</code>, <code>spring-boot-starter-flyway</code>, <code>flyway-database-postgresql</code>, <code>postgresql</code></td><td><code>JdbcClient</code> con Hikari, y las migraciones, que corren en un proceso aparte con otro rol.</td></tr>
+            <tr><td><code>spring-security-crypto</code></td><td>Solo <code>BCryptPasswordEncoder</code>, sin Spring Security entero: la autenticación es un interceptor de 30 líneas que puedes leer.</td></tr>
+            <tr><td><code>spring-boot-starter-webmvc-test</code>, <code>spring-boot-testcontainers</code>, <code>testcontainers-postgresql</code> (test)</td><td>Las pruebas, contra un PostgreSQL de verdad con los mismos dos roles que la VM.</td></tr>
+            <tr><td><code>gatling-charts-highcharts</code> 3.16.0 (test) y <code>gatling-maven-plugin</code> 4.21.12</td><td>Carga contra el borde de cada etapa, con los mismos tokens.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+<pre data-lang="xml" data-file="pom.xml"><code>&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd"&gt;
+  &lt;modelVersion&gt;4.0.0&lt;/modelVersion&gt;
+
+  &lt;parent&gt;
+    &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+    &lt;artifactId&gt;spring-boot-starter-parent&lt;/artifactId&gt;
+    &lt;version&gt;4.1.1&lt;/version&gt;
+    &lt;relativePath/&gt;
+  &lt;/parent&gt;
+
+  &lt;groupId&gt;lab&lt;/groupId&gt;
+  &lt;artifactId&gt;notas&lt;/artifactId&gt;
+  &lt;version&gt;0.1.0&lt;/version&gt;
+
+  &lt;properties&gt;
+    &lt;!-- 21 y no 25: es el JRE que Ubuntu 24.04 trae en sus repositorios, y la VM no instala nada de afuera. --&gt;
+    &lt;java.version&gt;21&lt;/java.version&gt;
+    &lt;gatling.version&gt;3.16.0&lt;/gatling.version&gt;
+    &lt;gatling-maven-plugin.version&gt;4.21.12&lt;/gatling-maven-plugin.version&gt;
+  &lt;/properties&gt;
+
+  &lt;dependencies&gt;
+    &lt;dependency&gt;
+      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+      &lt;artifactId&gt;spring-boot-starter-webmvc&lt;/artifactId&gt;
+    &lt;/dependency&gt;
+    &lt;dependency&gt;
+      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+      &lt;artifactId&gt;spring-boot-starter-validation&lt;/artifactId&gt;
+    &lt;/dependency&gt;
+    &lt;dependency&gt;
+      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+      &lt;artifactId&gt;spring-boot-starter-actuator&lt;/artifactId&gt;
+    &lt;/dependency&gt;
+    &lt;dependency&gt;
+      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+      &lt;artifactId&gt;spring-boot-starter-jdbc&lt;/artifactId&gt;
+    &lt;/dependency&gt;
+    &lt;dependency&gt;
+      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+      &lt;artifactId&gt;spring-boot-starter-flyway&lt;/artifactId&gt;
+    &lt;/dependency&gt;
+    &lt;dependency&gt;
+      &lt;groupId&gt;org.flywaydb&lt;/groupId&gt;
+      &lt;artifactId&gt;flyway-database-postgresql&lt;/artifactId&gt;
+    &lt;/dependency&gt;
+    &lt;dependency&gt;
+      &lt;groupId&gt;org.postgresql&lt;/groupId&gt;
+      &lt;artifactId&gt;postgresql&lt;/artifactId&gt;
+      &lt;scope&gt;runtime&lt;/scope&gt;
+    &lt;/dependency&gt;
+    &lt;dependency&gt;
+      &lt;groupId&gt;org.springframework.security&lt;/groupId&gt;
+      &lt;artifactId&gt;spring-security-crypto&lt;/artifactId&gt;
+    &lt;/dependency&gt;
+
+    &lt;dependency&gt;
+      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+      &lt;artifactId&gt;spring-boot-starter-webmvc-test&lt;/artifactId&gt;
+      &lt;scope&gt;test&lt;/scope&gt;
+    &lt;/dependency&gt;
+    &lt;dependency&gt;
+      &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+      &lt;artifactId&gt;spring-boot-testcontainers&lt;/artifactId&gt;
+      &lt;scope&gt;test&lt;/scope&gt;
+    &lt;/dependency&gt;
+    &lt;dependency&gt;
+      &lt;groupId&gt;org.testcontainers&lt;/groupId&gt;
+      &lt;artifactId&gt;testcontainers-postgresql&lt;/artifactId&gt;
+      &lt;scope&gt;test&lt;/scope&gt;
+    &lt;/dependency&gt;
+    &lt;dependency&gt;
+      &lt;groupId&gt;io.gatling.highcharts&lt;/groupId&gt;
+      &lt;artifactId&gt;gatling-charts-highcharts&lt;/artifactId&gt;
+      &lt;version&gt;${gatling.version}&lt;/version&gt;
+      &lt;scope&gt;test&lt;/scope&gt;
+    &lt;/dependency&gt;
+  &lt;/dependencies&gt;
+
+  &lt;build&gt;
+    &lt;plugins&gt;
+      &lt;plugin&gt;
+        &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+        &lt;artifactId&gt;spring-boot-maven-plugin&lt;/artifactId&gt;
+      &lt;/plugin&gt;
+      &lt;plugin&gt;
+        &lt;groupId&gt;io.gatling&lt;/groupId&gt;
+        &lt;artifactId&gt;gatling-maven-plugin&lt;/artifactId&gt;
+        &lt;version&gt;${gatling-maven-plugin.version}&lt;/version&gt;
+      &lt;/plugin&gt;
+    &lt;/plugins&gt;
+  &lt;/build&gt;
+&lt;/project&gt;</code></pre>
+
+      <h2 id="infraestructura">La infraestructura</h2>
+
+      <p>Las etapas 1 y 2 son máquinas virtuales de verdad, no contenedores: un firewall, un sandbox de systemd o una IP virtual necesitan un kernel propio. Las crea Vagrant sobre VirtualBox, a partir de la imagen <code>bento/ubuntu-24.04</code>. Además de Java 21, Maven y Docker, instala:</p>
+
+<pre data-lang="bash"><code>winget install -e --id Oracle.VirtualBox     # Windows
+winget install -e --id Hashicorp.Vagrant
+brew install --cask virtualbox vagrant       # macOS con Intel (en Apple Silicon, VirtualBox no corre imágenes x86)
+winget install -e --id Kubernetes.kubectl     # para la etapa 3
+vagrant --version
+VBoxManage --version</code></pre>
+
+      <p>Tiene que haber memoria libre para las VMs: la etapa 1 usa 2&#8239;GB; la etapa 2, 1 024 × 3 + 768 × 2 = 4 608&#8239;MB; la etapa 3, 1 024 + 2 048 + 1 536 × 2 = 6 144&#8239;MB. Levanta una etapa por vez y destruye la anterior con <code>vagrant destroy -f</code>. En Windows, si tienes WSL 2 o Docker Desktop, VirtualBox corre encima de Hyper-V: funciona, pero las VMs arrancan más lento.</p>
+
+      <p>Así queda el proyecto:</p>
+
+<pre data-lang="bash"><code>a29-servidor-seguro/
+├── pom.xml, Dockerfile, .gitignore, src/…
+├── infra/
+│   ├── comun/     base.sh, 99-endurecido.conf, sshd-endurecido.conf, jail.local, jail-nginx.local,
+│   │              auditoria.rules, notas.service, notas-migrar.service, instalar-app.sh,
+│   │              tls.sh, instalar-borde.sh, nginx-notas.conf, modsec-main.conf
+│   ├── etapa1/    Vagrantfile, provision.sh, db.sql, nftables.conf, upstream.conf
+│   ├── etapa2/    Vagrantfile, db.sh, app.sh, borde.sh, keepalived.conf, upstream.conf,
+│   │              nftables-db.conf, nftables-app.conf, nftables-borde.conf
+│   └── etapa3/    Vagrantfile, k3s.sh, nftables-k3s.conf, secretos.sh,
+│                  k8s/ 00-namespace.yaml, 10-migrar.yaml, 20-api.yaml, 30-gateway.yaml, 40-waf.yaml, 50-red.yaml
+└── scripts/       ataques.sh, tokens.sh</code></pre>
+
+      <p>Los scripts de <code>infra/</code> los corre Vagrant dentro de cada VM, como root. Los de <code>scripts/</code> los corres tú desde tu máquina, en Git Bash. Vagrant monta la raíz del proyecto en <code>/proyecto</code> dentro de cada VM: de ahí salen el jar y la configuración, y ahí quedan, en <code>infra/</code>, las claves y el certificado que se generan la primera vez. El <code>.gitignore</code> los deja fuera del repositorio:</p>
+
+<pre data-lang="bash" data-file=".gitignore"><code>target/
+.vagrant/
+# Lo que crean las VMs y Vagrant en tu máquina: claves, certificados, kubeconfig e imágenes.
+infra/.secretos.yaml
+infra/.k3s-token
+infra/.tls/
+infra/.kube/
+infra/.imagenes/
+src/test/resources/tokens.csv</code></pre>
+
+      <h2 id="paso-a-paso">Paso a paso</h2>
+
+      <h3 id="paso-app">Paso 1. La API, sin confiar en nada</h3>
+
+      <p>Crea el proyecto con Spring Initializr (Maven, Java 21) para tener el wrapper <code>mvnw</code>, y reemplaza el <code>pom.xml</code> por el de arriba. La configuración recibe todo lo que cambia entre etapas por variables de entorno: el mismo jar corre en las tres.</p>
+
+<pre data-lang="yaml" data-file="src/main/resources/application.yaml"><code>spring:
+  application:
+    name: notas
+  datasource:
+    # Todo lo que cambia entre etapas llega por variables de entorno: el mismo jar corre en las tres.
+    url: ${DB_URL:jdbc:postgresql://127.0.0.1:5432/notas}
+    username: ${DB_USER:notas_app}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 3000
+  flyway:
+    # Apagado por defecto: las migraciones corren aparte, con el rol dueño (notas-migrar).
+    enabled: ${FLYWAY_ENABLED:false}
+    user: ${FLYWAY_USER:notas_owner}
+    password: ${FLYWAY_PASSWORD:}
+    schemas: notas
+    create-schemas: false
+  mvc:
+    problemdetails:
+      enabled: true
+
+server:
+  address: ${SERVER_ADDRESS:127.0.0.1}
+  port: 8080
+  shutdown: graceful
+  forward-headers-strategy: native
+  error:
+    include-stacktrace: never
+    include-message: never
+
+management:
+  server:
+    port: 8081
+    address: ${MANAGEMENT_ADDRESS:127.0.0.1}
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+notas:
+  sesion-minutos: 60
+  max-fallidos: 5
+  bloqueo-minutos: 15
+  bcrypt-costo: 12</code></pre>
+
+      <p>Tres valores hacen el trabajo de seguridad. <code>server.address</code> vale <code>127.0.0.1</code> por defecto: aunque el firewall falle, la API no escucha en la red. La salud va en otro puerto, el 8081, también en localhost. Y <code>include-stacktrace: never</code> e <code>include-message: never</code> evitan que un error le cuente al atacante qué librería usas o qué consulta falló.</p>
+
+<pre data-lang="sql" data-file="src/main/resources/db/migration/V1__esquema.sql"><code>-- Corre con el rol notas_owner, dueño del esquema notas. Los permisos de notas_app
+-- llegan solos por los ALTER DEFAULT PRIVILEGES de db.sql: aquí no hay ningún GRANT.
+CREATE TABLE usuarios (
+    id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    usuario         text NOT NULL UNIQUE,
+    clave_hash      text NOT NULL,
+    fallidos        int  NOT NULL DEFAULT 0,
+    bloqueado_hasta timestamptz
+);
+
+-- Se guarda el SHA-256 del token, no el token: quien lea la tabla no puede usar las sesiones.
+CREATE TABLE sesiones (
+    token_hash bytea PRIMARY KEY,
+    usuario_id bigint NOT NULL REFERENCES usuarios (id) ON DELETE CASCADE,
+    vence      timestamptz NOT NULL
+);
+
+CREATE TABLE notas (
+    id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    usuario_id bigint NOT NULL REFERENCES usuarios (id) ON DELETE CASCADE,
+    texto      text NOT NULL CHECK (length(texto) &lt;= 4000),
+    creada     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX notas_por_usuario ON notas (usuario_id, id);</code></pre>
+
+<pre data-lang="java" data-file="src/main/java/lab/notas/NotasApplication.java"><code>package lab.notas;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+
+@SpringBootApplication
+@ConfigurationPropertiesScan
+public class NotasApplication {
+
+    public static void main(String[] args) {
+        var ctx = SpringApplication.run(NotasApplication.class, args);
+        // En el despliegue, las migraciones corren en un proceso aparte con el rol dueño
+        // (notas-migrar.service o el Job de Kubernetes). Ese proceso migra y termina.
+        if (ctx.getEnvironment().getProperty("notas.solo-migrar", Boolean.class, false)) {
+            System.exit(SpringApplication.exit(ctx));
+        }
+    }
+}</code></pre>
+
+<pre data-lang="java" data-file="src/main/java/lab/notas/NotasProps.java"><code>package lab.notas;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+/** Los valores de notas.* en application.yaml. */
+@ConfigurationProperties("notas")
+public record NotasProps(int sesionMinutos, int maxFallidos, int bloqueoMinutos, int bcryptCosto) {
+}</code></pre>
+
+      <p>El servicio de sesiones es el corazón de la guía. Tiene tres defensas: el token se guarda como hash, la comparación tarda lo mismo exista o no el usuario, y el contador de fallos no se puede saltar con requests en paralelo.</p>
+
+<pre data-lang="java" data-file="src/main/java/lab/notas/sesiones/SesionService.java"><code>package lab.notas.sesiones;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.util.Base64;
+import java.util.Optional;
+
+import lab.notas.NotasProps;
+
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.web.ErrorResponseException;
+
+@Service
+public class SesionService {
+
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    private final JdbcClient db;
+    private final NotasProps props;
+    private final BCryptPasswordEncoder bcrypt;
+    private final String hashFalso;
+
+    record Intento(long id, String claveHash, int fallidos) {
+    }
+
+    SesionService(JdbcClient db, NotasProps props) {
+        this.db = db;
+        this.props = props;
+        this.bcrypt = new BCryptPasswordEncoder(props.bcryptCosto());
+        // Para comparar contra algo cuando el usuario no existe o está bloqueado: misma demora, misma respuesta.
+        this.hashFalso = bcrypt.encode("no-existe-" + RANDOM.nextLong());
+    }
+
+    public void registrar(String usuario, String clave) {
+        try {
+            db.sql("INSERT INTO usuarios (usuario, clave_hash) VALUES (:u, :h)")
+                    .param("u", usuario).param("h", bcrypt.encode(clave)).update();
+        } catch (DuplicateKeyException e) {
+            throw new ErrorResponseException(HttpStatus.CONFLICT);
+        }
+    }
+
+    /** El token de una sesión nueva, o vacío si el usuario no existe, la clave no coincide o la cuenta está bloqueada. */
+    public Optional&lt;String&gt; iniciar(String usuario, String clave) {
+        // 1. Reservar el intento ANTES de comparar. El UPDATE es atómico: con 50 requests a la vez,
+        //    solo max-fallidos consiguen fila; el resto no llega a bcrypt con la clave real.
+        Optional&lt;Intento&gt; intento = db.sql("""
+                UPDATE usuarios
+                   SET fallidos = CASE WHEN bloqueado_hasta &lt; now() THEN 1 ELSE fallidos + 1 END,
+                       bloqueado_hasta = CASE WHEN bloqueado_hasta &lt; now() THEN NULL ELSE bloqueado_hasta END
+                 WHERE usuario = :u
+                   AND (bloqueado_hasta &lt; now() OR (bloqueado_hasta IS NULL AND fallidos &lt; :max))
+                RETURNING id, clave_hash, fallidos""")
+                .param("u", usuario).param("max", props.maxFallidos())
+                .query(Intento.class).optional();
+
+        if (intento.isEmpty()) {
+            bcrypt.matches(clave, hashFalso);   // no existe o está bloqueado: la misma demora que un intento real
+            return Optional.empty();
+        }
+        Intento i = intento.get();
+
+        // 2. Comparar fuera de cualquier transacción: bcrypt tarda y no debe tener una fila bloqueada mientras tanto.
+        if (!bcrypt.matches(clave, i.claveHash())) {
+            if (i.fallidos() &gt;= props.maxFallidos()) {
+                db.sql("UPDATE usuarios SET bloqueado_hasta = now() + make_interval(mins =&gt; :m) WHERE id = :id")
+                        .param("m", props.bloqueoMinutos()).param("id", i.id()).update();
+            }
+            return Optional.empty();
+        }
+
+        // 3. Clave correcta: el contador vuelve a cero y nace la sesión.
+        db.sql("UPDATE usuarios SET fallidos = 0 WHERE id = :id").param("id", i.id()).update();
+        byte[] crudo = new byte[32];
+        RANDOM.nextBytes(crudo);
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(crudo);
+        db.sql("INSERT INTO sesiones (token_hash, usuario_id, vence) VALUES (:h, :id, now() + make_interval(mins =&gt; :m))")
+                .param("h", sha256(token)).param("id", i.id()).param("m", props.sesionMinutos()).update();
+        return Optional.of(token);
+    }
+
+    public Optional&lt;Long&gt; usuarioDe(String token) {
+        return db.sql("SELECT usuario_id FROM sesiones WHERE token_hash = :h AND vence &gt; now()")
+                .param("h", sha256(token)).query(Long.class).optional();
+    }
+
+    static byte[] sha256(String s) {
+        try {
+            return MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}</code></pre>
+
+      <p>El <code>UPDATE</code> del paso 1 hace dos cosas en una sentencia: decide si al usuario le queda un intento y lo gasta. Si la cuenta está bloqueada y el bloqueo ya venció, empieza de nuevo con <code>fallidos = 1</code>. Si está bloqueada y no venció, o ya gastó sus cinco intentos, el <code>WHERE</code> no encuentra la fila y el método compara la clave contra un hash falso, para que la respuesta tarde lo mismo que un intento real. La versión ingenua, leer el contador, comparar y escribir, deja pasar más intentos de los que debería cuando llegan juntos; la sección <a href="#hilos">La versión con hilos</a> lo provoca con 50 hilos.</p>
+
+<pre data-lang="java" data-file="src/main/java/lab/notas/sesiones/SesionController.java"><code>package lab.notas.sesiones;
+
+import java.nio.charset.StandardCharsets;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.ErrorResponseException;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api")
+class SesionController {
+
+    record Credenciales(
+            @NotNull @Pattern(regexp = "[a-z0-9_.-]{3,32}") String usuario,
+            @NotNull @Size(min = 12, max = 72) String clave) {
+    }
+
+    record Token(String token) {
+    }
+
+    private final SesionService sesiones;
+
+    SesionController(SesionService sesiones) {
+        this.sesiones = sesiones;
+    }
+
+    @PostMapping("/usuarios")
+    ResponseEntity&lt;Void&gt; registrar(@Valid @RequestBody Credenciales c) {
+        hasta72Bytes(c.clave());
+        sesiones.registrar(c.usuario(), c.clave());
+        return ResponseEntity.status(HttpStatus.CREATED).build();
+    }
+
+    @PostMapping("/sesiones")
+    ResponseEntity&lt;Token&gt; iniciar(@Valid @RequestBody Credenciales c) {
+        hasta72Bytes(c.clave());
+        return sesiones.iniciar(c.usuario(), c.clave())
+                .map(t -&gt; ResponseEntity.status(HttpStatus.CREATED).body(new Token(t)))
+                .orElseThrow(() -&gt; new ErrorResponseException(HttpStatus.UNAUTHORIZED));
+    }
+
+    /** bcrypt solo mira 72 bytes, y 72 caracteres con tildes son más. Sin esto, la librería lanza y responde 500. */
+    private static void hasta72Bytes(String clave) {
+        if (clave.getBytes(StandardCharsets.UTF_8).length &gt; 72) {
+            throw new ErrorResponseException(HttpStatus.BAD_REQUEST);
+        }
+    }
+}</code></pre>
+
+<pre data-lang="java" data-file="src/main/java/lab/notas/sesiones/AuthInterceptor.java"><code>package lab.notas.sesiones;
+
+import java.util.Optional;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Component;
+import org.springframework.web.ErrorResponseException;
+import org.springframework.web.servlet.HandlerInterceptor;
+
+/** Toda ruta de /api/notas necesita un token vigente. Deja el id del usuario en la request. */
+@Component
+public class AuthInterceptor implements HandlerInterceptor {
+
+    public static final String USUARIO = "notas.usuario";
+
+    private final SesionService sesiones;
+
+    AuthInterceptor(SesionService sesiones) {
+        this.sesiones = sesiones;
+    }
+
+    @Override
+    public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) {
+        String h = req.getHeader("Authorization");
+        Optional&lt;Long&gt; usuario = h != null &amp;&amp; h.startsWith("Bearer ")
+                ? sesiones.usuarioDe(h.substring(7))
+                : Optional.empty();
+        if (usuario.isEmpty()) {
+            res.setHeader("WWW-Authenticate", "Bearer");
+            throw new ErrorResponseException(HttpStatus.UNAUTHORIZED);
+        }
+        req.setAttribute(USUARIO, usuario.get());
+        return true;
+    }
+}</code></pre>
+
+<pre data-lang="java" data-file="src/main/java/lab/notas/sesiones/WebConfig.java"><code>package lab.notas.sesiones;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+@Configuration
+class WebConfig implements WebMvcConfigurer {
+
+    private final AuthInterceptor auth;
+
+    WebConfig(AuthInterceptor auth) {
+        this.auth = auth;
+    }
+
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(auth).addPathPatterns("/api/notas", "/api/notas/**");
+    }
+}</code></pre>
+
+<pre data-lang="java" data-file="src/main/java/lab/notas/notas/NotaController.java"><code>package lab.notas.notas;
+
+import java.net.URI;
+import java.time.OffsetDateTime;
+import java.util.List;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import lab.notas.sesiones.AuthInterceptor;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.web.ErrorResponseException;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestAttribute;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/notas")
+class NotaController {
+
+    record NuevaNota(@NotBlank @Size(max = 4000) String texto) {
+    }
+
+    record Nota(long id, String texto, OffsetDateTime creada) {
+    }
+
+    private final JdbcClient db;
+
+    NotaController(JdbcClient db) {
+        this.db = db;
+    }
+
+    @GetMapping
+    List&lt;Nota&gt; mias(@RequestAttribute(AuthInterceptor.USUARIO) long usuario) {
+        return db.sql("SELECT id, texto, creada FROM notas WHERE usuario_id = :u ORDER BY id DESC LIMIT 50")
+                .param("u", usuario).query(Nota.class).list();
+    }
+
+    @PostMapping
+    ResponseEntity&lt;Nota&gt; crear(@RequestAttribute(AuthInterceptor.USUARIO) long usuario,
+                               @Valid @RequestBody NuevaNota nueva) {
+        Nota nota = db.sql("INSERT INTO notas (usuario_id, texto) VALUES (:u, :t) RETURNING id, texto, creada")
+                .param("u", usuario).param("t", nueva.texto()).query(Nota.class).single();
+        return ResponseEntity.created(URI.create("/api/notas/" + nota.id())).body(nota);
+    }
+
+    @GetMapping("/{id}")
+    Nota una(@RequestAttribute(AuthInterceptor.USUARIO) long usuario, @PathVariable long id) {
+        // El dueño va en el WHERE: la nota de otro da 404, igual que una que no existe (BOLA, M10).
+        return db.sql("SELECT id, texto, creada FROM notas WHERE id = :id AND usuario_id = :u")
+                .param("id", id).param("u", usuario).query(Nota.class).optional()
+                .orElseThrow(() -&gt; new ErrorResponseException(HttpStatus.NOT_FOUND));
+    }
+}</code></pre>
+
+<pre data-lang="bash"><code>./mvnw -DskipTests package
+ls target/notas-0.1.0.jar</code></pre>
+
+      <dl class="pj-why">
+        <div><dt>La decisión</dt><dd>Defensas que no dependen de la red: escuchar en localhost, el dueño de la nota en el <code>WHERE</code> (contra BOLA, <a href="../modules/m10-seguridad.html">M10</a>), el token guardado como hash, la misma respuesta para los tres motivos del 401 y el contador que se reserva antes de comparar. Si mañana alguien publica el 8080 por error, la API sigue sin regalar nada.</dd></div>
+        <div><dt>Lo que descartas</dt><dd>JWT: un token opaco se revoca borrando la fila, y aquí no hay otro servicio que tenga que validarlo sin preguntarle a la base. Spring Security entero: para un Bearer y un interceptor, es más configuración de la que se puede revisar en una tarde. Y el 403 para la nota ajena, que confirma que el id existe.</dd></div>
+        <div><dt>Qué puede salir mal</dt><dd>Que la clave tenga más de 72 bytes: bcrypt solo mira los primeros 72, y la librería lanza una excepción con una clave más larga. Por eso el controlador mide bytes y no solo caracteres: 40 eñes pasan un <code>@Size(max = 72)</code> y son 80 bytes. Y que el bloqueo sirva para molestar: cualquiera puede bloquear la cuenta de otro con cinco intentos. Está acotado a 15 minutos y el borde limita los intentos por IP.</dd></div>
+      </dl>
+
+      <h3 id="paso-base">Paso 2. La base, con dos roles</h3>
+
+      <p>La API se conecta con un rol que solo puede leer y escribir filas. Las tablas las crea otro rol, el dueño del esquema, que usan únicamente las migraciones. Si alguien toma la API, puede hacer lo que la API hace, pero no borrar tablas, crear funciones ni leer otras bases.</p>
+
+<pre data-lang="sql" data-file="infra/etapa1/db.sql"><code>-- Roles con lo justo. Lo corre el superusuario postgres con:
+--   psql -v app_pass=... -v owner_pass=... &lt; db.sql
+-- Se puede correr dos veces: lo que ya existe no se vuelve a crear.
+SELECT 'CREATE ROLE notas_owner LOGIN'
+ WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'notas_owner') \gexec
+SELECT 'CREATE ROLE notas_app LOGIN'
+ WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'notas_app') \gexec
+ALTER ROLE notas_owner PASSWORD :'owner_pass';
+ALTER ROLE notas_app PASSWORD :'app_pass';
+
+SELECT 'CREATE DATABASE notas OWNER notas_owner'
+ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'notas') \gexec
+\c notas
+
+-- Nadie más se conecta a esta base, y nadie crea tablas en public.
+REVOKE ALL ON DATABASE notas FROM PUBLIC;
+GRANT CONNECT ON DATABASE notas TO notas_app;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+-- El esquema es del dueño. La app puede usarlo, no cambiarlo.
+CREATE SCHEMA IF NOT EXISTS notas AUTHORIZATION notas_owner;
+GRANT USAGE ON SCHEMA notas TO notas_app;
+-- Toda tabla que cree el dueño (las migraciones) le da a la app solo filas: leer, escribir y borrar.
+ALTER DEFAULT PRIVILEGES FOR ROLE notas_owner IN SCHEMA notas
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO notas_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE notas_owner IN SCHEMA notas
+    GRANT USAGE ON SEQUENCES TO notas_app;
+ALTER ROLE notas_owner SET search_path = notas;
+ALTER ROLE notas_app SET search_path = notas;</code></pre>
+
+      <p>Los <code>ALTER DEFAULT PRIVILEGES</code> son la pieza clave: le dicen a PostgreSQL que toda tabla que cree <code>notas_owner</code> en el esquema <code>notas</code> nace con <code>SELECT</code>, <code>INSERT</code>, <code>UPDATE</code> y <code>DELETE</code> para <code>notas_app</code>. Por eso la migración no tiene ningún <code>GRANT</code>, y una tabla nueva no queda olvidada sin permisos ni con permisos de más. M35 explica el modelo de roles y privilegios de PostgreSQL.</p>
+
+      <p>Las migraciones corren en un proceso aparte, <code>notas-migrar</code>, que arranca la misma aplicación sin servidor web, aplica Flyway con la clave del dueño y termina. La API arranca después, con otro archivo de entorno que no tiene esa clave.</p>
+
+      <dl class="pj-why">
+        <div><dt>La decisión</dt><dd>Dos roles: <code>notas_owner</code>, dueño del esquema, y <code>notas_app</code>, que solo toca filas. La clave del dueño está en un archivo que la API no lee.</dd></div>
+        <div><dt>Lo que descartas</dt><dd>Conectar la API como <code>postgres</code>, que es lo que pasa cuando nadie lo piensa: una inyección SQL pasa a ser un <code>COPY … TO PROGRAM</code>. Y Flyway dentro de la API con el rol dueño, que deja la clave del dueño en el entorno de la API toda su vida.</dd></div>
+        <div><dt>Qué puede salir mal</dt><dd>Que una migración cree una función o una vista y la app no pueda usarla: los privilegios por defecto de arriba cubren tablas y secuencias, no funciones. Si agregas una, súmale su <code>GRANT EXECUTE</code> en la misma migración.</dd></div>
+      </dl>
+
+      <h3 id="paso-borde">Paso 3. El borde: TLS, WAF, límites y rutas</h3>
+
+      <p>Nginx hace aquí de WAF y de API gateway a la vez, como en el patrón "todo en una VM" de <a href="../modules/m32-firewalls.html#ubicacion-patrones">M32</a>. Termina TLS, pasa cada request por ModSecurity con el OWASP Core Rule Set, limita por IP y deja pasar solo las rutas públicas.</p>
+
+<pre data-lang="nginx" data-file="infra/comun/nginx-notas.conf"><code># /etc/nginx/conf.d/notas.conf: el borde de las etapas 1 y 2. Hace de WAF y de gateway a la vez.
+# Límites gruesos por IP: el WAF no sabe quién es el cliente, solo de dónde viene.
+limit_req_zone $binary_remote_addr zone=por_ip:10m rate=50r/s;
+limit_req_zone $binary_remote_addr zone=entrar:10m rate=1r/s;
+limit_conn_zone $binary_remote_addr zone=conexiones:10m;
+limit_req_status 429;
+limit_conn_status 429;
+server_tokens off;
+
+# HTTP solo existe para mandar a HTTPS.
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    # Ubuntu 24.04 trae Nginx 1.24: http2 va en el listen (la directiva "http2 on" llegó en la 1.25.1).
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+    server_name notas.lab;
+
+    ssl_certificate     /etc/nginx/tls/notas.crt;
+    ssl_certificate_key /etc/nginx/tls/notas.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_tickets off;
+
+    # El WAF ve la request en claro, antes que nada más.
+    modsecurity on;
+    modsecurity_rules_file /etc/nginx/modsec/main.conf;
+
+    # Requests chicas y lentas no: el cuerpo más grande de la API es una nota de 4 000 caracteres.
+    client_max_body_size 16k;
+    client_body_timeout 10s;
+    client_header_timeout 10s;
+    keepalive_timeout 30s;
+    limit_conn conexiones 20;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Cache-Control "no-store" always;
+
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    # Se pisa, no se agrega: el borde es el primero en el que se confía.
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Request-Id $request_id;
+    proxy_connect_timeout 2s;
+    proxy_read_timeout 15s;
+
+    # El gateway: solo estas rutas existen hacia afuera. /actuator no está en la lista.
+    location = /api/sesiones {
+        limit_req zone=entrar burst=5 nodelay;
+        proxy_pass http://notas_api;
+    }
+    location = /api/usuarios {
+        limit_req zone=entrar burst=5 nodelay;
+        proxy_pass http://notas_api;
+    }
+    location /api/notas {
+        limit_req zone=por_ip burst=100 nodelay;
+        proxy_pass http://notas_api;
+    }
+    location / {
+        return 404;
+    }
+}</code></pre>
+
+      <p>Las rutas son una lista blanca: <code>/api/sesiones</code>, <code>/api/usuarios</code> y <code>/api/notas</code>. Todo lo demás, <code>/actuator</code> incluido, es un 404 que Nginx responde sin molestar a la API. El inicio de sesión y el registro tienen su propia zona, mucho más estricta: 1 por segundo por IP, con ráfaga de 5. Así, desde una IP se pueden probar como mucho 3 600 claves por hora contra todas las cuentas, y el bloqueo de 5 intentos frena antes a quien insiste con una sola.</p>
+
+<pre data-lang="bash" data-file="infra/comun/modsec-main.conf"><code># /etc/nginx/modsec/main.conf: el motor de ModSecurity y las reglas del OWASP CRS.
+SecRuleEngine On
+SecRequestBodyAccess On
+SecRequestBodyLimit 16384
+SecRequestBodyNoFilesLimit 16384
+SecRequestBodyLimitAction Reject
+SecResponseBodyAccess Off
+SecTmpDir /tmp/
+SecDataDir /tmp/
+SecArgumentSeparator &amp;
+SecCookieFormat 0
+
+# La API habla JSON: que el motor lo entienda para mirar dentro de cada campo.
+SecRule REQUEST_HEADERS:Content-Type "@rx ^application/json" \
+    "id:200001,phase:1,t:none,t:lowercase,pass,nolog,ctl:requestBodyProcessor=JSON"
+
+# Registro de lo que bloquea (no de los 404): es lo que se revisa antes de endurecer una regla.
+SecAuditEngine RelevantOnly
+SecAuditLogRelevantStatus "^(?:5|4(?!04))"
+SecAuditLogParts ABHZ
+SecAuditLogType Serial
+SecAuditLog /var/log/nginx/modsec_audit.log
+
+# OWASP CRS, tal como lo instala el paquete modsecurity-crs de Ubuntu 24.04.
+# Si dpkg -L modsecurity-crs muestra otras rutas, cámbialas aquí.
+Include /etc/modsecurity/crs/crs-setup.conf
+Include /usr/share/modsecurity-crs/rules/*.conf</code></pre>
+
+      <p>Las rutas de las reglas del CRS son las que deja el paquete <code>modsecurity-crs</code> de Ubuntu 24.04. Compruébalas en tu VM antes de culpar a otra cosa si <code>nginx -t</code> falla:</p>
+
+<pre data-lang="bash"><code>dpkg -L modsecurity-crs | grep -E 'crs-setup.conf$|/rules$'</code></pre>
+
+<pre data-lang="bash" data-file="infra/comun/tls.sh"><code>#!/usr/bin/env bash
+# Una CA del laboratorio y un certificado para notas.lab, creados una sola vez en /proyecto/infra/.tls.
+# Uso: tls.sh            solo crea los archivos (etapa 3, para el Secret de Kubernetes)
+#      tls.sh instalar   además los copia a /etc/nginx/tls (etapas 1 y 2)
+set -euo pipefail
+D=/proyecto/infra/.tls
+mkdir -p "$D"
+if [ ! -f "$D/notas.crt" ]; then
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 365 \
+    -subj "/CN=CA del laboratorio A29" -keyout "$D/ca.key" -out "$D/ca.crt"
+  openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+    -subj "/CN=notas.lab" -keyout "$D/notas.key" -out "$D/notas.csr"
+  cat &gt; "$D/ext.cnf" &lt;&lt;'EOF'
+subjectAltName = DNS:notas.lab, IP:192.168.56.10, IP:192.168.56.100, IP:192.168.56.31, IP:192.168.56.32, IP:192.168.56.33
+extendedKeyUsage = serverAuth
+EOF
+  openssl x509 -req -in "$D/notas.csr" -CA "$D/ca.crt" -CAkey "$D/ca.key" -CAcreateserial \
+    -days 90 -extfile "$D/ext.cnf" -out "$D/notas.crt"
+fi
+if [ "${1:-}" = instalar ]; then
+  install -d -m 755 /etc/nginx/tls
+  install -m 644 "$D/notas.crt" /etc/nginx/tls/notas.crt
+  install -m 600 "$D/notas.key" /etc/nginx/tls/notas.key   # la lee el proceso maestro de Nginx, que es root
+fi</code></pre>
+
+<pre data-lang="bash" data-file="infra/comun/instalar-borde.sh"><code>#!/usr/bin/env bash
+# Nginx como borde: TLS, WAF (ModSecurity + OWASP CRS), límites y ruteo. Variable: UPSTREAM (archivo).
+set -euo pipefail
+C=/proyecto/infra/comun
+apt-get install -y nginx libnginx-mod-http-modsecurity modsecurity-crs
+
+# 1. Certificado
+bash $C/tls.sh instalar
+
+# 2. WAF: nuestro main.conf carga el motor y las reglas del paquete modsecurity-crs.
+install -d -m 755 /etc/nginx/modsec
+install -m 644 $C/modsec-main.conf /etc/nginx/modsec/main.conf
+
+# 3. El sitio. Sin el default de Ubuntu, que responde con la página de bienvenida a cualquiera.
+rm -f /etc/nginx/sites-enabled/default
+install -m 644 "$UPSTREAM" /etc/nginx/conf.d/00-upstream.conf
+install -m 644 $C/nginx-notas.conf /etc/nginx/conf.d/notas.conf
+nginx -t
+systemctl enable nginx
+systemctl restart nginx
+
+# 4. fail2ban también mira los 429 de Nginx: quien insiste contra el límite queda afuera una hora.
+install -m 644 $C/jail-nginx.local /etc/fail2ban/jail.d/nginx.local
+systemctl restart fail2ban</code></pre>
+
+<pre data-lang="ini" data-file="infra/comun/jail-nginx.local"><code># /etc/fail2ban/jail.d/nginx.local: 10 rechazos de limit_req en 10 minutos, una hora afuera.
+[nginx-limit-req]
+enabled  = true
+backend  = auto
+logpath  = /var/log/nginx/error.log
+maxretry = 10</code></pre>
+
+      <dl class="pj-why">
+        <div><dt>La decisión</dt><dd>El WAF antes del gateway, en el mismo proceso: TLS se termina una vez, ModSecurity ve la request en claro y el ruteo decide después. Un límite grueso por IP en el borde y la regla fina (el bloqueo por cuenta) en la API, que sabe quién es quién.</dd></div>
+        <div><dt>Lo que descartas</dt><dd>Un WAF administrado (AWS WAF, Cloudflare): es lo que usarías en producción, pero no se puede leer ni romper en tu máquina. Y el <code>modsecurity.conf-recommended</code> del paquete, que arranca en <code>DetectionOnly</code>: registra y no bloquea, y es fácil olvidarse de cambiarlo.</dd></div>
+        <div><dt>Qué puede salir mal</dt><dd>Falsos positivos: una nota que diga <code>select * from</code> puede activar una regla de SQLi. El 403 queda en <code>/var/log/nginx/modsec_audit.log</code> con el id de la regla. La salida es una exclusión para esa regla y ese campo, no apagar el WAF. Y fail2ban: diez 429 en diez minutos te dejan afuera una hora. La sección <a href="#comprueba-ataques">ataques</a> dice cómo desbloquearte.</dd></div>
+      </dl>
+
+      <h3 id="paso-firewall">Paso 4. El sistema operativo, el sandbox y el firewall</h3>
+
+      <p>El script común de todas las VMs: parches, kernel, SSH, fail2ban y auditd. Es lo que <a href="../modules/m33-hardening-linux.html">M33</a> explica medida por medida.</p>
+
+<pre data-lang="bash" data-file="infra/comun/base.sh"><code>#!/usr/bin/env bash
+# Endurecimiento común a todas las VMs de las tres etapas. Lo corre Vagrant como root.
+set -euo pipefail
+C=/proyecto/infra/comun
+export DEBIAN_FRONTEND=noninteractive
+
+# 1. Parches: todo al día ahora, y los de seguridad solos de aquí en adelante.
+apt-get update
+apt-get -y upgrade
+apt-get install -y nftables fail2ban auditd unattended-upgrades curl
+cat &gt; /etc/apt/apt.conf.d/20auto-upgrades &lt;&lt;'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+
+# 2. Kernel: redirecciones, source routing, SYN cookies y lo que se ve del kernel.
+install -m 644 $C/99-endurecido.conf /etc/sysctl.d/99-endurecido.conf
+sysctl --system &gt; /dev/null
+
+# 3. SSH: solo llave, sin root, pocos intentos. Se valida antes de reiniciar para no quedar afuera.
+install -m 644 $C/sshd-endurecido.conf /etc/ssh/sshd_config.d/10-endurecido.conf
+sshd -t
+systemctl restart ssh
+
+# 4. fail2ban para SSH y auditd para los archivos que importan.
+install -m 644 $C/jail.local /etc/fail2ban/jail.local
+install -m 640 $C/auditoria.rules /etc/audit/rules.d/50-notas.rules
+augenrules --load
+systemctl enable --now auditd
+systemctl restart fail2ban</code></pre>
+
+<pre data-lang="ini" data-file="infra/comun/99-endurecido.conf"><code># Red: no aceptar redirecciones ni rutas de origen, descartar IPs de origen imposibles.
+net.ipv4.tcp_syncookies = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+net.ipv4.conf.all.log_martians = 1
+
+# Kernel: menos información para quien ya está adentro.
+kernel.kptr_restrict = 2
+kernel.dmesg_restrict = 1
+kernel.yama.ptrace_scope = 2
+fs.protected_hardlinks = 1
+fs.protected_symlinks = 1
+fs.suid_dumpable = 0
+
+# net.ipv4.ip_forward no se toca aquí: vale 0 en las etapas 1 y 2, y k3s lo necesita en 1 (etapa 3).</code></pre>
+
+<pre data-lang="bash" data-file="infra/comun/sshd-endurecido.conf"><code># /etc/ssh/sshd_config.d/10-endurecido.conf
+# sshd usa el PRIMER valor que lee, y los archivos de sshd_config.d se leen en orden alfabético:
+# el 10- gana sobre el 50-cloud-init.conf que algunas imágenes traen con PasswordAuthentication yes.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+MaxAuthTries 3
+LoginGraceTime 20
+MaxStartups 10:30:60
+X11Forwarding no
+AllowTcpForwarding no
+AllowAgentForwarding no
+PermitTunnel no
+ClientAliveInterval 300
+ClientAliveCountMax 2
+# En tu servidor real, el usuario de administración. En el laboratorio, el que usa vagrant ssh.
+AllowUsers vagrant
+LogLevel VERBOSE</code></pre>
+
+<pre data-lang="ini" data-file="infra/comun/jail.local"><code># /etc/fail2ban/jail.local
+[DEFAULT]
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+# Bloquea con un set de nftables, en la misma tabla que el resto del firewall no se toca.
+banaction = nftables-multiport
+banaction_allports = nftables-allports
+# 10.0.2.2 es tu máquina vista por la NAT de VirtualBox (vagrant ssh): no te bloquees a ti mismo.
+ignoreip = 127.0.0.1/8 ::1 10.0.2.2
+
+[sshd]
+enabled = true
+backend = systemd</code></pre>
+
+<pre data-lang="bash" data-file="infra/comun/auditoria.rules"><code># /etc/audit/rules.d/50-notas.rules: quién tocó lo que define la seguridad de la máquina.
+-w /etc/passwd -p wa -k identidad
+-w /etc/shadow -p wa -k identidad
+-w /etc/group -p wa -k identidad
+-w /etc/sudoers -p wa -k sudo
+-w /etc/sudoers.d/ -p wa -k sudo
+-w /etc/ssh/sshd_config -p wa -k ssh
+-w /etc/ssh/sshd_config.d/ -p wa -k ssh
+-w /etc/nftables.conf -p wa -k firewall
+-w /etc/notas/ -p wa -k notas-config
+-w /etc/systemd/system/ -p wa -k servicios
+# Todo comando que alguien que inició sesión corre como root (auid es quien entró, euid es root).
+-a always,exit -F arch=b64 -S execve -F euid=0 -F auid&gt;=1000 -F auid!=unset -k comandos-root</code></pre>
+
+      <p>La API corre como el usuario de sistema <code>notas</code>, sin shell, dentro de un sandbox de systemd. Para el proceso, el sistema de archivos es de solo lectura, <code>/home</code> no existe, no ve los procesos de otros usuarios y no puede ganar privilegios aunque encuentre un binario setuid.</p>
+
+<pre data-lang="ini" data-file="infra/comun/notas.service"><code>[Unit]
+Description=API de notas
+After=network-online.target notas-migrar.service
+Wants=network-online.target
+Requires=notas-migrar.service
+
+[Service]
+User=notas
+Group=notas
+# systemd lee este archivo como root antes de bajar a notas: puede ser 600 root:root.
+EnvironmentFile=/etc/notas/notas.env
+ExecStart=/usr/bin/java -XX:MaxRAMPercentage=60 -jar /opt/notas/notas.jar
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+
+# Sandbox de systemd (M33): el proceso ve un sistema de solo lectura y no puede ganar privilegios.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+UMask=0077
+# MemoryDenyWriteExecute=yes queda fuera a propósito: el JIT de la JVM escribe código y lo ejecuta.
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+
+<pre data-lang="ini" data-file="infra/comun/notas-migrar.service"><code>[Unit]
+Description=Migraciones de la base de notas (rol dueño, corre y termina)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=notas
+Group=notas
+# Otro archivo, con la clave del dueño del esquema. La API nunca la ve.
+EnvironmentFile=/etc/notas/migrar.env
+ExecStart=/usr/bin/java -jar /opt/notas/notas.jar --spring.main.web-application-type=none --notas.solo-migrar=true
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+UMask=0077</code></pre>
+
+<pre data-lang="bash" data-file="infra/comun/instalar-app.sh"><code>#!/usr/bin/env bash
+# Instala la API como servicio de systemd. Variables: DB_URL, SERVER_ADDRESS, DB_APP_PASS, DB_OWNER_PASS.
+set -euo pipefail
+C=/proyecto/infra/comun
+apt-get install -y openjdk-21-jre-headless
+
+# 1. Un usuario de sistema, sin shell y sin home: si alguien toma el proceso, no tiene dónde sentarse.
+id notas &gt; /dev/null 2&gt;&amp;1 || useradd --system --no-create-home --shell /usr/sbin/nologin notas
+
+# 2. El jar, de root y de solo lectura para todos.
+install -d -m 755 /opt/notas
+install -m 644 /proyecto/target/notas-0.1.0.jar /opt/notas/notas.jar
+
+# 3. Dos archivos de entorno, los dos 600 root: la API recibe la clave de notas_app y nada más.
+install -d -m 700 /etc/notas
+umask 077
+cat &gt; /etc/notas/notas.env &lt;&lt;EOF
+DB_URL=$DB_URL
+DB_USER=notas_app
+DB_PASSWORD=$DB_APP_PASS
+SERVER_ADDRESS=$SERVER_ADDRESS
+EOF
+cat &gt; /etc/notas/migrar.env &lt;&lt;EOF
+DB_URL=$DB_URL
+DB_USER=notas_owner
+DB_PASSWORD=$DB_OWNER_PASS
+FLYWAY_ENABLED=true
+FLYWAY_USER=notas_owner
+FLYWAY_PASSWORD=$DB_OWNER_PASS
+EOF
+umask 022
+
+# 4. Las dos unidades: primero migrar, después la API.
+install -m 644 $C/notas-migrar.service /etc/systemd/system/notas-migrar.service
+install -m 644 $C/notas.service /etc/systemd/system/notas.service
+systemctl daemon-reload
+systemctl enable notas-migrar notas
+systemctl restart notas-migrar
+systemctl restart notas</code></pre>
+
+      <p>Cuando termines la etapa 1, <code>systemd-analyze security notas</code> dentro de la VM le pone un puntaje de exposición a la unidad, con cada medida que falta. Anota el tuyo: es la medida de cuánto encerraste el proceso.</p>
+
+      <p>El firewall de la etapa 1 filtra en las dos direcciones. Hacia adentro, solo 80, 443 y SSH desde la red de administración. Hacia afuera, el filtro es por usuario: <code>notas</code> y <code>www-data</code> solo pueden hablar por localhost. Un proceso tomado no puede bajar herramientas ni mandar la base a otro lado.</p>
+
+<pre data-lang="bash" data-file="infra/etapa1/nftables.conf"><code>#!/usr/sbin/nft -f
+# Etapa 1: todo en una VM. Entra 80 y 443 de cualquiera, SSH solo por la red de administración.
+flush ruleset
+
+table inet filtro {
+  # 10.0.2.2 es tu máquina vista por la NAT de VirtualBox: por ahí entra vagrant ssh.
+  # En un servidor real, la IP de tu VPN o de tu bastión.
+  set admin { type ipv4_addr; elements = { 10.0.2.2 } }
+
+  chain entrada {
+    type filter hook input priority filter; policy drop;
+    ct state invalid drop
+    ct state established,related accept
+    iif "lo" accept
+    icmp type { echo-request, destination-unreachable, time-exceeded } limit rate 10/second accept
+    meta l4proto ipv6-icmp accept
+    ip saddr @admin tcp dport 22 accept
+    tcp dport { 80, 443 } accept
+    limit rate 5/minute log prefix "nft entrada: " level info
+  }
+
+  chain reenvio {
+    type filter hook forward priority filter; policy drop;
+  }
+
+  chain salida {
+    type filter hook output priority filter; policy accept;
+    ct state established,related accept
+    oif "lo" accept
+    # La API y Nginx solo hablan por localhost. Si alguien los toma, no pueden abrir nada hacia afuera.
+    meta skuid "notas" counter log prefix "nft salida notas: " reject
+    meta skuid "www-data" counter log prefix "nft salida nginx: " reject
+  }
+}</code></pre>
+
+<pre data-lang="nginx" data-file="infra/etapa1/upstream.conf"><code># Etapa 1: la API está en la misma máquina, solo en localhost.
+upstream notas_api {
+    server 127.0.0.1:8080;
+    keepalive 16;
+}</code></pre>
+
+      <dl class="pj-why">
+        <div><dt>La decisión</dt><dd>Contar con que alguna capa va a fallar, y que la siguiente acote el daño: el sandbox limita lo que hace un proceso tomado dentro de la máquina, y el filtro de salida limita lo que puede hacer hacia afuera. auditd deja registro de quién cambió qué.</dd></div>
+        <div><dt>Lo que descartas</dt><dd><code>MemoryDenyWriteExecute=yes</code>, que la JVM no aguanta: su compilador JIT escribe código en memoria y después lo ejecuta. Y ufw, que es nftables con otra sintaxis encima: aquí ves las reglas tal como las carga el kernel.</dd></div>
+        <div><dt>Qué puede salir mal</dt><dd>Que nftables cargue antes de que existan los usuarios <code>notas</code> y <code>www-data</code>: <code>meta skuid "notas"</code> falla al cargar. Por eso el firewall va al final de la provisión. Y quedarte afuera de SSH: <code>sshd -t</code> valida la configuración antes de reiniciar, y Vagrant entra desde 10.0.2.2, que el firewall y fail2ban dejan pasar.</dd></div>
+      </dl>
+
+      <h3 id="paso-etapa1">Paso 5. Levantar la etapa 1</h3>
+
+<pre data-lang="bash" data-file="infra/etapa1/Vagrantfile"><code># Etapa 1: una sola VM con todas las defensas. Uso: cd infra/etapa1 &amp;&amp; vagrant up
+require "securerandom"
+require "yaml"
+
+# Las claves de la base se crean una vez, en tu máquina, y las tres etapas usan las mismas.
+SECRETOS = File.join(__dir__, "..", ".secretos.yaml")
+unless File.exist?(SECRETOS)
+  File.write(SECRETOS, { "app" =&gt; SecureRandom.alphanumeric(32), "owner" =&gt; SecureRandom.alphanumeric(32) }.to_yaml)
+end
+S = YAML.load_file(SECRETOS)
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  # La raíz del proyecto aparece como /proyecto: de ahí salen el jar y los archivos de infra.
+  config.vm.synced_folder "../..", "/proyecto"
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  config.vm.define "todo" do |m|
+    m.vm.hostname = "todo"
+    # La red "pública" del laboratorio: solo tu máquina la ve, en 192.168.56.0/24.
+    m.vm.network "private_network", ip: "192.168.56.10"
+    m.vm.provider "virtualbox" do |vb|
+      vb.memory = 2048
+      vb.cpus = 2
+    end
+    m.vm.provision "shell", path: "provision.sh",
+      env: { "DB_APP_PASS" =&gt; S["app"], "DB_OWNER_PASS" =&gt; S["owner"] }
+  end
+end</code></pre>
+
+<pre data-lang="bash" data-file="infra/etapa1/provision.sh"><code>#!/usr/bin/env bash
+# Etapa 1: todo en una VM. Lo corre Vagrant como root, con DB_APP_PASS y DB_OWNER_PASS en el entorno.
+set -euo pipefail
+C=/proyecto/infra/comun
+E=/proyecto/infra/etapa1
+
+# 1. Lo común: parches, sysctl, SSH, fail2ban y auditd.
+bash $C/base.sh
+
+# 2. PostgreSQL solo en localhost, con dos roles y un pg_hba que nombra a cada uno.
+apt-get install -y postgresql
+PGC=/etc/postgresql/$(ls /etc/postgresql)/main
+cat &gt; $PGC/conf.d/notas.conf &lt;&lt;'EOF'
+listen_addresses = 'localhost'
+password_encryption = scram-sha-256
+log_connections = on
+log_disconnections = on
+EOF
+cat &gt; $PGC/pg_hba.conf &lt;&lt;'EOF'
+# TYPE  DATABASE  USER         ADDRESS        METHOD
+local   all       postgres                    peer
+host    notas     notas_app    127.0.0.1/32   scram-sha-256
+host    notas     notas_owner  127.0.0.1/32   scram-sha-256
+EOF
+systemctl restart postgresql
+sudo -u postgres psql -v ON_ERROR_STOP=1 -v app_pass="$DB_APP_PASS" -v owner_pass="$DB_OWNER_PASS" &lt; $E/db.sql
+
+# 3. La API, escuchando solo en 127.0.0.1.
+DB_URL="jdbc:postgresql://127.0.0.1:5432/notas" SERVER_ADDRESS=127.0.0.1 bash $C/instalar-app.sh
+
+# 4. El borde: Nginx con TLS, WAF y las rutas públicas.
+UPSTREAM=$E/upstream.conf bash $C/instalar-borde.sh
+
+# 5. El firewall al final: los usuarios notas y www-data ya existen, y las reglas los nombran.
+install -m 644 $E/nftables.conf /etc/nftables.conf
+nft -c -f /etc/nftables.conf
+systemctl enable nftables
+systemctl restart nftables
+systemctl restart fail2ban   # flush ruleset borró su tabla: que la vuelva a crear</code></pre>
+
+<pre data-lang="bash"><code>./mvnw -DskipTests package
+cd infra/etapa1
+vagrant up            # la primera vez baja la imagen y tarda varios minutos
+vagrant ssh -c "systemctl is-active nginx notas postgresql nftables fail2ban auditd"
+cd ../..</code></pre>
+
+      <p>Los seis servicios tienen que responder <code>active</code>. Ahora, desde tu máquina, con la CA del laboratorio:</p>
+
+<pre data-lang="bash"><code>CA=infra/.tls/ca.crt
+curl -s --cacert $CA -X POST https://192.168.56.10/api/usuarios -H 'Content-Type: application/json' \
+  -d '{"usuario":"ana","clave":"clave-de-ana-123"}' -w '%{http_code}\n'
+TOKEN=$(curl -s --cacert $CA -X POST https://192.168.56.10/api/sesiones -H 'Content-Type: application/json' \
+  -d '{"usuario":"ana","clave":"clave-de-ana-123"}' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+curl -s --cacert $CA -X POST https://192.168.56.10/api/notas -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"texto":"mi primera nota"}'
+curl -s --cacert $CA https://192.168.56.10/api/notas -H "Authorization: Bearer $TOKEN"
+curl -sI --cacert $CA https://192.168.56.10/api/notas -H "Authorization: Bearer $TOKEN"</code></pre>
+
+      <p>El primer comando tiene que imprimir <code>201</code>, el tercero la nota con su <code>id</code> y el cuarto una lista con esa nota. En las cabeceras del último busca <code>strict-transport-security</code>, <code>content-security-policy</code> y <code>x-content-type-options</code>, y que <code>server</code> diga <code>nginx</code> sin versión.</p>
+
+      <dl class="pj-why">
+        <div><dt>La decisión</dt><dd>Claves generadas en tu máquina la primera vez, con <code>SecureRandom</code>, y compartidas por las tres etapas. Nunca están en el repositorio ni en el Vagrantfile.</dd></div>
+        <div><dt>Lo que descartas</dt><dd>Una clave fija "para el laboratorio". Termina copiada en el servidor de verdad.</dd></div>
+        <div><dt>Qué puede salir mal</dt><dd>Que <code>vagrant up</code> falle en el paso del CRS o de <code>nginx -t</code>: revisa las rutas con <code>dpkg -L</code>, corrige <code>modsec-main.conf</code> y corre <code>vagrant provision</code>. Que <code>notas</code> no arranque: <code>vagrant ssh -c "sudo journalctl -u notas-migrar -u notas -n 50"</code>. Que <code>curl</code> diga que no confía en el certificado: le falta <code>--cacert</code>.</dd></div>
+      </dl>
+
+      <h3 id="paso-etapa2">Paso 6. Separar: cinco VMs y tres redes</h3>
+
+      <p>La etapa 1 tiene un techo que ninguna regla levanta: una sola máquina. Si se cae, se cae todo, y si alguien toma Nginx, está a un <code>localhost</code> de la base. La etapa 2 separa las capas en VMs y las conecta por redes que se eligen a propósito.</p>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 420" role="img" aria-labelledby="fa29ct fa29cd">
+<title id="fa29ct">Las tres redes de la etapa 2</title>
+<desc id="fa29cd">Tres bandas horizontales. Arriba, la red pública 192.168.56.0/24 con tu máquina en .1, la IP virtual .100 y los bordes en .11 y .12, que se mandan VRRP entre sí. En el medio, la red dmz 10.10.1.0/24: los bordes en .11 y .12 y las apps en .21 y .22; solo los bordes llegan al 8080. Abajo, la red datos 10.10.2.0/24: las apps en .21 y .22 y la base en .10; solo las apps llegan al 5432.</desc>
+<defs><marker id="fa29ca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="14" width="742" height="120" rx="8"/>
+<text class="dg-group" x="26" y="32">publica 192.168.56.0/24 (host-only: tu máquina la ve)</text>
+<rect class="dg-frame" x="14" y="148" width="742" height="120" rx="8"/>
+<text class="dg-group" x="26" y="166">a29-dmz 10.10.1.0/24 (red interna de VirtualBox)</text>
+<rect class="dg-frame" x="14" y="282" width="742" height="124" rx="8"/>
+<text class="dg-group" x="340" y="300" text-anchor="start">a29-datos 10.10.2.0/24 (red interna de VirtualBox)</text>
+<rect class="dg-layer" style="--c: var(--l-client)" data-part="cliente" x="30" y="46" width="130" height="52" rx="6"/>
+<text class="dg-label" x="95" y="68" text-anchor="middle">tu máquina</text>
+<text class="dg-tiny" x="95" y="87" text-anchor="middle">.1: curl, Gatling</text>
+<path class="dg-edge" d="M162 72 H226" marker-end="url(#fa29ca)"/>
+<text class="dg-tiny" x="166" y="64" text-anchor="start">443</text>
+<rect class="dg-layer" style="--c: var(--l-client)" data-part="vip" x="230" y="46" width="120" height="52" rx="6"/>
+<text class="dg-label" x="290" y="68" text-anchor="middle">IP virtual</text>
+<text class="dg-tiny" x="290" y="87" text-anchor="middle">.100</text>
+<path class="dg-feedback" d="M290 100 L290 112 L440 112 L440 100"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" data-part="borde" x="380" y="46" width="120" height="52" rx="6"/>
+<text class="dg-label" x="440" y="68" text-anchor="middle">borde1</text>
+<text class="dg-tiny" x="440" y="87" text-anchor="middle">.11 (prioridad 150)</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" data-part="borde" x="560" y="46" width="120" height="52" rx="6"/>
+<text class="dg-label" x="620" y="68" text-anchor="middle">borde2</text>
+<text class="dg-tiny" x="620" y="87" text-anchor="middle">.12 (prioridad 100)</text>
+<path class="dg-edge" d="M502 64 H558" marker-start="url(#fa29ca)" marker-end="url(#fa29ca)"/>
+<text class="dg-tiny" x="506" y="58" text-anchor="start">VRRP (112)</text>
+<path class="dg-edge" d="M440 100 V178" marker-end="url(#fa29ca)"/>
+<path class="dg-edge" d="M620 100 V178" marker-end="url(#fa29ca)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" data-part="borde" x="380" y="182" width="120" height="52" rx="6"/>
+<text class="dg-label" x="440" y="204" text-anchor="middle">borde1</text>
+<text class="dg-tiny" x="440" y="223" text-anchor="middle">10.10.1.11</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" data-part="borde" x="560" y="182" width="120" height="52" rx="6"/>
+<text class="dg-label" x="620" y="204" text-anchor="middle">borde2</text>
+<text class="dg-tiny" x="620" y="223" text-anchor="middle">10.10.1.12</text>
+<rect class="dg-layer" style="--c: var(--l-service)" data-part="api" x="30" y="182" width="120" height="52" rx="6"/>
+<text class="dg-label" x="90" y="204" text-anchor="middle">app1</text>
+<text class="dg-tiny" x="90" y="223" text-anchor="middle">10.10.1.21:8080</text>
+<rect class="dg-layer" style="--c: var(--l-service)" data-part="api" x="200" y="182" width="120" height="52" rx="6"/>
+<text class="dg-label" x="260" y="204" text-anchor="middle">app2</text>
+<text class="dg-tiny" x="260" y="223" text-anchor="middle">10.10.1.22:8080</text>
+<path class="dg-edge" d="M378 200 H322" marker-end="url(#fa29ca)"/>
+<text class="dg-tiny" x="326" y="194" text-anchor="start">8080</text>
+<path class="dg-feedback" d="M90 236 V312"/>
+<path class="dg-feedback" d="M260 236 V312"/>
+<text class="dg-tiny" x="96" y="270" text-anchor="start">misma VM</text>
+<rect class="dg-layer" style="--c: var(--l-service)" data-part="api" x="30" y="316" width="120" height="52" rx="6"/>
+<text class="dg-label" x="90" y="338" text-anchor="middle">app1</text>
+<text class="dg-tiny" x="90" y="357" text-anchor="middle">10.10.2.21</text>
+<rect class="dg-layer" style="--c: var(--l-service)" data-part="api" x="200" y="316" width="120" height="52" rx="6"/>
+<text class="dg-label" x="260" y="338" text-anchor="middle">app2</text>
+<text class="dg-tiny" x="260" y="357" text-anchor="middle">10.10.2.22</text>
+<rect class="dg-layer" style="--c: var(--l-db)" data-part="db" x="460" y="316" width="160" height="52" rx="6"/>
+<text class="dg-label" x="540" y="338" text-anchor="middle">db</text>
+<text class="dg-tiny" x="540" y="357" text-anchor="middle">10.10.2.10:5432</text>
+<path class="dg-edge" d="M322 342 H458" marker-end="url(#fa29ca)"/>
+<text class="dg-tiny" x="332" y="336" text-anchor="start">5432, hostssl</text>
+<text class="dg-tiny" x="30" y="394" text-anchor="start">Los bordes no tienen interfaz en a29-datos: no hay ruta a la base desde Nginx.</text>
+</svg>
+
+        </div>
+        <figcaption><b>Figura A29.3.</b> Las tres redes de la etapa 2. Es una VPC en miniatura: una subred pública con los bordes, una privada con las apps y otra privada con la base. Las apps están en dos redes; los bordes y la base, en una cada uno.</figcaption>
+      </figure>
+
+<pre data-lang="bash" data-file="infra/etapa2/Vagrantfile"><code># Etapa 2: las capas separadas en cinco VMs y tres redes. Uso: cd infra/etapa2 &amp;&amp; vagrant up
+require "securerandom"
+require "yaml"
+
+SECRETOS = File.join(__dir__, "..", ".secretos.yaml")
+unless File.exist?(SECRETOS)
+  File.write(SECRETOS, { "app" =&gt; SecureRandom.alphanumeric(32), "owner" =&gt; SecureRandom.alphanumeric(32) }.to_yaml)
+end
+S = YAML.load_file(SECRETOS)
+
+# publica: la red que ve tu máquina (internet, en el laboratorio)
+# dmz:     borde &lt;-&gt; aplicaciones          datos: aplicaciones &lt;-&gt; base
+# El orden importa: Vagrant las levanta así, y la base tiene que estar antes que las apps.
+MAQUINAS = {
+  "db"     =&gt; { rol: "db",    datos: "10.10.2.10", mem: 1024 },
+  "app1"   =&gt; { rol: "app",   dmz: "10.10.1.21", datos: "10.10.2.21", mem: 1024 },
+  "app2"   =&gt; { rol: "app",   dmz: "10.10.1.22", datos: "10.10.2.22", mem: 1024 },
+  "borde1" =&gt; { rol: "borde", publica: "192.168.56.11", dmz: "10.10.1.11", mem: 768, prioridad: 150, par: "192.168.56.12" },
+  "borde2" =&gt; { rol: "borde", publica: "192.168.56.12", dmz: "10.10.1.12", mem: 768, prioridad: 100, par: "192.168.56.11" },
+}
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.synced_folder "../..", "/proyecto"
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  MAQUINAS.each do |nombre, x|
+    config.vm.define nombre do |m|
+      m.vm.hostname = nombre
+      m.vm.network "private_network", ip: x[:publica] if x[:publica]
+      # virtualbox__intnet: una red interna sin salida y sin tu máquina. Solo la ven las VMs conectadas.
+      m.vm.network "private_network", ip: x[:dmz], virtualbox__intnet: "a29-dmz" if x[:dmz]
+      m.vm.network "private_network", ip: x[:datos], virtualbox__intnet: "a29-datos" if x[:datos]
+      m.vm.provider "virtualbox" do |vb|
+        vb.memory = x[:mem]
+        vb.cpus = 1
+      end
+      m.vm.provision "shell", path: "#{x[:rol]}.sh", env: {
+        "DB_APP_PASS" =&gt; S["app"], "DB_OWNER_PASS" =&gt; S["owner"],
+        "IP_PUBLICA" =&gt; x[:publica].to_s, "IP_DMZ" =&gt; x[:dmz].to_s,
+        "PRIORIDAD" =&gt; x[:prioridad].to_s, "PAR" =&gt; x[:par].to_s,
+        "DB_CLIENTES" =&gt; "10.10.2.21 10.10.2.22"
+      }
+    end
+  end
+end</code></pre>
+
+      <p>La base ahora escucha en la red de datos, exige TLS a cada cliente con <code>hostssl</code> y solo acepta a las apps por IP. El mismo script sirve para la etapa 3, con otros clientes.</p>
+
+<pre data-lang="bash" data-file="infra/etapa2/db.sh"><code>#!/usr/bin/env bash
+# La base, sola en la red de datos. También la usa la etapa 3. Variables: DB_*_PASS, DB_CLIENTES.
+set -euo pipefail
+C=/proyecto/infra/comun
+bash $C/base.sh
+apt-get install -y postgresql
+PGC=/etc/postgresql/$(ls /etc/postgresql)/main
+
+# 1. Escucha en la red de datos y exige TLS. Ubuntu trae un certificado autofirmado (snakeoil) con ssl = on.
+cat &gt; $PGC/conf.d/notas.conf &lt;&lt;'EOF'
+listen_addresses = 'localhost,10.10.2.10'
+password_encryption = scram-sha-256
+ssl = on
+log_connections = on
+log_disconnections = on
+EOF
+
+# 2. Una línea por cliente y por rol: hostssl rechaza a quien llegue sin TLS.
+{
+  echo "local   all   postgres   peer"
+  for ip in $DB_CLIENTES; do
+    echo "hostssl notas notas_app   $ip/32 scram-sha-256"
+    echo "hostssl notas notas_owner $ip/32 scram-sha-256"
+  done
+} &gt; $PGC/pg_hba.conf
+systemctl restart postgresql
+sudo -u postgres psql -v ON_ERROR_STOP=1 -v app_pass="$DB_APP_PASS" -v owner_pass="$DB_OWNER_PASS" \
+  &lt; /proyecto/infra/etapa1/db.sql
+
+# 3. Firewall: el 5432 solo desde las apps; postgres no abre conexiones hacia afuera.
+sed -e "s/@CLIENTES@/$(echo $DB_CLIENTES | sed 's/ /, /g')/" /proyecto/infra/etapa2/nftables-db.conf &gt; /etc/nftables.conf
+nft -c -f /etc/nftables.conf
+systemctl enable nftables
+systemctl restart nftables
+systemctl restart fail2ban</code></pre>
+
+<pre data-lang="bash" data-file="infra/etapa2/nftables-db.conf"><code>#!/usr/sbin/nft -f
+# Etapa 2, base de datos: solo las apps llegan al 5432, y el proceso postgres no sale a ningún lado.
+flush ruleset
+
+table inet filtro {
+  set admin { type ipv4_addr; elements = { 10.0.2.2 } }
+  # db.sh pone aquí los clientes de DB_CLIENTES: las apps en la etapa 2, los nodos de k3s en la etapa 3.
+  set apps { type ipv4_addr; elements = { @CLIENTES@ } }
+
+  chain entrada {
+    type filter hook input priority filter; policy drop;
+    ct state invalid drop
+    ct state established,related accept
+    iif "lo" accept
+    icmp type { echo-request, destination-unreachable, time-exceeded } limit rate 10/second accept
+    meta l4proto ipv6-icmp accept
+    ip saddr @admin tcp dport 22 accept
+    ip saddr @apps tcp dport 5432 accept
+    limit rate 5/minute log prefix "nft entrada: " level info
+  }
+
+  chain reenvio {
+    type filter hook forward priority filter; policy drop;
+  }
+
+  chain salida {
+    type filter hook output priority filter; policy accept;
+    ct state established,related accept
+    oif "lo" accept
+    # Una base tomada que abre una conexión hacia afuera es exfiltración: se corta y queda en el log.
+    meta skuid "postgres" counter log prefix "nft salida postgres: " reject
+  }
+}</code></pre>
+
+<pre data-lang="bash" data-file="infra/etapa2/app.sh"><code>#!/usr/bin/env bash
+# Una aplicación de la etapa 2. Escucha en la dmz; habla con la base por la red de datos, con TLS.
+set -euo pipefail
+C=/proyecto/infra/comun
+bash $C/base.sh
+
+# sslmode=require: cifra el tramo app-base. verify-full además comprobaría el certificado de la base
+# (en producción, con la CA de tu proveedor; aquí la base usa el certificado snakeoil de Ubuntu).
+DB_URL="jdbc:postgresql://10.10.2.10:5432/notas?sslmode=require" \
+SERVER_ADDRESS="$IP_DMZ" \
+  bash $C/instalar-app.sh
+
+install -m 644 /proyecto/infra/etapa2/nftables-app.conf /etc/nftables.conf
+nft -c -f /etc/nftables.conf
+systemctl enable nftables
+systemctl restart nftables
+systemctl restart fail2ban</code></pre>
+
+<pre data-lang="bash" data-file="infra/etapa2/nftables-app.conf"><code>#!/usr/sbin/nft -f
+# Etapa 2, aplicación: el 8080 solo desde los bordes; la API solo puede hablar con la base.
+flush ruleset
+
+table inet filtro {
+  set admin { type ipv4_addr; elements = { 10.0.2.2 } }
+  set bordes { type ipv4_addr; elements = { 10.10.1.11, 10.10.1.12 } }
+
+  chain entrada {
+    type filter hook input priority filter; policy drop;
+    ct state invalid drop
+    ct state established,related accept
+    iif "lo" accept
+    icmp type { echo-request, destination-unreachable, time-exceeded } limit rate 10/second accept
+    meta l4proto ipv6-icmp accept
+    ip saddr @admin tcp dport 22 accept
+    ip saddr @bordes tcp dport 8080 accept
+    limit rate 5/minute log prefix "nft entrada: " level info
+  }
+
+  chain reenvio {
+    type filter hook forward priority filter; policy drop;
+  }
+
+  chain salida {
+    type filter hook output priority filter; policy accept;
+    ct state established,related accept
+    oif "lo" accept
+    # La API abre exactamente una cosa: conexiones a PostgreSQL. DNS tampoco, porque usa la IP.
+    meta skuid "notas" ip daddr 10.10.2.10 tcp dport 5432 accept
+    meta skuid "notas" counter log prefix "nft salida notas: " reject
+  }
+}</code></pre>
+
+      <p>Los dos bordes son iguales y comparten la IP 192.168.56.100 con keepalived, que habla VRRP. El de prioridad más alta la tiene; si su Nginx deja de estar activo, su prioridad baja 60 puntos y el otro se la queda. Es el par activo-pasivo de <a href="../modules/m32-firewalls.html#ubicacion-ha">M32, 32.9</a>: aquí no hace falta <code>conntrackd</code>, porque Nginx no guarda estado de las conexiones que valga la pena pasar; un cliente con una conexión abierta reconecta.</p>
+
+<pre data-lang="bash" data-file="infra/etapa2/borde.sh"><code>#!/usr/bin/env bash
+# Un borde de la etapa 2: Nginx con WAF y keepalived. Variables: IP_PUBLICA, PRIORIDAD, PAR.
+set -euo pipefail
+C=/proyecto/infra/comun
+E=/proyecto/infra/etapa2
+bash $C/base.sh
+
+# 1. El mismo borde de la etapa 1, con otro upstream.
+UPSTREAM=$E/upstream.conf bash $C/instalar-borde.sh
+
+# 2. keepalived. La interfaz se busca por la IP, para no depender de cómo la nombre la imagen.
+apt-get install -y keepalived
+IFACE=$(ip -o -4 addr show | awk -v ip="$IP_PUBLICA" '$4 ~ "^"ip"/" {print $2}')
+sed -e "s/@PRIORIDAD@/$PRIORIDAD/" -e "s/@IP@/$IP_PUBLICA/" -e "s/@PAR@/$PAR/" -e "s/eth1/$IFACE/g" \
+  $E/keepalived.conf &gt; /etc/keepalived/keepalived.conf
+chmod 640 /etc/keepalived/keepalived.conf
+systemctl enable keepalived
+systemctl restart keepalived
+
+# 3. Nginx escucha en 0.0.0.0, así que atiende también en la IP virtual cuando este borde la tiene.
+sed -e "s/@PAR@/$PAR/" $E/nftables-borde.conf &gt; /etc/nftables.conf
+nft -c -f /etc/nftables.conf
+systemctl enable nftables
+systemctl restart nftables
+systemctl restart fail2ban</code></pre>
+
+<pre data-lang="bash" data-file="infra/etapa2/keepalived.conf"><code># /etc/keepalived/keepalived.conf: los dos bordes comparten la IP 192.168.56.100 (M32, 32.9).
+# borde.sh reemplaza @PRIORIDAD@, @IP@ y @PAR@.
+global_defs {
+    enable_script_security
+    script_user root
+}
+
+# Si Nginx no está vivo, este borde baja 60 puntos y el otro se queda con la IP.
+vrrp_script nginx_vivo {
+    script "/usr/bin/systemctl is-active --quiet nginx"
+    interval 2
+    fall 2
+    rise 2
+    weight -60
+}
+
+vrrp_instance BORDE {
+    state BACKUP
+    interface eth1
+    virtual_router_id 29
+    priority @PRIORIDAD@
+    advert_int 1
+    # Unicast: los anuncios van al par y a nadie más (y el firewall solo los acepta de él).
+    unicast_src_ip @IP@
+    unicast_peer {
+        @PAR@
+    }
+    virtual_ipaddress {
+        192.168.56.100/24 dev eth1
+    }
+    track_script {
+        nginx_vivo
+    }
+}</code></pre>
+
+<pre data-lang="bash" data-file="infra/etapa2/nftables-borde.conf"><code>#!/usr/sbin/nft -f
+# Etapa 2, borde: 80 y 443 de cualquiera, VRRP solo del otro borde, y Nginx solo hacia las apps.
+# @PAR@ lo reemplaza borde.sh con la IP pública del otro borde.
+flush ruleset
+
+table inet filtro {
+  set admin { type ipv4_addr; elements = { 10.0.2.2 } }
+  set apps { type ipv4_addr; elements = { 10.10.1.21, 10.10.1.22 } }
+
+  chain entrada {
+    type filter hook input priority filter; policy drop;
+    ct state invalid drop
+    ct state established,related accept
+    iif "lo" accept
+    icmp type { echo-request, destination-unreachable, time-exceeded } limit rate 10/second accept
+    meta l4proto ipv6-icmp accept
+    ip saddr @admin tcp dport 22 accept
+    # VRRP es el protocolo IP 112, no TCP ni UDP. Solo lo aceptamos del par: si no, cualquiera en la
+    # red podría anunciarse con prioridad 255 y quedarse con la IP virtual.
+    ip saddr @PAR@ ip protocol vrrp accept
+    tcp dport { 80, 443 } accept
+    limit rate 5/minute log prefix "nft entrada: " level info
+  }
+
+  chain reenvio {
+    type filter hook forward priority filter; policy drop;
+  }
+
+  chain salida {
+    type filter hook output priority filter; policy accept;
+    ct state established,related accept
+    oif "lo" accept
+    meta skuid "www-data" ip daddr @apps tcp dport 8080 accept
+    meta skuid "www-data" counter log prefix "nft salida nginx: " reject
+  }
+}</code></pre>
+
+<pre data-lang="nginx" data-file="infra/etapa2/upstream.conf"><code># Etapa 2: dos apps en la dmz. Si una no responde 3 veces, Nginx la saca 10 segundos y prueba otra.
+upstream notas_api {
+    server 10.10.1.21:8080 max_fails=3 fail_timeout=10s;
+    server 10.10.1.22:8080 max_fails=3 fail_timeout=10s;
+    keepalive 32;
+}</code></pre>
+
+<pre data-lang="bash"><code>cd infra/etapa1 &amp;&amp; vagrant destroy -f &amp;&amp; cd ../etapa2
+vagrant up            # db, app1, app2, borde1 y borde2, en ese orden
+vagrant ssh borde1 -c "ip -4 addr show | grep 192.168.56.100"
+cd ../..
+bash scripts/ataques.sh 192.168.56.100</code></pre>
+
+      <p>La IP virtual tiene que aparecer en <code>borde1</code>, que tiene la prioridad más alta. Las notas de la etapa 1 no están: la base es nueva.</p>
+
+      <dl class="pj-why">
+        <div><dt>La decisión</dt><dd>Redes que no se ven: el borde no tiene interfaz en la red de datos, así que, aunque lo tomen, no hay ruta a la base. El firewall de cada máquina repite la regla por si alguien conecta una red por error. Cada capa escala sola: otra app es otra VM y otra línea en el upstream; otro borde, otra VM con keepalived.</dd></div>
+        <div><dt>Lo que descartas</dt><dd>Todo en una red con firewalls estrictos: funciona hasta que alguien abre una regla de más. Y VRRP por multicast, el modo por defecto: en una red compartida, cualquiera que hable VRRP puede anunciarse con prioridad 255 y quedarse con la IP. Con <code>unicast_peer</code> y el firewall aceptando el protocolo 112 solo del par, eso no pasa.</dd></div>
+        <div><dt>Qué puede salir mal</dt><dd>El límite por IP pasa a ser por borde: cada Nginx cuenta lo suyo, y si los bordes repartieran tráfico activo-activo, un atacante tendría el doble de intentos. Con activo-pasivo, el que tiene la IP cuenta todo. Y el certificado de la base: con <code>sslmode=require</code>, el tramo va cifrado pero la app no comprueba a quién le habla; <code>verify-full</code> con tu CA lo cierra.</dd></div>
+      </dl>
+
+      <h3 id="paso-k8s">Paso 7. Kubernetes: cada capa escala por su cuenta</h3>
+
+      <p>En la etapa 2, escalar es crear una VM. En la etapa 3, el borde y las apps pasan a un clúster de k3s, y cada capa es un Deployment con su propio HPA. El borde se parte en dos: el WAF, que termina TLS y aplica el CRS, y el gateway, que rutea y limita. Así un pico de ataques que gasta CPU en el WAF escala el WAF, no la API. La base se queda en su VM, afuera del clúster: es la capa que menos conviene mover.</p>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="fa29dt fa29dd">
+<title id="fa29dt">Las flechas permitidas en la etapa 3</title>
+<desc id="fa29dd">ServiceLB recibe el 443 en cada nodo y lo manda a los pods del WAF en el 8443. El WAF habla con el gateway en el 8080, y el gateway con la API en el 8080. La API y el Job de migraciones salen solo a 10.10.2.10:5432. Todo lo demás lo rechaza la NetworkPolicy nada-por-defecto.</desc>
+<defs><marker id="fa29da" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="14" width="742" height="236" rx="8"/>
+<text class="dg-group" x="26" y="32">namespace notas: nada-por-defecto niega todo; cada flecha es una NetworkPolicy</text>
+<rect class="dg-layer" style="--c: var(--l-client)" data-part="vip" x="30" y="60" width="130" height="52" rx="6"/>
+<text class="dg-label" x="95" y="82" text-anchor="middle">ServiceLB</text>
+<text class="dg-tiny" x="95" y="101" text-anchor="middle">443 y 80 en cada nodo</text>
+<path class="dg-edge" d="M162 86 H206" marker-end="url(#fa29da)"/>
+<text class="dg-tiny" x="166" y="78" text-anchor="start">8443</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" data-part="borde" x="210" y="60" width="130" height="52" rx="6"/>
+<text class="dg-label" x="275" y="82" text-anchor="middle">notas-waf</text>
+<text class="dg-tiny" x="275" y="101" text-anchor="middle">TLS, CRS</text>
+<path class="dg-edge" d="M342 86 H386" marker-end="url(#fa29da)"/>
+<text class="dg-tiny" x="346" y="78" text-anchor="start">8080</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" data-part="borde" x="390" y="60" width="130" height="52" rx="6"/>
+<text class="dg-label" x="455" y="82" text-anchor="middle">notas-gateway</text>
+<text class="dg-tiny" x="455" y="101" text-anchor="middle">límite por token</text>
+<path class="dg-edge" d="M522 86 H566" marker-end="url(#fa29da)"/>
+<text class="dg-tiny" x="526" y="78" text-anchor="start">8080</text>
+<rect class="dg-layer" style="--c: var(--l-service)" data-part="api" x="570" y="60" width="170" height="52" rx="6"/>
+<text class="dg-label" x="655" y="82" text-anchor="middle">notas-api</text>
+<text class="dg-tiny" x="655" y="101" text-anchor="middle">sin token de K8s</text>
+<rect class="dg-layer" style="--c: var(--l-service)" data-part="api" x="570" y="160" width="170" height="52" rx="6"/>
+<text class="dg-label" x="655" y="182" text-anchor="middle">notas-migrar (Job)</text>
+<text class="dg-tiny" x="655" y="201" text-anchor="middle">rol notas_owner</text>
+<rect class="dg-box" x="30" y="160" width="300" height="52" rx="6"/>
+<text class="dg-label" x="180" y="191" text-anchor="middle">kubelet: sondas a 8081 (gateway y API)</text>
+<rect class="dg-box" x="360" y="160" width="180" height="52" rx="6"/>
+<text class="dg-label" x="450" y="182" text-anchor="middle">kube-dns: 53</text>
+<text class="dg-tiny" x="450" y="201" text-anchor="middle">lo único común</text>
+<path class="dg-feedback" d="M655 114 V156" marker-end="url(#fa29da)"/>
+<path class="dg-edge" d="M740 86 H750 V288 H544" marker-end="url(#fa29da)"/>
+<path class="dg-edge" d="M655 214 V280" marker-end="url(#fa29da)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" data-part="db" x="380" y="266" width="160" height="50" rx="6"/>
+<text class="dg-label" x="460" y="287" text-anchor="middle">db (VM)</text>
+<text class="dg-tiny" x="460" y="306" text-anchor="middle">10.10.2.10:5432</text>
+<text class="dg-tiny" x="560" y="304" text-anchor="start">ipBlock 10.10.2.10/32, 5432</text>
+<text class="dg-tiny" x="30" y="290" text-anchor="start">Flannel hace SNAT a la IP del nodo en</text>
+<text class="dg-tiny" x="30" y="306" text-anchor="start">a29-datos: pg_hba lista los tres nodos.</text>
+</svg>
+
+        </div>
+        <figcaption><b>Figura A29.4.</b> Las flechas permitidas en la etapa 3. El firewall entre capas de la etapa 2 se convierte en NetworkPolicy: primero nadie habla con nadie, después se abre cada flecha con su puerto.</figcaption>
+      </figure>
+
+      <p>La imagen se construye en tu máquina y cada nodo la importa de un archivo, sin registro:</p>
+
+<pre data-lang="dockerfile" data-file="Dockerfile"><code># La imagen de la etapa 3. Se construye en tu máquina, después de ./mvnw package.
+FROM eclipse-temurin:21-jre-noble
+# Un usuario sin privilegios con un uid fijo: el securityContext del Deployment lo nombra por número.
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin notas
+COPY target/notas-0.1.0.jar /opt/notas/notas.jar
+USER 10001
+EXPOSE 8080 8081
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=60", "-jar", "/opt/notas/notas.jar"]</code></pre>
+
+<pre data-lang="bash"><code>./mvnw -DskipTests package
+docker build -t notas:0.1.0 .
+mkdir -p infra/.imagenes
+docker save -o infra/.imagenes/notas.tar notas:0.1.0</code></pre>
+
+<pre data-lang="bash" data-file="infra/etapa3/Vagrantfile"><code># Etapa 3: la base sigue en su VM; borde y apps pasan a un clúster k3s de tres nodos.
+# Uso: cd infra/etapa3 &amp;&amp; vagrant up
+require "securerandom"
+require "yaml"
+
+SECRETOS = File.join(__dir__, "..", ".secretos.yaml")
+unless File.exist?(SECRETOS)
+  File.write(SECRETOS, { "app" =&gt; SecureRandom.alphanumeric(32), "owner" =&gt; SecureRandom.alphanumeric(32) }.to_yaml)
+end
+S = YAML.load_file(SECRETOS)
+
+# El token del clúster: los agentes lo usan para unirse al servidor.
+TOKEN_K3S = File.join(__dir__, "..", ".k3s-token")
+File.write(TOKEN_K3S, SecureRandom.hex(32)) unless File.exist?(TOKEN_K3S)
+
+NODOS = {
+  "k3s1" =&gt; { rol: "server", publica: "192.168.56.31", datos: "10.10.2.31", mem: 2048 },
+  "k3s2" =&gt; { rol: "agent",  publica: "192.168.56.32", datos: "10.10.2.32", mem: 1536 },
+  "k3s3" =&gt; { rol: "agent",  publica: "192.168.56.33", datos: "10.10.2.33", mem: 1536 },
+}
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.synced_folder "../..", "/proyecto"
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  # La misma base de la etapa 2, ahora con los nodos del clúster como clientes.
+  config.vm.define "db" do |m|
+    m.vm.hostname = "db"
+    m.vm.network "private_network", ip: "10.10.2.10", virtualbox__intnet: "a29-datos"
+    m.vm.provider("virtualbox") { |vb| vb.memory = 1024; vb.cpus = 1 }
+    m.vm.provision "shell", path: "../etapa2/db.sh", env: {
+      "DB_APP_PASS" =&gt; S["app"], "DB_OWNER_PASS" =&gt; S["owner"],
+      "DB_CLIENTES" =&gt; "10.10.2.31 10.10.2.32 10.10.2.33"
+    }
+  end
+
+  NODOS.each do |nombre, x|
+    config.vm.define nombre do |m|
+      m.vm.hostname = nombre
+      m.vm.network "private_network", ip: x[:publica]
+      m.vm.network "private_network", ip: x[:datos], virtualbox__intnet: "a29-datos"
+      m.vm.provider("virtualbox") { |vb| vb.memory = x[:mem]; vb.cpus = 2 }
+      m.vm.provision "shell", path: "k3s.sh", env: {
+        "ROL" =&gt; x[:rol], "IP_NODO" =&gt; x[:publica], "SERVIDOR" =&gt; "192.168.56.31"
+      }
+    end
+  end
+end</code></pre>
+
+<pre data-lang="bash" data-file="infra/etapa3/k3s.sh"><code>#!/usr/bin/env bash
+# Un nodo de k3s. Variables: ROL (server o agent), IP_NODO, SERVIDOR.
+set -euo pipefail
+C=/proyecto/infra/comun
+E=/proyecto/infra/etapa3
+bash $C/base.sh
+
+# 1. Kubernetes enruta entre pods: necesita reenvío. rp_filter flexible para el tráfico de flannel.
+cat &gt; /etc/sysctl.d/90-k3s.conf &lt;&lt;'EOF'
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
+EOF
+sysctl --system &gt; /dev/null
+
+# 2. Nuestro firewall vive en su propia tabla. Sin flush ruleset: k3s escribe sus reglas en otras tablas.
+install -m 644 $E/nftables-k3s.conf /etc/nftables.conf
+nft -c -f /etc/nftables.conf
+systemctl enable nftables
+systemctl restart nftables
+systemctl restart fail2ban
+
+# 3. k3s con la versión fijada. flannel va por la interfaz de la red pública del laboratorio.
+IFACE=$(ip -o -4 addr show | awk -v ip="$IP_NODO" '$4 ~ "^"ip"/" {print $2}')
+export INSTALL_K3S_VERSION="v1.36.5+k3s1"
+export K3S_TOKEN=$(cat /proyecto/infra/.k3s-token)
+if [ "$ROL" = server ]; then
+  curl -sfL https://get.k3s.io | sh -s - server \
+    --disable traefik \
+    --node-ip "$IP_NODO" --flannel-iface "$IFACE" \
+    --secrets-encryption \
+    --write-kubeconfig-mode 600
+  # El kubeconfig para tu máquina, apuntando a la IP del servidor y no a 127.0.0.1.
+  mkdir -p /proyecto/infra/.kube
+  sed "s/127.0.0.1/$IP_NODO/" /etc/rancher/k3s/k3s.yaml &gt; /proyecto/infra/.kube/config
+else
+  curl -sfL https://get.k3s.io | K3S_URL="https://$SERVIDOR:6443" sh -s - agent \
+    --node-ip "$IP_NODO" --flannel-iface "$IFACE"
+fi
+
+# 4. La imagen de la API, sin registro: cada nodo la importa del tar que armaste con docker save.
+if [ -f /proyecto/infra/.imagenes/notas.tar ]; then
+  k3s ctr images import /proyecto/infra/.imagenes/notas.tar
+fi</code></pre>
+
+<pre data-lang="bash" data-file="infra/etapa3/nftables-k3s.conf"><code>#!/usr/sbin/nft -f
+# Etapa 3, nodo de k3s. Solo nuestra tabla: borrarla y crearla de nuevo no toca las reglas de k3s.
+table inet filtro
+delete table inet filtro
+
+table inet filtro {
+  set admin { type ipv4_addr; elements = { 10.0.2.2 } }
+  set nodos { type ipv4_addr; elements = { 192.168.56.31, 192.168.56.32, 192.168.56.33 } }
+
+  chain entrada {
+    type filter hook input priority filter; policy drop;
+    ct state invalid drop
+    ct state established,related accept
+    iif "lo" accept
+    icmp type { echo-request, destination-unreachable, time-exceeded } limit rate 10/second accept
+    meta l4proto ipv6-icmp accept
+    ip saddr @admin tcp dport 22 accept
+    # Los pods hablan con el nodo (DNS, kubelet) por las interfaces de flannel.
+    iifname { "cni0", "flannel.1" } accept
+    ip saddr 10.42.0.0/16 accept
+    # Entre nodos: la API de Kubernetes, el kubelet y VXLAN de flannel.
+    ip saddr @nodos tcp dport { 6443, 10250 } accept
+    ip saddr @nodos udp dport 8472 accept
+    # kubectl desde tu máquina (192.168.56.1 es el host en la red solo-anfitrión).
+    ip saddr 192.168.56.1 tcp dport 6443 accept
+    tcp dport { 80, 443 } accept
+    limit rate 5/minute log prefix "nft entrada: " level info
+  }
+  # Sin cadena de reenvío propia: el tráfico entre pods lo filtran las NetworkPolicy, no este archivo.
+}</code></pre>
+
+      <p>Los manifiestos, en el orden en que se aplican. El namespace rechaza cualquier pod que no cumpla el perfil <code>restricted</code> de Pod Security (<a href="../modules/m57-contenedores-k8s.html">M57</a>): sin root, sin escalar privilegios, sin capacidades y con seccomp.</p>
+
+<pre data-lang="yaml" data-file="infra/etapa3/k8s/00-namespace.yaml"><code># Todo en un namespace que rechaza pods con privilegios (Pod Security Standards, M57).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: notas
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted</code></pre>
+
+<pre data-lang="yaml" data-file="infra/etapa3/k8s/10-migrar.yaml"><code># Las migraciones, con el rol dueño, una vez por versión. El Deployment de la API no ve esta clave.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: notas-migrar
+  namespace: notas
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: notas-migrar
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrar
+          image: notas:0.1.0
+          imagePullPolicy: Never
+          args: ["--spring.main.web-application-type=none", "--notas.solo-migrar=true"]
+          env:
+            - name: DB_URL
+              value: jdbc:postgresql://10.10.2.10:5432/notas?sslmode=require
+            - name: DB_USER
+              value: notas_owner
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: notas-db-owner, key: clave } }
+            - name: FLYWAY_ENABLED
+              value: "true"
+            - name: FLYWAY_PASSWORD
+              valueFrom: { secretKeyRef: { name: notas-db-owner, key: clave } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 250m, memory: 384Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: tmp
+          emptyDir: {}</code></pre>
+
+<pre data-lang="yaml" data-file="infra/etapa3/k8s/20-api.yaml"><code># La API: dos réplicas o más, repartidas entre nodos, sin token de Kubernetes y con el disco de solo lectura.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notas-api
+  namespace: notas
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: notas-api }
+  template:
+    metadata:
+      labels: { app: notas-api }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: notas-api }
+      containers:
+        - name: api
+          image: notas:0.1.0
+          imagePullPolicy: Never
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: gestion, containerPort: 8081 }
+          env:
+            - name: DB_URL
+              value: jdbc:postgresql://10.10.2.10:5432/notas?sslmode=require
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: notas-db, key: clave } }
+            # En el pod, 127.0.0.1 no lo ve nadie más: se escucha en todas, y la NetworkPolicy decide quién entra.
+            - name: SERVER_ADDRESS
+              value: 0.0.0.0
+            - name: MANAGEMENT_ADDRESS
+              value: 0.0.0.0
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: gestion }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: gestion }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 250m, memory: 384Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notas-api
+  namespace: notas
+spec:
+  selector: { app: notas-api }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: notas-api
+  namespace: notas
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: notas-api }
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+---
+# Durante un drenado de nodo, al menos una réplica sigue atendiendo.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: notas-api
+  namespace: notas
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: notas-api }</code></pre>
+
+<pre data-lang="yaml" data-file="infra/etapa3/k8s/30-gateway.yaml"><code># El gateway, ya separado del WAF: rutas, límites por cliente (por token) y nada de TLS (lo terminó el WAF).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notas-gateway
+  namespace: notas
+data:
+  default.conf: |
+    # Detrás del WAF, todas las requests llegan desde la IP del pod del WAF: limitar por IP aquí no sirve.
+    # El límite fino va por token; el inicio de sesión, que todavía no tiene token, por usuario no se puede
+    # (el cuerpo no se lee aquí), así que va con un límite global.
+    limit_req_zone $http_authorization zone=por_token:10m rate=20r/s;
+    limit_req_zone $server_name zone=entrar_global:1m rate=20r/s;
+    limit_req_status 429;
+    server_tokens off;
+
+    upstream notas_api {
+        server notas-api:8080;
+        keepalive 32;
+    }
+
+    server {
+        listen 8080;
+        client_max_body_size 16k;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 15s;
+
+        location = /api/sesiones {
+            limit_req zone=entrar_global burst=40 nodelay;
+            proxy_pass http://notas_api;
+        }
+        location = /api/usuarios {
+            limit_req zone=entrar_global burst=40 nodelay;
+            proxy_pass http://notas_api;
+        }
+        location /api/notas {
+            # Sin Authorization ni se llama a la API: 401 desde el gateway.
+            if ($http_authorization = "") {
+                add_header WWW-Authenticate "Bearer" always;
+                return 401;
+            }
+            limit_req zone=por_token burst=40 nodelay;
+            proxy_pass http://notas_api;
+        }
+        location / {
+            return 404;
+        }
+    }
+
+    # Solo para las sondas de Kubernetes.
+    server {
+        listen 8081;
+        location = /healthz {
+            return 200 "ok\n";
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notas-gateway
+  namespace: notas
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: notas-gateway }
+  template:
+    metadata:
+      labels: { app: notas-gateway }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: notas-gateway }
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:1.30.6-alpine
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: salud, containerPort: 8081 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: salud }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: salud }
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: conf, mountPath: /etc/nginx/conf.d }
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { memory: 128Mi }
+      volumes:
+        - name: conf
+          configMap: { name: notas-gateway }
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notas-gateway
+  namespace: notas
+spec:
+  selector: { app: notas-gateway }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: notas-gateway
+  namespace: notas
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: notas-gateway }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: notas-gateway
+  namespace: notas
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: notas-gateway }</code></pre>
+
+<pre data-lang="yaml" data-file="infra/etapa3/k8s/40-waf.yaml"><code># El WAF, primera capa dentro del clúster: termina TLS, aplica el OWASP CRS y pasa al gateway.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notas-waf
+  namespace: notas
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: notas-waf }
+  template:
+    metadata:
+      labels: { app: notas-waf }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: notas-waf }
+      containers:
+        - name: waf
+          image: owasp/modsecurity-crs:4.25.2-nginx-202610051210-lts
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: https, containerPort: 8443 }
+          env:
+            - { name: BACKEND, value: "http://notas-gateway:8080" }
+            - { name: SSL_CERT_FILE, value: /etc/tls/tls.crt }
+            - { name: SSL_CERT_KEY_FILE, value: /etc/tls/tls.key }
+            - { name: NGINX_ALWAYS_TLS_REDIRECT, value: "on" }
+            - { name: BLOCKING_PARANOIA, value: "1" }
+          readinessProbe:
+            httpGet: { path: /healthz, port: https, scheme: HTTPS }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: https, scheme: HTTPS }
+            periodSeconds: 10
+          # Sin readOnlyRootFilesystem: la imagen arma su configuración al arrancar a partir de las variables.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tls, mountPath: /etc/tls, readOnly: true }
+          resources:
+            requests: { cpu: 250m, memory: 128Mi }
+            limits: { memory: 256Mi }
+      volumes:
+        - name: tls
+          secret: { secretName: notas-tls }
+---
+# ServiceLB (el balanceador que trae k3s) abre el 80 y el 443 en cada nodo y los lleva a estos pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: notas-waf
+  namespace: notas
+spec:
+  type: LoadBalancer
+  selector: { app: notas-waf }
+  ports:
+    - { name: https, port: 443, targetPort: https }
+    - { name: http, port: 80, targetPort: http }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: notas-waf
+  namespace: notas
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: notas-waf }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: notas-waf
+  namespace: notas
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: notas-waf }</code></pre>
+
+<pre data-lang="yaml" data-file="infra/etapa3/k8s/50-red.yaml"><code># El firewall entre capas, ahora como NetworkPolicy: primero nadie habla con nadie, después cada flecha.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: nada-por-defecto, namespace: notas }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: dns, namespace: notas }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# Internet -&gt; WAF (8080 y 8443). WAF -&gt; gateway.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: waf, namespace: notas }
+spec:
+  podSelector:
+    matchLabels: { app: notas-waf }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8443 }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: notas-gateway }
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+# WAF -&gt; gateway (8080). Las sondas, a 8081. Gateway -&gt; API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: gateway, namespace: notas }
+spec:
+  podSelector:
+    matchLabels: { app: notas-gateway }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: notas-waf }
+      ports:
+        - { protocol: TCP, port: 8080 }
+    - ports:
+        - { protocol: TCP, port: 8081 }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: notas-api }
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+# Gateway -&gt; API (8080). Las sondas, a 8081. API -&gt; base, y nada más.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: api, namespace: notas }
+spec:
+  podSelector:
+    matchLabels: { app: notas-api }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: notas-gateway }
+      ports:
+        - { protocol: TCP, port: 8080 }
+    - ports:
+        - { protocol: TCP, port: 8081 }
+  egress:
+    - to:
+        - ipBlock: { cidr: 10.10.2.10/32 }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: migrar, namespace: notas }
+spec:
+  podSelector:
+    matchLabels: { app: notas-migrar }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock: { cidr: 10.10.2.10/32 }
+      ports:
+        - { protocol: TCP, port: 5432 }</code></pre>
+
+<pre data-lang="bash" data-file="infra/etapa3/secretos.sh"><code>#!/usr/bin/env bash
+# Crea los Secrets del namespace notas desde tu máquina (Git Bash, en la raíz del proyecto).
+# Las claves salen de infra/.secretos.yaml y el certificado de infra/.tls: los mismos de las etapas 1 y 2.
+set -euo pipefail
+export KUBECONFIG=infra/.kube/config
+APP=$(sed -n 's/^app: *//p' infra/.secretos.yaml)
+OWNER=$(sed -n 's/^owner: *//p' infra/.secretos.yaml)
+
+# --dry-run=client -o yaml | apply: se puede correr dos veces sin error.
+kubectl -n notas create secret generic notas-db --from-literal=clave="$APP" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n notas create secret generic notas-db-owner --from-literal=clave="$OWNER" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n notas create secret tls notas-tls --cert=infra/.tls/notas.crt --key=infra/.tls/notas.key \
+  --dry-run=client -o yaml | kubectl apply -f -</code></pre>
+
+<pre data-lang="bash"><code>cd infra/etapa2 &amp;&amp; vagrant destroy -f &amp;&amp; cd ../etapa3
+vagrant up            # db, k3s1 (servidor), k3s2 y k3s3
+cd ../..
+# En Git Bash, kubectl.exe necesita la ruta de Windows: pwd -W la da, y en Linux o macOS se usa pwd.
+export KUBECONFIG="$(pwd -W 2&gt;/dev/null || pwd)/infra/.kube/config"
+kubectl get nodes -o wide
+kubectl apply -f infra/etapa3/k8s/00-namespace.yaml
+bash infra/etapa3/secretos.sh
+kubectl apply -f infra/etapa3/k8s/50-red.yaml       # la red primero: ningún pod nace sin política
+kubectl apply -f infra/etapa3/k8s/10-migrar.yaml
+kubectl -n notas wait --for=condition=complete job/notas-migrar --timeout=180s
+kubectl apply -f infra/etapa3/k8s/20-api.yaml -f infra/etapa3/k8s/30-gateway.yaml -f infra/etapa3/k8s/40-waf.yaml
+kubectl -n notas get pods -o wide
+INTENTOS=80 bash scripts/ataques.sh 192.168.56.31</code></pre>
+
+      <p>Los tres nodos tienen que estar <code>Ready</code>, el Job tiene que terminar <code>Complete</code> y los seis pods tienen que estar <code>Running</code>, repartidos entre nodos. Si al aplicar ves un aviso de Pod Security, lee qué campo nombra: es un pod que no cumple <code>restricted</code>.</p>
+
+      <dl class="pj-why">
+        <div><dt>La decisión</dt><dd>WAF y gateway separados, cada uno con su HPA: el WAF gasta CPU por request inspeccionada, el gateway casi nada, y la API gasta en bcrypt. Tres curvas distintas, tres autoescalados. La API sin token de Kubernetes, con el disco de solo lectura y sin capacidades.</dd></div>
+        <div><dt>Lo que descartas</dt><dd>Un Ingress con el WAF dentro (ingress-nginx con ModSecurity): es una sola pieza que escala junta, y su soporte de ModSecurity quedó deprecado. Mover la base al clúster: un operador como el de A07 lo hace bien, pero aquí la base es la capa que menos se toca.</dd></div>
+        <div><dt>Qué puede salir mal</dt><dd>ServiceLB, el balanceador de k3s, hace SNAT: el WAF ve la IP de un nodo, no la del cliente. Por eso el gateway limita por token y el inicio de sesión tiene un límite global, más alto que el por IP de la etapa 1. En una nube, el balanceador administrado conserva la IP del cliente en <code>X-Forwarded-For</code> o con proxy protocol. Y la base: flannel sale con la IP del nodo, así que <code>pg_hba</code> y el firewall de la base listan los tres nodos, no los pods.</dd></div>
+      </dl>
+
+      <h3 id="paso-nube">Paso 8. Lo mismo, en una nube</h3>
+
+      <p>Nada de esta guía se queda en VirtualBox. Cada pieza tiene su equivalente administrado, y la arquitectura de la etapa 3 es la que <a href="../modules/m37-nube.html">M37</a> dibuja para una VPC en AWS. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+      <div class="table-wrap">
+        <table class="t">
+          <thead><tr><th>En el laboratorio</th><th>En AWS</th><th>Qué cambia</th></tr></thead>
+          <tbody>
+            <tr><td>Las redes <code>publica</code>, <code>a29-dmz</code> y <code>a29-datos</code></td><td>Una VPC con subredes públicas y privadas en tres zonas</td><td>Las subredes privadas salen a internet, si hace falta, por un NAT gateway, y se puede cortar.</td></tr>
+            <tr><td>nftables por máquina</td><td>Security groups (con estado) y NACL (sin estado)</td><td>Un security group puede nombrar a otro como origen: "la base acepta a las apps", sin listar IPs.</td></tr>
+            <tr><td>Dos bordes con keepalived</td><td>Un Application Load Balancer con AWS WAF</td><td>El balanceador ya es redundante entre zonas. El WAF administrado trae reglas parecidas al CRS.</td></tr>
+            <tr><td>k3s de tres nodos</td><td>EKS con nodos en tres zonas</td><td>El plano de control lo opera AWS. Las NetworkPolicy necesitan que el CNI las aplique.</td></tr>
+            <tr><td>PostgreSQL en una VM</td><td>RDS Multi-AZ</td><td>Una réplica en otra zona con failover; la conexión por TLS con la CA de RDS y <code>verify-full</code>.</td></tr>
+            <tr><td><code>.secretos.yaml</code> y Secrets</td><td>Secrets Manager, con IAM por pod</td><td>La clave no vive en un archivo ni en etcd; el pod la pide con su identidad.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="decisiones">Decisiones guiadas</h2>
+
+      <div data-exercise="a29-borde"></div>
+
+      <h2 id="comprueba">Cómo comprobar que funciona</h2>
+
+      <h3 id="comprueba-pruebas">Las pruebas</h3>
+
+      <p><code>./mvnw verify</code> levanta un PostgreSQL 16 con Testcontainers y crea los mismos dos roles que la VM. La app se conecta como <code>notas_app</code> y Flyway como <code>notas_owner</code>: las pruebas corren con los permisos de producción, no como superusuario.</p>
+
+<pre data-lang="sql" data-file="src/test/resources/roles.sql"><code>-- Los mismos roles que infra/etapa1/db.sql, sobre la base "test" que crea Testcontainers.
+CREATE ROLE notas_owner LOGIN PASSWORD 'owner-de-prueba';
+CREATE ROLE notas_app LOGIN PASSWORD 'app-de-prueba';
+GRANT CONNECT ON DATABASE test TO notas_owner, notas_app;
+CREATE SCHEMA notas AUTHORIZATION notas_owner;
+GRANT USAGE ON SCHEMA notas TO notas_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE notas_owner IN SCHEMA notas
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO notas_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE notas_owner IN SCHEMA notas
+    GRANT USAGE ON SEQUENCES TO notas_app;
+ALTER ROLE notas_owner SET search_path = notas;
+ALTER ROLE notas_app SET search_path = notas;</code></pre>
+
+<pre data-lang="java" data-file="src/test/java/lab/notas/ConBase.java"><code>package lab.notas;
+
+import org.testcontainers.postgresql.PostgreSQLContainer;
+
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+
+/**
+ * Un PostgreSQL de verdad con los dos roles del despliegue. La app se conecta como notas_app
+ * y Flyway como notas_owner: las pruebas corren con los mismos permisos que la VM.
+ */
+public abstract class ConBase {
+
+    static final PostgreSQLContainer PG = new PostgreSQLContainer("postgres:16").withInitScript("roles.sql");
+
+    static {
+        PG.start();
+    }
+
+    @DynamicPropertySource
+    static void base(DynamicPropertyRegistry r) {
+        r.add("spring.datasource.url", PG::getJdbcUrl);
+        r.add("spring.datasource.username", () -&gt; "notas_app");
+        r.add("spring.datasource.password", () -&gt; "app-de-prueba");
+        r.add("spring.flyway.enabled", () -&gt; "true");
+        r.add("spring.flyway.user", () -&gt; "notas_owner");
+        r.add("spring.flyway.password", () -&gt; "owner-de-prueba");
+        r.add("notas.bcrypt-costo", () -&gt; "4");   // 4 en vez de 12: la prueba no mide bcrypt
+    }
+}</code></pre>
+
+<pre data-lang="java" data-file="src/test/java/lab/notas/NotasApiTest.java"><code>package lab.notas;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.jayway.jsonpath.JsonPath;
+import org.junit.jupiter.api.Test;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
+import org.springframework.test.web.servlet.assertj.MvcTestResult;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+class NotasApiTest extends ConBase {
+
+    @Autowired
+    MockMvcTester mvc;
+    @Autowired
+    JdbcClient db;
+
+    @Test
+    void cadaUnoLeeSoloSusNotas() throws Exception {
+        String ana = registrarYEntrar("ana", "clave-de-ana-123");
+        String beto = registrarYEntrar("beto", "clave-de-beto-123");
+
+        MvcTestResult creada = mvc.post().uri("/api/notas").header("Authorization", "Bearer " + ana)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"texto\": \"la clave del wifi\"}").exchange();
+        assertThat(creada).hasStatus(HttpStatus.CREATED);
+        long id = ((Number) JsonPath.read(creada.getResponse().getContentAsString(), "$.id")).longValue();
+
+        assertThat(mvc.get().uri("/api/notas/" + id).header("Authorization", "Bearer " + ana)).hasStatusOk();
+        // La nota existe, pero no es de Beto: 404, la misma respuesta que una nota que no existe.
+        assertThat(mvc.get().uri("/api/notas/" + id).header("Authorization", "Bearer " + beto))
+                .hasStatus(HttpStatus.NOT_FOUND);
+        assertThat(mvc.get().uri("/api/notas"))
+                .hasStatus(HttpStatus.UNAUTHORIZED).headers().hasValue("WWW-Authenticate", "Bearer");
+    }
+
+    @Test
+    void cincoFallosBloqueanLaCuentaYElBloqueoVence() {
+        post("/api/usuarios", cred("carla", "clave-de-carla-1"));
+        for (int i = 0; i &lt; 5; i++) {
+            assertThat(post("/api/sesiones", cred("carla", "clave-equivocada-" + i))).hasStatus(HttpStatus.UNAUTHORIZED);
+        }
+        // La clave correcta tampoco entra: la cuenta quedó bloqueada, y la respuesta es la misma.
+        assertThat(post("/api/sesiones", cred("carla", "clave-de-carla-1"))).hasStatus(HttpStatus.UNAUTHORIZED);
+
+        db.sql("UPDATE usuarios SET bloqueado_hasta = now() - interval '1 second' WHERE usuario = 'carla'").update();
+        assertThat(post("/api/sesiones", cred("carla", "clave-de-carla-1"))).hasStatus(HttpStatus.CREATED);
+    }
+
+    @Test
+    void elRolDeLaAppNoPuedeCambiarElEsquema() {
+        // JdbcClient usa el pool de la app, es decir, notas_app.
+        assertThatThrownBy(() -&gt; db.sql("DROP TABLE notas").update()).isInstanceOf(DataAccessException.class);
+        assertThatThrownBy(() -&gt; db.sql("CREATE TABLE robada (x int)").update()).isInstanceOf(DataAccessException.class);
+    }
+
+    @Test
+    void unaClaveDeMasDe72BytesEsUn400YNoUn500() {
+        // 40 eñes pasan el @Size de 72 caracteres, pero en UTF-8 son 80 bytes.
+        assertThat(post("/api/sesiones", cred("dani", "ñ".repeat(40)))).hasStatus(HttpStatus.BAD_REQUEST);
+    }
+
+    String registrarYEntrar(String usuario, String clave) throws Exception {
+        assertThat(post("/api/usuarios", cred(usuario, clave))).hasStatus(HttpStatus.CREATED);
+        MvcTestResult r = post("/api/sesiones", cred(usuario, clave));
+        assertThat(r).hasStatus(HttpStatus.CREATED);
+        return JsonPath.read(r.getResponse().getContentAsString(), "$.token");
+    }
+
+    static String cred(String usuario, String clave) {
+        return "{\"usuario\": \"" + usuario + "\", \"clave\": \"" + clave + "\"}";
+    }
+
+    MvcTestResult post(String uri, String json) {
+        return mvc.post().uri(uri).contentType(MediaType.APPLICATION_JSON).content(json).exchange();
+    }
+}</code></pre>
+
+      <ul>
+        <li><code>cadaUnoLeeSoloSusNotas</code>: Beto pide la nota de Ana y recibe 404; sin token, 401 con <code>WWW-Authenticate: Bearer</code>.</li>
+        <li><code>cincoFallosBloqueanLaCuentaYElBloqueoVence</code>: después de cinco fallos, ni la clave correcta entra; cuando vence el bloqueo, sí.</li>
+        <li><code>elRolDeLaAppNoPuedeCambiarElEsquema</code>: <code>DROP TABLE</code> y <code>CREATE TABLE</code> fallan con el rol de la app.</li>
+        <li><code>unaClaveDeMasDe72BytesEsUn400YNoUn500</code>: la clave de 40 eñes.</li>
+      </ul>
+
+      <p>Para ver que la prueba de permisos prueba algo, cambia en <code>ConBase</code> el usuario de la app por <code>notas_owner</code>: <code>elRolDeLaAppNoPuedeCambiarElEsquema</code> tiene que fallar, porque el dueño sí puede borrar sus tablas.</p>
+
+      <h3 id="comprueba-ataques">Los ataques, capa por capa</h3>
+
+<pre data-lang="bash" data-file="scripts/ataques.sh"><code>#!/usr/bin/env bash
+# Prueba cada defensa desde afuera, contra TU laboratorio y nada más.
+# Uso (Git Bash, desde la raíz del proyecto):  bash scripts/ataques.sh 192.168.56.10
+# Las cargas son las mínimas para que la regla salte: no buscan saltarse el WAF, buscan ver que bloquea.
+set -u
+IP=${1:?Uso: bash scripts/ataques.sh &lt;IP del borde&gt;}
+URL="https://$IP"
+CA="infra/.tls/ca.crt"
+# 8 alcanzan con el límite por IP de las etapas 1 y 2 (1 por segundo, ráfaga de 5).
+# En la etapa 3 el límite es global y más alto (20 por segundo, ráfaga de 40): INTENTOS=80 bash scripts/ataques.sh 192.168.56.31
+INTENTOS=${INTENTOS:-8}
+pasa=0; falla=0
+
+espero() {   # espero &lt;descripción&gt; &lt;código esperado&gt; &lt;código obtenido&gt;
+  if [ "$2" = "$3" ]; then echo "PASA   $1 (respondió $3)"; pasa=$((pasa+1))
+  else echo "FALLA  $1 (esperaba $2, respondió $3)"; falla=$((falla+1)); fi
+}
+codigo() { curl -s -o /dev/null -w '%{http_code}' --cacert "$CA" --max-time 5 "$@"; }
+
+echo "== 1. Puertos: solo 80 y 443 responden desde afuera"
+for p in 22 5432 8080 8081; do
+  if timeout 2 bash -c "&lt;/dev/tcp/$IP/$p" 2&gt;/dev/null; then espero "puerto $p cerrado" cerrado abierto
+  else espero "puerto $p cerrado" cerrado cerrado; fi
+done
+espero "HTTP manda a HTTPS" 301 "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$IP/api/notas")"
+
+echo "== 2. WAF: inyecciones mínimas en la query string"
+espero "SQLi en un parámetro" 403 "$(codigo "$URL/api/notas?id=1%27%20OR%20%271%27=%271")"
+espero "XSS en un parámetro" 403 "$(codigo "$URL/api/notas?q=%3Cscript%3Ealert(1)%3C/script%3E")"
+
+echo "== 3. Gateway: rutas y autenticación"
+espero "notas sin token" 401 "$(codigo "$URL/api/notas")"
+espero "actuator no se publica" 404 "$(codigo "$URL/actuator/health")"
+espero "ruta que no existe" 404 "$(codigo "$URL/admin")"
+
+echo "== 4. Tamaño: un cuerpo de 32 KB"
+grande=$(head -c 32768 /dev/zero | tr '\0' 'a')
+espero "cuerpo de 32 KB" 413 "$(codigo -X POST -H 'Content-Type: application/json' --data "{\"texto\":\"$grande\"}" "$URL/api/notas")"
+
+echo "== 5. Límite de inicio de sesión: $INTENTOS intentos a la vez"
+intento() {
+  codigo -X POST -H 'Content-Type: application/json' \
+    --data '{"usuario":"nadie","clave":"clave-falsa-123"}' "$URL/api/sesiones"
+  echo
+}
+export -f intento codigo; export CA URL
+rechazos=$(seq 1 "$INTENTOS" | xargs -P "$INTENTOS" -I{} bash -c intento | grep -c 429 || true)
+[ "$rechazos" -gt 0 ] &amp;&amp; r=si || r=no
+espero "alguno recibe 429 ($rechazos de $INTENTOS)" si "$r"
+
+echo
+echo "$pasa pasan, $falla fallan"
+[ "$falla" -eq 0 ]</code></pre>
+
+      <p>Córrelo contra cada etapa: <code>192.168.56.10</code>, <code>192.168.56.100</code> y, con <code>INTENTOS=80</code>, <code>192.168.56.31</code>. Tiene que terminar con 0 fallas. Si alguna línea dice FALLA, el código que respondió dice qué capa no hizo su trabajo: un 200 donde esperabas 403 es el WAF; un 404 donde esperabas 401 es el ruteo.</p>
+
+      <p>Mira los rechazos del otro lado. En la etapa 1, dentro de la VM:</p>
+
+<pre data-lang="bash"><code>vagrant ssh -c "sudo tail -n 30 /var/log/nginx/modsec_audit.log"     # el id de la regla del CRS que bloqueó
+vagrant ssh -c "sudo journalctl -k -g 'nft entrada' -n 10"           # los SYN a puertos cerrados
+vagrant ssh -c "sudo fail2ban-client status nginx-limit-req"</code></pre>
+
+      <aside class="callout callout--fail">
+        <p class="callout-label">Si te bloqueas a ti mismo</p>
+        <p>Cada corrida del script provoca un par de 429, y fail2ban banea una hora a la IP que junta diez en diez minutos. Si después de varias corridas todo deja de responder, eres tú, con la IP 192.168.56.1: <code>vagrant ssh -c "sudo fail2ban-client set nginx-limit-req unbanip 192.168.56.1"</code>.</p>
+      </aside>
+
+      <h3 id="comprueba-ssh">Falla: entrar por SSH con contraseña</h3>
+
+<pre data-lang="bash"><code>ssh -p 2222 -o PreferredAuthentications=password -o PubkeyAuthentication=no vagrant@127.0.0.1</code></pre>
+
+      <p>Vagrant publica el SSH de la VM en el puerto 2222 de tu máquina, que llega desde 10.0.2.2. El servidor no ofrece contraseña: el error tiene que ser <code>Permission denied (publickey)</code>, sin pedirte nada. Si te pide una contraseña, el drop-in de <code>sshd_config.d</code> no está ganando: <code>vagrant ssh -c "sudo sshd -T | grep -i passwordauth"</code> dice el valor que de verdad usa.</p>
+
+      <h3 id="comprueba-egreso">Falla: la API tomada intenta salir</h3>
+
+      <p>Simula que alguien ejecuta código como el usuario de la API e intenta bajar algo:</p>
+
+<pre data-lang="bash"><code>vagrant ssh -c "sudo -u notas curl -sS --max-time 5 https://example.com -o /dev/null; echo salida: \$?"
+vagrant ssh -c "sudo journalctl -k -g 'nft salida notas' -n 5"
+vagrant ssh -c "curl -sS --max-time 5 https://example.com -o /dev/null; echo salida: \$?"</code></pre>
+
+      <p>El primero tiene que fallar enseguida con un error de conexión (el <code>reject</code> responde, no deja esperando), y el segundo mostrar la línea del log con <code>nft salida notas:</code>. El tercero, como <code>vagrant</code>, sí sale: el filtro es por usuario, no por máquina. En la etapa 2, prueba lo mismo en <code>app1</code> contra <code>10.10.2.10</code> en el 5432 (sale) y contra cualquier otra cosa (no sale).</p>
+
+      <h3 id="comprueba-vrrp">Falla: se cae un borde</h3>
+
+      <p>En la etapa 2, con dos terminales. En una, un bucle que pregunta cada medio segundo:</p>
+
+<pre data-lang="bash"><code>while true; do
+  printf '%s %s\n' "$(date +%T)" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 --cacert infra/.tls/ca.crt https://192.168.56.100/api/notas)"
+  sleep 0.5
+done</code></pre>
+
+      <p>En la otra, detén Nginx en <code>borde1</code>, mira quién tiene la IP, y vuelve a levantarlo:</p>
+
+<pre data-lang="bash"><code>cd infra/etapa2
+vagrant ssh borde1 -c "sudo systemctl stop nginx"
+vagrant ssh borde2 -c "ip -4 addr show | grep 192.168.56.100"
+vagrant ssh borde2 -c "sudo journalctl -u keepalived -n 5"
+vagrant ssh borde1 -c "sudo systemctl start nginx"
+vagrant ssh borde1 -c "ip -4 addr show | grep 192.168.56.100"</code></pre>
+
+      <p>El bucle responde 401 (no lleva token, y eso basta para saber que el borde contesta). Cuenta cuántas líneas salen con <code>000</code> después de detener Nginx: es el hueco del failover. Con <code>interval 2</code> y <code>fall 2</code>, el script tarda unos 4&#8239;s en dar a Nginx por caído, más lo que tarde borde2 en ver que el anuncio bajó: anota tu número. Después repite con <code>vagrant halt borde1</code>, que apaga la máquina entera, y compara.</p>
+
+      <p>Para ver por qué el firewall acepta VRRP solo del par, comenta esa regla en <code>borde2</code> y recarga nftables: borde2 deja de oír a borde1, se cree solo y toma la IP. Los dos quedan con la misma IP a la vez, el split brain de <a href="../modules/m32-firewalls.html#ubicacion-ha">M32</a>. Vuelve a dejar la regla y recarga.</p>
+
+      <h3 id="comprueba-app">Falla: se cae una app</h3>
+
+<pre data-lang="bash"><code>vagrant ssh app1 -c "sudo systemctl stop notas"</code></pre>
+
+      <p>Con el mismo bucle, ahora con un token, mira cuántos errores aparecen antes de que Nginx deje de mandarle requests a <code>app1</code>: <code>max_fails=3</code> y <code>fail_timeout=10s</code> dicen que la saca después de tres errores y la vuelve a probar a los 10&#8239;s. Como <code>proxy_next_upstream</code> reintenta un GET en la otra app cuando la conexión falla, puede que no veas ningún error en las lecturas. En <code>POST /api/notas</code> Nginx no reintenta, porque no es idempotente: ahí sí aparecen.</p>
+
+      <h3 id="comprueba-netpol">Falla: un pod quiere hablar con quien no debe</h3>
+
+      <p>En la etapa 3, desde un pod del gateway, que tiene <code>wget</code>:</p>
+
+<pre data-lang="bash"><code>kubectl -n notas exec deploy/notas-gateway -- wget -T 3 -qO- http://notas-api:8080/api/notas
+kubectl -n notas exec deploy/notas-gateway -- wget -T 3 -qO- http://notas-api:8081/actuator/health
+kubectl -n notas exec deploy/notas-gateway -- wget -T 3 -qO- http://10.10.2.10:5432/</code></pre>
+
+      <p>El primero llega a la API y termina en un error con <code>401</code>: la flecha gateway → API en el 8080 existe. El segundo y el tercero terminan por timeout después de 3&#8239;s: el gateway no tiene permitido salir al 8081 ni a la base. Borra la política <code>gateway</code> con <code>kubectl -n notas delete networkpolicy gateway</code> y repite: ahora el primero también falla, porque <code>nada-por-defecto</code> niega todo lo que no esté abierto. Vuelve a aplicar <code>50-red.yaml</code>.</p>
+
+      <h3 id="comprueba-carga">La carga, en cada etapa</h3>
+
+<pre data-lang="bash" data-file="scripts/tokens.sh"><code>#!/usr/bin/env bash
+# Crea N usuarios de carga y guarda un token de cada uno para Gatling.
+# Uso: bash scripts/tokens.sh 192.168.56.10 20
+# Respeta el límite de 1 inicio de sesión por segundo: tarda unos 2 segundos por usuario.
+set -euo pipefail
+IP=${1:?Uso: bash scripts/tokens.sh &lt;IP del borde&gt; [usuarios]}
+N=${2:-20}
+URL="https://$IP"
+CA="infra/.tls/ca.crt"
+OUT="src/test/resources/tokens.csv"
+SUFIJO=$(date +%s)
+
+echo "token" &gt; "$OUT"
+for i in $(seq 1 "$N"); do
+  u="carga.$SUFIJO.$i"
+  c="clave-de-carga-$SUFIJO"
+  curl -s --cacert "$CA" -o /dev/null -X POST -H 'Content-Type: application/json' \
+    --data "{\"usuario\":\"$u\",\"clave\":\"$c\"}" "$URL/api/usuarios"
+  sleep 1.1
+  curl -s --cacert "$CA" -X POST -H 'Content-Type: application/json' \
+    --data "{\"usuario\":\"$u\",\"clave\":\"$c\"}" "$URL/api/sesiones" \
+    | sed -n 's/.*"token":"\([^"]*\)".*/\1/p' &gt;&gt; "$OUT"
+  sleep 1.1
+done
+echo "$(($(wc -l &lt; "$OUT") - 1)) tokens en $OUT"</code></pre>
+
+<pre data-lang="java" data-file="src/test/java/lab/notas/NotasSimulation.java"><code>package lab.notas;
+
+import static io.gatling.javaapi.core.CoreDsl.StringBody;
+import static io.gatling.javaapi.core.CoreDsl.constantUsersPerSec;
+import static io.gatling.javaapi.core.CoreDsl.csv;
+import static io.gatling.javaapi.core.CoreDsl.scenario;
+import static io.gatling.javaapi.http.HttpDsl.http;
+import static io.gatling.javaapi.http.HttpDsl.status;
+
+import io.gatling.javaapi.core.ScenarioBuilder;
+import io.gatling.javaapi.core.Simulation;
+import io.gatling.javaapi.http.HttpProtocolBuilder;
+
+/**
+ * Lee y escribe notas con los tokens de src/test/resources/tokens.csv (los crea scripts/tokens.sh).
+ * No inicia sesión en cada usuario virtual: el límite de 1 r/s del inicio de sesión lo frenaría en el borde.
+ * ./mvnw gatling:test -DbaseUrl=https://192.168.56.10 -Drps=20 -Dseconds=60
+ */
+public class NotasSimulation extends Simulation {
+
+    int rps = Integer.getInteger("rps", 20);
+    int seconds = Integer.getInteger("seconds", 60);
+
+    // Gatling no valida certificados por defecto: la CA del laboratorio no hace falta aquí.
+    HttpProtocolBuilder protocolo = http.baseUrl(System.getProperty("baseUrl", "https://192.168.56.10"))
+            .contentTypeHeader("application/json")
+            .shareConnections();
+
+    ScenarioBuilder notas = scenario("Notas")
+            .feed(csv("tokens.csv").circular())
+            .exec(http("POST nota").post("/api/notas")
+                    .header("Authorization", "Bearer #{token}")
+                    .body(StringBody("{\"texto\": \"nota de carga\"}"))
+                    .check(status().is(201)))
+            .exec(http("GET notas").get("/api/notas")
+                    .header("Authorization", "Bearer #{token}")
+                    .check(status().is(200)));
+
+    {
+        setUp(notas.injectOpen(constantUsersPerSec(rps).during(seconds))).protocols(protocolo);
+    }
+}</code></pre>
+
+<pre data-lang="bash"><code>bash scripts/tokens.sh 192.168.56.10 20
+./mvnw gatling:test -DbaseUrl=https://192.168.56.10 -Drps=20 -Dseconds=60</code></pre>
+
+      <p>Corre la misma simulación contra cada etapa, con los mismos <code>rps</code>, y anota en una tabla el p95, el p99 y los KO del reporte de Gatling. No compares las etapas en valor absoluto: la etapa 2 tiene más VMs, pero cada una con una CPU, y todo comparte los núcleos de tu máquina. Lo que sí se ve es dónde se gasta: en la etapa 3, <code>kubectl -n notas top pods</code> durante la carga dice cuánta CPU usa cada capa. Sube <code>-Drps</code> hasta que <code>kubectl -n notas get hpa</code> muestre réplicas nuevas, y anota cuál escala primero.</p>
+
+      <h2 id="hilos">La versión con hilos</h2>
+
+      <p>La API ya resuelve la concurrencia que le importa con una sentencia atómica. Esta sección la pone a prueba con 50 hilos a la vez y le agrega un bulkhead para bcrypt. La teoría de las race conditions y de los pools está en la guía AH, "Hilos en Java".</p>
+
+      <h3 id="hilos-carrera">La carrera del bloqueo</h3>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 340" role="img" aria-labelledby="fa29et fa29ed">
+<title id="fa29et">Leer, comparar y escribir contra reservar primero</title>
+<desc id="fa29ed">Dos líneas de tiempo. Arriba, la versión ingenua: tres hilos leen fallidos igual a 4 al mismo tiempo, los tres comparan la clave con bcrypt y los tres escriben 5; el atacante consiguió tres intentos donde quedaba uno. Abajo, la reserva atómica: los tres mandan el UPDATE condicional, la base los ordena con el lock de la fila, el primero recibe la fila con fallidos 5 y los otros dos reciben cero filas y no llegan a comparar la clave.</desc>
+<defs><marker id="fa29ea" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="14" y="24" text-anchor="start">Leer, comparar, escribir (ingenuo): queda 1 intento y entran 3</text>
+<text class="dg-small" x="14" y="62" text-anchor="start">hilo 1</text>
+<rect class="dg-box" x="80" y="40" width="170" height="36" rx="6"/>
+<text class="dg-label" x="165" y="63" text-anchor="middle">SELECT fallidos = 4</text>
+<rect class="dg-warnbox" x="262" y="40" width="230" height="36" rx="6"/>
+<text class="dg-label" x="377" y="63" text-anchor="middle">bcrypt: ¿coincide? (250 ms)</text>
+<rect class="dg-box" x="504" y="40" width="250" height="36" rx="6"/>
+<text class="dg-label" x="629" y="63" text-anchor="middle">UPDATE fallidos = 5</text>
+<text class="dg-small" x="14" y="106" text-anchor="start">hilo 2</text>
+<rect class="dg-box" x="80" y="84" width="170" height="36" rx="6"/>
+<text class="dg-label" x="165" y="107" text-anchor="middle">SELECT fallidos = 4</text>
+<rect class="dg-warnbox" x="262" y="84" width="230" height="36" rx="6"/>
+<text class="dg-label" x="377" y="107" text-anchor="middle">bcrypt: ¿coincide? (250 ms)</text>
+<rect class="dg-box" x="504" y="84" width="250" height="36" rx="6"/>
+<text class="dg-label" x="629" y="107" text-anchor="middle">UPDATE fallidos = 5</text>
+<text class="dg-small" x="14" y="150" text-anchor="start">hilo 3</text>
+<rect class="dg-box" x="80" y="128" width="170" height="36" rx="6"/>
+<text class="dg-label" x="165" y="151" text-anchor="middle">SELECT fallidos = 4</text>
+<rect class="dg-warnbox" x="262" y="128" width="230" height="36" rx="6"/>
+<text class="dg-label" x="377" y="151" text-anchor="middle">bcrypt: ¿coincide? (250 ms)</text>
+<rect class="dg-box" x="504" y="128" width="250" height="36" rx="6"/>
+<text class="dg-label" x="629" y="151" text-anchor="middle">UPDATE fallidos = 5</text>
+<text class="dg-small" x="14" y="196" text-anchor="start">Reservar primero (esta guía): la base ordena, uno solo compara</text>
+<rect class="dg-box" x="80" y="210" width="300" height="36" rx="6"/>
+<text class="dg-label" x="230" y="233" text-anchor="middle">UPDATE … WHERE fallidos &lt; 5 RETURNING</text>
+<rect class="dg-ok" x="392" y="210" width="362" height="36" rx="6"/>
+<text class="dg-label" x="573" y="233" text-anchor="middle">1 fila (fallidos = 5): compara con bcrypt</text>
+<rect class="dg-box" x="80" y="254" width="300" height="36" rx="6"/>
+<text class="dg-label" x="230" y="277" text-anchor="middle">UPDATE … espera el lock de la fila</text>
+<rect class="dg-bad" x="392" y="254" width="362" height="36" rx="6"/>
+<text class="dg-label" x="573" y="277" text-anchor="middle">0 filas: hash falso, 401, no prueba la clave</text>
+<rect class="dg-box" x="80" y="298" width="300" height="36" rx="6"/>
+<text class="dg-label" x="230" y="321" text-anchor="middle">UPDATE … espera el lock de la fila</text>
+<rect class="dg-bad" x="392" y="298" width="362" height="36" rx="6"/>
+<text class="dg-label" x="573" y="321" text-anchor="middle">0 filas: hash falso, 401, no prueba la clave</text>
+<text class="dg-small" x="14" y="232" text-anchor="start">hilo 1</text>
+<text class="dg-small" x="14" y="276" text-anchor="start">hilo 2</text>
+<text class="dg-small" x="14" y="320" text-anchor="start">hilo 3</text>
+</svg>
+
+        </div>
+        <figcaption><b>Figura A29.5.</b> Leer, comparar y escribir es un check-then-act: entre la lectura y la escritura hay 250&#8239;ms de bcrypt, y todos los hilos que leyeron 4 creen que les queda un intento. Reservar primero deja que la base los ordene con el lock de la fila.</figcaption>
+      </figure>
+
+<pre data-lang="java" data-file="src/test/java/lab/notas/BloqueoConcurrenteTest.java"><code>package lab.notas;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+
+import lab.notas.sesiones.SesionService;
+import org.junit.jupiter.api.Test;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.simple.JdbcClient;
+
+/**
+ * 50 intentos con la clave equivocada, todos a la vez, contra la misma cuenta.
+ * Con "leer, comparar, escribir", varios hilos leen fallidos = 0 antes de que nadie escriba,
+ * y el atacante consigue más de 5 intentos. Con la reserva atómica, exactamente 5.
+ */
+@SpringBootTest
+class BloqueoConcurrenteTest extends ConBase {
+
+    @Autowired
+    SesionService sesiones;
+    @Autowired
+    JdbcClient db;
+
+    @Test
+    void cincuentaIntentosALaVezCuentanComoMaximoCinco() throws Exception {
+        sesiones.registrar("elena", "clave-de-elena-1");
+        int hilos = 50;
+        CountDownLatch largada = new CountDownLatch(1);
+
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            List&lt;Future&lt;Optional&lt;String&gt;&gt;&gt; intentos = new ArrayList&lt;&gt;();
+            for (int i = 0; i &lt; hilos; i++) {
+                int n = i;
+                intentos.add(pool.submit(() -&gt; {
+                    largada.await();   // todos esperan aquí y salen juntos
+                    return sesiones.iniciar("elena", "equivocada-" + n);
+                }));
+            }
+            largada.countDown();
+            for (Future&lt;Optional&lt;String&gt;&gt; f : intentos) {
+                assertThat(f.get(30, TimeUnit.SECONDS)).isEmpty();
+            }
+        }
+
+        int fallidos = db.sql("SELECT fallidos FROM usuarios WHERE usuario = 'elena'").query(Integer.class).single();
+        assertThat(fallidos).isEqualTo(5);
+        // Y la cuenta quedó bloqueada: la clave correcta tampoco entra.
+        assertThat(sesiones.iniciar("elena", "clave-de-elena-1")).isEmpty();
+    }
+}</code></pre>
+
+      <p>Con el servicio del paso 1, la prueba pasa: <code>fallidos</code> queda en 5. Para provocar la falla, reemplaza el paso 1 de <code>iniciar</code> por la versión ingenua y córrela:</p>
+
+<pre data-lang="java"><code>// Versión ingenua, SOLO para ver fallar la prueba. No la dejes así.
+Optional&lt;Intento&gt; intento = db.sql("""
+        SELECT id, clave_hash, fallidos FROM usuarios
+         WHERE usuario = :u AND fallidos &lt; :max
+           AND (bloqueado_hasta IS NULL OR bloqueado_hasta &lt; now())""")
+        .param("u", usuario).param("max", props.maxFallidos())
+        .query(Intento.class).optional();
+intento.ifPresent(i -&gt; db.sql("UPDATE usuarios SET fallidos = :f WHERE id = :id")
+        .param("f", i.fallidos() + 1).param("id", i.id()).update());</code></pre>
+
+<pre data-lang="bash"><code>./mvnw -Dtest=BloqueoConcurrenteTest test</code></pre>
+
+      <p>Tiene que fallar en <code>isEqualTo(5)</code>. Anota cuánto valía <code>fallidos</code>: puede ser menos de 5 (escrituras que se pisan) o puede que la cuenta no quede bloqueada. Lo que importa es el otro número, que la prueba no ve: cuántos hilos llegaron a comparar la clave. Si eran más de cinco, el atacante probó más claves de las permitidas. Vuelve a la versión del paso 1.</p>
+
+      <h3 id="hilos-bulkhead">Un bulkhead para bcrypt</h3>
+
+      <p>Cada comparación con costo 12 ocupa un núcleo durante decenas o cientos de milisegundos. Una ráfaga de inicios de sesión, aunque el borde la limite por IP, puede venir de muchas IP y dejar la CPU sin lugar para leer y escribir notas. El bulkhead de <a href="../modules/m08-resiliencia.html">M08</a> lo acota: como mucho N bcrypt a la vez, y quien no consigue lugar en 200&#8239;ms recibe 503 con <code>Retry-After</code>.</p>
+
+<pre data-lang="java" data-file="src/main/java/lab/notas/NotasProps.java"><code>package lab.notas;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+/** Los valores de notas.* en application.yaml. bcryptConcurrentes es el tamaño del bulkhead. */
+@ConfigurationProperties("notas")
+public record NotasProps(int sesionMinutos, int maxFallidos, int bloqueoMinutos, int bcryptCosto,
+                         int bcryptConcurrentes) {
+}</code></pre>
+
+<pre data-lang="java" data-file="src/main/java/lab/notas/sesiones/Bcrypt.java"><code>package lab.notas.sesiones;
+
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+
+import lab.notas.NotasProps;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.stereotype.Component;
+import org.springframework.web.ErrorResponseException;
+
+/**
+ * bcrypt detrás de un bulkhead: como mucho bcryptConcurrentes cálculos a la vez.
+ * Una ráfaga de inicios de sesión espera 200 ms por un lugar y, si no lo consigue, recibe 503:
+ * la CPU sigue libre para leer y escribir notas.
+ */
+@Component
+public class Bcrypt {
+
+    private final BCryptPasswordEncoder encoder;
+    private final Semaphore lugares;
+
+    Bcrypt(NotasProps props) {
+        this.encoder = new BCryptPasswordEncoder(props.bcryptCosto());
+        this.lugares = new Semaphore(props.bcryptConcurrentes(), true);
+    }
+
+    public String hash(String clave) {
+        return conLugar(() -&gt; encoder.encode(clave));
+    }
+
+    public boolean coincide(String clave, String hash) {
+        return conLugar(() -&gt; encoder.matches(clave, hash));
+    }
+
+    private &lt;T&gt; T conLugar(java.util.function.Supplier&lt;T&gt; calculo) {
+        boolean tengo;
+        try {
+            tengo = lugares.tryAcquire(200, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ErrorResponseException(HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        if (!tengo) {
+            var ocupado = new ErrorResponseException(HttpStatus.SERVICE_UNAVAILABLE);
+            ocupado.getHeaders().set("Retry-After", "1");
+            throw ocupado;
+        }
+        try {
+            return calculo.get();
+        } finally {
+            lugares.release();
+        }
+    }
+}</code></pre>
+
+<pre data-lang="java" data-file="src/main/java/lab/notas/sesiones/SesionService.java"><code>package lab.notas.sesiones;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.util.Base64;
+import java.util.Optional;
+
+import lab.notas.NotasProps;
+
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Service;
+import org.springframework.web.ErrorResponseException;
+
+@Service
+public class SesionService {
+
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    private final JdbcClient db;
+    private final NotasProps props;
+    private final Bcrypt bcrypt;
+    private final String hashFalso;
+
+    record Intento(long id, String claveHash, int fallidos) {
+    }
+
+    SesionService(JdbcClient db, NotasProps props, Bcrypt bcrypt) {
+        this.db = db;
+        this.props = props;
+        this.bcrypt = bcrypt;
+        // Para comparar contra algo cuando el usuario no existe o está bloqueado: misma demora, misma respuesta.
+        this.hashFalso = bcrypt.hash("no-existe-" + RANDOM.nextLong());
+    }
+
+    public void registrar(String usuario, String clave) {
+        try {
+            db.sql("INSERT INTO usuarios (usuario, clave_hash) VALUES (:u, :h)")
+                    .param("u", usuario).param("h", bcrypt.hash(clave)).update();
+        } catch (DuplicateKeyException e) {
+            throw new ErrorResponseException(HttpStatus.CONFLICT);
+        }
+    }
+
+    /** El token de una sesión nueva, o vacío si el usuario no existe, la clave no coincide o la cuenta está bloqueada. */
+    public Optional&lt;String&gt; iniciar(String usuario, String clave) {
+        // 1. Reservar el intento ANTES de comparar. El UPDATE es atómico: con 50 requests a la vez,
+        //    solo max-fallidos consiguen fila; el resto no llega a bcrypt con la clave real.
+        Optional&lt;Intento&gt; intento = db.sql("""
+                UPDATE usuarios
+                   SET fallidos = CASE WHEN bloqueado_hasta &lt; now() THEN 1 ELSE fallidos + 1 END,
+                       bloqueado_hasta = CASE WHEN bloqueado_hasta &lt; now() THEN NULL ELSE bloqueado_hasta END
+                 WHERE usuario = :u
+                   AND (bloqueado_hasta &lt; now() OR (bloqueado_hasta IS NULL AND fallidos &lt; :max))
+                RETURNING id, clave_hash, fallidos""")
+                .param("u", usuario).param("max", props.maxFallidos())
+                .query(Intento.class).optional();
+
+        if (intento.isEmpty()) {
+            bcrypt.coincide(clave, hashFalso);   // no existe o está bloqueado: la misma demora que un intento real
+            return Optional.empty();
+        }
+        Intento i = intento.get();
+
+        // 2. Comparar fuera de cualquier transacción, y dentro del bulkhead: si no hay lugar, 503 y el intento
+        //    ya reservado cuenta como fallido (quien insiste sin parar no gana intentos gratis).
+        if (!bcrypt.coincide(clave, i.claveHash())) {
+            if (i.fallidos() &gt;= props.maxFallidos()) {
+                db.sql("UPDATE usuarios SET bloqueado_hasta = now() + make_interval(mins =&gt; :m) WHERE id = :id")
+                        .param("m", props.bloqueoMinutos()).param("id", i.id()).update();
+            }
+            return Optional.empty();
+        }
+
+        // 3. Clave correcta: el contador vuelve a cero y nace la sesión.
+        db.sql("UPDATE usuarios SET fallidos = 0 WHERE id = :id").param("id", i.id()).update();
+        byte[] crudo = new byte[32];
+        RANDOM.nextBytes(crudo);
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(crudo);
+        db.sql("INSERT INTO sesiones (token_hash, usuario_id, vence) VALUES (:h, :id, now() + make_interval(mins =&gt; :m))")
+                .param("h", sha256(token)).param("id", i.id()).param("m", props.sesionMinutos()).update();
+        return Optional.of(token);
+    }
+
+    public Optional&lt;Long&gt; usuarioDe(String token) {
+        return db.sql("SELECT usuario_id FROM sesiones WHERE token_hash = :h AND vence &gt; now()")
+                .param("h", sha256(token)).query(Long.class).optional();
+    }
+
+    static byte[] sha256(String s) {
+        try {
+            return MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+}</code></pre>
+
+      <p>En <code>application.yaml</code>, debajo de <code>bcrypt-costo: 12</code>, agrega el tamaño del bulkhead. Con 2 CPU por VM, 2 es un punto de partida razonable: más bcrypt a la vez que núcleos solo los hace esperar a todos.</p>
+
+<pre data-lang="yaml"><code>notas:
+  # …lo de antes
+  bcrypt-concurrentes: 2</code></pre>
+
+<pre data-lang="java" data-file="src/test/java/lab/notas/sesiones/BcryptBulkheadTest.java"><code>package lab.notas.sesiones;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+
+import lab.notas.NotasProps;
+import org.junit.jupiter.api.Test;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.web.ErrorResponseException;
+
+/** Sin Spring ni base: un solo lugar, costo 12 y 20 comparaciones a la vez. */
+class BcryptBulkheadTest {
+
+    @Test
+    void conUnLugarLaRafagaRecibe503EnVezDeEncolarse() throws Exception {
+        Bcrypt bcrypt = new Bcrypt(new NotasProps(60, 5, 15, 12, 1));
+        String hash = bcrypt.hash("clave-de-prueba-1");
+        CountDownLatch largada = new CountDownLatch(1);
+        int ok = 0, ocupado = 0;
+
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            List&lt;Future&lt;Boolean&gt;&gt; fs = new ArrayList&lt;&gt;();
+            for (int i = 0; i &lt; 20; i++) {
+                fs.add(pool.submit(() -&gt; {
+                    largada.await();
+                    return bcrypt.coincide("clave-de-prueba-1", hash);
+                }));
+            }
+            largada.countDown();
+            for (Future&lt;Boolean&gt; f : fs) {
+                try {
+                    assertThat(f.get(30, TimeUnit.SECONDS)).isTrue();
+                    ok++;
+                } catch (ExecutionException e) {
+                    assertThat(e.getCause()).isInstanceOf(ErrorResponseException.class);
+                    assertThat(((ErrorResponseException) e.getCause()).getStatusCode())
+                            .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                    ocupado++;
+                }
+            }
+        }
+        // Al menos una pasó y al menos una recibió 503. Cuántas exactamente depende de tu CPU: anótalo.
+        System.out.printf("pasaron %d, recibieron 503 %d%n", ok, ocupado);
+        assertThat(ok).isPositive();
+        assertThat(ocupado).isPositive();
+    }
+}</code></pre>
+
+      <p>En <code>ConBase</code>, suma <code>r.add("notas.bcrypt-concurrentes", () -&gt; "4");</code> para que las demás pruebas tengan lugar. <code>BcryptBulkheadTest</code> imprime cuántas comparaciones pasaron y cuántas recibieron 503: anota tus números, dependen de tu CPU.</p>
+
+      <div class="table-wrap">
+        <table class="t">
+          <thead><tr><th></th><th>Paso a paso</th><th>Con hilos</th></tr></thead>
+          <tbody>
+            <tr><td>Intentos por cuenta</td><td>La base los ordena con el <code>UPDATE</code> condicional</td><td>Igual, comprobado con 50 hilos a la vez</td></tr>
+            <tr><td>Ráfaga de inicios de sesión</td><td>Los bcrypt se encolan en los hilos de Tomcat y se llevan la CPU</td><td>Como mucho N a la vez; el resto, 503 en 200&#8239;ms</td></tr>
+            <tr><td>Un intento que recibe 503</td><td>No existe</td><td>Ya reservó su intento: cuenta como fallido</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>La última fila es una decisión: un intento que no se pudo comparar se cuenta igual, para que inundar el servidor no sea una forma de ganar intentos gratis. El costo es que un usuario legítimo, en medio de un ataque, puede gastar intentos sin culpa.</p>
+
+      <h2 id="limites">Lo que falta para producción</h2>
+
+      <ul>
+        <li><b>Los parches de la JVM y de la imagen.</b> <code>unattended-upgrades</code> cubre los paquetes de Ubuntu; la imagen de la etapa 3 hay que reconstruirla cuando sale un parche de Temurin, y escanearla (M58).</li>
+        <li><b>Los secretos.</b> En las VMs viven en archivos 600 de root; en k3s, en Secrets cifrados en etcd con <code>--secrets-encryption</code>. Lo siguiente es un gestor de secretos con rotación.</li>
+        <li><b>Los logs fuera de la máquina.</b> Quien toma una VM como root puede borrar sus logs. Los de auditd, nftables, Nginx y ModSecurity tienen que viajar a otro lado (M59).</li>
+        <li><b>La protección contra DDoS volumétrico.</b> Ningún firewall en tu VM aguanta un enlace saturado: eso se resuelve antes de que el tráfico llegue, en el proveedor (<a href="../modules/m32-firewalls.html#ubicacion-ddos">M32</a>).</li>
+        <li><b>mTLS entre capas.</b> En la etapa 3, el tráfico dentro del clúster va en claro. Una malla de servicios o TLS entre gateway y API lo cierra.</li>
+        <li><b>Respaldos.</b> La base no tiene. Un respaldo que nadie restauró no cuenta.</li>
+      </ul>
+
+      <h2 id="repositorio">Tu repositorio</h2>
+
+      <div class="pj-repo" data-repo="a29">
+        <p class="pj-repo-head">Sube el proyecto a un repositorio propio, por ejemplo <code>a29-servidor-seguro</code>, y pega aquí el enlace. Revisa antes que <code>infra/.secretos.yaml</code>, <code>infra/.tls</code> e <code>infra/.kube</code> no estén en el commit.</p>
+        <ul class="pj-checks">
+          <li data-check="verify">Las cuatro pruebas de <code>NotasApiTest</code> pasan con <code>./mvnw verify</code>.</li>
+          <li data-check="etapa1">Levantaste la etapa 1 y <code>scripts/ataques.sh</code> terminó con 0 fallas.</li>
+          <li data-check="egreso">Comprobaste que el usuario <code>notas</code> no puede salir a internet, y viste la línea en el log.</li>
+          <li data-check="etapa2">Levantaste la etapa 2 y mediste el hueco del failover de la IP virtual.</li>
+          <li data-check="etapa3">Levantaste la etapa 3 y comprobaste las NetworkPolicy desde un pod.</li>
+          <li data-check="hilos">Hiciste fallar <code>BloqueoConcurrenteTest</code> con la versión ingenua, y pasar con la del paso 1.</li>
+          <li data-check="carga">Corriste Gatling contra las tres etapas y anotaste qué capa escala primero.</li>
+        </ul>
+      </div>
+
+      <h2 id="conectar">Cómo conectar</h2>
+
+      <p>Este proyecto funciona solo. Si quieres juntarlo con uno anterior:</p>
+
+      <ul class="pj-connect">
+        <li>
+          <p class="pj-connect-title">Con A00, el laboratorio</p>
+          <p>A00 ya separaba a Flyway de la app (Flyway directo a PostgreSQL, la app por PgBouncer). Aquí la separación es de permisos: otro rol y otro proceso. Si sumas PgBouncer, ponlo en la red de datos y deja que solo él hable con la base.</p>
+        </li>
+        <li>
+          <p class="pj-connect-title">Con A01, detrás de Nginx</p>
+          <p>El upstream, <code>max_fails</code> y <code>limit_req</code> son los de A01. Lo nuevo es lo que está antes del <code>proxy_pass</code>: ModSecurity, la lista blanca de rutas y las cabeceras de seguridad.</p>
+        </li>
+        <li>
+          <p class="pj-connect-title">Con A07, Kubernetes</p>
+          <p>A07 cuida que un despliegue no corte; esta guía cuida qué puede hacer cada pod. Suma a la API de esta guía el <code>preStop</code> y el apagado ordenado de A07, y a A07 el namespace <code>restricted</code> y las NetworkPolicy de esta.</p>
+        </li>
+        <li>
+          <p class="pj-connect-title">Con A12 y A13, sesiones y OAuth</p>
+          <p>El token opaco de esta guía es la versión mínima. A12 lo lleva a una cookie con CSRF para un navegador, y A13 lo cambia por un servidor de identidad: el borde y las capas de esta guía no cambian.</p>
+        </li>
+        <li>
+          <p class="pj-connect-title">Con A14, observabilidad</p>
+          <p>Las líneas de <code>nft entrada</code>, los 403 de ModSecurity y los 429 de Nginx son métricas que valen una alerta: un salto de 403 es alguien probando, y un salto de 429 en el inicio de sesión es credential stuffing.</p>
+        </li>
+      </ul>
+
+      <p>La teoría está en el curso:</p>
+
+      <ul class="pj-connect">
+        <li>
+          <p class="pj-connect-title">Firewall, WAF y gateway</p>
+          <p>Dónde va cada uno, qué patrón de despliegue elegir y cómo se mantienen disponibles: <a href="../modules/m32-firewalls.html#ubicacion">M32. Firewalls</a>.</p>
+        </li>
+        <li>
+          <p class="pj-connect-title">Endurecer Linux</p>
+          <p>SSH, sysctl, systemd y auditd, medida por medida: <a href="../modules/m33-hardening-linux.html">M33. Hardening de Linux</a>.</p>
+        </li>
+        <li>
+          <p class="pj-connect-title">Roles y privilegios en la base</p>
+          <p><a href="../modules/m35-seguridad-bd.html">M35. Seguridad en bases de datos</a>.</p>
+        </li>
+        <li>
+          <p class="pj-connect-title">La VPC y los security groups</p>
+          <p><a href="../modules/m37-nube.html">M37. Arquitecturas seguras en la nube</a>.</p>
+        </li>
+        <li>
+          <p class="pj-connect-title">Pods y NetworkPolicy</p>
+          <p><a href="../modules/m57-contenedores-k8s.html">M57. Contenedores y Kubernetes</a>.</p>
+        </li>
+        <li>
+          <p class="pj-connect-title">En el glosario</p>
+          <p><a href="../glosario.html#t-waf">WAF</a>, <a href="../glosario.html#t-vrrp">VRRP</a>, <a href="../glosario.html#t-bola">BOLA</a> y <a href="../glosario.html#t-bulkhead">bulkhead</a>.</p>
+        </li>
+      </ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/a29.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M73. El navegador por dentro</title>
+<meta name="description" content="Qué pasa entre que llega un HTML y ves una página: el parser que corrige, el DOM, el render y el event loop; qué código corre en el servidor, en el navegador y en Wasm, y por qué todo lo que llega al navegador lo controla quien lo usa.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m73">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>El navegador por dentro</h1>
+        <p class="lead">Casi todos los ataques web son una regla del navegador usada a favor de otro: un string que el parser convierte en código, una cookie que viaja sola, un botón oculto que igual se puede apretar. Antes de defenderte, tienes que saber qué hace el navegador con lo que le mandas.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M73</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>100 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M01, M10</dd></div>
+          <div><dt>Estado</dt><dd data-status="m73">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Decir <b>qué corre dónde</b> en una aplicación web: qué ejecuta PHP en el servidor, qué ejecuta el navegador y dónde vive Wasm.</li>
+    <li>Explicar cómo el <b>parser de HTML</b> convierte un string en un árbol, y por qué el mismo texto es marcado en un contexto y texto en otro.</li>
+    <li>Distinguir <code>textContent</code> de <code>innerHTML</code> y saber cuál llama al parser.</li>
+    <li>Predecir el orden de un <b>event loop</b> con tareas y microtareas, y explicar por qué una tarea larga congela la página.</li>
+    <li>Ubicar la <b>frontera de confianza</b> entre el navegador y el servidor, y usar DevTools para ver lo que ve un atacante.</li>
+  </ul>
+</section>
+
+<p>En <a href="m01-viaje-request.html#recorrido">M01</a> seguiste una request hasta el servidor, y en <a href="m10-seguridad.html#xss-csrf-detalle">M10</a> viste XSS y CSRF en un párrafo cada uno. Esta parte, la IX, baja al mecanismo, y empieza por la pieza que M10 daba por sabida: el navegador. Todos los ejemplos salen del sistema de control de prácticas, una API en PHP sobre MariaDB con estudiantes, reclutadores, oportunidades y postulaciones.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una imprenta y un lector. El servidor es la imprenta: tiene los originales, las planchas y la lista de suscriptores, y nada de eso sale de ahí. Lo que llega a tu casa es el periódico impreso. Con el periódico en la mano puedes recortarlo, tacharlo o pegarle hojas: es tuyo. El navegador es la casa del lector. Todo lo que mandas ahí, el lector lo puede leer y cambiar. Lo único que no puede tocar es lo que quedó en la imprenta.</p>
+</aside>
+
+<h2 id="lamina">Lámina 73.A: qué corre dónde</h2>
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 420" role="img" aria-labelledby="f73lt f73ld">
+<title id="f73lt">Qué corre dónde en una aplicación web</title>
+<desc id="f73ld">A la izquierda, el servidor de XAMPP con Apache, PHP y MariaDB, y lo que nunca sale de él. En el medio, HTTP lleva HTML, JSON y cookies. A la derecha, el navegador: el proceso del navegador con las cookies y la red, y un proceso renderer en sandbox con el parser de HTML, el DOM, el CSSOM y el render, el motor de JavaScript con Wasm adentro y el event loop.</desc>
+<defs><marker id="f73la" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="30" width="236" height="376" rx="12"/>
+<text class="dg-group" x="132" y="22" text-anchor="middle">Servidor (XAMPP)</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="30" y="46" width="204" height="52" rx="8"/>
+<text class="dg-small" x="132.0" y="68.5" text-anchor="middle">Apache</text>
+<text class="dg-tiny" x="132.0" y="83.5" text-anchor="middle">recibe y elige el archivo</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="30" y="112" width="204" height="52" rx="8"/>
+<text class="dg-small" x="132.0" y="134.5" text-anchor="middle">PHP</text>
+<text class="dg-tiny" x="132.0" y="149.5" text-anchor="middle">ejecuta el script, genera HTML</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="30" y="178" width="204" height="52" rx="8"/>
+<text class="dg-small" x="132.0" y="200.5" text-anchor="middle">MariaDB</text>
+<text class="dg-tiny" x="132.0" y="215.5" text-anchor="middle">las tablas del sistema</text>
+<rect class="dg-ok" x="30" y="252" width="204" height="138" rx="8"/>
+<text class="dg-small" x="132" y="276" text-anchor="middle">Nunca sale del servidor</text>
+<text class="dg-tiny" x="132" y="302" text-anchor="middle">el código PHP</text>
+<text class="dg-tiny" x="132" y="322" text-anchor="middle">el .env y COOKIE_KEY</text>
+<text class="dg-tiny" x="132" y="342" text-anchor="middle">las consultas SQL</text>
+<text class="dg-tiny" x="132" y="362" text-anchor="middle">la contraseña de la base</text>
+<path class="dg-edge" d="M132 98 L132 110" marker-end="url(#f73la)"/>
+<path class="dg-edge" d="M132 164 L132 176" marker-end="url(#f73la)"/>
+<path class="dg-edge" d="M252 150 L318 150" marker-end="url(#f73la)"/>
+<path class="dg-edge" d="M318 186 L252 186" marker-end="url(#f73la)"/>
+<text class="dg-tiny dg-mono" x="285" y="136" text-anchor="middle">HTTP</text>
+<text class="dg-tiny" x="285" y="206" text-anchor="middle">HTML, JSON</text>
+<text class="dg-tiny" x="285" y="222" text-anchor="middle">cookies</text>
+<rect class="dg-frame" x="320" y="30" width="436" height="376" rx="12"/>
+<text class="dg-group" x="538" y="22" text-anchor="middle">Navegador</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="336" y="44" width="404" height="44" rx="8"/>
+<text class="dg-small" x="538.0" y="62.5" text-anchor="middle">Proceso del navegador</text>
+<text class="dg-tiny" x="538.0" y="77.5" text-anchor="middle">pestañas, red, cookies, almacenamiento</text>
+<rect class="dg-frame" x="336" y="102" width="404" height="290" rx="10" style="stroke-dasharray:6 4"/>
+<text class="dg-tiny" x="724" y="120" text-anchor="end">renderer de un sitio, en sandbox</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="352" y="132" width="176" height="48" rx="8"/>
+<text class="dg-small" x="440.0" y="152.5" text-anchor="middle">Parser de HTML</text>
+<text class="dg-tiny" x="440.0" y="167.5" text-anchor="middle">string a árbol</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="548" y="132" width="176" height="48" rx="8"/>
+<text class="dg-small" x="636.0" y="152.5" text-anchor="middle">DOM</text>
+<text class="dg-tiny" x="636.0" y="167.5" text-anchor="middle">el árbol vivo de la página</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="352" y="196" width="176" height="48" rx="8"/>
+<text class="dg-small" x="440.0" y="216.5" text-anchor="middle">CSSOM</text>
+<text class="dg-tiny" x="440.0" y="231.5" text-anchor="middle">las reglas de estilo</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="548" y="196" width="176" height="48" rx="8"/>
+<text class="dg-small" x="636.0" y="216.5" text-anchor="middle">Render</text>
+<text class="dg-tiny" x="636.0" y="231.5" text-anchor="middle">layout y pintado</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="352" y="262" width="372" height="56" rx="8"/>
+<text class="dg-small" x="452" y="286" text-anchor="middle">Motor de JavaScript</text>
+<text class="dg-tiny" x="452" y="302" text-anchor="middle">tu app.js, fetch</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="568" y="270" width="144" height="40" rx="8"/>
+<text class="dg-small" x="640.0" y="286.5" text-anchor="middle">Wasm</text>
+<text class="dg-tiny" x="640.0" y="301.5" text-anchor="middle">misma caja</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="352" y="334" width="372" height="44" rx="8"/>
+<text class="dg-small" x="538.0" y="352.5" text-anchor="middle">Event loop</text>
+<text class="dg-tiny" x="538.0" y="367.5" text-anchor="middle">un hilo: tarea, microtareas, render</text>
+<path class="dg-edge" d="M528 156 L546 156" marker-end="url(#f73la)"/>
+<path class="dg-edge" d="M636 182 L636 194" marker-end="url(#f73la)"/>
+<path class="dg-edge" d="M528 220 L546 220" marker-end="url(#f73la)"/>
+<g class="pl-pin"><circle cx="42" cy="58" r="11"/><text x="42" y="62" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="42" cy="124" r="11"/><text x="42" y="128" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="42" cy="190" r="11"/><text x="42" y="194" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="42" cy="264" r="11"/><text x="42" y="268" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="285" cy="166" r="11"/><text x="285" y="170" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="348" cy="56" r="11"/><text x="348" y="60" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="348" cy="114" r="11"/><text x="348" y="118" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="364" cy="144" r="11"/><text x="364" y="148" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="560" cy="144" r="11"/><text x="560" y="148" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="364" cy="208" r="11"/><text x="364" y="212" text-anchor="middle">10</text></g>
+<g class="pl-pin"><circle cx="364" cy="274" r="11"/><text x="364" y="278" text-anchor="middle">11</text></g>
+<g class="pl-pin"><circle cx="580" cy="282" r="11"/><text x="580" y="286" text-anchor="middle">12</text></g>
+<g class="pl-pin"><circle cx="364" cy="346" r="11"/><text x="364" y="350" text-anchor="middle">13</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 73.A.</b> Una aplicación web en dos máquinas. Lo verde nunca sale del servidor; todo lo que cruza HTTP queda en manos del navegador.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Apache</b><span>Recibe la request y decide qué archivo la atiende: uno estático se manda tal cual; uno <code>.php</code> se le pasa a PHP. <a href="#viaje">73.1</a></span></li>
+  <li><b>PHP</b><span>Ejecuta el script en el servidor. Lo que imprime con <code>echo</code> es la respuesta; el código no viaja. <a href="#quien">73.7</a></span></li>
+  <li><b>MariaDB</b><span>La base del sistema. Solo PHP habla con ella, con la contraseña del <code>.env</code>. <a href="#viaje">73.1</a></span></li>
+  <li><b>Lo que nunca sale</b><span>El código PHP, el <code>.env</code> con <code>COOKIE_KEY</code>, las consultas. Si algo de esto llega al navegador, es una falla. <a href="#frontera">73.8</a></span></li>
+  <li><b>HTTP</b><span>Lo único que cruza: HTML, JSON, archivos y cookies. <a href="#viaje">73.1</a></span></li>
+  <li><b>Proceso del navegador</b><span>Guarda las cookies, hace la red y decide qué recibe cada página. <a href="#procesos">73.6</a></span></li>
+  <li><b>Renderer en sandbox</b><span>Un proceso por sitio, sin acceso directo al disco ni a otros sitios. <a href="#procesos">73.6</a></span></li>
+  <li><b>Parser de HTML</b><span>Convierte el string en un árbol y corrige los errores según la especificación. <a href="#parser">73.2</a></span></li>
+  <li><b>DOM</b><span>El árbol vivo de la página: lo que JavaScript lee y cambia. <a href="#dom">73.3</a></span></li>
+  <li><b>CSSOM y render</b><span>Los estilos, el layout y el pintado. <a href="#render">73.4</a></span></li>
+  <li><b>Motor de JavaScript</b><span>Corre tu <code>app.js</code> y lo que llegue a ejecutarse en la página, tuyo o no. <a href="#event-loop">73.5</a></span></li>
+  <li><b>Wasm</b><span>Código compilado que corre dentro del mismo motor, con las mismas reglas de la página (M85). <a href="#quien">73.7</a></span></li>
+  <li><b>Event loop</b><span>El único hilo de la página: una tarea, sus microtareas, el render. <a href="#event-loop">73.5</a></span></li>
+</ol>
+
+<h2 id="viaje"><span class="sec-num">73.1</span>El viaje de una página y de un fetch</h2>
+
+<p>Una aplicación web moderna hace dos tipos de viaje. En el primero, el navegador pide una página y el servidor la arma: Apache ve que es un <code>.php</code>, PHP ejecuta el script, consulta la base y escribe HTML. En el segundo, la página ya cargada pide datos con <code>fetch</code> y los pinta ella misma. El sistema de prácticas es del segundo tipo: su <code>api/</code> solo devuelve JSON, y un frontend en JavaScript lo pinta.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 674" role="img" aria-labelledby="f731t f731d">
+<title id="f731t">El viaje de una página y de un fetch</title>
+<desc id="f731d">El navegador pide una página. Apache le pasa el script a PHP, PHP consulta MariaDB y genera HTML. El navegador arma el DOM mientras llega, pide los archivos estáticos (que PHP no toca) y corre app.js, que hace un fetch a la API con la cookie; la API responde JSON y JavaScript lo pinta en el DOM.</desc>
+<defs><marker id="f731-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f731-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f731-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f731-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador</text>
+<path class="dg-frame" d="M70.0 40 V616"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Apache</text>
+<path class="dg-frame" d="M280.0 40 V616"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">PHP</text>
+<path class="dg-frame" d="M490.0 40 V616"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M700.0 40 V616"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#f731-a)"/>
+<rect x="122.80000000000001" y="55" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">GET /index.php</text>
+<path class="dg-edge" d="M283.0 106 L485.0 106" marker-end="url(#f731-a)"/>
+<rect x="322.9" y="89" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">ejecuta index.php</text>
+<path class="dg-edge" d="M493.0 140 L695.0 140" marker-end="url(#f731-a)"/>
+<rect x="529.6" y="123" width="130.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="134" text-anchor="middle">SELECT … (prepare)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 174 L495.0 174" marker-end="url(#f731-r)"/>
+<rect x="572.5" y="157" width="45.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="168" text-anchor="middle">filas</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 208 L285.0 208" marker-end="url(#f731-r)"/>
+<rect x="306.4" y="191" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="202" text-anchor="middle">HTML generado con echo</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 242 L75.0 242" marker-end="url(#f731-r)"/>
+<rect x="126.1" y="225" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="236" text-anchor="middle">200 text/html</text>
+<rect x="80.0" y="262" width="272" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="90.0" y="278">el parser arma el DOM mientras llega</text>
+<path class="dg-edge" d="M73.0 310 L275.0 310" marker-end="url(#f731-a)"/>
+<rect x="89.80000000000001" y="293" width="170.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="304" text-anchor="middle">GET app.js y estilos.css</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 344 L75.0 344" marker-end="url(#f731-r)"/>
+<rect x="46.900000000000006" y="327" width="256.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="338" text-anchor="middle">200: archivos estáticos, PHP no corre</text>
+<rect x="80.0" y="364" width="265" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="90.0" y="380">el motor de JavaScript corre app.js</text>
+<path class="dg-edge" d="M73.0 412 L275.0 412" marker-end="url(#f731-a)"/>
+<rect x="43.60000000000002" y="395" width="262.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="406" text-anchor="middle">fetch GET …/oportunidades.php + cookie</text>
+<path class="dg-edge" d="M283.0 446 L485.0 446" marker-end="url(#f731-a)"/>
+<rect x="316.3" y="429" width="137.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="440" text-anchor="middle">ejecuta el endpoint</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 480 L285.0 480" marker-end="url(#f731-r)"/>
+<rect x="365.8" y="463" width="38.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="474" text-anchor="middle">JSON</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 514 L75.0 514" marker-end="url(#f731-r)"/>
+<rect x="142.6" y="497" width="64.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="508" text-anchor="middle">200 JSON</text>
+<rect x="80.0" y="534" width="258" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="90.0" y="550">JavaScript pinta el feed en el DOM</text>
+<rect class="dg-box dg-box--em" x="8.0" y="628" width="124" height="38" rx="4"/>
+<text class="dg-small" x="70.0" y="644" text-anchor="middle" style="font-weight:700">Chrome, Firefox</text>
+<text class="dg-tiny" x="70.0" y="659" text-anchor="middle">tu máquina</text>
+<rect class="dg-box dg-box--em" x="218.0" y="628" width="124" height="38" rx="4"/>
+<text class="dg-small" x="280.0" y="644" text-anchor="middle" style="font-weight:700">httpd</text>
+<text class="dg-tiny" x="280.0" y="659" text-anchor="middle">XAMPP</text>
+<rect class="dg-box dg-box--em" x="428.0" y="628" width="124" height="38" rx="4"/>
+<text class="dg-small" x="490.0" y="644" text-anchor="middle" style="font-weight:700">PHP 8</text>
+<text class="dg-tiny" x="490.0" y="659" text-anchor="middle">módulo de Apache</text>
+<rect class="dg-box dg-box--em" x="638.0" y="628" width="124" height="38" rx="4"/>
+<text class="dg-small" x="700.0" y="644" text-anchor="middle" style="font-weight:700">MariaDB</text>
+<text class="dg-tiny" x="700.0" y="659" text-anchor="middle">puerto 3308</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 73.1.</b> Los dos viajes. Los archivos estáticos (<code>app.js</code>, <code>estilos.css</code>) Apache los manda sin pasar por PHP. El <code>fetch</code> lleva la cookie de la sesión, y eso es lo que M76 va a aprovechar para explicar CSRF.</figcaption>
+</figure>
+
+
+<p>Tres cosas para quedarte de esta figura. El navegador empieza a construir la página <b>antes</b> de que termine de llegar: el parser trabaja sobre lo que va recibiendo. El servidor nunca manda PHP, manda lo que PHP imprimió. Y la cookie viaja sola en cada request al mismo sitio, la pida tu código o no; cómo lo decide el navegador es <a href="m74-origen-cookies.html#samesite">M74</a>.</p>
+
+<h2 id="parser"><span class="sec-num">73.2</span>Del HTML al DOM: un parser que no falla</h2>
+
+<p>El <dfn data-term="parser-html">parser de HTML</dfn> convierte bytes en un árbol en dos etapas. El <b class="no-autolink">tokenizer</b> lee caracteres y produce tokens (una etiqueta que abre, texto, una que cierra). El <b>constructor del árbol</b> toma esos tokens y arma nodos. A diferencia de un parser de JSON, este nunca rechaza la entrada: si falta un cierre, lo agrega; si una etiqueta está donde no puede ir, la mueve. La especificación de HTML de WHATWG dice exactamente qué hacer con cada error, y por eso todos los navegadores arman el mismo árbol con el mismo HTML roto <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f732t f732d">
+<title id="f732t">Del string al árbol</title>
+<desc id="f732d">Tres etapas. A la izquierda, los bytes que llegan: un párrafo con una negrita sin cerrar. En el medio, los tokens que produce el tokenizer. A la derecha, el árbol que arma el constructor, con html, head y body agregados y las etiquetas cerradas.</desc>
+<defs><marker id="f732a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="40" width="222" height="200" rx="8"/>
+<text class="dg-small" x="125" y="30" text-anchor="middle">Bytes que llegan</text>
+<text class="dg-tiny dg-mono" x="32" y="70" text-anchor="start">&lt;p&gt;Hola &lt;b&gt;mundo</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="274" y="40" width="222" height="200" rx="8"/>
+<text class="dg-small" x="385" y="30" text-anchor="middle">Tokens</text>
+<text class="dg-tiny dg-mono" x="292" y="70" text-anchor="start">StartTag p</text>
+<text class="dg-tiny dg-mono" x="292" y="92" text-anchor="start">Character "Hola "</text>
+<text class="dg-tiny dg-mono" x="292" y="114" text-anchor="start">StartTag b</text>
+<text class="dg-tiny dg-mono" x="292" y="136" text-anchor="start">Character "mundo"</text>
+<text class="dg-tiny dg-mono" x="292" y="158" text-anchor="start">EOF</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="534" y="40" width="222" height="200" rx="8"/>
+<text class="dg-small" x="645" y="30" text-anchor="middle">Árbol (DOM)</text>
+<text class="dg-tiny dg-mono" x="552" y="70" text-anchor="start">html</text>
+<text class="dg-tiny dg-mono" x="552" y="92" text-anchor="start">  head</text>
+<text class="dg-tiny dg-mono" x="552" y="114" text-anchor="start">  body</text>
+<text class="dg-tiny dg-mono" x="552" y="136" text-anchor="start">    p</text>
+<text class="dg-tiny dg-mono" x="552" y="158" text-anchor="start">      "Hola "</text>
+<text class="dg-tiny dg-mono" x="552" y="180" text-anchor="start">      b</text>
+<text class="dg-tiny dg-mono" x="552" y="202" text-anchor="start">        "mundo"</text>
+<path class="dg-edge" d="M238 140 L272 140" marker-end="url(#f732a)"/>
+<path class="dg-edge" d="M498 140 L532 140" marker-end="url(#f732a)"/>
+<text class="dg-tiny" x="255" y="126" text-anchor="middle">tokenizer</text>
+<text class="dg-tiny" x="515" y="126" text-anchor="middle">árbol</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 73.2.</b> El párrafo sin cerrar. El árbol tiene <code>html</code>, <code>head</code> y <code>body</code> aunque no los escribiste, y la negrita queda cerrada dentro del párrafo.</figcaption>
+</figure>
+
+
+<p>Lo importante para la seguridad es el <b>contexto</b>. El <span class="no-autolink">tokenizer</span> cambia de modo según dónde está: dentro de un <code>&lt;title&gt;</code> o un <code>&lt;textarea&gt;</code> no reconoce etiquetas, todo es texto; dentro de un atributo, el valor termina en la comilla (o en el primer espacio, si no hay comillas); dentro de un <code>&lt;script&gt;</code>, el texto es JavaScript hasta que aparece <code>&lt;/script&gt;</code>. El mismo string puede ser texto inofensivo en un lugar y estructura nueva en otro. Escapar bien es escapar <b>para el contexto</b> donde va el dato, y M77 lo hace contexto por contexto.</p>
+
+<div data-sim="domparse"></div>
+
+<p>Prueba los ejemplos. Cada uno muestra una corrección que el navegador hace sin avisar: un <code>tbody</code> que aparece, un <code>div</code> que se muda fuera de la tabla, un atributo que se parte en dos. Ninguno es un ataque, pero los ataques reales de XSS (incluido el mutation XSS de M77) usan justamente estas reglas.</p>
+
+<h2 id="dom"><span class="sec-num">73.3</span>El DOM y las dos formas de meterle un string</h2>
+
+<p>El <dfn data-term="dom">DOM</dfn> (Document Object Model) es el árbol que arma el parser, convertido en objetos que JavaScript puede leer y cambiar: <code>document</code>, elementos, nodos de texto, atributos. Lo que ves en pantalla es el DOM, no el HTML que llegó: si JavaScript cambia un nodo, la página cambia, y el HTML original ya no importa.</p>
+
+<p>Para poner texto en la página hay dos caminos, y la diferencia es si interviene el parser:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f733t f733d">
+<title id="f733t">El mismo string por dos caminos</title>
+<desc id="f733d">Un string con una etiqueta b entra por dos caminos. Con textContent se vuelve un solo nodo de texto y se ve literal, con los signos de menor y mayor. Con innerHTML pasa por el parser y se vuelve un elemento b con el texto Ana adentro, que se ve en negrita.</desc>
+<defs><marker id="f733a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="86" width="190" height="56" rx="8"/>
+<text class="dg-small" x="109.0" y="110.5" text-anchor="middle">El string</text>
+<text class="dg-tiny dg-mono" x="109.0" y="125.5" text-anchor="middle">"&lt;b&gt;Ana&lt;/b&gt;"</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="286" y="20" width="200" height="56" rx="8"/>
+<text class="dg-small dg-mono" x="386.0" y="44.5" text-anchor="middle">el.textContent = s</text>
+<text class="dg-tiny" x="386.0" y="59.5" text-anchor="middle">no llama al parser</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="286" y="150" width="200" height="56" rx="8"/>
+<text class="dg-small dg-mono" x="386.0" y="174.5" text-anchor="middle">el.innerHTML = s</text>
+<text class="dg-tiny" x="386.0" y="189.5" text-anchor="middle">llama al parser</text>
+<rect class="dg-ok" x="556" y="20" width="200" height="56" rx="8"/>
+<text class="dg-small" x="656.0" y="44.5" text-anchor="middle">1 nodo de texto</text>
+<text class="dg-tiny" x="656.0" y="59.5" text-anchor="middle">se ve: &lt;b&gt;Ana&lt;/b&gt;</text>
+<rect class="dg-warnbox" x="556" y="150" width="200" height="56" rx="8"/>
+<text class="dg-small" x="656.0" y="174.5" text-anchor="middle">elemento b + texto</text>
+<text class="dg-tiny" x="656.0" y="189.5" text-anchor="middle">se ve: Ana en negrita</text>
+<path class="dg-edge" d="M204 104 L284 52" marker-end="url(#f733a)"/>
+<path class="dg-edge" d="M204 124 L284 176" marker-end="url(#f733a)"/>
+<path class="dg-edge" d="M486 48 L554 48" marker-end="url(#f733a)"/>
+<path class="dg-edge" d="M486 178 L554 178" marker-end="url(#f733a)"/>
+<text class="dg-tiny" x="521" y="112" text-anchor="middle">si el string trae marcado de otro,</text>
+<text class="dg-tiny" x="521" y="128" text-anchor="middle">ese marcado ahora es parte de tu página</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 73.3.</b> <code>textContent</code> crea un nodo de texto con el string tal cual. <code>innerHTML</code> le pasa el string al parser y crea los elementos que describa.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>API</th><th>¿Llama al parser?</th><th>Úsala para</th></tr></thead>
+    <tbody>
+      <tr><td><code>el.textContent = s</code></td><td>No</td><td>Cualquier dato: nombres, títulos, descripciones</td></tr>
+      <tr><td><code>document.createElement</code> + <code>setAttribute</code></td><td>No</td><td>Armar estructura con datos adentro (ojo con <code>href</code> y <code>src</code>, M77)</td></tr>
+      <tr><td><code>el.innerHTML = s</code></td><td>Sí</td><td>Solo HTML que escribiste tú, nunca con datos de usuarios sin sanitizar</td></tr>
+      <tr><td><code>insertAdjacentHTML</code>, <code>document.write</code>, <code>outerHTML</code></td><td>Sí</td><td>Lo mismo que <code>innerHTML</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>En el sistema de prácticas, el título y la descripción de una oportunidad los escribe un reclutador. Si el frontend los pinta con <code>innerHTML</code>, el reclutador escribe HTML en la página de todos los estudiantes. Esa es la puerta del XSS almacenado, y se cierra en M77 (y en la guía WEB05).</p>
+
+<h2 id="render"><span class="sec-num">73.4</span>Del árbol a los píxeles</h2>
+
+<p>Con el DOM y las reglas de CSS (el CSSOM), el navegador arma el árbol de render, calcula posiciones y tamaños (layout), pinta y compone las capas. No es un tema de seguridad en sí, pero explica dos cosas que vas a ver. Primero, por qué el render espera: un <code>&lt;script&gt;</code> sin <code>defer</code> detiene el parser hasta que se descarga y corre. Segundo, por qué existen ataques que miden tiempos de render o de carga para deducir datos de otro sitio (los XS-Leaks de M83).</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 180" role="img" aria-labelledby="f734t f734d">
+<title id="f734t">Del árbol a los píxeles</title>
+<desc id="f734d">El DOM y el CSSOM se combinan en el árbol de render. Después vienen el layout, que calcula posiciones y tamaños, el pintado y la composición de capas. Cambiar el DOM o leer una medida puede obligar a repetir el layout.</desc>
+<defs><marker id="f734a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="14" y="24" width="124" height="40" rx="8"/>
+<text class="dg-small" x="76.0" y="48.0" text-anchor="middle">DOM</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="84" width="124" height="40" rx="8"/>
+<text class="dg-small" x="76.0" y="108.0" text-anchor="middle">CSSOM</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="184" y="54" width="130" height="40" rx="8"/>
+<text class="dg-small" x="249.0" y="78.0" text-anchor="middle">Árbol de render</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="354" y="54" width="120" height="40" rx="8"/>
+<text class="dg-small" x="414.0" y="78.0" text-anchor="middle">Layout</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="514" y="54" width="110" height="40" rx="8"/>
+<text class="dg-small" x="569.0" y="78.0" text-anchor="middle">Pintado</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="664" y="54" width="92" height="40" rx="8"/>
+<text class="dg-small" x="710.0" y="78.0" text-anchor="middle">Composición</text>
+<path class="dg-edge" d="M138 44 L182 66" marker-end="url(#f734a)"/>
+<path class="dg-edge" d="M138 104 L182 82" marker-end="url(#f734a)"/>
+<path class="dg-edge" d="M314 74 L352 74" marker-end="url(#f734a)"/>
+<path class="dg-edge" d="M474 74 L512 74" marker-end="url(#f734a)"/>
+<path class="dg-edge" d="M624 74 L662 74" marker-end="url(#f734a)"/>
+<text class="dg-tiny" x="385" y="150" text-anchor="middle">cambiar el DOM o leer offsetHeight puede obligar a repetir el layout</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 73.4.</b> La tubería de render. JavaScript que cambia el DOM a mitad de camino obliga a repetir pasos.</figcaption>
+</figure>
+
+
+<h2 id="event-loop"><span class="sec-num">73.5</span>El event loop: un solo hilo</h2>
+
+<p>Todo el JavaScript de una página corre en un solo hilo, el mismo que hace el render. El <dfn data-term="event-loop">event loop</dfn> decide qué corre: toma una tarea de la cola (un clic, un <code>setTimeout</code>, la llegada de una respuesta), la corre entera, después corre <b>todas</b> las microtareas pendientes (los <code>then</code> de las promesas), y recién entonces deja que el navegador pinte y toma la siguiente tarea. La especificación de HTML define este orden <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 320" role="img" aria-labelledby="f735t f735d">
+<title id="f735t">El event loop</title>
+<desc id="f735d">Arriba, la pila de llamadas, la cola de tareas y la cola de microtareas. Abajo, una línea de tiempo del único hilo: una tarea, después todas las microtareas pendientes, después el render si toca, y recién entonces la siguiente tarea.</desc>
+<defs><marker id="f735a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="30" width="200" height="160" rx="8"/>
+<text class="dg-small" x="114" y="52" text-anchor="middle">Pila de llamadas</text>
+<rect class="dg-box" x="34" y="66" width="160" height="30" rx="8"/>
+<text class="dg-tiny dg-mono" x="114.0" y="85.0" text-anchor="middle">onClick()</text>
+<rect class="dg-box" x="34" y="104" width="160" height="30" rx="8"/>
+<text class="dg-tiny dg-mono" x="114.0" y="123.0" text-anchor="middle">cargarFeed()</text>
+<rect class="dg-box" x="34" y="142" width="160" height="30" rx="8"/>
+<text class="dg-tiny dg-mono" x="114.0" y="161.0" text-anchor="middle">fetch(…)</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="280" y="30" width="260" height="70" rx="8"/>
+<text class="dg-small" x="410" y="52" text-anchor="middle">Cola de tareas</text>
+<text class="dg-tiny" x="410" y="76" text-anchor="middle">setTimeout, clic, red, mensajes</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="280" y="120" width="260" height="70" rx="8"/>
+<text class="dg-small" x="410" y="142" text-anchor="middle">Cola de microtareas</text>
+<text class="dg-tiny" x="410" y="166" text-anchor="middle">then de una Promise, queueMicrotask</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="596" y="30" width="160" height="70" rx="8"/>
+<text class="dg-small" x="676.0" y="61.5" text-anchor="middle">3 · Render, si toca</text>
+<text class="dg-tiny" x="676.0" y="76.5" text-anchor="middle">estilo, layout, pintado</text>
+<path class="dg-edge" d="M278 64 L216 64" marker-end="url(#f735a)"/>
+<path class="dg-edge" d="M278 154 L216 154" marker-end="url(#f735a)"/>
+<text class="dg-tiny" x="247" y="52" text-anchor="middle">1</text>
+<text class="dg-tiny" x="247" y="142" text-anchor="middle">2</text>
+<text class="dg-small" x="385" y="222" text-anchor="middle">Un solo hilo, en este orden:</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="240" width="116" height="34" rx="8"/>
+<text class="dg-tiny" x="72.0" y="261.0" text-anchor="middle">tarea</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="134" y="240" width="56" height="34" rx="8"/>
+<text class="dg-tiny" x="162.0" y="261.0" text-anchor="middle">micro</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="194" y="240" width="56" height="34" rx="8"/>
+<text class="dg-tiny" x="222.0" y="261.0" text-anchor="middle">micro</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="254" y="240" width="76" height="34" rx="8"/>
+<text class="dg-tiny" x="292.0" y="261.0" text-anchor="middle">render</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="334" y="240" width="146" height="34" rx="8"/>
+<text class="dg-tiny" x="407.0" y="261.0" text-anchor="middle">tarea</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="484" y="240" width="56" height="34" rx="8"/>
+<text class="dg-tiny" x="512.0" y="261.0" text-anchor="middle">micro</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="544" y="240" width="76" height="34" rx="8"/>
+<text class="dg-tiny" x="582.0" y="261.0" text-anchor="middle">render</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="624" y="240" width="128" height="34" rx="8"/>
+<text class="dg-tiny" x="688.0" y="261.0" text-anchor="middle">tarea…</text>
+<text class="dg-tiny" x="385" y="302" text-anchor="middle">una tarea larga (un bucle de 3 s) congela clics y render: nada más corre en ese hilo</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 73.5.</b> Tareas, microtareas y render. Las microtareas se vacían completas antes de pintar o de tomar otra tarea.</figcaption>
+</figure>
+
+
+<pre data-lang="js"><code>console.log('1');
+setTimeout(() =&gt; console.log('2'), 0);         // una tarea nueva
+Promise.resolve().then(() =&gt; console.log('3')); // una microtarea
+console.log('4');
+// En la consola: 1, 4, 3, 2</code></pre>
+
+<p>El <code>3</code> sale antes que el <code>2</code> aunque el <code>setTimeout</code> diga cero milisegundos: la microtarea se corre al terminar la tarea actual, y el <code>setTimeout</code> espera a la siguiente vuelta. Para la seguridad, esto importa por dos motivos. Una tarea larga (un bucle que tarda tres segundos, una expresión regular mal escrita sobre un texto grande, el ReDoS de M83) congela clics y render, y la página deja de responder. Y un script ajeno que llega a ejecutarse en la página comparte este hilo y este DOM con el tuyo: no hay "mi JavaScript" y "el de otro", hay un solo programa.</p>
+
+<h2 id="procesos"><span class="sec-num">73.6</span>Un proceso por sitio</h2>
+
+<p>Los navegadores modernos reparten el trabajo en procesos. El proceso del navegador no tiene sandbox: hace la red, guarda las cookies y el almacenamiento, y decide qué recibe cada página. Las páginas corren en procesos renderer, cada uno en un sandbox del sistema operativo, sin acceso directo al disco ni a la red. Con <dfn data-term="site-isolation">Site Isolation</dfn>, Chromium usa un renderer distinto para cada sitio, incluso para un iframe de otro sitio dentro de tu página <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f736t f736d">
+<title id="f736t">Un proceso por sitio</title>
+<desc id="f736d">Arriba, el proceso del navegador, sin sandbox, con la red, las cookies y el almacenamiento. Abajo, tres procesos renderer en sandbox: uno para tu aplicación, uno para otro sitio y uno para un iframe de un tercer sitio, más el proceso de GPU. Los renderers piden cookies y red al proceso del navegador por IPC.</desc>
+<defs><marker id="f736a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="20" width="742" height="56" rx="8"/>
+<text class="dg-small" x="385.0" y="44.5" text-anchor="middle">Proceso del navegador</text>
+<text class="dg-tiny" x="385.0" y="59.5" text-anchor="middle">red, cookies, almacenamiento, permisos: sin sandbox, decide qué recibe cada renderer</text>
+<rect class="dg-frame" x="14" y="128" width="176" height="92" rx="10" style="stroke-dasharray:6 4"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="26" y="146" width="152" height="56" rx="8"/>
+<text class="dg-small" x="102.0" y="170.5" text-anchor="middle">Renderer: localhost</text>
+<text class="dg-tiny" x="102.0" y="185.5" text-anchor="middle">tu aplicación</text>
+<path class="dg-edge" d="M102 126 L102 78" marker-end="url(#f736a)"/>
+<rect class="dg-frame" x="204" y="128" width="176" height="92" rx="10" style="stroke-dasharray:6 4"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="216" y="146" width="152" height="56" rx="8"/>
+<text class="dg-small" x="292.0" y="170.5" text-anchor="middle">Renderer: otro sitio</text>
+<text class="dg-tiny" x="292.0" y="185.5" text-anchor="middle">otra pestaña</text>
+<path class="dg-edge" d="M292 126 L292 78" marker-end="url(#f736a)"/>
+<rect class="dg-frame" x="394" y="128" width="176" height="92" rx="10" style="stroke-dasharray:6 4"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="406" y="146" width="152" height="56" rx="8"/>
+<text class="dg-small" x="482.0" y="170.5" text-anchor="middle">Renderer: sitio C</text>
+<text class="dg-tiny" x="482.0" y="185.5" text-anchor="middle">un iframe de C</text>
+<path class="dg-edge" d="M482 126 L482 78" marker-end="url(#f736a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="600" y="146" width="156" height="56" rx="8"/>
+<text class="dg-small" x="678.0" y="170.5" text-anchor="middle">Proceso de GPU</text>
+<text class="dg-tiny" x="678.0" y="185.5" text-anchor="middle">pinta lo que le pasan</text>
+<path class="dg-edge" d="M678 144 L678 78" marker-end="url(#f736a)"/>
+<text class="dg-tiny dg-mono" x="118" y="110" text-anchor="middle">IPC</text>
+<text class="dg-tiny" x="300" y="240" text-anchor="middle">sandbox: sin acceso directo a disco, red ni a la memoria de otro renderer</text>
+<text class="dg-tiny" x="385" y="270" text-anchor="middle">Site Isolation: un renderer comprometido no tiene en su memoria los datos de otro sitio</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 73.6.</b> El proceso del navegador y los renderers. Cada renderer pide lo que necesita por IPC, y el proceso del navegador decide si se lo da.</figcaption>
+</figure>
+
+
+<p>Site Isolation existe por Spectre (2018): un ataque de canal lateral que deja leer memoria del propio proceso. Si dos sitios comparten proceso, uno podría leer datos del otro; separados, lo que se lee es solo lo propio. Las cabeceras COOP y COEP de M78 piden ese aislamiento de forma explícita.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Lo que no protege</p>
+  <p>El sandbox y Site Isolation protegen a un sitio de <b>otro</b> sitio y a tu máquina de una página. No protegen a tu sitio de sí mismo: un script que logra correr en tu página corre en tu renderer, con tu DOM, tus cookies sin <code>HttpOnly</code> y tus permisos. Esa es la razón de que el XSS sea tan grave.</p>
+</aside>
+
+<h2 id="quien"><span class="sec-num">73.7</span>Quién ejecuta qué: servidor, navegador y Wasm</h2>
+
+<p>La pregunta que ordena toda esta parte es dónde corre cada línea de código, porque de eso depende quién la controla.</p>
+
+<div class="tabs" data-tabs="Dónde corre el código">
+  <section data-tab="PHP (servidor)">
+    <p>PHP corre en el servidor. Lo que imprime es la respuesta. El navegador recibe el resultado, nunca el script:</p>
+    <pre data-lang="php"><code>&lt;?php // oportunidad.php: esto corre en el servidor y el navegador nunca lo ve
+require __DIR__ . '/api/core/connection.php';
+$stmt = Connection::load()-&gt;prepare('SELECT titulo, modalidad FROM oportunidades WHERE id = ?');
+$stmt-&gt;execute([(int)($_GET['id'] ?? 0)]);
+$o = $stmt-&gt;fetch(PDO::FETCH_ASSOC);
+?&gt;
+&lt;h1&gt;&lt;?= htmlspecialchars($o['titulo'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?&gt;&lt;/h1&gt;
+&lt;p&gt;Modalidad: &lt;?= htmlspecialchars($o['modalidad'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?&gt;&lt;/p&gt;</code></pre>
+    <p>Lo que llega al navegador:</p>
+    <pre data-lang="html"><code>&lt;h1&gt;Práctica de backend en Java&lt;/h1&gt;
+&lt;p&gt;Modalidad: remoto&lt;/p&gt;</code></pre>
+    <p>El <code>htmlspecialchars</code> con <code>ENT_QUOTES | ENT_SUBSTITUTE</code> y <code>UTF-8</code> convierte <code>&lt;</code>, <code>&gt;</code>, <code>&amp;</code> y las comillas en entidades, para que un título con marcado se vea como texto. Es el escape del contexto "texto dentro de HTML"; los otros contextos están en M77.</p>
+  </section>
+  <section data-tab="JavaScript (navegador)">
+    <p>JavaScript corre en el navegador, con el código a la vista de quien lo usa:</p>
+    <pre data-lang="js"><code>// app.js: esto corre en el navegador, y quien lo usa puede leerlo y cambiarlo
+const r = await fetch('api/endpoints/oportunidades.php', { credentials: 'same-origin' });
+const { data } = await r.json();
+const lista = document.querySelector('#feed');
+for (const o of data) {
+  const li = document.createElement('li');
+  li.textContent = o.titulo;          // texto: el parser no interviene
+  lista.append(li);
+}</code></pre>
+    <p>Cualquiera puede abrir este archivo, ponerle un punto de interrupción, cambiar una variable o llamar a la API sin pasar por él. Lo que hace este código es comodidad para el usuario honesto, no una barrera para el que no lo es.</p>
+  </section>
+  <section data-tab="Next.js (los dos)">
+    <p>Frameworks como Next.js mezclan los dos mundos en el mismo archivo: unos componentes corren solo en el servidor (Server Components) y otros también en el navegador (Client Components). La línea sigue existiendo, solo que es menos visible, y un secreto que cruza al lado del cliente queda publicado. Es el tema de M84.</p>
+  </section>
+  <section data-tab="Wasm (una caja)">
+    <p>WebAssembly es código compilado (de C, Rust, Go, incluso el intérprete de PHP entero) que corre en el motor de JavaScript, dentro del mismo renderer y con las mismas reglas de la página: no tiene más permisos que tu JavaScript. Se puede correr PHP dentro del navegador así, y en ese caso el servidor desaparece y todo queda del lado del cliente. Es el tema de M85.</p>
+  </section>
+</div>
+
+<h2 id="frontera"><span class="sec-num">73.8</span>La frontera de confianza</h2>
+
+<p>De todo lo anterior sale la regla más importante de la seguridad web: el navegador está del otro lado de la <a href="m54-threat-modeling.html#dfd-fronteras">frontera de confianza</a>. Todo lo que mandas ahí lo controla quien usa el navegador, y todo lo que llega desde ahí puede haber sido escrito a mano.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 292" role="img" aria-labelledby="f737t f737d">
+<title id="f737t">La frontera entre el navegador y el servidor</title>
+<desc id="f737d">A la izquierda, lo que controla cualquiera que usa el navegador: el HTML y el JavaScript que recibió, el DOM, los botones ocultos, las validaciones del formulario y cualquier request, también desde DevTools o curl. A la derecha, lo que solo controla el servidor: la clave que firma la cookie, quién es el usuario, su rol, las consultas y el .env. En el medio, la frontera de confianza.</desc>
+<defs><marker id="f737a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-bad" x="14" y="20" width="340" height="236" rx="8"/>
+<text class="dg-small dg-fail-text" x="184" y="44" text-anchor="middle">Lo controla quien usa el navegador</text>
+<text class="dg-tiny" x="34" y="74" text-anchor="start">· el HTML y el JavaScript que recibió</text>
+<text class="dg-tiny" x="34" y="99" text-anchor="start">· el DOM: puede cambiar cualquier nodo</text>
+<text class="dg-tiny" x="34" y="124" text-anchor="start">· los botones que ocultaste</text>
+<text class="dg-tiny" x="34" y="149" text-anchor="start">· las validaciones del formulario</text>
+<text class="dg-tiny" x="34" y="174" text-anchor="start">· los campos ocultos (creado_por)</text>
+<text class="dg-tiny" x="34" y="199" text-anchor="start">· cualquier request: DevTools, curl</text>
+<text class="dg-tiny" x="34" y="224" text-anchor="start">· las cookies sin HttpOnly (las lee)</text>
+<rect class="dg-ok" x="416" y="20" width="340" height="236" rx="8"/>
+<text class="dg-small" x="586" y="44" text-anchor="middle">Lo controla solo el servidor</text>
+<text class="dg-tiny" x="436" y="74" text-anchor="start">· COOKIE_KEY, que firma la sesión</text>
+<text class="dg-tiny" x="436" y="99" text-anchor="start">· quién es el usuario (la firma lo prueba)</text>
+<text class="dg-tiny" x="436" y="124" text-anchor="start">· qué rol tiene y qué puede hacer</text>
+<text class="dg-tiny" x="436" y="149" text-anchor="start">· las consultas a la base</text>
+<text class="dg-tiny" x="436" y="174" text-anchor="start">· el .env y la contraseña de la base</text>
+<text class="dg-tiny" x="436" y="199" text-anchor="start">· qué datos salen en cada respuesta</text>
+<path class="dg-feedback" d="M385 14 L385 266"/>
+<text class="dg-tiny" x="385" y="282" text-anchor="middle">frontera de confianza</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 73.7.</b> Los dos lados de la frontera. A la izquierda nada es una defensa; a la derecha está todo lo que decide.</figcaption>
+</figure>
+
+
+<p>Consecuencias directas, con el sistema de prácticas:</p>
+
+<ul>
+  <li><b>Ocultar un botón no es control de acceso.</b> Si el frontend esconde "Publicar oferta" a los estudiantes pero el endpoint no comprueba el rol, un estudiante publica igual.</li>
+  <li><b>Validar en el formulario es para la comodidad.</b> La fecha de cierre, el largo del título y la modalidad se validan otra vez en el servidor. El modelo <code>Oportunidades</code> ya lo hace con su lista de modalidades: bien.</li>
+  <li><b>Nada que identifique al usuario puede venir del body.</b> Hoy <code>oportunidades.php</code> toma <code>creado_por</code> de <code>$_POST</code>. Quien lo cambie publica a nombre de otro. Se arregla en M80 y en la guía WEB06.</li>
+</ul>
+
+<pre data-lang="php"><code>// Diseño de referencia: el servidor decide, no el botón ni el body
+$auth = requireAuth([ROL_RECLUTADOR]);      // rol leído de la cookie firmada
+$data = validarOportunidad($_POST);         // tipos, largos y fechas, otra vez
+$data['creado_por'] = (int)$auth['id'];     // el autor sale de la sesión, nunca del body</code></pre>
+
+<p><span class="badge badge--ref">Diseño de referencia</span> El código de arriba es la forma del arreglo; las funciones <code>validarOportunidad</code> y la constante del rol las escribe la guía WEB06.</p>
+
+<h2 id="devtools"><span class="sec-num">73.9</span>DevTools: lo que ve un atacante</h2>
+
+<p>Las herramientas de desarrollo del navegador (F12) son también la primera herramienta de seguridad, porque muestran exactamente lo mismo que puede ver y cambiar un atacante con tu aplicación:</p>
+
+<ol class="steps">
+  <li><span class="step-title">Elements</span>El DOM actual, no el HTML que llegó. Se puede editar cualquier nodo, mostrar un botón oculto o quitar un <code>disabled</code>.</li>
+  <li><span class="step-title">Network</span>Cada request con sus cabeceras, sus cookies y su respuesta. Revisa aquí que la API mande <code>Content-Type: application/json</code>: hoy <code>Response::json</code> no lo manda (hallazgo 5 del plan, M77).</li>
+  <li><span class="step-title">Application</span>Las cookies con sus atributos (<code>HttpOnly</code>, <code>Secure</code>, <code>SameSite</code>), <code>localStorage</code> y <code>sessionStorage</code>. <a href="m74-origen-cookies.html#cookies">M74</a> explica cada columna.</li>
+  <li><span class="step-title">Console</span>JavaScript con los mismos permisos que la página: lo que se puede hacer desde aquí lo puede hacer cualquier script que logre correr en ella.</li>
+  <li><span class="step-title">Copy as cURL</span>Clic derecho en una request de Network: la copia como comando, con cookies y cabeceras, lista para repetirla o cambiarla.</li>
+</ol>
+
+<pre data-lang="shell"><code># Lo que hace el formulario, sin el formulario: cualquiera puede mandar esto
+curl -i -X POST "http://localhost/SistemaControlPracticas/api/endpoints/oportunidades.php" \
+  -H "X-CSRF-Token: &lt;el token de su propia sesión&gt;" \
+  --cookie "&lt;COOKIE_NAME&gt;=&lt;su propia cookie&gt;" \
+  --data "titulo=Prueba&amp;descripcion=x&amp;fecha_cierre=2026-12-31&amp;creado_por=7"
+# creado_por=7 no es su id: si el servidor lo acepta, publica a nombre de otro</code></pre>
+
+<p>Esto no es un ataque contra nadie: es tu propia sesión, contra tu propio servidor local. Muestra que el servidor recibe lo que el cliente quiera mandar, y que la única defensa está en lo que el servidor comprueba.</p>
+
+<h2 id="fallas"><span class="sec-num">73.10</span>Qué falla</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+      <tr><td>Un estudiante publica ofertas aunque no ve el botón</td><td>El control de acceso vive en el frontend</td><td>Comprobar rol y permiso en el endpoint (M80)</td></tr>
+      <tr><td>Un título con <code>&lt;b&gt;</code> aparece en negrita en el feed</td><td>El frontend usa <code>innerHTML</code> con datos de usuarios</td><td><code>textContent</code>, o sanitizar si se permite formato (M77)</td></tr>
+      <tr><td>Abrir la URL de la API muestra el JSON interpretado como HTML</td><td>La respuesta no declara <code>Content-Type: application/json</code></td><td>Mandar el tipo y <code>X-Content-Type-Options: nosniff</code> (M78)</td></tr>
+      <tr><td>La página se congela al filtrar el feed</td><td>Una tarea larga en el único hilo</td><td>Trabajo más chico por tarea, o un Web Worker</td></tr>
+      <tr><td>Un selector <code>table &gt; tr</code> no encuentra filas</td><td>El parser insertó un <code>tbody</code></td><td>Seleccionar sobre el DOM real, no sobre el HTML escrito</td></tr>
+      <tr><td>El código fuente de PHP se descarga</td><td>El servidor no ejecuta PHP para ese archivo, o hay copias como <code>.php.bak</code> o una carpeta <code>.git</code> dentro de <code>htdocs</code></td><td>Sacar del webroot todo lo que no se sirve (guía WEB01)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>La pregunta de revisión de cualquier cambio web es la misma: ¿esta comprobación corre del lado derecho de la figura 73.7? Si la respuesta es "en el frontend", no es una comprobación, es una sugerencia. Lo que sigue en esta parte es cómo el navegador decide qué viaja (origen y cookies, <a href="m74-origen-cookies.html#origen">M74</a>), cuándo deja leer una respuesta de otro sitio (CORS, <a href="m75-cors.html#por-que">M75</a>) y cuándo manda tu cookie sin que lo pidas (CSRF, M76).</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m73"></div>
+<div data-exercise="m73-frontera"></div>
+<div data-checkpoint="m73"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m73.data.js"></script>
+<script src="../assets/js/data/exercises/m73.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>

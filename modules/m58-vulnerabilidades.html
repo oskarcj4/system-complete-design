@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M58. Gestión de vulnerabilidades</title>
+<meta name="description" content="Qué hacer con miles de hallazgos: CVE, CWE y la NVD; qué mide CVSS 4.0 y qué no; la probabilidad de EPSS; el catálogo KEV y las directivas de CISA; priorizar con explotación, exposición, alcanzabilidad y criticidad; plazos, excepciones que vencen, VEX y métricas.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m58">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Gestión de vulnerabilidades</h1>
+        <p class="lead">Un escáner encuentra 4 000 vulnerabilidades en una tienda pequeña. Nadie arregla 4 000 cosas. Este módulo trata de elegir bien las veinte que importan esta semana y de poder demostrar por qué esas.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M58</dd></div>
+          <div><dt>Parte</dt><dd>VII. Blue Team y DevSecOps</dd></div>
+          <div><dt>Duración</dt><dd>100 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M54, M55, M56</dd></div>
+          <div><dt>Estado</dt><dd data-status="m58">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Recorrer el <b>ciclo</b> descubrir, priorizar, arreglar y verificar, y decir por qué sin inventario no funciona.</li>
+    <li>Leer un registro <b>CVE</b>, su <b>CWE</b> y un vector de <b>CVSS 4.0</b>, y explicar qué mide el puntaje y qué no.</li>
+    <li>Usar la probabilidad de <b>EPSS</b> y el catálogo <b>KEV</b> como señales de explotación real.</li>
+    <li>Priorizar con <b>explotación, exposición, alcanzabilidad y criticidad</b>, y no solo con la severidad.</li>
+    <li>Fijar <b>plazos de parcheo</b> con excepciones que vencen, bajar el ruido con <b>VEX</b> y medir el programa con MTTR y cumplimiento.</li>
+  </ul>
+</section>
+
+<p>En <a href="m55-appsec.html#sca">M55.5</a> el SCA encontró una librería vulnerable, y en <a href="m55-appsec.html#pipeline">M55.8</a> quedó dicho que todo lo que no bloquea el build "va a la cola de hallazgos". En <a href="m56-supply-chain.html#sbom">M56.5</a> el SBOM de cada imagen dejó escrito qué hay adentro. Este módulo es esa cola. El primer día que Tienda Norte escanea sus 14 imágenes, su repositorio y su cuenta de nube, la herramienta devuelve <b>4 000 hallazgos</b>, 900 marcados como "críticos". El equipo puede arreglar unos 40 por semana.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>La guardia de un hospital. Llegan más pacientes de los que se pueden atender, así que alguien hace el triaje: no atiende primero al que más grita ni al de la herida más fea, sino al que se puede morir en la próxima hora. La severidad de una vulnerabilidad es lo fea que se ve la herida; la explotación activa, la exposición y lo que hay detrás son si el paciente se está desangrando.</p>
+</aside>
+
+<h2 id="lamina">La lámina: el vocabulario en una imagen</h2>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 380" role="img" aria-labelledby="f58Lt f58Ld">
+<title id="f58Lt">Lámina 58.A: un hallazgo y todo lo que se sabe de él</title>
+<desc id="f58Ld">Una ficha de hallazgo de Tienda Norte: Log4Shell en log4j-core 2.14.1 dentro de la imagen de la API. Cada fila es un dato: el identificador CVE, la debilidad CWE, la severidad CVSS, la probabilidad EPSS, si está en el catálogo KEV, el activo y su exposición, si el código vulnerable es alcanzable, la declaración VEX y el plazo de arreglo.</desc>
+<defs><marker id="f58La" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="110" y="16" width="550" height="348" rx="8"/>
+<text class="dg-label" x="385" y="40" text-anchor="middle">Hallazgo #1182 · log4j-core 2.14.1 en api@sha256:4f2a…</text>
+<path class="dg-feedback" d="M130 92 H640"/>
+<text class="dg-small" x="170" y="82" text-anchor="start">Identificador</text>
+<text class="dg-small dg-mono" x="330" y="82" text-anchor="start">CVE-2021-44228 (Log4Shell)</text>
+<g class="pl-pin"><circle cx="146" cy="78" r="11"/><text x="146" y="82" text-anchor="middle">1</text></g>
+<path class="dg-feedback" d="M130 124 H640"/>
+<text class="dg-small" x="170" y="114" text-anchor="start">Debilidad</text>
+<text class="dg-small dg-mono" x="330" y="114" text-anchor="start">CWE-20, CWE-502, CWE-917</text>
+<g class="pl-pin"><circle cx="146" cy="110" r="11"/><text x="146" y="114" text-anchor="middle">2</text></g>
+<path class="dg-feedback" d="M130 156 H640"/>
+<text class="dg-small" x="170" y="146" text-anchor="start">Severidad</text>
+<text class="dg-small dg-mono" x="330" y="146" text-anchor="start">CVSS 3.1: 10.0, crítica</text>
+<g class="pl-pin"><circle cx="146" cy="142" r="11"/><text x="146" y="146" text-anchor="middle">3</text></g>
+<path class="dg-feedback" d="M130 188 H640"/>
+<text class="dg-small" x="170" y="178" text-anchor="start">Probabilidad</text>
+<text class="dg-small dg-mono" x="330" y="178" text-anchor="start">EPSS 0.99999 (26 oct 2026)</text>
+<g class="pl-pin"><circle cx="146" cy="174" r="11"/><text x="146" y="178" text-anchor="middle">4</text></g>
+<path class="dg-feedback" d="M130 220 H640"/>
+<text class="dg-small" x="170" y="210" text-anchor="start">Explotada</text>
+<text class="dg-small dg-mono" x="330" y="210" text-anchor="start">En KEV desde el 10 dic 2021</text>
+<g class="pl-pin"><circle cx="146" cy="206" r="11"/><text x="146" y="210" text-anchor="middle">5</text></g>
+<path class="dg-feedback" d="M130 252 H640"/>
+<text class="dg-small" x="170" y="242" text-anchor="start">Activo</text>
+<text class="dg-small dg-mono" x="330" y="242" text-anchor="start">API pública, criticidad alta</text>
+<g class="pl-pin"><circle cx="146" cy="238" r="11"/><text x="146" y="242" text-anchor="middle">6</text></g>
+<path class="dg-feedback" d="M130 284 H640"/>
+<text class="dg-small" x="170" y="274" text-anchor="start">Alcanzable</text>
+<text class="dg-small dg-mono" x="330" y="274" text-anchor="start">Sí: registra headers del cliente</text>
+<g class="pl-pin"><circle cx="146" cy="270" r="11"/><text x="146" y="274" text-anchor="middle">7</text></g>
+<path class="dg-feedback" d="M130 316 H640"/>
+<text class="dg-small" x="170" y="306" text-anchor="start">Declaración</text>
+<text class="dg-small dg-mono" x="330" y="306" text-anchor="start">VEX: affected</text>
+<g class="pl-pin"><circle cx="146" cy="302" r="11"/><text x="146" y="306" text-anchor="middle">8</text></g>
+
+<text class="dg-small" x="170" y="338" text-anchor="start">Plazo</text>
+<text class="dg-small dg-mono" x="330" y="338" text-anchor="start">Actuar: 72 h desde el triaje</text>
+<g class="pl-pin"><circle cx="146" cy="334" r="11"/><text x="146" y="338" text-anchor="middle">9</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 58.A.</b> Un hallazgo de Tienda Norte con todo lo que el módulo enseña a leer. Los datos de CVE, CWE, EPSS y KEV son los reales de Log4Shell; el activo y el plazo son de la tienda.</figcaption>
+</figure>
+
+
+<ol class="plate-key">
+  <li><b>CVE</b><span>El identificador público de una vulnerabilidad concreta en un producto concreto. <a href="#cve">58.2</a></span></li>
+  <li><b>CWE</b><span>La categoría de la debilidad de fondo: validar mal la entrada, deserializar datos no confiables. <a href="#cve">58.2</a></span></li>
+  <li><b>CVSS</b><span>Un puntaje de 0 a 10 de qué tan grave es la falla en abstracto. <a href="#cvss">58.3</a></span></li>
+  <li><b>EPSS</b><span>La probabilidad estimada de que alguien intente explotarla en los próximos 30 días. <a href="#epss">58.4</a></span></li>
+  <li><b>KEV</b><span>El catálogo de CISA de vulnerabilidades con explotación confirmada. <a href="#kev">58.5</a></span></li>
+  <li><b>Activo y exposición</b><span>Dónde corre, quién puede llegar a ella y qué tan importante es lo que hay detrás. <a href="#priorizar">58.6</a></span></li>
+  <li><b>Alcanzabilidad</b><span>Si tu código llega de verdad a la función vulnerable. <a href="#ruido">58.8</a></span></li>
+  <li><b>VEX</b><span>La declaración escrita de si la vulnerabilidad te afecta o no, y por qué. <a href="#ruido">58.8</a></span></li>
+  <li><b>Plazo</b><span>Cuánto tiempo hay para arreglarla según su clase. <a href="#sla">58.7</a></span></li>
+</ol>
+
+<h2 id="ciclo"><span class="sec-num">58.1</span>El ciclo: descubrir, priorizar, arreglar, verificar</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f581t f581d">
+<title id="f581t">El ciclo de la gestión de vulnerabilidades</title>
+<desc id="f581d">A la izquierda, las fuentes de hallazgos: SCA, SAST, DAST, escaneo de imágenes, postura de la nube y pentest o bug bounty. Entran a un ciclo de cuatro etapas, descubrir, priorizar, arreglar y verificar, alrededor del inventario de activos.</desc>
+<defs><marker id="f581a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="22" width="150" height="34" rx="8"/>
+<text class="dg-tiny" x="89.0" y="43.0" text-anchor="middle">SCA (M55)</text>
+<path class="dg-feedback" d="M164 39 L208 150"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="66" width="150" height="34" rx="8"/>
+<text class="dg-tiny" x="89.0" y="87.0" text-anchor="middle">SAST (M55)</text>
+<path class="dg-feedback" d="M164 83 L208 150"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="110" width="150" height="34" rx="8"/>
+<text class="dg-tiny" x="89.0" y="131.0" text-anchor="middle">DAST (M55)</text>
+<path class="dg-feedback" d="M164 127 L208 150"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="154" width="150" height="34" rx="8"/>
+<text class="dg-tiny" x="89.0" y="175.0" text-anchor="middle">Imágenes y SBOM</text>
+<path class="dg-feedback" d="M164 171 L208 150"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="198" width="150" height="34" rx="8"/>
+<text class="dg-tiny" x="89.0" y="219.0" text-anchor="middle">Nube (M37)</text>
+<path class="dg-feedback" d="M164 215 L208 150"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="242" width="150" height="34" rx="8"/>
+<text class="dg-tiny" x="89.0" y="263.0" text-anchor="middle">Pentest, bug bounty</text>
+<path class="dg-feedback" d="M164 259 L208 150"/>
+<rect class="dg-box" x="210" y="124" width="160" height="52" rx="8"/>
+<text class="dg-small" x="290.0" y="146.5" text-anchor="middle">Descubrir</text>
+<text class="dg-tiny" x="290.0" y="161.5" text-anchor="middle">qué hay y qué tiene</text>
+<rect class="dg-box dg-box--em" x="400" y="14" width="160" height="52" rx="8"/>
+<text class="dg-small" x="480.0" y="36.5" text-anchor="middle">Priorizar</text>
+<text class="dg-tiny" x="480.0" y="51.5" text-anchor="middle">qué primero</text>
+<rect class="dg-box" x="590" y="124" width="160" height="52" rx="8"/>
+<text class="dg-small" x="670.0" y="146.5" text-anchor="middle">Arreglar</text>
+<text class="dg-tiny" x="670.0" y="161.5" text-anchor="middle">parche, mitigación</text>
+<rect class="dg-box" x="400" y="234" width="160" height="52" rx="8"/>
+<text class="dg-small" x="480.0" y="256.5" text-anchor="middle">Verificar</text>
+<text class="dg-tiny" x="480.0" y="271.5" text-anchor="middle">lo que corre, otra vez</text>
+<path class="dg-edge" d="M330 122 L400 50" marker-end="url(#f581a)"/>
+<path class="dg-edge" d="M560 50 L630 122" marker-end="url(#f581a)"/>
+<path class="dg-edge" d="M630 178 L560 250" marker-end="url(#f581a)"/>
+<path class="dg-edge" d="M400 250 L330 178" marker-end="url(#f581a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="410" y="126" width="140" height="48" rx="8"/>
+<text class="dg-small" x="480.0" y="146.5" text-anchor="middle">Inventario</text>
+<text class="dg-tiny" x="480.0" y="161.5" text-anchor="middle">activos y dueños</text>
+<text class="dg-tiny" x="480" y="196" text-anchor="middle">sin inventario, el ciclo no sabe dónde mirar</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 58.1.</b> Seis fuentes alimentan un ciclo de cuatro etapas. El inventario está en el centro porque cada etapa pregunta lo mismo: ¿dónde corre esto y de quién es?</figcaption>
+</figure>
+
+
+<p>La gestión de vulnerabilidades no es correr un escáner. Es un ciclo que no termina:</p>
+
+<ol class="steps">
+  <li><span class="step-title">Descubrir</span>Qué activos hay (servidores, imágenes, funciones, cuentas de nube, dominios) y qué vulnerabilidades tiene cada uno. Las fuentes son las de M55 (SAST, SCA, DAST), el escaneo de imágenes contra su SBOM, la postura de la nube de <a href="m37-nube.html">M37</a>, y lo que llega de afuera: un pentest, un programa de bug bounty, un aviso de un proveedor.</li>
+  <li><span class="step-title">Priorizar</span>Ordenar por riesgo real con los datos de 58.3 a 58.6. Es la etapa que más se hace mal y la que ocupa la mayor parte del módulo.</li>
+  <li><span class="step-title">Arreglar</span>Actualizar, parchar, quitar el componente, o mitigar mientras tanto: una regla del WAF, apagar una función, cerrar un puerto. A veces la decisión es aceptar el riesgo, por escrito y con fecha (58.7).</li>
+  <li><span class="step-title">Verificar</span>Volver a escanear <b>lo que corre</b>, no el ticket. Un hallazgo se cierra cuando la imagen desplegada por digest ya no lo tiene, no cuando alguien movió la tarjeta a "Hecho".</li>
+</ol>
+
+<p>El inventario es la pieza que más se subestima. Si nadie sabe que el blog corre en un servidor aparte, sus vulnerabilidades no entran nunca al ciclo. En Tienda Norte el inventario sale de tres lugares: el estado de Terraform para la nube, la lista de imágenes que admite el clúster (por digest, como en <a href="m56-supply-chain.html#verificar">M56.8</a>) y el SBOM de cada una. Cada activo lleva un dueño: sin dueño, el hallazgo no tiene a quién asignarse.</p>
+
+<h2 id="cve"><span class="sec-num">58.2</span>CVE, CWE, la NVD y los avisos</h2>
+
+<p>Un <dfn data-term="cve">CVE</dfn> (Common Vulnerabilities and Exposures) es el identificador de una vulnerabilidad concreta: <code>CVE-2021-44228</code> es la ejecución remota de código de Log4j 2 por los lookups JNDI en los mensajes de log. Lo asigna una <b>CNA</b> (CVE Numbering Authority): el propio fabricante, un proyecto grande, GitHub o MITRE, que coordina el programa. <span class="badge badge--doc">Documentado</span> El registro trae una descripción, los productos y versiones afectados y referencias. No trae, por sí solo, qué tan grave es ni cómo arreglarlo en tu distribución.</p>
+
+<p>Un <dfn data-term="cwe">CWE</dfn> (Common Weakness Enumeration) es la categoría de la debilidad que lo produjo. Log4Shell aparece con CWE-20 (validación de entrada incorrecta), CWE-502 (deserialización de datos no confiables) y CWE-917 (inyección de lenguaje de expresiones). <span class="badge badge--doc">Documentado</span> El CVE dice "esta falla en este producto"; el CWE dice "este tipo de error", y sirve para lo que M55 llama atacar la causa: si la mitad de tus hallazgos son CWE-89, el problema no son 200 consultas, es que el equipo no usa consultas parametrizadas.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f582t f582d">
+<title id="f582t">Del aviso al escáner</title>
+<desc id="f582d">Una CNA asigna el identificador y publica el registro CVE con su descripción y su CWE. Después lo enriquecen tres fuentes: la NVD con CVSS y CPE, las bases por ecosistema como GitHub Advisory y OSV con los rangos de versiones del paquete, y los avisos de la distribución con los parches retroportados. El escáner cruza esas fuentes con el SBOM.</desc>
+<defs><marker id="f582a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="100" width="130" height="60" rx="8"/>
+<text class="dg-small" x="79.0" y="126.5" text-anchor="middle">CNA</text>
+<text class="dg-tiny" x="79.0" y="141.5" text-anchor="middle">asigna el ID</text>
+<rect class="dg-box dg-box--em" x="184" y="100" width="150" height="60" rx="8"/>
+<text class="dg-small" x="259.0" y="126.5" text-anchor="middle">Registro CVE</text>
+<text class="dg-tiny" x="259.0" y="141.5" text-anchor="middle">descripción y CWE</text>
+<path class="dg-edge" d="M144 130 L182 130" marker-end="url(#f582a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="380" y="18" width="180" height="56" rx="8"/>
+<text class="dg-small" x="470.0" y="42.5" text-anchor="middle">NVD</text>
+<text class="dg-tiny" x="470.0" y="57.5" text-anchor="middle">CVSS, CPE</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="380" y="102" width="180" height="56" rx="8"/>
+<text class="dg-small" x="470.0" y="126.5" text-anchor="middle">GitHub Advisory, OSV</text>
+<text class="dg-tiny" x="470.0" y="141.5" text-anchor="middle">rangos por paquete</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="380" y="186" width="180" height="56" rx="8"/>
+<text class="dg-small" x="470.0" y="210.5" text-anchor="middle">Aviso de la distro</text>
+<text class="dg-tiny" x="470.0" y="225.5" text-anchor="middle">parche retroportado</text>
+<path class="dg-edge" d="M334 130 L378 46" marker-end="url(#f582a)"/>
+<path class="dg-edge" d="M334 130 L378 130" marker-end="url(#f582a)"/>
+<path class="dg-edge" d="M334 130 L378 214" marker-end="url(#f582a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="610" y="100" width="146" height="60" rx="8"/>
+<text class="dg-small" x="683.0" y="126.5" text-anchor="middle">Escáner</text>
+<text class="dg-tiny" x="683.0" y="141.5" text-anchor="middle">cruza con el SBOM</text>
+<path class="dg-edge" d="M560 46 L608 112" marker-end="url(#f582a)"/>
+<path class="dg-edge" d="M560 130 L608 130" marker-end="url(#f582a)"/>
+<path class="dg-edge" d="M560 214 L608 148" marker-end="url(#f582a)"/>
+<text class="dg-tiny dg-mono" x="683" y="186" text-anchor="middle">openssl 3.0.2-0ubuntu1.10</text>
+<text class="dg-tiny" x="683" y="202" text-anchor="middle">puede estar parchado</text>
+<text class="dg-tiny" x="683" y="218" text-anchor="middle">aunque "3.0.2" diga que no</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 58.2.</b> El registro CVE es el centro; tres fuentes lo enriquecen y el escáner las cruza con tu SBOM. La versión de la distribución puede tener el parche aunque el número de upstream diga que no.</figcaption>
+</figure>
+
+
+<p>Las fuentes que enriquecen el registro:</p>
+
+<ul>
+  <li><b>La NVD</b> (National Vulnerability Database, de NIST) le agrega un puntaje CVSS y la lista de productos en formato CPE. Desde febrero de 2024 acumula un atraso en ese análisis, y muchas CVE nuevas pasan semanas sin puntaje. <span class="badge badge--doc">Documentado</span> Por eso un escáner que solo mira la NVD llega tarde.</li>
+  <li><b>Las bases por ecosistema</b>, como GitHub Advisory Database y OSV, dicen qué rango de versiones de qué paquete (<code>org.apache.logging.log4j:log4j-core</code>, desde la 2.0-beta9) está afectado. Son las que usan Dependabot, Trivy y Grype para cruzar con el lockfile.</li>
+  <li><b>Los avisos de la distribución</b> (Debian, Ubuntu, Red Hat, Alpine) dicen si su paquete tiene el parche <b>retroportado</b>: Ubuntu puede arreglar una falla de OpenSSL sin cambiar el número de versión de upstream. Un escáner que compara solo el número reporta un falso positivo; uno que lee el aviso de la distro, no.</li>
+</ul>
+
+<p>La NVD tenía 414&#8239;861 registros el 26 de octubre de 2026. <span class="badge badge--doc">Documentado</span> Esa cifra es la razón de todo lo que sigue: nadie trata 400 000 cosas como urgentes.</p>
+
+<h2 id="cvss"><span class="sec-num">58.3</span>CVSS 4.0: qué mide y qué no</h2>
+
+<p>El <dfn data-term="cvss">CVSS</dfn> (Common Vulnerability Scoring System) es un estándar de FIRST para describir una vulnerabilidad con un vector de métricas y resumirlo en un puntaje de 0 a 10. La versión 4.0 se publicó el 1 de noviembre de 2023. <span class="badge badge--doc">Documentado</span> Tiene cuatro grupos de métricas:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Grupo</th><th>Qué describe</th><th>Quién lo llena</th></tr></thead>
+    <tbody>
+      <tr><td>Base</td><td>Lo intrínseco de la falla: cómo se llega, qué tan difícil es, qué privilegios pide, qué rompe</td><td>El fabricante o la NVD</td></tr>
+      <tr><td>Threat</td><td>La madurez del exploit: atacada, prueba de concepto pública o sin reportes (<code>E:A</code>, <code>E:P</code>, <code>E:U</code>)</td><td>Tú, y cambia con el tiempo</td></tr>
+      <tr><td>Environmental</td><td>Tus requisitos de confidencialidad, integridad y disponibilidad, y tus controles</td><td>Tú</td></tr>
+      <tr><td>Supplemental</td><td>Contexto que no cambia el puntaje: si es automatizable, si afecta la seguridad física, el esfuerzo de respuesta</td><td>El fabricante</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>La 4.0 obliga a decir qué grupos se usaron: <b>CVSS-B</b> es solo la base, <b>CVSS-BT</b> base más amenaza, <b>CVSS-BE</b> base más entorno y <b>CVSS-BTE</b> los tres. <span class="badge badge--doc">Documentado</span> El número que trae un escáner es casi siempre CVSS-B, el que no sabe nada de ti.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 410" role="img" aria-labelledby="f583t f583d">
+<title id="f583t">Un vector de CVSS 4.0, métrica por métrica</title>
+<desc id="f583d">El vector CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N separado en tres grupos: cómo se explota (vector, complejidad, requisitos de ataque, privilegios, interacción), impacto en el sistema vulnerable (confidencialidad, integridad, disponibilidad) e impacto en los sistemas siguientes. Su puntaje base es 9.3. Abajo, la escala cualitativa de 0 a 10.</desc>
+<defs><marker id="f583a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small dg-mono" x="385" y="24" text-anchor="middle">CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N</text>
+<rect class="dg-frame" x="10" y="44" width="732" height="104" rx="8"/>
+<text class="dg-tiny" x="376.0" y="62" text-anchor="middle">Cómo se explota</text>
+<rect class="dg-box" x="14" y="72" width="140" height="66" rx="8"/>
+<text class="dg-small dg-mono" x="84.0" y="101.5" text-anchor="middle">AV:N</text>
+<text class="dg-tiny" x="84.0" y="116.5" text-anchor="middle">por red</text>
+<rect class="dg-box" x="160" y="72" width="140" height="66" rx="8"/>
+<text class="dg-small dg-mono" x="230.0" y="101.5" text-anchor="middle">AC:L</text>
+<text class="dg-tiny" x="230.0" y="116.5" text-anchor="middle">complejidad baja</text>
+<rect class="dg-box" x="306" y="72" width="140" height="66" rx="8"/>
+<text class="dg-small dg-mono" x="376.0" y="101.5" text-anchor="middle">AT:N</text>
+<text class="dg-tiny" x="376.0" y="116.5" text-anchor="middle">sin requisitos</text>
+<rect class="dg-box" x="452" y="72" width="140" height="66" rx="8"/>
+<text class="dg-small dg-mono" x="522.0" y="101.5" text-anchor="middle">PR:N</text>
+<text class="dg-tiny" x="522.0" y="116.5" text-anchor="middle">sin cuenta</text>
+<rect class="dg-box" x="598" y="72" width="140" height="66" rx="8"/>
+<text class="dg-small dg-mono" x="668.0" y="101.5" text-anchor="middle">UI:N</text>
+<text class="dg-tiny" x="668.0" y="116.5" text-anchor="middle">nadie hace clic</text>
+<rect class="dg-frame" x="10" y="160" width="350" height="104" rx="8"/>
+<text class="dg-tiny" x="185.0" y="178" text-anchor="middle">Impacto en el sistema vulnerable</text>
+<rect class="dg-box" x="14" y="188" width="110" height="66" rx="8"/>
+<text class="dg-small dg-mono" x="69.0" y="217.5" text-anchor="middle">VC:H</text>
+<text class="dg-tiny" x="69.0" y="232.5" text-anchor="middle">confidencialidad</text>
+<rect class="dg-box" x="130" y="188" width="110" height="66" rx="8"/>
+<text class="dg-small dg-mono" x="185.0" y="217.5" text-anchor="middle">VI:H</text>
+<text class="dg-tiny" x="185.0" y="232.5" text-anchor="middle">integridad</text>
+<rect class="dg-box" x="246" y="188" width="110" height="66" rx="8"/>
+<text class="dg-small dg-mono" x="301.0" y="217.5" text-anchor="middle">VA:H</text>
+<text class="dg-tiny" x="301.0" y="232.5" text-anchor="middle">disponibilidad</text>
+<rect class="dg-frame" x="398" y="160" width="350" height="104" rx="8"/>
+<text class="dg-tiny" x="573.0" y="178" text-anchor="middle">Impacto en los sistemas siguientes</text>
+<rect class="dg-box" x="402" y="188" width="110" height="66" rx="8"/>
+<text class="dg-small dg-mono" x="457.0" y="217.5" text-anchor="middle">SC:N</text>
+<text class="dg-tiny" x="457.0" y="232.5" text-anchor="middle">ninguno</text>
+<rect class="dg-box" x="518" y="188" width="110" height="66" rx="8"/>
+<text class="dg-small dg-mono" x="573.0" y="217.5" text-anchor="middle">SI:N</text>
+<text class="dg-tiny" x="573.0" y="232.5" text-anchor="middle">ninguno</text>
+<rect class="dg-box" x="634" y="188" width="110" height="66" rx="8"/>
+<text class="dg-small dg-mono" x="689.0" y="217.5" text-anchor="middle">SA:N</text>
+<text class="dg-tiny" x="689.0" y="232.5" text-anchor="middle">ninguno</text>
+<text class="dg-label" x="385" y="292" text-anchor="middle">Puntaje base: 9.3 (crítica). Con SC, SI y SA en H llega a 10.0.</text>
+<rect class="dg-box" x="40.0" y="312" width="6.9" height="30" rx="4"/>
+<rect class="dg-ok" x="46.9" y="312" width="269.1" height="30" rx="4"/>
+<text class="dg-tiny" x="181.4" y="331" text-anchor="middle">Baja</text>
+<rect class="dg-warnbox" x="316.0" y="312" width="207.0" height="30" rx="4"/>
+<text class="dg-tiny" x="419.5" y="331" text-anchor="middle">Media</text>
+<rect class="dg-bad" x="523.0" y="312" width="138.0" height="30" rx="4"/>
+<text class="dg-tiny" x="592.0" y="331" text-anchor="middle">Alta</text>
+<rect class="dg-bad" x="661.0" y="312" width="69.0" height="30" rx="4"/>
+<text class="dg-tiny" x="695.5" y="331" text-anchor="middle">Crítica</text>
+<text class="dg-tiny" x="40.0" y="360" text-anchor="middle">0.0</text>
+<text class="dg-tiny" x="316.0" y="360" text-anchor="middle">4.0</text>
+<text class="dg-tiny" x="523.0" y="360" text-anchor="middle">7.0</text>
+<text class="dg-tiny" x="661.0" y="360" text-anchor="middle">9.0</text>
+<text class="dg-tiny" x="730.0" y="360" text-anchor="middle">10.0</text>
+<text class="dg-tiny" x="385" y="390" text-anchor="middle">Ninguna es 0.0 exacto. Mide qué tan grave es la falla en abstracto: no si alguien la explota ni dónde corre.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 58.3.</b> El vector de una falla explotable por red, sin cuenta ni interacción, que compromete del todo el sistema vulnerable. La 4.0 separa el impacto en el sistema vulnerable (VC, VI, VA) del impacto en los que vienen después (SC, SI, SA).</figcaption>
+</figure>
+
+
+<p>El vector se lee de izquierda a derecha. <code>AV:N</code>: se llega por red. <code>AC:L</code> y <code>AT:N</code>: no hace falta ninguna condición rara. <code>PR:N</code> y <code>UI:N</code>: no hace falta cuenta ni que alguien haga clic. <code>VC:H/VI:H/VA:H</code>: quien la explota lee, cambia y tira el sistema vulnerable. En la 4.0 el puntaje no sale de una fórmula que se pueda hacer a mano, como en la 3.1: el vector se agrupa en un "macrovector" y el puntaje se busca en una tabla que armaron expertos. Para ese vector, la tabla da 9.3. <span class="badge badge--doc">Documentado</span></p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Definición</p>
+  <p class="def-term">Severidad no es riesgo <span class="def-en">Severity is not risk</span></p>
+  <p class="def-one">CVSS-B mide qué tan grave sería la falla si alguien la explota, en un sistema genérico. No mide la probabilidad de que la exploten ni lo que vale el sistema donde corre.</p>
+  <dl class="def-rows">
+    <dt>Intuición</dt><dd>Un 9.8 en una librería que solo usa un script de build que corre en el CI no es lo mismo que un 7.5 en el ingress expuesto a internet que alguien ya está explotando.</dd>
+    <dt>Ejemplo</dt><dd>De las 4 000 de Tienda Norte, 900 son "críticas" por CVSS. Con 40 arreglos por semana, ordenar solo por CVSS tarda más de 22 semanas en pasar por ellas.</dd>
+    <dt>Por qué importa en producción</dt><dd>Un programa que solo mira CVSS gasta su capacidad en lo que se ve feo y deja abierto lo que se está explotando.</dd>
+  </dl>
+</aside>
+
+<p>La cuenta del ejemplo: 900 / 40 = 22.5 semanas, más de cinco meses, y mientras tanto entran hallazgos nuevos. CVSS sirve para describir la falla y para el impacto; la probabilidad viene de otro lado.</p>
+
+<h2 id="epss"><span class="sec-num">58.4</span>EPSS: la probabilidad de explotación</h2>
+
+<p>El <dfn data-term="epss">EPSS</dfn> (Exploit Prediction Scoring System), también de FIRST, es un modelo de aprendizaje automático que publica <b>cada día</b> un número entre 0 y 1 para cada CVE: la probabilidad estimada de que se observe actividad de explotación en los próximos 30 días. <span class="badge badge--doc">Documentado</span> Viene con un percentil: un EPSS de 0.189 parece bajo, pero si su percentil es 0.973, está por encima del 97&#8239;% de las CVE. El archivo del 26 de octubre de 2026 lo produjo el modelo <code>v2026.06.15</code> y puntúa 395&#8239;492 CVE. <span class="badge badge--doc">Documentado</span></p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f584t f584d">
+<title id="f584t">Cuántas CVE tienen una probabilidad alta según EPSS</title>
+<desc id="f584d">Del archivo de EPSS del 26 de octubre de 2026, con 395 492 CVE puntuadas: el 37.4 por ciento tiene 0.01 o más, el 4.42 por ciento tiene 0.1 o más y el 1.11 por ciento tiene 0.5 o más. Abajo, cuatro CVE conocidas sobre la escala.</desc>
+<defs><marker id="f584a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small dg-mono" x="150" y="51" text-anchor="end">EPSS ≥ 0.01</text>
+<rect class="sim-grid" x="160" y="30" width="560" height="30" rx="4" style="fill:none"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="160" y="30" width="209.6" height="30" rx="4"/>
+<text class="dg-tiny" x="377.6" y="50" text-anchor="start">148 035 CVE · 37.43 %</text>
+<text class="dg-small dg-mono" x="150" y="97" text-anchor="end">EPSS ≥ 0.1</text>
+<rect class="sim-grid" x="160" y="76" width="560" height="30" rx="4" style="fill:none"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="160" y="76" width="24.8" height="30" rx="4"/>
+<text class="dg-tiny" x="192.8" y="96" text-anchor="start">17 497 CVE · 4.42 %</text>
+<text class="dg-small dg-mono" x="150" y="143" text-anchor="end">EPSS ≥ 0.5</text>
+<rect class="sim-grid" x="160" y="122" width="560" height="30" rx="4" style="fill:none"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="160" y="122" width="6.2" height="30" rx="4"/>
+<text class="dg-tiny" x="174.2" y="142" text-anchor="start">4 376 CVE · 1.11 %</text>
+<text class="dg-tiny" x="720" y="24" text-anchor="end">del total puntuado (395 492)</text>
+<path class="dg-edge" d="M40 218 H730"/>
+<path class="dg-edge" d="M40.0 212 V224"/>
+<text class="dg-tiny" x="40" y="244" text-anchor="middle">0</text>
+<path class="dg-edge" d="M385.0 212 V224"/>
+<text class="dg-tiny" x="385.0" y="244" text-anchor="middle">0.5</text>
+<path class="dg-edge" d="M730.0 212 V224"/>
+<text class="dg-tiny" x="730" y="244" text-anchor="middle">1</text>
+<circle cx="170.4" cy="218" r="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="170.4" y="196" text-anchor="middle">runc: 0.189</text>
+<circle cx="667.2" cy="218" r="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="667.2" y="196" text-anchor="end">xz: 0.909</text>
+<circle cx="729.9" cy="218" r="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="735.9" y="266" text-anchor="end">libwebp: 0.9998</text>
+<circle cx="730.0" cy="218" r="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="736.0" y="182" text-anchor="end">Log4Shell: 0.99999</text>
+<text class="dg-tiny" x="40" y="280" text-anchor="start">EPSS del 26 de octubre de 2026</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 58.4.</b> La probabilidad está muy concentrada: menos del 5&#8239;% de las CVE tiene 0.1 o más. Abajo, cuatro CVE conocidas con su EPSS del 26 de octubre de 2026.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>CVE</th><th>Qué es</th><th class="r">EPSS</th><th class="r">Percentil</th></tr></thead>
+    <tbody>
+      <tr><td>CVE-2021-44228</td><td>Log4Shell</td><td class="r">0.99999</td><td class="r">1.000</td></tr>
+      <tr><td>CVE-2023-4863</td><td>libwebp, desbordamiento al decodificar una imagen</td><td class="r">0.99979</td><td class="r">0.9998</td></tr>
+      <tr><td>CVE-2024-3094</td><td>La puerta trasera de xz (<a href="m56-supply-chain.html#casos">M56.2</a>)</td><td class="r">0.909</td><td class="r">0.998</td></tr>
+      <tr><td>CVE-2024-21626</td><td>runc, escape de contenedor (<a href="m57-contenedores-k8s.html#escapes">M57</a>)</td><td class="r">0.189</td><td class="r">0.973</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Valores de la API de FIRST del 26 de octubre de 2026. <span class="badge badge--doc">Documentado</span> La cuenta que importa: el 4.42&#8239;% de 395&#8239;492 son 17&#8239;497 CVE con EPSS de 0.1 o más, y el 1.11&#8239;% son 4&#8239;376 con 0.5 o más. Si un escáner te devuelve 1 300 hallazgos únicos y aplicas el mismo reparto, unos 57 (1 300 × 0.0442) tendrían EPSS de 0.1 o más. Son muchos menos que los cientos de "críticos" por CVSS.</p>
+
+<p>Lo que EPSS no dice:</p>
+
+<ul>
+  <li><b>No sabe nada de ti.</b> Es la probabilidad de que alguien, en algún lugar, intente explotarla; no de que te la exploten a ti ni de que tu instancia esté expuesta.</li>
+  <li><b>Es una probabilidad de intento, no de éxito</b>, y se mueve día a día. Una CVE recién publicada puede tener un EPSS bajo hasta que aparece un exploit público.</li>
+  <li><b>Solo cubre lo que tiene CVE.</b> Un error de configuración de tu nube o una falla en tu propio código no tienen EPSS.</li>
+</ul>
+
+<h2 id="kev"><span class="sec-num">58.5</span>El catálogo KEV de CISA</h2>
+
+<p>El <dfn data-term="kev">KEV</dfn> (Known Exploited Vulnerabilities) es un catálogo público de CISA, la agencia de ciberseguridad de Estados Unidos. Una vulnerabilidad entra si cumple tres condiciones: tiene CVE, hay <b>evidencia confiable de explotación real</b> y hay una forma clara de arreglarla. <span class="badge badge--doc">Documentado</span> EPSS es una predicción; el KEV es un hecho observado.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f585t f585d">
+<title id="f585t">De todas las CVE a las explotadas</title>
+<desc id="f585d">Embudo: la NVD tiene 414 861 registros, EPSS da 0.1 o más a 17 497 y el catálogo KEV lista 1 758, el 0.42 por ciento del total. A la derecha, las entradas agregadas al KEV por año: 311 en 2021 (el año en que nace, con la carga inicial), 555 en 2022, 187 en 2023, 186 en 2024, 245 en 2025 y 274 en 2026 hasta el 26 de octubre.</desc>
+<defs><marker id="f585a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20.0" y="30" width="380" height="56" rx="8"/>
+<text class="dg-small" x="210.0" y="54.5" text-anchor="middle">NVD</text>
+<text class="dg-tiny" x="210.0" y="69.5" text-anchor="middle">414 861 registros</text>
+<path class="dg-edge" d="M210 86 L210 108" marker-end="url(#f585a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="95.0" y="110" width="230" height="56" rx="8"/>
+<text class="dg-small" x="210.0" y="134.5" text-anchor="middle">EPSS ≥ 0.1</text>
+<text class="dg-tiny" x="210.0" y="149.5" text-anchor="middle">17 497</text>
+<path class="dg-edge" d="M210 166 L210 188" marker-end="url(#f585a)"/>
+<rect class="dg-bad" x="150.0" y="190" width="120" height="56" rx="8"/>
+<text class="dg-small dg-fail-text" x="210.0" y="214.5" text-anchor="middle">KEV</text>
+<text class="dg-tiny" x="210.0" y="229.5" text-anchor="middle">1 758 (0.42 %)</text>
+<text class="dg-tiny" x="210" y="290" text-anchor="middle">Las tres cifras, del 26 de octubre de 2026</text>
+<text class="dg-tiny" x="605" y="24" text-anchor="middle">Entradas agregadas al KEV por año</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="460" y="143.5" width="36" height="106.5" rx="3"/>
+<text class="dg-tiny" x="478" y="137.5" text-anchor="middle">311</text>
+<text class="dg-tiny" x="478" y="266" text-anchor="middle">2021</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="510" y="60.0" width="36" height="190.0" rx="3"/>
+<text class="dg-tiny" x="528" y="54.0" text-anchor="middle">555</text>
+<text class="dg-tiny" x="528" y="266" text-anchor="middle">2022</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="560" y="186.0" width="36" height="64.0" rx="3"/>
+<text class="dg-tiny" x="578" y="180.0" text-anchor="middle">187</text>
+<text class="dg-tiny" x="578" y="266" text-anchor="middle">2023</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="610" y="186.3" width="36" height="63.7" rx="3"/>
+<text class="dg-tiny" x="628" y="180.3" text-anchor="middle">186</text>
+<text class="dg-tiny" x="628" y="266" text-anchor="middle">2024</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="660" y="166.1" width="36" height="83.9" rx="3"/>
+<text class="dg-tiny" x="678" y="160.1" text-anchor="middle">245</text>
+<text class="dg-tiny" x="678" y="266" text-anchor="middle">2025</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="710" y="156.2" width="36" height="93.8" rx="3"/>
+<text class="dg-tiny" x="728" y="150.2" text-anchor="middle">274</text>
+<text class="dg-tiny" x="728" y="266" text-anchor="middle">2026</text>
+<text class="dg-tiny" x="605" y="288" text-anchor="middle">2026: hasta el 26 de octubre</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 58.5.</b> De cada 1 000 CVE de la NVD, unas 4 están en el KEV. A la derecha, las entradas agregadas por año desde que nació el catálogo, en noviembre de 2021.</figcaption>
+</figure>
+
+
+<p>El 26 de octubre de 2026, el catálogo (versión <code>2026.10.26</code>) tenía 1&#8239;758 entradas, 361 de ellas marcadas como usadas en campañas de ransomware. <span class="badge badge--doc">Documentado</span> La cuenta: 1&#8239;758 / 414&#8239;861 = 0.42&#8239;%, menos de una de cada 200. Cada entrada trae la fecha en que se agregó y un plazo; Log4Shell entró el 10 de diciembre de 2021 con plazo hasta el 24 de diciembre.</p>
+
+<p>El catálogo nació con la directiva <b>BOD 22-01</b>, del 3 de noviembre de 2021, que obligaba a las agencias federales de Estados Unidos a arreglar cada entrada en dos semanas (seis meses si la CVE era anterior a 2021). <span class="badge badge--doc">Documentado</span> El 10 de junio de 2026 CISA la reemplazó con la <b>BOD 26-04</b>, "Prioritizing Security Updates Based on Risk", que ya no usa un solo plazo: combina cuatro factores, si el activo está expuesto, si la CVE está en el KEV, si la explotación se puede automatizar y si da control total o parcial, y de ahí salen plazos de 3, 14 o 60 días o "en la próxima actualización". Los casos en el KEV que dan control total piden además un triaje forense, porque se asume que alguien pudo haber entrado antes del parche. <span class="badge badge--doc">Documentado</span></p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>La BOD 26-04 solo obliga a agencias federales de Estados Unidos, pero el cambio es la lección del módulo dicha por el propio dueño del KEV: estar en el KEV es una señal fuerte, no la única. La exposición y el impacto deciden cuánto tiempo hay. Tienda Norte copia la idea, con sus propios números (58.6).</p>
+</aside>
+
+<h2 id="priorizar"><span class="sec-num">58.6</span>Priorizar con cuatro datos</h2>
+
+<p>En <a href="m54-threat-modeling.html#priorizar">M54.5</a> las amenazas se ordenaron por probabilidad por impacto. Con las vulnerabilidades es la misma cuenta, con datos mejores:</p>
+
+<ul>
+  <li><b>Probabilidad:</b> KEV primero (explotación confirmada) y EPSS después (explotación predicha).</li>
+  <li><b>Exposición:</b> ¿se llega desde internet, desde la red interna o solo desde la máquina? Es la superficie de ataque de M54, ahora por activo.</li>
+  <li><b>Impacto técnico:</b> ¿quien la explota toma control total o solo lee algo? Aquí sí sirve CVSS (las métricas de impacto del vector).</li>
+  <li><b>Criticidad del activo:</b> el worker de pagos y la base de clientes valen más que el blog.</li>
+</ul>
+
+<p>Es la misma idea de <dfn data-term="ssvc">SSVC</dfn> (Stakeholder-Specific Vulnerability Categorization), el árbol de decisión que publica CISA y que da cuatro resultados: Track, Track*, Attend y Act. <span class="badge badge--doc">Documentado</span> Tienda Norte lo resume en una matriz <span class="badge badge--ref">Diseño de referencia</span>:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f586t f586d">
+<title id="f586t">La matriz de prioridad de Tienda Norte</title>
+<desc id="f586d">Filas: la señal de explotación (en KEV, EPSS de 0.1 o más, o ninguna). Columnas: expuesto a internet con impacto total, expuesto con impacto parcial, e interno. Cada celda es una clase con su plazo: Actuar en 72 horas, Atender en 14 días, Seguir de cerca en 60 días o Seguir hasta la próxima actualización. Si el código vulnerable no es alcanzable, el hallazgo baja una clase.</desc>
+<defs><marker id="f586a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="265.0" y="48" text-anchor="middle">Expuesto, control total</text>
+<text class="dg-small" x="463.0" y="48" text-anchor="middle">Expuesto, control parcial</text>
+<text class="dg-small" x="661.0" y="48" text-anchor="middle">Interno</text>
+<text class="dg-small" x="158" y="96.0" text-anchor="end">En KEV</text>
+<rect class="dg-bad" x="170" y="60" width="190" height="64" rx="8"/>
+<text class="dg-small dg-fail-text" x="265.0" y="88.5" text-anchor="middle">Actuar</text>
+<text class="dg-tiny" x="265.0" y="103.5" text-anchor="middle">72 h</text>
+<rect class="dg-bad" x="368" y="60" width="190" height="64" rx="8"/>
+<text class="dg-small dg-fail-text" x="463.0" y="88.5" text-anchor="middle">Actuar</text>
+<text class="dg-tiny" x="463.0" y="103.5" text-anchor="middle">72 h</text>
+<rect class="dg-warnbox" x="566" y="60" width="190" height="64" rx="8"/>
+<text class="dg-small" x="661.0" y="88.5" text-anchor="middle">Atender</text>
+<text class="dg-tiny" x="661.0" y="103.5" text-anchor="middle">14 días</text>
+<text class="dg-small" x="158" y="168.0" text-anchor="end">EPSS ≥ 0.1</text>
+<rect class="dg-bad" x="170" y="132" width="190" height="64" rx="8"/>
+<text class="dg-small dg-fail-text" x="265.0" y="160.5" text-anchor="middle">Actuar</text>
+<text class="dg-tiny" x="265.0" y="175.5" text-anchor="middle">72 h</text>
+<rect class="dg-warnbox" x="368" y="132" width="190" height="64" rx="8"/>
+<text class="dg-small" x="463.0" y="160.5" text-anchor="middle">Atender</text>
+<text class="dg-tiny" x="463.0" y="175.5" text-anchor="middle">14 días</text>
+<rect class="dg-box" x="566" y="132" width="190" height="64" rx="8"/>
+<text class="dg-small" x="661.0" y="160.5" text-anchor="middle">Seguir de cerca</text>
+<text class="dg-tiny" x="661.0" y="175.5" text-anchor="middle">60 días</text>
+<text class="dg-small" x="158" y="240.0" text-anchor="end">Sin señal</text>
+<rect class="dg-warnbox" x="170" y="204" width="190" height="64" rx="8"/>
+<text class="dg-small" x="265.0" y="232.5" text-anchor="middle">Atender</text>
+<text class="dg-tiny" x="265.0" y="247.5" text-anchor="middle">14 días</text>
+<rect class="dg-box" x="368" y="204" width="190" height="64" rx="8"/>
+<text class="dg-small" x="463.0" y="232.5" text-anchor="middle">Seguir de cerca</text>
+<text class="dg-tiny" x="463.0" y="247.5" text-anchor="middle">60 días</text>
+<rect class="dg-ok" x="566" y="204" width="190" height="64" rx="8"/>
+<text class="dg-small" x="661.0" y="232.5" text-anchor="middle">Seguir</text>
+<text class="dg-tiny" x="661.0" y="247.5" text-anchor="middle">próxima versión</text>
+<text class="dg-tiny" x="385" y="22" text-anchor="middle">Señal de explotación (filas) contra exposición e impacto (columnas)</text>
+<text class="dg-tiny" x="385" y="292" text-anchor="middle">Código vulnerable no alcanzable, con el análisis escrito en un VEX: baja una clase.</text>
+<text class="dg-tiny" x="385" y="312" text-anchor="middle">Activo de criticidad alta (pagos, datos de clientes): sube una clase, hasta Actuar.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 58.6.</b> Nueve celdas, cuatro clases. La matriz entra en una página y cualquier persona del equipo la aplica igual; ese es su valor.</figcaption>
+</figure>
+
+
+<p>El widget pone a prueba las tres formas comunes de ordenar con la misma capacidad. Tienda Norte tiene veinte hallazgos y arregla cinco por semana. Elige una política y mira cuánto riesgo cierra, cuántos hallazgos del KEV quedan abiertos y cuántos "críticos" por CVSS arregla.</p>
+
+<div data-sim="vulnprio"></div>
+
+<p>Con cinco por semana, "solo CVSS" cierra un poco menos de la mitad del riesgo y deja abiertos cinco de los siete del KEV, incluido el ingress del clúster. "KEV primero" cierra cerca del 70&#8239;%, pero dentro del KEV vuelve a ordenar por CVSS y pone el servidor de archivos interno delante del ingress expuesto. El riesgo combinado cierra más del 80&#8239;% con los mismos cinco arreglos y arregla solo dos "críticos" por CVSS: los que deja son los que nadie explota o no se alcanzan. Deja abiertos dos del KEV de poco impacto, el correo saliente y el servidor de archivos interno, que pasan a la semana siguiente. La fórmula del widget es un supuesto didáctico; lo que se transfiere es la forma de la cuenta.</p>
+
+<h2 id="sla"><span class="sec-num">58.7</span>Plazos de parcheo y excepciones que vencen</h2>
+
+<p>Un <dfn data-term="sla-parcheo">plazo de parcheo</dfn> (patch SLA) es el tiempo máximo entre que un hallazgo se clasifica y que deja de estar en lo que corre. Se fija por clase, no por hallazgo, para que nadie negocie cada caso. Los de Tienda Norte <span class="badge badge--ref">Diseño de referencia</span>:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Clase</th><th>Plazo</th><th>Qué pasa si no llega</th></tr></thead>
+    <tbody>
+      <tr><td>Actuar</td><td class="r">72 h</td><td>Mitigación el mismo día (WAF, apagar la función, sacar de internet) y triaje forense, como pide la BOD 26-04 para el KEV con control total</td></tr>
+      <tr><td>Atender</td><td class="r">14 días</td><td>Excepción aprobada por la persona responsable del servicio, con control compensatorio</td></tr>
+      <tr><td>Seguir de cerca</td><td class="r">60 días</td><td>Se revisa cada semana: si su EPSS sube o entra al KEV, cambia de clase</td></tr>
+      <tr><td>Seguir</td><td>Próxima versión</td><td>Entra con la actualización normal de dependencias</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f587t f587d">
+<title id="f587t">Un hallazgo con plazo y una excepción que vence</title>
+<desc id="f587d">Línea de tiempo en días. Día 0: el escáner lo detecta. Día 1: el triaje lo clasifica como Atender, con plazo de 14 días. El arreglo necesita cambiar de versión mayor y no llega: el día 10 se abre una excepción con un control compensatorio y vencimiento el día 40. El día 40 se revisa otra vez; no se renueva sola.</desc>
+<defs><marker id="f587a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-edge" d="M40 130 L730 130" marker-end="url(#f587a)"/>
+<text class="dg-tiny" x="40.0" y="152" text-anchor="middle">día 0</text>
+<text class="dg-tiny" x="193.3" y="152" text-anchor="middle">día 10</text>
+<text class="dg-tiny" x="270.0" y="152" text-anchor="middle">día 15</text>
+<text class="dg-tiny" x="346.7" y="152" text-anchor="middle">día 20</text>
+<text class="dg-tiny" x="500.0" y="152" text-anchor="middle">día 30</text>
+<text class="dg-tiny" x="653.3" y="152" text-anchor="middle">día 40</text>
+<rect class="dg-warnbox" x="55.3" y="96" width="214.7" height="26" rx="4"/>
+<text class="dg-tiny" x="162.7" y="113" text-anchor="middle">plazo de Atender: 14 días</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="193.3" y="168" width="459.99999999999994" height="26" rx="4"/>
+<text class="dg-tiny" x="423.3" y="185" text-anchor="middle">excepción: regla del WAF y feature apagada</text>
+<circle cx="40.0" cy="130" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny" x="40.0" y="40" text-anchor="middle">detectado</text>
+<path class="dg-feedback" d="M40.0 46 V122"/>
+<circle cx="55.3" cy="130" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny" x="55.3" y="66" text-anchor="middle">triaje</text>
+<path class="dg-feedback" d="M55.3 72 V122"/>
+<circle cx="193.3" cy="130" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny" x="193.3" y="40" text-anchor="middle">excepción aprobada</text>
+<path class="dg-feedback" d="M193.3 46 V94"/>
+<circle cx="653.3" cy="130" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny" x="653.3" y="66" text-anchor="middle">vence: revisar</text>
+<path class="dg-feedback" d="M653.3 72 V122"/>
+<text class="dg-small" x="385" y="230" text-anchor="middle">Cada excepción tiene dueño, motivo, control compensatorio y fecha de vencimiento.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 58.7.</b> Un hallazgo de clase Atender cuyo arreglo pide cambiar de versión mayor. La excepción se aprueba antes de que venza el plazo, con un control que reduce el riesgo mientras tanto, y vence sola.</figcaption>
+</figure>
+
+
+<p>Una <b>excepción</b> no es "lo dejamos así". Lleva cuatro cosas: un dueño, el motivo (el arreglo rompe la compatibilidad, el proveedor no tiene parche), un control compensatorio que baja el riesgo (una regla del WAF, apagar la función vulnerable, sacar el servicio de internet) y una <b>fecha de vencimiento</b>. Al vencer se revisa; si no se renueva por escrito, vuelve al tablero como vencida. Es el <a href="m54-threat-modeling.html#priorizar">riesgo residual</a> de M54 con fecha.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Las excepciones sin vencimiento son la forma más común de deuda invisible. A los dos años nadie recuerda por qué se aceptó, la persona que la aprobó ya no está y el control compensatorio se desactivó en una migración. El vencimiento obliga a alguien a mirarla otra vez.</p>
+</aside>
+
+<h2 id="ruido"><span class="sec-num">58.8</span>Ruido: duplicados, VEX y alcanzabilidad</h2>
+
+<p>La mayor parte de los 4 000 hallazgos no son 4 000 problemas. Antes de priorizar se quita el ruido, en este orden:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f588t f588d">
+<title id="f588t">De 4 000 hallazgos a 520</title>
+<desc id="f588d">Embudo de Tienda Norte: 4 000 hallazgos brutos; sin duplicados quedan 1 300; sin las imágenes que no corren en producción, 920; sin las dependencias de build y pruebas, 660; sin los que tienen un VEX not_affected con análisis, 520.</desc>
+<defs><marker id="f588a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20.0" y="18" width="360" height="42" rx="8"/>
+<text class="dg-label" x="200.0" y="35.5" text-anchor="middle">4 000</text>
+<text class="dg-tiny" x="200.0" y="50.5" text-anchor="middle">hallazgos de los escáneres</text>
+<rect class="dg-box" x="42.5" y="74" width="315" height="42" rx="8"/>
+<text class="dg-label" x="200.0" y="91.5" text-anchor="middle">1 300</text>
+<text class="dg-tiny" x="200.0" y="106.5" text-anchor="middle">sin duplicados</text>
+<text class="dg-tiny" x="400" y="100" text-anchor="start">−2 700: la misma CVE en 14 imágenes y 3 herramientas</text>
+<path class="dg-feedback" d="M363.5 95 H392"/>
+<rect class="dg-box" x="65.0" y="130" width="270" height="42" rx="8"/>
+<text class="dg-label" x="200.0" y="147.5" text-anchor="middle">920</text>
+<text class="dg-tiny" x="200.0" y="162.5" text-anchor="middle">solo lo que corre</text>
+<text class="dg-tiny" x="400" y="156" text-anchor="start">−380: imágenes viejas que quedaron en el registro</text>
+<path class="dg-feedback" d="M341.0 151 H392"/>
+<rect class="dg-box" x="87.5" y="186" width="225" height="42" rx="8"/>
+<text class="dg-label" x="200.0" y="203.5" text-anchor="middle">660</text>
+<text class="dg-tiny" x="200.0" y="218.5" text-anchor="middle">solo lo que se despliega</text>
+<text class="dg-tiny" x="400" y="212" text-anchor="start">−260: dependencias de build y de pruebas</text>
+<path class="dg-feedback" d="M318.5 207 H392"/>
+<rect class="dg-box dg-box--em" x="110.0" y="242" width="180" height="42" rx="8"/>
+<text class="dg-label" x="200.0" y="259.5" text-anchor="middle">520</text>
+<text class="dg-tiny" x="200.0" y="274.5" text-anchor="middle">quitando lo no alcanzable</text>
+<text class="dg-tiny" x="400" y="268" text-anchor="start">−140: VEX not_affected con el análisis escrito</text>
+<path class="dg-feedback" d="M296.0 263 H392"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 58.8.</b> Cuatro filtros, del más barato al más caro. Cada uno se aplica con un dato que el equipo ya tiene o que se escribe una vez.</figcaption>
+</figure>
+
+
+<ol class="steps">
+  <li><span class="step-title">Duplicados</span>La misma CVE en el mismo paquete aparece en 14 imágenes que comparten la imagen base, y la reportan tres herramientas. Se agrupa por CVE, paquete y versión: es un solo arreglo.</li>
+  <li><span class="step-title">Lo que no corre</span>El registro guarda imágenes viejas que ya no se despliegan. El inventario por digest de 58.1 dice cuáles corren.</li>
+  <li><span class="step-title">Lo que no se despliega</span>Dependencias de build y de pruebas que no llegan a la imagen final. Un build multi-stage (<a href="m57-contenedores-k8s.html#imagen">M57</a>) las deja afuera.</li>
+  <li><span class="step-title">Lo que no se alcanza</span>El paquete está, pero tu código no llama a la función vulnerable.</li>
+</ol>
+
+<p>La <dfn data-term="alcanzabilidad">alcanzabilidad</dfn> (reachability) es si existe un camino desde tu código hasta la función vulnerable. Algunas herramientas de SCA la calculan con el grafo de llamadas, como el SAST de <a href="m55-appsec.html#sast">M55.4</a> sigue un dato de la fuente al sumidero. Tiene dos límites: la reflexión, la configuración y los plugins crean caminos que el análisis no ve, y un camino que no existe hoy puede existir después del próximo cambio. Por eso un "no alcanzable" no se borra: se escribe.</p>
+
+<p>Se escribe en un <a href="m56-supply-chain.html#sbom">VEX</a>, el documento de M56 donde el dueño declara por cada CVE si lo afecta. Un <code>not_affected</code> lleva una justificación estándar (por ejemplo, <code>vulnerable_code_not_in_execute_path</code>) y quién lo analizó. Los escáneres que leen VEX dejan de reportar ese hallazgo, y si el código cambia, el análisis se repite. Es la diferencia entre "lo silenciamos" y "lo analizamos y lo dejamos dicho".</p>
+
+<h2 id="metricas"><span class="sec-num">58.9</span>Métricas: MTTR, cumplimiento, deuda y cobertura</h2>
+
+<p>"Tenemos 520 vulnerabilidades abiertas" no dice si el programa va bien. Las métricas que sí lo dicen <span class="badge badge--ref">Diseño de referencia</span>:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Métrica</th><th>Qué mide</th><th>Cómo se mira</th></tr></thead>
+    <tbody>
+      <tr><td>MTTR por clase</td><td>Tiempo medio desde el triaje hasta que lo que corre está arreglado</td><td>Contra el plazo de su clase, no un promedio de todo</td></tr>
+      <tr><td>Cumplimiento del plazo</td><td>Porcentaje de hallazgos cerrados dentro de su plazo</td><td>Por clase y por equipo dueño</td></tr>
+      <tr><td>Deuda</td><td>Hallazgos abiertos con el plazo vencido, y excepciones vencidas</td><td>Debería tender a cero en Actuar y Atender</td></tr>
+      <tr><td>Cobertura</td><td>Porcentaje de activos del inventario que se escanean</td><td>Lo que no se escanea tiene cero hallazgos y riesgo desconocido</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>El backlog se comporta como cualquier cola, y la ley de Little de M00 lo explica: los hallazgos abiertos (L) son los que llegan por semana (λ) por el tiempo que cada uno queda abierto (W). Con 60 nuevos por semana y un MTTR de 3 semanas, el backlog estable es 60 × 3 = 180. Si llegan más de los que se arreglan, crece sin tope.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f589t f589d">
+<title id="f589t">El backlog cuando llega más de lo que se arregla</title>
+<desc id="f589d">Ocho semanas. Llegan 60 hallazgos priorizados por semana y se arreglan 50. El backlog arranca en 520 y crece 10 por semana: 600 en la semana 8. Con 60 arreglos por semana se queda en 520; con 70 baja a 440.</desc>
+<defs><marker id="f589a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="sim-grid" d="M70 230.0 H630"/>
+<text class="sim-label" x="62" y="234.0" text-anchor="end">400</text>
+<path class="sim-grid" d="M70 190.0 H630"/>
+<text class="sim-label" x="62" y="194.0" text-anchor="end">450</text>
+<path class="sim-grid" d="M70 150.0 H630"/>
+<text class="sim-label" x="62" y="154.0" text-anchor="end">500</text>
+<path class="sim-grid" d="M70 110.0 H630"/>
+<text class="sim-label" x="62" y="114.0" text-anchor="end">550</text>
+<path class="sim-grid" d="M70 70.0 H630"/>
+<text class="sim-label" x="62" y="74.0" text-anchor="end">600</text>
+<path class="sim-grid" d="M70 30.0 H630"/>
+<text class="sim-label" x="62" y="34.0" text-anchor="end">650</text>
+<text class="sim-label" x="70.0" y="248" text-anchor="middle">0</text>
+<text class="sim-label" x="140.0" y="248" text-anchor="middle">1</text>
+<text class="sim-label" x="210.0" y="248" text-anchor="middle">2</text>
+<text class="sim-label" x="280.0" y="248" text-anchor="middle">3</text>
+<text class="sim-label" x="350.0" y="248" text-anchor="middle">4</text>
+<text class="sim-label" x="420.0" y="248" text-anchor="middle">5</text>
+<text class="sim-label" x="490.0" y="248" text-anchor="middle">6</text>
+<text class="sim-label" x="560.0" y="248" text-anchor="middle">7</text>
+<text class="sim-label" x="630.0" y="248" text-anchor="middle">8</text>
+<text class="sim-label" x="350.0" y="270" text-anchor="middle">semana</text>
+<text class="dg-tiny" x="30" y="16" text-anchor="start">Hallazgos abiertos; llegan 60 por semana</text>
+<path d="M70.0 134.0 140.0 126.0 210.0 118.0 280.0 110.0 350.0 102.0 420.0 94.0 490.0 86.0 560.0 78.0 630.0 70.0" fill="none" stroke="var(--fail)" stroke-width="2.5"/>
+<text class="dg-tiny" x="640.0" y="74.0" text-anchor="start">arreglan 50: 600</text>
+<path d="M70.0 134.0 140.0 134.0 210.0 134.0 280.0 134.0 350.0 134.0 420.0 134.0 490.0 134.0 560.0 134.0 630.0 134.0" fill="none" stroke="var(--label-2)" stroke-width="2.5"/>
+<text class="dg-tiny" x="640.0" y="138.0" text-anchor="start">arreglan 60: 520</text>
+<path d="M70.0 134.0 140.0 142.0 210.0 150.0 280.0 158.0 350.0 166.0 420.0 174.0 490.0 182.0 560.0 190.0 630.0 198.0" fill="none" stroke="var(--ok)" stroke-width="2.5"/>
+<text class="dg-tiny" x="640.0" y="202.0" text-anchor="start">arreglan 70: 440</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 58.9.</b> El mismo backlog de 520 con tres capacidades. Diez arreglos por semana de diferencia separan un backlog que crece de uno que baja.</figcaption>
+</figure>
+
+
+<p>Las cuentas de la figura: con 50 arreglos contra 60 llegadas, el backlog crece 10 por semana y en 8 semanas pasa de 520 a 600. Con 70, baja 10 por semana y llega a 440. La salida rara vez es "arreglar más rápido": es que lleguen menos, con imágenes base mínimas (<a href="m57-contenedores-k8s.html#imagen">M57</a>), menos dependencias y actualizaciones automáticas que cierran solas la clase Seguir.</p>
+
+<h2 id="tienda"><span class="sec-num">58.10</span>Los 4 000 hallazgos de Tienda Norte</h2>
+
+<p>Juntando todo <span class="badge badge--ref">Diseño de referencia</span>: los 4 000 hallazgos brutos bajan a 520 con los filtros de 58.8, y la matriz de 58.6 los reparte en cuatro clases.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f5810t f5810d">
+<title id="f5810t">Los 520 hallazgos de Tienda Norte por clase</title>
+<desc id="f5810d">Barras: Actuar 6, Atender 34, Seguir de cerca 120 y Seguir 360. De los 520, 300 se cierran con un solo cambio: actualizar la imagen base.</desc>
+<defs><marker id="f5810a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="210" y="39" text-anchor="end">Actuar · 72 h</text>
+<rect class="dg-bad" x="220" y="20" width="7.7" height="28" rx="4"/>
+<text class="dg-small" x="235.7" y="39" text-anchor="start">6</text>
+<text class="dg-small" x="210" y="79" text-anchor="end">Atender · 14 días</text>
+<rect class="dg-warnbox" x="220" y="60" width="43.4" height="28" rx="4"/>
+<text class="dg-small" x="271.4" y="79" text-anchor="start">34</text>
+<text class="dg-small" x="210" y="119" text-anchor="end">Seguir de cerca · 60 días</text>
+<rect class="dg-box" x="220" y="100" width="153.3" height="28" rx="4"/>
+<text class="dg-small" x="381.3" y="119" text-anchor="start">120</text>
+<text class="dg-small" x="210" y="159" text-anchor="end">Seguir · próxima versión</text>
+<rect class="dg-ok" x="220" y="140" width="460.0" height="28" rx="4"/>
+<text class="dg-small" x="688.0" y="159" text-anchor="start">360</text>
+<text class="dg-small" x="385" y="200" text-anchor="middle">300 de los 520 desaparecen con un solo PR: subir la imagen base de la API y del worker.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 58.10.</b> Seis hallazgos para esta semana, 34 para estas dos. Lo demás tiene plazo y dueño, y la mayor parte se va con un cambio de imagen base.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Clase</th><th class="r">Hallazgos</th><th>Qué se hace</th></tr></thead>
+    <tbody>
+      <tr><td>Actuar</td><td class="r">6</td><td>Hoy: mitigar y abrir un incidente para buscar si alguien ya entró (<a href="m60-respuesta-forense.html#triaje">M60</a>). El ingress del clúster y la VPN están aquí.</td></tr>
+      <tr><td>Atender</td><td class="r">34</td><td>Este sprint. Tres son cambios de versión mayor con excepción y control compensatorio.</td></tr>
+      <tr><td>Seguir de cerca</td><td class="r">120</td><td>Se revisan cada semana contra el KEV y el EPSS del día.</td></tr>
+      <tr><td>Seguir</td><td class="r">360</td><td>Renovate abre los PR; 300 se van con la imagen base nueva.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Con 40 arreglos por semana, las cuentas cierran: 6 + 34 = 40 caben en la primera semana, y los 120 de Seguir de cerca entran en tres semanas más, dentro de sus 60 días. El PR de la imagen base cuenta como un arreglo y cierra 300 hallazgos. Lo que no se puede parchar todavía, como el ingress mientras sale la versión nueva, se vigila: la detección de quien intente explotarlo es el tema de <a href="m59-deteccion.html#tienda">M59</a>, y lo que se hace si se descubre que alguien entró antes del parche es <a href="m60-respuesta-forense.html#marco">M60</a>.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Priorizar con cuatro datos cuesta más que ordenar por CVSS: hay que mantener el inventario, la exposición y la criticidad de cada activo. La alternativa cuesta más, pero no se ve: semanas de trabajo en hallazgos que no cambiaban nada mientras lo que estaba en el KEV seguía abierto.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m58"></div>
+<div data-exercise="m58-backlog"></div>
+<div data-checkpoint="m58"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m58.data.js"></script>
+<script src="../assets/js/data/exercises/m58.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-blueteam.js"></script>
+</body>
+</html>

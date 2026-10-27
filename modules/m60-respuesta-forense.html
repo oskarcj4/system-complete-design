@@ -1,0 +1,925 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M60. Respuesta a incidentes y forense</title>
+<meta name="description" content="Cómo se responde a un incidente sin destruir lo que lo explica: NIST SP 800-61r3 y CSF 2.0, roles y ejercicios de mesa, severidad, contener sin borrar, orden de volatilidad, cadena de custodia, artefactos de Linux, CloudTrail y el audit log de Kubernetes, la línea de tiempo, erradicar, comunicar y el postmortem, con un mapa de cuatro incidentes.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/map.css">
+</head>
+<body data-root="../" data-module="m60">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Respuesta a incidentes y forense</h1>
+        <p class="lead">Un incidente se gana o se pierde en las primeras dos horas, y casi siempre se pierde por apuro: alguien borra el pod, reinicia el servidor o rota la llave sin mirar qué hizo. Este módulo trata de responder rápido sin destruir lo que explica qué pasó.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M60</dd></div>
+          <div><dt>Parte</dt><dd>VII. Blue Team y DevSecOps</dd></div>
+          <div><dt>Duración</dt><dd>140 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M11, M37, M54, M56</dd></div>
+          <div><dt>Estado</dt><dd data-status="m60">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Ubicar la respuesta a incidentes en el <b>modelo de NIST SP 800-61r3</b> y en las seis funciones de CSF 2.0.</li>
+    <li>Preparar a un equipo: <b>roles</b>, canal fuera de banda, playbooks y <b>ejercicios de mesa</b>.</li>
+    <li>Asignar una <b>severidad</b> y elegir la contención más chica que corte el daño sin destruir evidencia.</li>
+    <li>Recolectar evidencia en el <b>orden de volatilidad</b> de RFC 3227 y mantener su <b>cadena de custodia</b>.</li>
+    <li>Leer los artefactos de <b>Linux</b>, de <b>CloudTrail</b> y del <b>audit log de Kubernetes</b>, y juntarlos en una línea de tiempo.</li>
+    <li>Erradicar y recuperar reconstruyendo en lugar de limpiar, comunicar a tiempo y escribir un postmortem que cambie controles.</li>
+  </ul>
+</section>
+
+<p>Los módulos anteriores de esta parte trataron de que el incidente no pase: el modelo de amenazas de <a href="m54-threat-modeling.html#tienda">M54</a>, los controles del ciclo de vida de <a href="m55-appsec.html#pipeline">M55</a> y la cadena endurecida de <a href="m56-supply-chain.html#tienda">M56</a>. Ninguno lo garantiza. <a href="m56-supply-chain.html#tienda">M56.9</a> terminaba justo aquí: el día que aparece una puerta trasera en una dependencia, lo que importa es cuánto tarda el equipo en saber qué pasó, cortarlo y volver a un estado confiable.</p>
+
+<p>Ya viste dos piezas. En <a href="m11-observabilidad.html#incidentes">M11.8</a>, un incidente de disponibilidad: mitigar primero, tres roles y un postmortem sin culpas. En <a href="m37-nube.html#incidentes">M37.8</a>, el ciclo de cinco pasos y el caso de Capital One. Un incidente de seguridad suma algo que un incidente de disponibilidad no tiene: <b>un adversario</b> que puede seguir adentro, que borra rastros y que reacciona a lo que haces. Por eso aquí la prisa por "volver a la normalidad" tiene un costo: el reinicio que arregla la caída también borra la memoria donde estaba la explicación.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Los bomberos que llegan a un incendio con sospecha de intencional. Primero apagan, porque las personas van antes que todo. Pero no barren las cenizas ni tiran los muebles quemados a la calle: el perito necesita ver dónde empezó el fuego. Contener sin destruir la escena es la habilidad central de este módulo.</p>
+</aside>
+
+<h2 id="marco"><span class="sec-num">60.1</span>El marco: NIST SP 800-61r3</h2>
+
+<p>La <dfn data-term="incident-response">respuesta a incidentes</dfn> es lo que hace una organización desde que sospecha que algo se comprometió hasta que vuelve a operar con confianza y aprende de lo que pasó. La guía de referencia es la <b>NIST SP 800-61</b>. Su revisión 3, de abril de 2025, reemplaza a la revisión 2 de 2012 y cambia el enfoque <span class="badge badge--doc">Documentado</span>: deja de presentar la respuesta como un ciclo aparte y la reparte en las seis funciones del <b>Cybersecurity Framework 2.0</b>, como un "perfil comunitario" de CSF.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f601t f601d">
+<title id="f601t">Del ciclo de 2012 al perfil de CSF 2.0</title>
+<desc id="f601d">Arriba, las cuatro fases de NIST SP 800-61 Rev. 2: preparación; detección y análisis; contención, erradicación y recuperación; actividad posterior. Abajo, Rev. 3 reparte la respuesta en las seis funciones de CSF 2.0: Govern, Identify y Protect como preparación; Detect, Respond y Recover como respuesta; la mejora (ID.IM) vuelve de la respuesta a la preparación.</desc>
+<defs><marker id="f601a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="14" y="22" text-anchor="start">Rev. 2 (2012): cuatro fases en ciclo</text>
+<rect class="dg-box" x="14" y="36" width="172" height="46" rx="8"/>
+<text class="dg-tiny" x="100.0" y="63.0" text-anchor="middle">Preparación</text>
+<path class="dg-edge" d="M186 59 L206 59" marker-end="url(#f601a)"/>
+<rect class="dg-box" x="206" y="36" width="172" height="46" rx="8"/>
+<text class="dg-tiny" x="292.0" y="63.0" text-anchor="middle">Detección y análisis</text>
+<path class="dg-edge" d="M378 59 L398 59" marker-end="url(#f601a)"/>
+<rect class="dg-box" x="398" y="36" width="172" height="46" rx="8"/>
+<text class="dg-tiny" x="484.0" y="55.5" text-anchor="middle">Contener, erradicar</text>
+<text class="dg-tiny" x="484.0" y="70.5" text-anchor="middle">y recuperar</text>
+<path class="dg-edge" d="M570 59 L590 59" marker-end="url(#f601a)"/>
+<rect class="dg-box" x="590" y="36" width="172" height="46" rx="8"/>
+<text class="dg-tiny" x="676.0" y="63.0" text-anchor="middle">Actividad posterior</text>
+<path class="dg-feedback" d="M704 82 L704 100 L100 100 L100 82" marker-end="url(#f601a)" style="stroke-dasharray:5 4"/>
+<text class="dg-group" x="14" y="136" text-anchor="start">Rev. 3 (abril de 2025): las seis funciones de CSF 2.0</text>
+<rect class="dg-frame" x="14" y="150" width="358" height="104" rx="10"/>
+<rect class="dg-frame" x="398" y="150" width="358" height="104" rx="10"/>
+<text class="dg-tiny" x="193" y="168" text-anchor="middle">Preparación: prevenir y estar listo</text>
+<text class="dg-tiny" x="577" y="168" text-anchor="middle">Respuesta: el incidente en curso</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="26" y="182" width="104" height="56" rx="8"/>
+<text class="dg-small" x="78.0" y="206.5" text-anchor="middle">Govern</text>
+<text class="dg-tiny" x="78.0" y="221.5" text-anchor="middle">roles, política</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="142" y="182" width="104" height="56" rx="8"/>
+<text class="dg-small" x="194.0" y="206.5" text-anchor="middle">Identify</text>
+<text class="dg-tiny" x="194.0" y="221.5" text-anchor="middle">activos, mejora</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="258" y="182" width="104" height="56" rx="8"/>
+<text class="dg-small" x="310.0" y="206.5" text-anchor="middle">Protect</text>
+<text class="dg-tiny" x="310.0" y="221.5" text-anchor="middle">controles</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="410" y="182" width="104" height="56" rx="8"/>
+<text class="dg-small" x="462.0" y="206.5" text-anchor="middle">Detect</text>
+<text class="dg-tiny" x="462.0" y="221.5" text-anchor="middle">alertas</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="526" y="182" width="104" height="56" rx="8"/>
+<text class="dg-small" x="578.0" y="206.5" text-anchor="middle">Respond</text>
+<text class="dg-tiny" x="578.0" y="221.5" text-anchor="middle">contener</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="642" y="182" width="104" height="56" rx="8"/>
+<text class="dg-small" x="694.0" y="206.5" text-anchor="middle">Recover</text>
+<text class="dg-tiny" x="694.0" y="221.5" text-anchor="middle">restaurar</text>
+<path class="dg-edge" d="M372 210 L396 210" marker-end="url(#f601a)"/>
+<path class="dg-feedback" d="M640 256 L640 280 L193 280 L193 256" marker-end="url(#f601a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="416" y="294" text-anchor="middle">Improvement (ID.IM): lo aprendido cambia la preparación</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 60.1.</b> De las cuatro fases de 2012 a las seis funciones de CSF 2.0. La respuesta ya no empieza con la alerta: Govern, Identify y Protect son la preparación, y la mejora vuelve de cada incidente.</figcaption>
+</figure>
+
+
+<p>La lectura práctica de ese cambio: la respuesta no empieza con la alerta. <b>Govern</b> (quién decide, con qué política), <b>Identify</b> (qué activos hay y cuáles importan) y <b>Protect</b> (los controles de M54 a M57) son la preparación. <b>Detect</b>, <b>Respond</b> y <b>Recover</b> son el incidente en curso. Y la categoría de mejora de Identify (ID.IM) cierra el lazo: cada incidente cambia la preparación del siguiente <span class="badge badge--doc">Documentado</span>. El ciclo de cinco pasos de <a href="m37-nube.html#incidentes">M37.8</a> (detectar, contener, erradicar, recuperar, aprender) sigue sirviendo como el orden de las tareas dentro de Respond y Recover; este módulo lo recorre paso a paso.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Función de CSF 2.0</th><th>En un incidente de Tienda Norte</th><th>Sección</th></tr></thead>
+    <tbody>
+      <tr><td>Govern</td><td>Quién puede declarar un incidente y quién decide apagar producción</td><td><a href="#preparar">60.2</a></td></tr>
+      <tr><td>Identify</td><td>El inventario y el modelo de amenazas: qué está en juego</td><td><a href="m54-threat-modeling.html#tienda">M54.8</a></td></tr>
+      <tr><td>Protect</td><td>Los controles de la Parte VII, y los registros que se necesitarán</td><td><a href="#nube-k8s">60.7</a></td></tr>
+      <tr><td>Detect</td><td>La alerta, el triaje y el alcance</td><td><a href="#triaje">60.3</a>, y la detección en <a href="m59-deteccion.html#soc">M59</a></td></tr>
+      <tr><td>Respond</td><td>Contener, recolectar evidencia, investigar, comunicar</td><td><a href="#contener">60.4</a> a <a href="#timeline">60.8</a>, <a href="#comunicar">60.10</a></td></tr>
+      <tr><td>Recover</td><td>Erradicar, reconstruir, restaurar y verificar</td><td><a href="#erradicar">60.9</a></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="lamina">La lámina: el vocabulario de un incidente</h3>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 310" role="img" aria-labelledby="f60lt f60ld">
+<title id="f60lt">Lámina 60.A: el vocabulario de un incidente</title>
+<desc id="f60ld">Diez cajas en dos filas recorren un incidente de Tienda Norte: antes, el ejercicio de mesa; después la alerta, el incident commander, la severidad, la contención, el orden de volatilidad, la cadena de custodia, la línea de tiempo forense, erradicar y recuperar, y el postmortem. Cada caja lleva una marca numerada.</desc>
+<defs><marker id="f60la" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-tiny" x="14" y="22" text-anchor="start">Antes y durante</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="40" width="136" height="76" rx="8"/>
+<text class="dg-small" x="82.0" y="74.5" text-anchor="middle">Ejercicio de mesa</text>
+<text class="dg-tiny" x="82.0" y="89.5" text-anchor="middle">ensayar sin incidente</text>
+<g class="pl-pin"><circle cx="28" cy="54" r="11"/><text x="28" y="58" text-anchor="middle">1</text></g>
+<path class="dg-edge" d="M150 78 L164 78" marker-end="url(#f60la)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="164" y="40" width="136" height="76" rx="8"/>
+<text class="dg-small" x="232.0" y="74.5" text-anchor="middle">Alerta</text>
+<text class="dg-tiny" x="232.0" y="89.5" text-anchor="middle">el SIEM avisa</text>
+<g class="pl-pin"><circle cx="178" cy="54" r="11"/><text x="178" y="58" text-anchor="middle">2</text></g>
+<path class="dg-edge" d="M300 78 L314 78" marker-end="url(#f60la)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="314" y="40" width="136" height="76" rx="8"/>
+<text class="dg-small" x="382.0" y="74.5" text-anchor="middle">Incident commander</text>
+<text class="dg-tiny" x="382.0" y="89.5" text-anchor="middle">una persona decide</text>
+<g class="pl-pin"><circle cx="328" cy="54" r="11"/><text x="328" y="58" text-anchor="middle">3</text></g>
+<path class="dg-edge" d="M450 78 L464 78" marker-end="url(#f60la)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="464" y="40" width="136" height="76" rx="8"/>
+<text class="dg-small" x="532.0" y="74.5" text-anchor="middle">Severidad</text>
+<text class="dg-tiny" x="532.0" y="89.5" text-anchor="middle">SEV1 a SEV4</text>
+<g class="pl-pin"><circle cx="478" cy="54" r="11"/><text x="478" y="58" text-anchor="middle">4</text></g>
+<path class="dg-edge" d="M600 78 L614 78" marker-end="url(#f60la)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="614" y="40" width="136" height="76" rx="8"/>
+<text class="dg-small" x="682.0" y="74.5" text-anchor="middle">Contención</text>
+<text class="dg-tiny" x="682.0" y="89.5" text-anchor="middle">aislar sin borrar</text>
+<g class="pl-pin"><circle cx="628" cy="54" r="11"/><text x="628" y="58" text-anchor="middle">5</text></g>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="196" width="136" height="76" rx="8"/>
+<text class="dg-small" x="82.0" y="230.5" text-anchor="middle">Orden de volatilidad</text>
+<text class="dg-tiny" x="82.0" y="245.5" text-anchor="middle">se pierde primero</text>
+<g class="pl-pin"><circle cx="28" cy="210" r="11"/><text x="28" y="214" text-anchor="middle">6</text></g>
+<path class="dg-edge" d="M150 234 L164 234" marker-end="url(#f60la)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="164" y="196" width="136" height="76" rx="8"/>
+<text class="dg-small" x="232.0" y="230.5" text-anchor="middle">Cadena de custodia</text>
+<text class="dg-tiny" x="232.0" y="245.5" text-anchor="middle">quién tocó qué</text>
+<g class="pl-pin"><circle cx="178" cy="210" r="11"/><text x="178" y="214" text-anchor="middle">7</text></g>
+<path class="dg-edge" d="M300 234 L314 234" marker-end="url(#f60la)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="314" y="196" width="136" height="76" rx="8"/>
+<text class="dg-small" x="382.0" y="230.5" text-anchor="middle">Línea de tiempo</text>
+<text class="dg-tiny" x="382.0" y="245.5" text-anchor="middle">todo en UTC</text>
+<g class="pl-pin"><circle cx="328" cy="210" r="11"/><text x="328" y="214" text-anchor="middle">8</text></g>
+<path class="dg-edge" d="M450 234 L464 234" marker-end="url(#f60la)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="464" y="196" width="136" height="76" rx="8"/>
+<text class="dg-small" x="532.0" y="230.5" text-anchor="middle">Erradicar</text>
+<text class="dg-tiny" x="532.0" y="245.5" text-anchor="middle">rotar y reconstruir</text>
+<g class="pl-pin"><circle cx="478" cy="210" r="11"/><text x="478" y="214" text-anchor="middle">9</text></g>
+<path class="dg-edge" d="M600 234 L614 234" marker-end="url(#f60la)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="614" y="196" width="136" height="76" rx="8"/>
+<text class="dg-small" x="682.0" y="230.5" text-anchor="middle">Postmortem</text>
+<text class="dg-tiny" x="682.0" y="245.5" text-anchor="middle">cambia controles</text>
+<g class="pl-pin"><circle cx="628" cy="210" r="11"/><text x="628" y="214" text-anchor="middle">10</text></g>
+<path class="dg-edge" d="M682 116 L682 140 L82 140 L82 188" marker-end="url(#f60la)"/>
+<text class="dg-tiny" x="390" y="158" text-anchor="middle">se contiene y se investiga</text>
+<text class="dg-tiny" x="14" y="182" text-anchor="start">Después</text>
+<text class="dg-tiny" x="385" y="296" text-anchor="middle">Lo aprendido en 10 vuelve al ejercicio de mesa de 1 y a las detecciones.</text>
+</svg>
+  </div>
+  <figcaption><b>Lámina 60.A.</b> Un incidente de punta a punta en diez términos. La clave de abajo los define y enlaza a su sección.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Ejercicio de mesa</b><span>Un incidente ensayado en una sala, sin tocar sistemas, para descubrir huecos antes del real. <a href="#preparar">60.2</a></span></li>
+  <li><b>Alerta</b><span>La señal que abre el caso: una regla del SIEM, un aviso externo o alguien que nota algo raro. <a href="#triaje">60.3</a></span></li>
+  <li><b>Incident commander</b><span>La persona que coordina y decide; no investiga ni teclea comandos. <a href="#preparar">60.2</a></span></li>
+  <li><b>Severidad</b><span>Un nivel acordado de antemano (SEV1 a SEV4) que dice quién se suma y cada cuánto se informa. <a href="#triaje">60.3</a></span></li>
+  <li><b>Contención</b><span>Cortar el daño con la acción más chica posible, conservando la evidencia. <a href="#contener">60.4</a></span></li>
+  <li><b>Orden de volatilidad</b><span>Recolectar primero lo que desaparece antes: memoria, procesos, conexiones; el disco después. <a href="#evidencia">60.5</a></span></li>
+  <li><b>Cadena de custodia</b><span>El registro de quién recolectó, guardó y tocó cada evidencia, con su hash. <a href="#evidencia">60.5</a></span></li>
+  <li><b>Línea de tiempo forense</b><span>Los eventos de todas las fuentes ordenados en UTC: la columna vertebral de la investigación. <a href="#timeline">60.8</a></span></li>
+  <li><b>Erradicar y recuperar</b><span>Quitar el acceso, rotar lo expuesto y reconstruir desde algo confiable. <a href="#erradicar">60.9</a></span></li>
+  <li><b>Postmortem</b><span>El documento sin culpas cuyas acciones cambian controles, detecciones y el playbook. <a href="#postmortem">60.11</a></span></li>
+</ol>
+
+<h2 id="preparar"><span class="sec-num">60.2</span>Preparar: roles, canales, playbooks y ejercicios</h2>
+
+<p>La preparación decide más que cualquier herramienta. En un incidente real, a las 4 de la mañana, nadie lee un documento de 40 páginas: se hace lo que se ensayó. Lo mínimo, antes del primer incidente de seguridad:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f602t f602d">
+<title id="f602t">Los roles de una respuesta</title>
+<desc id="f602d">En el centro, el incident commander, que coordina y decide. A su alrededor, investigación, operaciones, comunicación, el escriba que lleva la bitácora, y legal y privacidad. Abajo, el canal fuera de banda, separado de los sistemas que pueden estar comprometidos.</desc>
+<defs><marker id="f602a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box dg-box--em" x="300" y="104" width="170" height="62" rx="8"/>
+<text class="dg-label" x="385.0" y="131.5" text-anchor="middle">Incident commander</text>
+<text class="dg-tiny" x="385.0" y="146.5" text-anchor="middle">coordina y decide</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="20" width="170" height="56" rx="8"/>
+<text class="dg-small" x="105.0" y="44.5" text-anchor="middle">Investigación</text>
+<text class="dg-tiny" x="105.0" y="59.5" text-anchor="middle">qué pasó, alcance</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="580" y="20" width="170" height="56" rx="8"/>
+<text class="dg-small" x="665.0" y="44.5" text-anchor="middle">Operaciones</text>
+<text class="dg-tiny" x="665.0" y="59.5" text-anchor="middle">contiene, restaura</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="190" width="170" height="56" rx="8"/>
+<text class="dg-small" x="105.0" y="214.5" text-anchor="middle">Comunicación</text>
+<text class="dg-tiny" x="105.0" y="229.5" text-anchor="middle">adentro y afuera</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="580" y="190" width="170" height="56" rx="8"/>
+<text class="dg-small" x="665.0" y="214.5" text-anchor="middle">Escriba</text>
+<text class="dg-tiny" x="665.0" y="229.5" text-anchor="middle">bitácora con hora</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="300" y="14" width="170" height="56" rx="8"/>
+<text class="dg-small" x="385.0" y="38.5" text-anchor="middle">Legal y privacidad</text>
+<text class="dg-tiny" x="385.0" y="53.5" text-anchor="middle">qué notificar</text>
+<path class="dg-edge" d="M190 60 L298 116" marker-end="url(#f602a)"/>
+<path class="dg-edge" d="M580 60 L472 116" marker-end="url(#f602a)"/>
+<path class="dg-edge" d="M190 210 L298 156" marker-end="url(#f602a)"/>
+<path class="dg-edge" d="M580 210 L472 156" marker-end="url(#f602a)"/>
+<path class="dg-edge" d="M385 70 L385 102" marker-end="url(#f602a)"/>
+<rect class="dg-warnbox" x="268" y="204" width="234" height="52" rx="8"/>
+<text class="dg-small" x="385.0" y="226.5" text-anchor="middle">Canal fuera de banda</text>
+<text class="dg-tiny" x="385.0" y="241.5" text-anchor="middle">no el chat que el atacante puede leer</text>
+<path class="dg-edge" d="M385 166 L385 202" marker-end="url(#f602a)" style="stroke-dasharray:5 4"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 60.2.</b> El incident commander coordina y no investiga. El escriba lleva la bitácora con hora, y el canal de respuesta vive fuera de los sistemas que podrían estar comprometidos.</figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Roles.</b> Los tres de <a href="m11-observabilidad.html#incidentes">M11.8</a> (quien coordina, quien investiga y ejecuta, quien comunica) más dos que un incidente de seguridad necesita: un <b>escriba</b> que anota cada decisión y cada comando con su hora en UTC (esa bitácora será la mitad de la línea de tiempo), y <b>legal y privacidad</b>, que deciden qué hay que notificar y a quién. En un equipo chico, una persona tiene dos roles; el incident commander nunca investiga a la vez.</li>
+  <li><b>Un canal fuera de banda.</b> Si el atacante tiene la cuenta de un administrador, puede leer el chat de la empresa y el correo. El canal de respuesta tiene que existir antes y no depender de las identidades que podrían estar comprometidas: un grupo de mensajería aparte, con números de teléfono, y una lista impresa de quién llamar.</li>
+  <li><b>Accesos de emergencia.</b> Cuentas de respuesta con permiso de leer los registros y de aplicar contenciones (desactivar llaves, aislar un host), con MFA y probadas cada trimestre. Descubrir en pleno incidente que nadie puede leer el bucket de CloudTrail es un clásico.</li>
+  <li><b>Playbooks y runbooks.</b> El <dfn data-term="playbook-incidentes">playbook de incidentes</dfn> dice cómo se maneja cualquier incidente (quién declara, dónde se habla, cuándo se escala); los runbooks son los pasos para un caso concreto: "credencial de la nube filtrada", "contenedor con un proceso inesperado", "ransomware en un servidor". Los cuatro escenarios del mapa de <a href="#mapa">60.12</a> son el borrador de los primeros cuatro runbooks de Tienda Norte.</li>
+</ul>
+
+<h3 id="preparar-mesa">El ejercicio de mesa</h3>
+
+<p>Un <dfn data-term="tabletop">ejercicio de mesa</dfn> (tabletop exercise) es un incidente simulado que se juega en una sala, sin tocar ningún sistema. Un facilitador cuenta un escenario por partes, las "inyecciones" ("son las 04:07, salta esta alerta"; "a las 05:00, un periodista pregunta"), y el equipo dice qué haría y quién. No se gana nada por responder bien; se gana por descubrir lo que falta: un permiso, un teléfono, una decisión que nadie sabe quién toma <span class="badge badge--ref">Diseño de referencia</span>. CISA publica paquetes de escenarios listos para usar <span class="badge badge--doc">Documentado</span>.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Parte</th><th>Qué lleva</th><th>Ejemplo en Tienda Norte</th></tr></thead>
+    <tbody>
+      <tr><td>Objetivo</td><td>Una o dos preguntas que se quieren responder</td><td>¿Podemos desactivar una llave de AWS en menos de 15 minutos de madrugada?</td></tr>
+      <tr><td>Escenario</td><td>Realista, sacado del modelo de amenazas</td><td>La amenaza 6 de <a href="m54-threat-modeling.html#tienda">M54.8</a>: una credencial en el repositorio</td></tr>
+      <tr><td>Inyecciones</td><td>Hechos que llegan con hora</td><td>04:07 alerta; 04:30 la llave creó otra; 06:00 un cliente pregunta</td></tr>
+      <tr><td>Duración</td><td>De 60 a 90 minutos</td><td>Con las personas que estarían de guardia</td></tr>
+      <tr><td>Salida</td><td>Una lista de huecos con dueño y fecha</td><td>"Nadie de guardia tiene permiso sobre IAM"</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="triaje"><span class="sec-num">60.3</span>Triaje: severidad y alcance</h2>
+
+<p>Una alerta no es un incidente. El triaje responde tres preguntas en minutos, no en horas: <b>¿es real?</b> (o es un falso positivo, un tema de <a href="m59-deteccion.html#calidad">M59</a>), <b>¿qué está en juego?</b> (datos de clientes, dinero, disponibilidad, credenciales) y <b>¿sigue pasando?</b> Con eso se asigna una severidad, que no es un juicio sobre la gravedad "moral" del caso sino un contrato: dice quién se suma, cada cuánto se informa y qué se puede sacrificar para contener.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f603t f603d">
+<title id="f603t">Una escala de severidad</title>
+<desc id="f603d">Cuatro niveles, de SEV1 a SEV4, cada uno con un ejemplo de Tienda Norte, quién se suma y cada cuánto se actualiza. Es un diseño de referencia: cada organización fija la suya antes del primer incidente.</desc>
+<defs><marker id="f603a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-tiny" x="20" y="24" text-anchor="start">Nivel</text>
+<text class="dg-tiny" x="106" y="24" text-anchor="start">Ejemplo en Tienda Norte</text>
+<text class="dg-tiny" x="402" y="24" text-anchor="start">Quién se suma</text>
+<text class="dg-tiny" x="608" y="24" text-anchor="start">Actualización</text>
+<rect class="dg-bad" x="14" y="34" width="80" height="44" rx="8"/>
+<text class="dg-label" x="54.0" y="60.0" text-anchor="middle">SEV1</text>
+<rect class="dg-box" x="100" y="34" width="290" height="44" rx="8"/>
+<text class="dg-tiny" x="245.0" y="60.0" text-anchor="middle">datos de clientes salen o el ransomware cifra</text>
+<rect class="dg-box" x="396" y="34" width="200" height="44" rx="8"/>
+<text class="dg-tiny" x="496.0" y="60.0" text-anchor="middle">dirección, legal, todo el equipo</text>
+<rect class="dg-box" x="602" y="34" width="154" height="44" rx="8"/>
+<text class="dg-tiny" x="679.0" y="60.0" text-anchor="middle">cada 30 min</text>
+<rect class="dg-warnbox" x="14" y="86" width="80" height="44" rx="8"/>
+<text class="dg-label" x="54.0" y="112.0" text-anchor="middle">SEV2</text>
+<rect class="dg-box" x="100" y="86" width="290" height="44" rx="8"/>
+<text class="dg-tiny" x="245.0" y="112.0" text-anchor="middle">credencial de producción usada por un tercero</text>
+<rect class="dg-box" x="396" y="86" width="200" height="44" rx="8"/>
+<text class="dg-tiny" x="496.0" y="112.0" text-anchor="middle">IC, seguridad, plataforma</text>
+<rect class="dg-box" x="602" y="86" width="154" height="44" rx="8"/>
+<text class="dg-tiny" x="679.0" y="112.0" text-anchor="middle">cada hora</text>
+<rect class="dg-box" x="14" y="138" width="80" height="44" rx="8"/>
+<text class="dg-label" x="54.0" y="164.0" text-anchor="middle">SEV3</text>
+<rect class="dg-box" x="100" y="138" width="290" height="44" rx="8"/>
+<text class="dg-tiny" x="245.0" y="164.0" text-anchor="middle">un pod mina criptomonedas, sin datos</text>
+<rect class="dg-box" x="396" y="138" width="200" height="44" rx="8"/>
+<text class="dg-tiny" x="496.0" y="164.0" text-anchor="middle">guardia y seguridad</text>
+<rect class="dg-box" x="602" y="138" width="154" height="44" rx="8"/>
+<text class="dg-tiny" x="679.0" y="164.0" text-anchor="middle">cada 4 horas</text>
+<rect class="dg-box" x="14" y="190" width="80" height="44" rx="8"/>
+<text class="dg-label" x="54.0" y="216.0" text-anchor="middle">SEV4</text>
+<rect class="dg-box" x="100" y="190" width="290" height="44" rx="8"/>
+<text class="dg-tiny" x="245.0" y="216.0" text-anchor="middle">un escaneo de puertos sin efecto</text>
+<rect class="dg-box" x="396" y="190" width="200" height="44" rx="8"/>
+<text class="dg-tiny" x="496.0" y="216.0" text-anchor="middle">quien está de guardia</text>
+<rect class="dg-box" x="602" y="190" width="154" height="44" rx="8"/>
+<text class="dg-tiny" x="679.0" y="216.0" text-anchor="middle">al cerrar</text>
+<text class="dg-tiny" x="385" y="244" text-anchor="middle">La severidad se puede subir o bajar en cualquier momento; ante la duda, se declara más alta.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 60.3.</b> Una escala de severidad de referencia para Tienda Norte. Los ejemplos importan más que las definiciones: así se decide rápido.</figcaption>
+</figure>
+
+
+<p>Dos reglas que ahorran discusiones. Primero, la severidad se fija <b>por lo que podría estar pasando</b> con lo que se sabe, no por lo que ya se confirmó: una llave de producción usada desde una IP desconocida es SEV2 aunque todavía no se vea que haya leído nada. Segundo, se puede bajar en cualquier momento, y bajarla cuesta menos que haber despertado tarde a la persona correcta.</p>
+
+<p>El <b>alcance</b> se arma como un inventario que crece: qué identidades se usaron, qué hosts tocaron, qué datos pudieron leer. Cada elemento nuevo del alcance es una pregunta para los registros de <a href="#linux">60.6</a> y <a href="#nube-k8s">60.7</a>, y una posible contención más.</p>
+
+<h2 id="contener"><span class="sec-num">60.4</span>Contener sin destruir evidencia</h2>
+
+<p>La <dfn data-term="contencion">contención</dfn> corta el daño en curso: que la llave deje de servir, que el contenedor deje de hablar con afuera, que el ransomware deje de cifrar. El error típico es contener con la acción más grande a mano (borrar el pod, reiniciar el servidor, reinstalar), que corta el daño y también borra lo que explicaba cómo empezó. La regla es elegir la acción <b>más chica que corte el daño</b>, y dejar las destructivas para cuando la evidencia ya está copiada.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 312" role="img" aria-labelledby="f604t f604d">
+<title id="f604t">Opciones de contención y qué evidencia destruye cada una</title>
+<desc id="f604d">Seis acciones ordenadas de la menos a la más destructiva: vigilar, cortar la red de salida, revocar credenciales, aislar el nodo, tomar un snapshot y detener, y borrar o reinstalar. A la derecha, qué evidencia se conserva o se pierde con cada una.</desc>
+<defs><marker id="f604a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="60" y="14" width="300" height="40" rx="8"/>
+<text class="dg-small" x="210.0" y="30.5" text-anchor="middle">Vigilar sin tocar</text>
+<text class="dg-tiny" x="210.0" y="45.5" text-anchor="middle">el atacante sigue activo</text>
+<rect class="dg-box" x="470" y="14" width="286" height="40" rx="8"/>
+<text class="dg-tiny" x="613.0" y="38.0" text-anchor="middle">se conserva todo</text>
+<path class="dg-feedback" d="M360 34 L468 34" marker-end="url(#f604a)"/>
+<rect class="dg-box" x="60" y="60" width="300" height="40" rx="8"/>
+<text class="dg-small" x="210.0" y="76.5" text-anchor="middle">Cortar la salida de red</text>
+<text class="dg-tiny" x="210.0" y="91.5" text-anchor="middle">NetworkPolicy o security group</text>
+<rect class="dg-ok" x="470" y="60" width="286" height="40" rx="8"/>
+<text class="dg-tiny" x="613.0" y="84.0" text-anchor="middle">se conserva todo</text>
+<path class="dg-feedback" d="M360 80 L468 80" marker-end="url(#f604a)"/>
+<rect class="dg-box" x="60" y="106" width="300" height="40" rx="8"/>
+<text class="dg-small" x="210.0" y="122.5" text-anchor="middle">Revocar credenciales</text>
+<text class="dg-tiny" x="210.0" y="137.5" text-anchor="middle">desactivar, no borrar</text>
+<rect class="dg-ok" x="470" y="106" width="286" height="40" rx="8"/>
+<text class="dg-tiny" x="613.0" y="130.0" text-anchor="middle">se conserva todo</text>
+<path class="dg-feedback" d="M360 126 L468 126" marker-end="url(#f604a)"/>
+<rect class="dg-box" x="60" y="152" width="300" height="40" rx="8"/>
+<text class="dg-small" x="210.0" y="168.5" text-anchor="middle">Aislar el nodo o el host</text>
+<text class="dg-tiny" x="210.0" y="183.5" text-anchor="middle">sin apagarlo</text>
+<rect class="dg-ok" x="470" y="152" width="286" height="40" rx="8"/>
+<text class="dg-tiny" x="613.0" y="176.0" text-anchor="middle">se conserva la memoria</text>
+<path class="dg-feedback" d="M360 172 L468 172" marker-end="url(#f604a)"/>
+<rect class="dg-box" x="60" y="198" width="300" height="40" rx="8"/>
+<text class="dg-small" x="210.0" y="214.5" text-anchor="middle">Snapshot y detener</text>
+<text class="dg-tiny" x="210.0" y="229.5" text-anchor="middle">después de copiar lo volátil</text>
+<rect class="dg-warnbox" x="470" y="198" width="286" height="40" rx="8"/>
+<text class="dg-tiny" x="613.0" y="222.0" text-anchor="middle">se pierde la memoria</text>
+<path class="dg-feedback" d="M360 218 L468 218" marker-end="url(#f604a)"/>
+<rect class="dg-box" x="60" y="244" width="300" height="40" rx="8"/>
+<text class="dg-small" x="210.0" y="260.5" text-anchor="middle">Borrar o reinstalar</text>
+<text class="dg-tiny" x="210.0" y="275.5" text-anchor="middle">antes de investigar</text>
+<rect class="dg-bad" x="470" y="244" width="286" height="40" rx="8"/>
+<text class="dg-tiny dg-fail-text" x="613.0" y="268.0" text-anchor="middle">se pierde casi todo</text>
+<path class="dg-feedback" d="M360 264 L468 264" marker-end="url(#f604a)"/>
+<path class="dg-edge" d="M40 20 L40 270" marker-end="url(#f604a)"/>
+<text class="dg-tiny" x="20" y="150" text-anchor="middle" style="writing-mode: vertical-rl">más destructivo</text>
+<text class="dg-tiny" x="415" y="304" text-anchor="middle">Se elige la más chica que corte el daño; lo destructivo, solo con la evidencia ya copiada.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 60.4.</b> Las opciones de contención de la menos a la más destructiva. Las tres del medio cortan casi cualquier daño y conservan la evidencia.</figcaption>
+</figure>
+
+
+<p>En Kubernetes, aislar un pod sin matarlo tiene dos partes. Una <a href="m32-firewalls.html#host-vs-red">regla de red</a> en forma de NetworkPolicy que selecciona una etiqueta de cuarentena y no permite nada, ni entrada ni salida (los detalles de NetworkPolicy y de los CNI que la aplican son de <a href="m57-contenedores-k8s.html#red-k8s">M57</a>):</p>
+
+<pre data-lang="shell"><code># cuarentena.yaml: sin reglas de ingress ni egress, el pod seleccionado no habla con nadie
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cuarentena
+  namespace: tienda
+spec:
+  podSelector:
+    matchLabels:
+      cuarentena: "si"
+  policyTypes: [Ingress, Egress]</code></pre>
+
+<p>Y sacar el pod de su ReplicaSet y de su Service cambiándole la etiqueta <code>app</code>: el ReplicaSet deja de contarlo y crea un reemplazo limpio, el Service deja de mandarle tráfico, y el pod sospechoso sigue vivo, con su memoria y su sistema de archivos, para investigarlo.</p>
+
+<pre data-lang="shell"><code>$ kubectl apply -f cuarentena.yaml
+$ kubectl label pod api-7d9f-x2k -n tienda cuarentena=si app=api-cuarentena --overwrite
+$ kubectl cordon ip-10-0-3-7      # el nodo no recibe pods nuevos; los que tiene siguen
+# lo que NO se hace todavía: kubectl delete pod, reiniciar el nodo, kubectl rollout restart</code></pre>
+
+<p>En la nube, la contención de una credencial es <b>desactivar, no borrar</b>. Una llave de acceso de IAM inactiva deja de funcionar al instante y conserva su identificador, que es lo que se busca en CloudTrail; borrarla no agrega seguridad y complica la investigación <span class="badge badge--doc">Documentado</span>. Para las credenciales temporales de un rol, que no se pueden desactivar una por una, IAM tiene "revocar sesiones activas": agrega al rol una política que niega todo token emitido antes de ese momento <span class="badge badge--doc">Documentado</span>.</p>
+
+<pre data-lang="shell"><code>$ aws iam update-access-key --user-name ci-deployer \
+    --access-key-id AKIAIOSFODNN7EXAMPLE --status Inactive</code></pre>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Vigilar sin contener permite ver qué busca el atacante, pero cada minuto puede costar datos. Fuera de equipos con mucha experiencia y apoyo legal, la decisión por defecto es contener en cuanto se entiende el alcance mínimo. Lo que sí conviene es contener <b>todo a la vez</b>: desactivar una llave mientras queda otra activa avisa al atacante y le da tiempo de usar la segunda.</p>
+</aside>
+
+<h2 id="evidencia"><span class="sec-num">60.5</span>Evidencia: orden de volatilidad y cadena de custodia</h2>
+
+<p>Antes de apagar o reconstruir algo, se copia lo que se va a perder. RFC 3227 (2002), la guía clásica de recolección de evidencia, fija el <dfn data-term="orden-volatilidad">orden de volatilidad</dfn>: se recolecta primero lo que desaparece antes <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f605t f605d">
+<title id="f605t">El orden de volatilidad de RFC 3227</title>
+<desc id="f605d">Siete niveles, del más volátil al menos: registros y caché; tabla de rutas, ARP, procesos, estadísticas del kernel y memoria; sistemas de archivos temporales; disco; logs remotos y monitoreo; configuración física y topología; medios de archivo. Se recolecta de arriba hacia abajo.</desc>
+<defs><marker id="f605a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="235" y="14" width="300" height="34" rx="8"/>
+<text class="dg-tiny" x="385.0" y="35.0" text-anchor="middle">Registros y caché de la CPU</text>
+<text class="dg-tiny" x="543" y="35" text-anchor="start">nanosegundos</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="210" y="54" width="350" height="34" rx="8"/>
+<text class="dg-tiny" x="385.0" y="75.0" text-anchor="middle">Rutas, ARP, procesos, kernel, memoria</text>
+<text class="dg-tiny" x="568" y="75" text-anchor="start">se pierde al apagar</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="185" y="94" width="400" height="34" rx="8"/>
+<text class="dg-tiny" x="385.0" y="115.0" text-anchor="middle">Sistemas de archivos temporales</text>
+<text class="dg-tiny" x="593" y="115" text-anchor="start">/tmp, /dev/shm</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="160" y="134" width="450" height="34" rx="8"/>
+<text class="dg-tiny" x="385.0" y="155.0" text-anchor="middle">Disco</text>
+<text class="dg-tiny" x="618" y="155" text-anchor="start">se reescribe con el uso</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="135" y="174" width="500" height="34" rx="8"/>
+<text class="dg-tiny" x="385.0" y="195.0" text-anchor="middle">Logs remotos y monitoreo</text>
+<text class="dg-tiny" x="643" y="195" text-anchor="start">según la retención</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="110" y="214" width="550" height="34" rx="8"/>
+<text class="dg-tiny" x="385.0" y="235.0" text-anchor="middle">Configuración física y topología</text>
+<text class="dg-tiny" x="668" y="235" text-anchor="start">cambia poco</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="85" y="254" width="600" height="34" rx="8"/>
+<text class="dg-tiny" x="385.0" y="275.0" text-anchor="middle">Medios de archivo</text>
+<text class="dg-tiny" x="693" y="275" text-anchor="start">años</text>
+<path class="dg-edge" d="M70 20 L70 284" marker-end="url(#f605a)"/>
+<text class="dg-tiny" x="14" y="26" text-anchor="start">primero</text>
+<text class="dg-tiny" x="14" y="284" text-anchor="start">después</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 60.5.</b> El orden de volatilidad de RFC 3227: arriba lo que se pierde en segundos o al apagar, abajo lo que dura años.</figcaption>
+</figure>
+
+
+<p>En la práctica de un servidor de Tienda Norte, eso significa: la lista de procesos con sus argumentos, las conexiones de red abiertas y los usuarios conectados <b>antes</b> de tocar nada más; si el riesgo lo justifica, una copia de la memoria con una herramienta preparada de antemano; después, un snapshot del disco (en la nube, un snapshot del volumen, que no requiere apagar). Todo se escribe <b>fuera</b> del sistema investigado: a un volumen montado para eso o por red, nunca al disco que se está examinando, porque escribir en él pisa lo borrado que se podría recuperar.</p>
+
+<pre data-lang="shell"><code># Lo volátil primero, a /mnt/ev (un volumen aparte), con hora en UTC
+$ date -u &gt; /mnt/ev/00-hora.txt
+$ ps auxwwf &gt; /mnt/ev/10-procesos.txt
+$ ss -tanp &gt; /mnt/ev/20-conexiones.txt
+$ who -a &gt; /mnt/ev/30-sesiones.txt
+$ ls -la /proc/*/exe 2&gt;/dev/null &gt; /mnt/ev/40-binarios.txt   # un binario borrado aparece como "(deleted)"
+$ sha256sum /mnt/ev/* &gt; /mnt/ev/SHA256SUMS</code></pre>
+
+<p>Un detalle que cambia la lectura: las herramientas del propio servidor pueden estar alteradas si el atacante tuvo root. Por eso la copia remota de los logs (<a href="m33-hardening-linux.html#auditoria">M33.8</a>) y el snapshot analizado desde otra máquina valen más que lo que el servidor dice de sí mismo.</p>
+
+<h3 id="evidencia-custodia">La cadena de custodia</h3>
+
+<p>La <dfn data-term="cadena-custodia">cadena de custodia</dfn> es el registro de dónde, cuándo y quién encontró, recolectó, guardó y entregó cada evidencia, como pide RFC 3227 <span class="badge badge--doc">Documentado</span>. Sin ella, nadie puede afirmar después que el archivo analizado es el que salió del servidor. El hash SHA-256 (<a href="m36-criptografia.html">M36</a>) es lo que la hace verificable: se calcula al recolectar y se vuelve a calcular antes de cada análisis.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f606t f606d">
+<title id="f606t">La cadena de custodia de una evidencia</title>
+<desc id="f606d">Cuatro pasos: recolectar con quién, cuándo y el hash SHA-256; guardar en un almacén de solo escritura; transferir con registro de quién entrega y quién recibe; analizar sobre una copia, verificando que el hash coincida. Abajo, la ficha que acompaña a la evidencia.</desc>
+<defs><marker id="f606a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="24" width="168" height="56" rx="8"/>
+<text class="dg-small" x="98.0" y="48.5" text-anchor="middle">Recolectar</text>
+<text class="dg-tiny" x="98.0" y="63.5" text-anchor="middle">quién, cuándo, hash</text>
+<path class="dg-edge" d="M182 52 L202 52" marker-end="url(#f606a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="204" y="24" width="168" height="56" rx="8"/>
+<text class="dg-small" x="288.0" y="48.5" text-anchor="middle">Guardar</text>
+<text class="dg-tiny" x="288.0" y="63.5" text-anchor="middle">solo escritura, cifrado</text>
+<path class="dg-edge" d="M372 52 L392 52" marker-end="url(#f606a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="394" y="24" width="168" height="56" rx="8"/>
+<text class="dg-small" x="478.0" y="48.5" text-anchor="middle">Transferir</text>
+<text class="dg-tiny" x="478.0" y="63.5" text-anchor="middle">entrega y recibe</text>
+<path class="dg-edge" d="M562 52 L582 52" marker-end="url(#f606a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="584" y="24" width="168" height="56" rx="8"/>
+<text class="dg-small" x="668.0" y="48.5" text-anchor="middle">Analizar</text>
+<text class="dg-tiny" x="668.0" y="63.5" text-anchor="middle">una copia, hash igual</text>
+<rect class="dg-box" x="120" y="110" width="530" height="104" rx="8"/>
+<text class="dg-tiny dg-mono" x="136" y="134" text-anchor="start">evidencia: snapshot-vol-0a1b (disco del nodo ip-10-0-3-7)</text>
+<text class="dg-tiny dg-mono" x="136" y="156" text-anchor="start">sha256: 9f2c…e41a   recolectó: Ana R., 2026-03-14 04:52 UTC</text>
+<text class="dg-tiny dg-mono" x="136" y="178" text-anchor="start">guardado: bucket de evidencia con object lock, cuenta aparte</text>
+<text class="dg-tiny dg-mono" x="136" y="200" text-anchor="start">entregado a: forense externo, 2026-03-14 09:10 UTC, ticket IR-212</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 60.6.</b> La cadena de custodia: cuatro pasos y una ficha que acompaña a la evidencia. El hash es lo que permite verificar que nadie la cambió.</figcaption>
+</figure>
+
+
+<p>Aunque el caso nunca llegue a un juzgado, la disciplina sirve: el seguro, un auditor o un forense externo van a preguntar lo mismo. El almacén de evidencia de Tienda Norte es un bucket en una cuenta aparte, con <b>object lock</b> (escritura una vez, sin borrado hasta que vence la retención) y acceso solo para el rol de respuesta <span class="badge badge--ref">Diseño de referencia</span>.</p>
+
+<h2 id="linux"><span class="sec-num">60.6</span>Artefactos de Linux</h2>
+
+<p>Un servidor Linux deja rastro en pocos lugares, y saber cuáles ahorra horas. Los que más se usan:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f607t f607d">
+<title id="f607t">Dónde deja rastro un servidor Linux</title>
+<desc id="f607d">Un servidor dividido en tres zonas: lo volátil (procesos, conexiones, módulos cargados), el disco (auth.log y journald, auditd, el historial de la shell, cron y timers de systemd, authorized_keys, /tmp) y la copia remota de los logs, la única que el atacante no puede borrar desde el servidor.</desc>
+<defs><marker id="f607a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="14" width="520" height="272" rx="10"/>
+<text class="dg-group" x="24" y="34" text-anchor="start">El servidor</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="30" y="46" width="488" height="52" rx="8"/>
+<text class="dg-small" x="274.0" y="68.5" text-anchor="middle">En memoria: procesos, conexiones, módulos cargados</text>
+<text class="dg-tiny" x="274.0" y="83.5" text-anchor="middle">ps, ss, /proc; se pierde al apagar</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="30" y="112" width="156" height="70" rx="8"/>
+<text class="dg-small dg-mono" x="108.0" y="143.5" text-anchor="middle">auth.log / journald</text>
+<text class="dg-tiny" x="108.0" y="158.5" text-anchor="middle">logins, sudo, ssh</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="196" y="112" width="156" height="70" rx="8"/>
+<text class="dg-small dg-mono" x="274.0" y="143.5" text-anchor="middle">auditd</text>
+<text class="dg-tiny" x="274.0" y="158.5" text-anchor="middle">execve, archivos</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="362" y="112" width="156" height="70" rx="8"/>
+<text class="dg-small dg-mono" x="440.0" y="143.5" text-anchor="middle">.bash_history</text>
+<text class="dg-tiny" x="440.0" y="158.5" text-anchor="middle">fácil de borrar</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="30" y="194" width="156" height="70" rx="8"/>
+<text class="dg-small dg-mono" x="108.0" y="225.5" text-anchor="middle">cron y timers</text>
+<text class="dg-tiny" x="108.0" y="240.5" text-anchor="middle">persistencia</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="196" y="194" width="156" height="70" rx="8"/>
+<text class="dg-small dg-mono" x="274.0" y="225.5" text-anchor="middle">authorized_keys</text>
+<text class="dg-tiny" x="274.0" y="240.5" text-anchor="middle">llaves agregadas</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="362" y="194" width="156" height="70" rx="8"/>
+<text class="dg-small dg-mono" x="440.0" y="225.5" text-anchor="middle">/tmp, /dev/shm</text>
+<text class="dg-tiny" x="440.0" y="240.5" text-anchor="middle">binarios sueltos</text>
+<rect class="dg-ok" x="590" y="100" width="166" height="100" rx="8"/>
+<text class="dg-small" x="673.0" y="139.0" text-anchor="middle">Copia remota</text>
+<text class="dg-tiny" x="673.0" y="154.0" text-anchor="middle">en el SIEM, fuera</text>
+<text class="dg-tiny" x="673.0" y="169.0" text-anchor="middle">del alcance del host</text>
+<path class="dg-edge" d="M534 150 L588 150" marker-end="url(#f607a)"/>
+<text class="dg-tiny" x="673" y="226" text-anchor="middle">si el host miente,</text>
+<text class="dg-tiny" x="673" y="242" text-anchor="middle">esta copia no</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 60.7.</b> Dónde deja rastro un servidor Linux. La copia remota es la única que no depende de lo que el servidor diga de sí mismo.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Artefacto</th><th>Dónde</th><th>Qué responde</th><th>Cuidado</th></tr></thead>
+    <tbody>
+      <tr><td>Logins y sudo</td><td><code>/var/log/auth.log</code> (Debian, Ubuntu), <code>/var/log/secure</code> (RHEL) o <a href="m34-sysadmin.html#journald">journald</a></td><td>Quién entró, desde dónde, qué ejecutó con sudo</td><td>Con root se edita; compara con la copia remota</td></tr>
+      <tr><td>auditd</td><td><code>/var/log/audit/audit.log</code></td><td>Qué programas se ejecutaron y qué archivos vigilados se tocaron</td><td>Solo registra lo que las reglas pedían antes</td></tr>
+      <tr><td>Historial de la shell</td><td><code>~/.bash_history</code></td><td>Comandos de una sesión interactiva</td><td>Se escribe al cerrar la sesión y se desactiva fácil; su ausencia también dice algo</td></tr>
+      <tr><td>Sesiones</td><td><code>/var/log/wtmp</code>, <code>/var/log/btmp</code> (con <code>last</code> y <code>lastb</code>)</td><td>Inicios y fallos de sesión con hora</td><td>Binarios, no se leen con un editor</td></tr>
+      <tr><td>Persistencia</td><td><code>/etc/cron.*</code>, crontabs, unidades y timers en <code>/etc/systemd/system</code>, <code>~/.ssh/authorized_keys</code></td><td>Qué vuelve a correr aunque se mate el proceso</td><td>Fíjate en las fechas de modificación, no en los nombres</td></tr>
+      <tr><td>Archivos temporales</td><td><code>/tmp</code>, <code>/var/tmp</code>, <code>/dev/shm</code></td><td>Binarios y scripts dejados para correr</td><td><code>/dev/shm</code> vive en memoria: se pierde al apagar</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<pre data-lang="shell"><code># Consultas de solo lectura, con salida en UTC para poder juntarlas después
+$ journalctl --utc -o short-iso --since "2026-03-14 02:00" --until "2026-03-14 05:00" -u ssh
+$ ausearch -i --start 03/14/2026 02:00:00 --end 03/14/2026 05:00:00 -k exec
+$ last -F -i
+$ systemctl list-timers --all
+$ ls -la --time-style=full-iso /etc/cron.d /etc/systemd/system ~/.ssh</code></pre>
+
+<p>Recuerda que leer cambia cosas: abrir un archivo puede actualizar su hora de acceso, según cómo esté montado el disco. Por eso el análisis serio se hace sobre el snapshot montado en solo lectura en otra máquina, y las consultas en vivo se limitan a lo volátil y a lo urgente.</p>
+
+<h2 id="nube-k8s"><span class="sec-num">60.7</span>Artefactos de la nube y de Kubernetes</h2>
+
+<p>En la nube, la mayor parte de la evidencia no está en ningún disco: está en los registros del proveedor. En AWS es <a href="m37-nube.html#auditoria">CloudTrail</a>; en Kubernetes, el audit log del API server. Los dos tienen una trampa común: solo registran lo que se configuró <b>antes</b> del incidente.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f608t f608d">
+<title id="f608t">Los registros de la nube y del clúster</title>
+<desc id="f608d">Dos columnas. CloudTrail: el historial de eventos guarda 90 días de eventos de gestión sin configurar nada; los eventos de datos, como leer un objeto de S3, solo se registran si un trail o un event data store los pide; un trail a S3 con validación de integridad guarda más tiempo. Kubernetes: el audit log del API server está apagado hasta que se le da una política y un destino; los niveles van de None a RequestResponse.</desc>
+<defs><marker id="f608a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="193" y="22" text-anchor="middle">CloudTrail (AWS)</text>
+<text class="dg-group" x="577" y="22" text-anchor="middle">Audit log de Kubernetes</text>
+<rect class="dg-ok" x="14" y="36" width="358" height="58" rx="8"/>
+<text class="dg-small" x="193.0" y="61.5" text-anchor="middle">Historial de eventos</text>
+<text class="dg-tiny" x="193.0" y="76.5" text-anchor="middle">90 días, solo gestión, sin configurar</text>
+<rect class="dg-warnbox" x="14" y="106" width="358" height="58" rx="8"/>
+<text class="dg-small" x="193.0" y="131.5" text-anchor="middle">Eventos de datos (S3, Lambda)</text>
+<text class="dg-tiny" x="193.0" y="146.5" text-anchor="middle">solo si un trail los pide</text>
+<rect class="dg-ok" x="14" y="176" width="358" height="58" rx="8"/>
+<text class="dg-small" x="193.0" y="201.5" text-anchor="middle">Trail a un bucket</text>
+<text class="dg-tiny" x="193.0" y="216.5" text-anchor="middle">retención propia, validación de integridad</text>
+<rect class="dg-warnbox" x="398" y="36" width="358" height="58" rx="8"/>
+<text class="dg-small" x="577.0" y="61.5" text-anchor="middle">Apagado por defecto</text>
+<text class="dg-tiny" x="577.0" y="76.5" text-anchor="middle">sin política no se registra nada</text>
+<rect class="dg-box" x="398" y="106" width="358" height="58" rx="8"/>
+<text class="dg-small dg-mono" x="577.0" y="131.5" text-anchor="middle">--audit-policy-file</text>
+<text class="dg-tiny" x="577.0" y="146.5" text-anchor="middle">qué se registra y a qué nivel</text>
+<rect class="dg-box" x="398" y="176" width="358" height="58" rx="8"/>
+<text class="dg-small dg-mono" x="577.0" y="201.5" text-anchor="middle">--audit-log-path</text>
+<text class="dg-tiny" x="577.0" y="216.5" text-anchor="middle">a dónde va (o un webhook)</text>
+<rect class="dg-box" x="398" y="252" width="60" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="428.0" y="273.0" text-anchor="middle">None</text>
+<rect class="dg-box" x="462" y="252" width="84" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="504.0" y="273.0" text-anchor="middle">Metadata</text>
+<rect class="dg-box" x="550" y="252" width="80" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="590.0" y="273.0" text-anchor="middle">Request</text>
+<rect class="dg-box" x="634" y="252" width="122" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="695.0" y="273.0" text-anchor="middle">RequestResponse</text>
+<text class="dg-tiny" x="193" y="270" text-anchor="middle">En un servicio gestionado, se activa en el proveedor.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 60.8.</b> CloudTrail y el audit log de Kubernetes. Lo que no se configuró antes del incidente no existe después.</figcaption>
+</figure>
+
+
+<ul>
+  <li><b>CloudTrail.</b> El historial de eventos viene activo y guarda 90 días de <b>eventos de gestión</b> (crear una llave, cambiar una política, lanzar una instancia) por región <span class="badge badge--doc">Documentado</span>. No muestra <b>eventos de datos</b> (leer un objeto de S3, invocar una función): esos se registran solo si un trail o un event data store los pide, y cuestan aparte <span class="badge badge--doc">Documentado</span>. Traducido a un incidente: si nadie activó los eventos de datos de S3, sabrás que alguien listó los buckets, pero no qué objetos leyó. Un trail a un bucket de otra cuenta, con validación de integridad de los archivos, da la retención larga y la garantía de que nadie editó el registro.</li>
+  <li><b>Kubernetes.</b> El audit log del API server registra cada pedido a la API (quién creó un pod, quién abrió un <code>exec</code>, quién leyó un Secret), pero está <b>apagado</b> hasta que el API server recibe una política (<code>--audit-policy-file</code>) y un destino (<code>--audit-log-path</code> o un webhook) <span class="badge badge--doc">Documentado</span>. Cada regla de la política elige un nivel: <code>None</code>, <code>Metadata</code> (quién, qué, cuándo), <code>Request</code> o <code>RequestResponse</code> (con los cuerpos) <span class="badge badge--doc">Documentado</span>. En un clúster gestionado se activa en el proveedor, y en varios viene desactivado por defecto.</li>
+</ul>
+
+<p>Así se ve el evento que delató a la llave filtrada del mapa, con los campos que importan para la línea de tiempo (identificadores y direcciones de ejemplo):</p>
+
+<pre data-lang="json"><code>{
+  "eventTime": "2026-03-14T04:05:12Z",
+  "eventSource": "iam.amazonaws.com",
+  "eventName": "CreateAccessKey",
+  "userIdentity": { "type": "IAMUser", "userName": "ci-deployer",
+                    "accessKeyId": "AKIAIOSFODNN7EXAMPLE" },
+  "sourceIPAddress": "203.0.113.45",
+  "userAgent": "aws-cli/2.x",
+  "requestParameters": { "userName": "backup-legacy" }
+}</code></pre>
+
+<p>Y un pedido de <code>exec</code> a un pod en el audit log de Kubernetes, a nivel <code>Metadata</code>:</p>
+
+<pre data-lang="json"><code>{
+  "kind": "Event", "apiVersion": "audit.k8s.io/v1", "level": "Metadata",
+  "stage": "ResponseComplete", "verb": "create",
+  "user": { "username": "maria@tiendanorte.example" },
+  "sourceIPs": ["10.0.1.20"],
+  "objectRef": { "resource": "pods", "subresource": "exec",
+                 "namespace": "tienda", "name": "api-7d9f-x2k" },
+  "responseStatus": { "code": 101 },
+  "requestReceivedTimestamp": "2026-03-14T05:02:44Z"
+}</code></pre>
+
+<p>Lo que se preguntan los dos: <b>quién</b> (la identidad, que en la nube casi nunca es una persona), <b>desde dónde</b> (la IP y el <span class="no-autolink">agente</span> de usuario), <b>qué</b> (la acción y el recurso) y <b>cuándo</b> (siempre en UTC). Con esos cuatro campos, cualquier fuente entra en la línea de tiempo.</p>
+
+<h2 id="timeline"><span class="sec-num">60.8</span>Armar la línea de tiempo</h2>
+
+<p>La <dfn data-term="timeline-forense">línea de tiempo forense</dfn> es la lista de eventos de todas las fuentes (CI, CloudTrail, el clúster, los hosts, el SIEM, la bitácora del escriba) llevada a UTC y ordenada. Es donde se responde la pregunta que importa: <b>cuál fue el primer evento malicioso</b>, porque todo lo que vino después está dentro del alcance y todo backup anterior es candidato a confiable.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 340" role="img" aria-labelledby="f609t f609d">
+<title id="f609t">Línea de tiempo forense de la llave filtrada</title>
+<desc id="f609d">Cinco carriles, uno por fuente: GitHub Actions, CloudTrail, el API server de Kubernetes, el registro de imágenes y el SIEM. Los eventos se ordenan en UTC entre las 02:00 y las 05:00. A las 02:14 un job vuelca la llave en el log; a las 03:41 se usa desde una IP desconocida; a las 03:52 lista buckets; a las 04:05 crea una llave nueva para otro usuario; a las 04:07 salta la alerta; a las 04:31 se desactivan las dos llaves. El registro y el clúster no muestran actividad del atacante.</desc>
+<defs><marker id="f609a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-tiny" x="14" y="44" text-anchor="start">GitHub Actions</text>
+<path class="sim-grid" d="M130 40 H730"/>
+<text class="dg-tiny" x="14" y="98" text-anchor="start">CloudTrail</text>
+<path class="sim-grid" d="M130 94 H730"/>
+<text class="dg-tiny" x="14" y="152" text-anchor="start">API server K8s</text>
+<path class="sim-grid" d="M130 148 H730"/>
+<text class="dg-tiny" x="14" y="206" text-anchor="start">Registro</text>
+<path class="sim-grid" d="M130 202 H730"/>
+<text class="dg-tiny" x="14" y="260" text-anchor="start">SIEM y equipo</text>
+<path class="sim-grid" d="M130 256 H730"/>
+<path class="sim-grid" d="M130.0 24 V262"/>
+<text class="dg-tiny dg-mono" x="130.0" y="280" text-anchor="middle">02:00</text>
+<path class="sim-grid" d="M330.0 24 V262"/>
+<text class="dg-tiny dg-mono" x="330.0" y="280" text-anchor="middle">03:00</text>
+<path class="sim-grid" d="M530.0 24 V262"/>
+<text class="dg-tiny dg-mono" x="530.0" y="280" text-anchor="middle">04:00</text>
+<path class="sim-grid" d="M730.0 24 V262"/>
+<text class="dg-tiny dg-mono" x="730.0" y="280" text-anchor="middle">05:00</text>
+<circle cx="176.7" cy="40" r="5" class="dg-bad"/>
+<text class="dg-tiny" x="176.7" y="28" text-anchor="middle">02:14 llave en el log</text>
+<circle cx="466.7" cy="94" r="5" class="dg-warnbox"/>
+<text class="dg-tiny" x="470.7" y="82" text-anchor="end">03:41 GetCallerIdentity</text>
+<circle cx="503.3" cy="94" r="5" class="dg-warnbox"/>
+<text class="dg-tiny" x="503.3" y="112" text-anchor="middle">03:52 ListBuckets</text>
+<circle cx="546.7" cy="94" r="5" class="dg-bad"/>
+<text class="dg-tiny" x="542.7" y="82" text-anchor="start">04:05 CreateAccessKey</text>
+<circle cx="553.3" cy="256" r="5" class="dg-warnbox"/>
+<text class="dg-tiny" x="553.3" y="244" text-anchor="middle">04:07 alerta</text>
+<circle cx="596.7" cy="256" r="5" class="dg-box"/>
+<text class="dg-tiny" x="602.7" y="274" text-anchor="end">04:20 SEV2, IC</text>
+<circle cx="633.3" cy="94" r="5" class="dg-ok"/>
+<text class="dg-tiny" x="633.3" y="112" text-anchor="middle">04:31 llaves inactivas</text>
+<text class="dg-tiny" x="330.0" y="138" text-anchor="middle">sin actividad del atacante</text>
+<text class="dg-tiny" x="330.0" y="192" text-anchor="middle">sin pushes fuera del pipeline</text>
+<path class="dg-feedback" d="M176.7 40 V310 M633.3 94 V310"/>
+<path class="dg-feedback" d="M176.7 310 L633.3 310" marker-end="url(#f609a)"/>
+<text class="dg-tiny" x="405.0" y="328" text-anchor="middle">2 h 17 min de exposición: el número que pide el postmortem</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 60.9.</b> La línea de tiempo del incidente de la llave filtrada, con cinco fuentes en UTC. Las filas vacías también son hallazgos.</figcaption>
+</figure>
+
+
+<p>Leída de izquierda a derecha, la figura cuenta el incidente de la llave filtrada del mapa, con horas de ejemplo <span class="badge badge--ref">Diseño de referencia</span>. A las 02:14 un job del CI usa una acción de terceros alterada que vuelca las variables del job en el log, el mismo patrón de tj-actions en <a href="m56-supply-chain.html#casos">M56.2</a>, y la llave de larga vida de <code>ci-deployer</code> queda expuesta. A las 03:41 la llave se usa desde una IP que nunca la había usado; a las 03:52 lista los buckets; a las 04:05 crea una llave nueva para otro usuario, que es <b>persistencia</b>: aunque se desactive la primera, queda la segunda. La regla que mira <code>CreateAccessKey</code> fuera del pipeline salta a las 04:07; a las 04:31 las dos llaves quedan inactivas.</p>
+
+<p>Tres cosas que hacen que una línea de tiempo sirva:</p>
+
+<ol class="steps">
+  <li><span class="step-title">Todo en UTC</span>Cada fuente usa su zona y su formato. Se normaliza al cargar, no al leer. Un servidor con el reloj corrido 3 minutos (por eso NTP en <a href="m33-hardening-linux.html#actualizaciones">M33.4</a>) se anota con su desfase.</li>
+  <li><span class="step-title">Cada fila con su fuente</span>Hora, fuente, identidad, acción, recurso y el id del registro original. Sin la fuente, una fila no se puede verificar.</li>
+  <li><span class="step-title">Las ausencias también cuentan</span>"El registro de imágenes no muestra pushes fuera del pipeline" y "el clúster no muestra exec del atacante" son hallazgos: reducen el alcance. Y "no hay eventos de datos de S3" es un hueco que el postmortem tiene que cerrar.</li>
+</ol>
+
+<p>La cuenta que pide el postmortem sale de la figura: la llave estuvo expuesta de 02:14 a 04:31, <b>2 h 17 min</b>; el atacante la usó por primera vez a las 03:41 y la alerta llegó 26 minutos después. Sin la acción fijada por SHA de <a href="m56-supply-chain.html#ci-sha">M56.4</a> o sin llaves de larga vida (<a href="m56-supply-chain.html#ci-oidc">OIDC</a>), no había nada que filtrar.</p>
+
+<h2 id="erradicar"><span class="sec-num">60.9</span>Erradicar y recuperar</h2>
+
+<p>Erradicar es quitar todo acceso del atacante; recuperar es volver a operar desde un estado en el que se confía. La tentación es limpiar el servidor en el lugar: borrar el binario, el cron y la llave agregada. El problema es que no hay forma de saber si quedó otra persistencia que no se encontró. Por eso la práctica por defecto es <b>reconstruir</b>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f610t f610d">
+<title id="f610t">Limpiar contra reconstruir</title>
+<desc id="f610d">Dos caminos para un servidor comprometido. Limpiar en el lugar deja la duda de si quedó persistencia. Reconstruir parte de una imagen firmada, rota toda credencial que el servidor pudo ver y restaura los datos desde un backup inmutable de antes del acceso inicial; después se vigila con detecciones nuevas.</desc>
+<defs><marker id="f610a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-bad" x="14" y="100" width="150" height="60" rx="8"/>
+<text class="dg-small dg-fail-text" x="89.0" y="126.5" text-anchor="middle">Host comprometido</text>
+<text class="dg-tiny" x="89.0" y="141.5" text-anchor="middle">ip-10-0-3-7</text>
+<rect class="dg-warnbox" x="240" y="20" width="220" height="56" rx="8"/>
+<text class="dg-small" x="350.0" y="44.5" text-anchor="middle">Limpiar en el lugar</text>
+<text class="dg-tiny" x="350.0" y="59.5" text-anchor="middle">borrar lo que se encontró</text>
+<rect class="dg-bad" x="530" y="20" width="226" height="56" rx="8"/>
+<text class="dg-small dg-fail-text" x="643.0" y="44.5" text-anchor="middle">¿Quedó persistencia?</text>
+<text class="dg-tiny" x="643.0" y="59.5" text-anchor="middle">no hay forma de saberlo</text>
+<path class="dg-edge" d="M164 116 L238 56" marker-end="url(#f610a)"/>
+<path class="dg-edge" d="M460 48 L528 48" marker-end="url(#f610a)"/>
+<rect class="dg-ok" x="214" y="150" width="124" height="60" rx="8"/>
+<text class="dg-small" x="276.0" y="176.5" text-anchor="middle">Imagen firmada</text>
+<text class="dg-tiny" x="276.0" y="191.5" text-anchor="middle">del pipeline (M56)</text>
+<path class="dg-edge" d="M338 180 L350 180" marker-end="url(#f610a)"/>
+<rect class="dg-ok" x="350" y="150" width="124" height="60" rx="8"/>
+<text class="dg-small" x="412.0" y="176.5" text-anchor="middle">Rotar credenciales</text>
+<text class="dg-tiny" x="412.0" y="191.5" text-anchor="middle">todo lo que vio</text>
+<path class="dg-edge" d="M474 180 L486 180" marker-end="url(#f610a)"/>
+<rect class="dg-ok" x="486" y="150" width="124" height="60" rx="8"/>
+<text class="dg-small" x="548.0" y="176.5" text-anchor="middle">Datos del backup</text>
+<text class="dg-tiny" x="548.0" y="191.5" text-anchor="middle">inmutable, previo</text>
+<path class="dg-edge" d="M610 180 L622 180" marker-end="url(#f610a)"/>
+<rect class="dg-ok" x="622" y="150" width="124" height="60" rx="8"/>
+<text class="dg-small" x="684.0" y="176.5" text-anchor="middle">Vigilar</text>
+<text class="dg-tiny" x="684.0" y="191.5" text-anchor="middle">detecciones nuevas</text>
+<path class="dg-edge" d="M164 144 L212 172" marker-end="url(#f610a)"/>
+<text class="dg-tiny" x="484" y="236" text-anchor="middle">Reconstruir es más lento el primer día y más barato el mes siguiente.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 60.10.</b> Limpiar en el lugar deja una duda que no se puede cerrar; reconstruir la cierra.</figcaption>
+</figure>
+
+
+<ol class="steps">
+  <li><span class="step-title">Rotar todo lo que el sistema pudo ver</span>No solo la credencial que se usó: los secretos que el host o el pod tenía a mano (la contraseña de la base, el token de la service account, las llaves del registro). Si una identidad creó otras, también esas.</li>
+  <li><span class="step-title">Reconstruir desde una imagen firmada</span>La imagen viene del pipeline verificado de <a href="m56-supply-chain.html#verificar">M56.8</a>, con la dependencia vulnerable ya parcheada si esa fue la entrada.</li>
+  <li><span class="step-title">Restaurar datos de antes del primer evento</span>La línea de tiempo dice qué backup es anterior al acceso inicial. Y el backup tiene que haber sido inmutable y estar probado (<a href="m34-sysadmin.html#backups">M34.4</a>): un backup que el atacante podía borrar no es un plan de recuperación. Es también por qué la amenaza 9 de <a href="m54-threat-modeling.html#tienda">M54.8</a> pedía backups cifrados con las claves en KMS: si se roban, no se leen.</li>
+  <li><span class="step-title">Vigilar la vuelta</span>Las detecciones nuevas (los indicadores de este incidente, la regla que faltaba) quedan activas al menos un mes. Un atacante que perdió el acceso suele intentar volver por el mismo camino.</li>
+</ol>
+
+<p>Si el compromiso tocó la identidad central (un dominio de Active Directory), la recuperación es otra escala: <a href="m38-active-directory.html#recuperar">M38.8</a> la trata aparte.</p>
+
+<h2 id="comunicar"><span class="sec-num">60.10</span>Comunicar y notificar</h2>
+
+<p>Un incidente mal comunicado hace más daño que uno mal investigado. La regla de <a href="m11-observabilidad.html#incidentes">M11.8</a> (cadencia fija aunque no haya novedades) sigue valiendo, con dos cambios: lo que se dice afuera se limita a <b>hechos confirmados</b>, y el canal es el de fuera de banda si hay sospecha de que el atacante lee el interno.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f611t f611d">
+<title id="f611t">Quién se entera y cuándo</title>
+<desc id="f611d">Una línea de tiempo desde la declaración del incidente. Actualizaciones internas con cadencia fija; la página de estado si hay impacto visible; los clientes afectados cuando se conoce el alcance; y la autoridad de protección de datos dentro de las 72 horas de saberlo, si el RGPD aplica y hay riesgo para las personas.</desc>
+<defs><marker id="f611a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-edge" d="M20 110 L750 110" marker-end="url(#f611a)"/>
+<circle cx="40" cy="110" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny dg-mono" x="40" y="134" text-anchor="middle">T0</text>
+<rect class="dg-box" x="14" y="30" width="152" height="54" rx="8"/>
+<text class="dg-small" x="90.0" y="53.5" text-anchor="middle">se declara</text>
+<text class="dg-tiny" x="90.0" y="68.5" text-anchor="middle">canal y bitácora</text>
+<path class="dg-feedback" d="M40 84 L40 104"/>
+<circle cx="180" cy="110" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny dg-mono" x="180" y="134" text-anchor="middle">cada 30-60 min</text>
+<rect class="dg-box" x="104" y="150" width="152" height="54" rx="8"/>
+<text class="dg-small" x="180.0" y="173.5" text-anchor="middle">actualización interna</text>
+<text class="dg-tiny" x="180.0" y="188.5" text-anchor="middle">aunque no haya nada</text>
+<path class="dg-feedback" d="M180 150 L180 116"/>
+<circle cx="340" cy="110" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny dg-mono" x="340" y="134" text-anchor="middle">si se ve afuera</text>
+<rect class="dg-box" x="264" y="30" width="152" height="54" rx="8"/>
+<text class="dg-small" x="340.0" y="53.5" text-anchor="middle">página de estado</text>
+<text class="dg-tiny" x="340.0" y="68.5" text-anchor="middle">hechos, no causas</text>
+<path class="dg-feedback" d="M340 84 L340 104"/>
+<circle cx="500" cy="110" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny dg-mono" x="500" y="134" text-anchor="middle">alcance conocido</text>
+<rect class="dg-box" x="424" y="150" width="152" height="54" rx="8"/>
+<text class="dg-small" x="500.0" y="173.5" text-anchor="middle">clientes afectados</text>
+<text class="dg-tiny" x="500.0" y="188.5" text-anchor="middle">qué, qué hacer</text>
+<path class="dg-feedback" d="M500 150 L500 116"/>
+<circle cx="680" cy="110" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny dg-mono" x="680" y="134" text-anchor="middle">72 h</text>
+<rect class="dg-box" x="604" y="30" width="152" height="54" rx="8"/>
+<text class="dg-small" x="680.0" y="53.5" text-anchor="middle">autoridad de datos</text>
+<text class="dg-tiny" x="680.0" y="68.5" text-anchor="middle">RGPD, art. 33</text>
+<path class="dg-feedback" d="M680 84 L680 104"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 60.11.</b> Quién se entera y cuándo. El plazo de 72 horas del RGPD es un ejemplo; los plazos que aplican los decide legal.</figcaption>
+</figure>
+
+
+<p>Las obligaciones legales dependen del país y del tipo de dato, y las decide legal, no el equipo técnico. Un ejemplo para dimensionar los plazos: el RGPD europeo pide notificar a la autoridad de protección de datos "sin dilación indebida y, de ser posible, a más tardar 72 horas" después de tener constancia de una violación de datos personales, salvo que sea improbable que afecte a las personas, y avisar a los afectados cuando el riesgo es alto (artículos 33 y 34) <span class="badge badge--doc">Documentado</span>. Otras jurisdicciones y sectores tienen sus propios plazos. Lo que sí es del equipo técnico: tener a la hora 70 una respuesta a "qué datos, de cuántas personas, desde cuándo", y eso solo sale de la línea de tiempo y de los registros que existían.</p>
+
+<h2 id="postmortem"><span class="sec-num">60.11</span>El postmortem que cambia detecciones</h2>
+
+<p>El <a href="m11-observabilidad.html#incidentes">postmortem sin culpas de M11.8</a> se escribe igual: impacto, línea de tiempo, causas, qué salió bien, acciones con dueño y fecha. Un incidente de seguridad le suma dos cosas. La línea de tiempo es la forense de <a href="#timeline">60.8</a>, con la exposición medida. Y cada acción tiene que caer en una pieza concreta del programa de seguridad; si una acción no cambia un control, una detección o el playbook, no es una acción.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f612t f612d">
+<title id="f612t">El postmortem que cambia algo</title>
+<desc id="f612d">En el centro, el postmortem del incidente de la llave filtrada. Cada acción sale hacia una pieza de la Parte VII: el modelo de amenazas (M54), el pipeline (M56), una detección nueva (M59) y el playbook (M60). Las acciones vuelven al próximo ejercicio de mesa.</desc>
+<defs><marker id="f612a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box dg-box--em" x="285" y="104" width="200" height="62" rx="8"/>
+<text class="dg-label" x="385.0" y="131.5" text-anchor="middle">Postmortem</text>
+<text class="dg-tiny" x="385.0" y="146.5" text-anchor="middle">sin culpas, con dueños y fechas</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="20" width="220" height="58" rx="8"/>
+<text class="dg-small" x="130.0" y="45.5" text-anchor="middle">Modelo de amenazas</text>
+<text class="dg-tiny" x="130.0" y="60.5" text-anchor="middle">nueva frontera: logs del CI</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="530" y="20" width="220" height="58" rx="8"/>
+<text class="dg-small" x="640.0" y="45.5" text-anchor="middle">Pipeline</text>
+<text class="dg-tiny" x="640.0" y="60.5" text-anchor="middle">OIDC, sin llaves largas</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="192" width="220" height="58" rx="8"/>
+<text class="dg-small" x="130.0" y="217.5" text-anchor="middle">Detección</text>
+<text class="dg-tiny" x="130.0" y="232.5" text-anchor="middle">CreateAccessKey fuera del CI</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="530" y="192" width="220" height="58" rx="8"/>
+<text class="dg-small" x="640.0" y="217.5" text-anchor="middle">Playbook</text>
+<text class="dg-tiny" x="640.0" y="232.5" text-anchor="middle">paso: desactivar, no borrar</text>
+<path class="dg-edge" d="M285 116 L242 64" marker-end="url(#f612a)"/>
+<path class="dg-edge" d="M485 116 L528 64" marker-end="url(#f612a)"/>
+<path class="dg-edge" d="M285 156 L242 206" marker-end="url(#f612a)"/>
+<path class="dg-edge" d="M485 156 L528 206" marker-end="url(#f612a)"/>
+<text class="dg-tiny" x="385" y="218" text-anchor="middle">y el próximo ejercicio de mesa</text>
+<text class="dg-tiny" x="385" y="234" text-anchor="middle">ensaya justo este caso</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 60.12.</b> Cada acción del postmortem cae en una pieza del programa: el modelo, el pipeline, una detección o el playbook.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Hallazgo del incidente de la llave</th><th>Acción</th><th>Dónde cae</th></tr></thead>
+    <tbody>
+      <tr><td>Una acción de terceros por tag volcó secretos</td><td>Todas las acciones por SHA, con Renovate</td><td><a href="m56-supply-chain.html#ci-sha">M56.4</a></td></tr>
+      <tr><td>Había una llave de larga vida en el CI</td><td>OIDC hacia AWS; borrar las llaves de CI</td><td><a href="m56-supply-chain.html#ci-oidc">M56.4</a></td></tr>
+      <tr><td>La alerta tardó 26 minutos desde el primer uso</td><td>Regla: llave de CI usada fuera de los runners</td><td>Detección (<a href="m59-deteccion.html#detection-as-code">M59</a>)</td></tr>
+      <tr><td>No se supo qué objetos de S3 se leyeron</td><td>Eventos de datos en el bucket de pedidos</td><td><a href="#nube-k8s">60.7</a></td></tr>
+      <tr><td>Alguien propuso borrar las llaves de inmediato</td><td>Paso en el runbook: desactivar, no borrar</td><td><a href="#contener">60.4</a></td></tr>
+      <tr><td>Los logs del CI no estaban en el modelo</td><td>Nueva frontera de confianza: logs de CI</td><td><a href="m54-threat-modeling.html#proceso">M54.7</a></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Un postmortem de seguridad a veces no se puede publicar entero (detalles que ayudarían a un atacante, datos de clientes), pero se escribe entero y se comparte una versión. Las métricas que se siguen de un incidente a otro: tiempo hasta detectar, hasta contener y hasta recuperar, medidos desde el primer evento malicioso de la línea de tiempo, no desde la alerta.</p>
+
+<h2 id="mapa"><span class="sec-num">60.12</span>Cuatro incidentes de Tienda Norte, paso a paso</h2>
+
+<p>El mapa junta todo el módulo sobre la infraestructura de Tienda Norte. Cada escenario es un incidente distinto y cada paso dice <b>lo que se ve</b>, <b>lo que se hace</b> y <b>lo que no se toca</b>. Los ataques aparecen solo como el rastro que dejan; el foco es la respuesta.</p>
+
+<div data-map="m60-incidente"></div>
+
+<p>Con los cuatro escenarios se ve el patrón: la contención es casi siempre una acción chica sobre la identidad o la red (desactivar, revocar, aislar), la evidencia sale de registros que alguien configuró meses antes, y la recuperación es reconstruir más rotar. Lo que varía es dónde mirar, y eso es lo que tienen que decir los runbooks.</p>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m60"></div>
+<div data-exercise="m60-incidente"></div>
+<div data-checkpoint="m60"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m60.data.js"></script>
+<script src="../assets/js/data/exercises/m60.data.js"></script>
+<script src="../assets/js/data/maps/m60-incidente.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/map/map-engine.js"></script>
+<script src="../assets/js/map/flow-sim.js"></script>
+</body>
+</html>

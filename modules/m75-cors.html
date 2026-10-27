@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M75. CORS a fondo</title>
+<meta name="description" content="Cómo un servidor le da permiso al navegador para que otro origen lea sus respuestas: requests simples y preflight, credenciales, Vary: Origin, los errores de configuración que abren una API a cualquiera, por qué CORS no frena CSRF y cómo se escribe la política en PHP.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m75">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>CORS a fondo</h1>
+        <p class="lead">CORS no es una defensa: es una excepción. La Same-Origin Policy ya bloquea leer respuestas de otro origen, y CORS es la forma de que tu servidor diga a quién se lo permite. Configurarlo mal es regalar ese permiso.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M75</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>90 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M74</dd></div>
+          <div><dt>Estado</dt><dd data-status="m75">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Explicar qué relaja CORS y por qué lo hace cumplir el navegador, no el servidor.</li>
+    <li>Decir si una request es simple o lleva preflight, y qué viaja en el <code>OPTIONS</code>.</li>
+    <li>Configurar credenciales con CORS y explicar por qué el comodín <code>*</code> no las admite.</li>
+    <li>Reconocer los errores de configuración que abren una API: reflejar el <code>Origin</code>, aceptar <code>null</code>, expresiones sin ancla.</li>
+    <li>Escribir la política de CORS de una API en PHP, en el orden correcto con la sesión y el token anti-CSRF.</li>
+  </ul>
+</section>
+
+<p>En <a href="m74-origen-cookies.html#sop">M74</a> quedó la regla base: el JavaScript de un origen puede enviar a otro, pero no puede leer lo que vuelve. Eso está bien hasta que tu frontend y tu API viven en orígenes distintos, como <code>app.practicas.edu.gt</code> y <code>api.practicas.edu.gt</code>. Entonces tu propio frontend no puede leer tu propia API. CORS (Cross-Origin Resource Sharing) es la forma de que la API diga "a este origen sí le dejo leer".</p>
+
+<h2 id="por-que"><span class="sec-num">75.1</span>Qué relaja CORS y quién lo hace cumplir</h2>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es la lista de invitados en la puerta de un edificio. El dueño del departamento (el servidor) escribe la lista. El portero (el navegador) la lee y decide quién pasa. Quien entra por la puerta del garaje (curl, un script en otro servidor) no pasa por el portero.</p>
+</aside>
+<p><dfn data-term="cors">CORS</dfn> es un conjunto de cabeceras con las que el servidor le dice al navegador qué orígenes pueden leer sus respuestas <span class="badge badge--doc">Documentado</span>. El navegador agrega la cabecera <code>Origin</code> a la request, y al recibir la respuesta compara ese valor con <code>Access-Control-Allow-Origin</code>. Si no coinciden, le esconde la respuesta al JavaScript y le da un <code>TypeError</code>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f751t f751d">
+<title id="f751t">Quién decide en CORS</title>
+<desc id="f751d">Tres cajas. La página de app.practicas.edu.gt hace un fetch a la API. El servidor de la API declara en cabeceras qué orígenes pueden leer. El navegador compara el Origin con esas cabeceras y decide si entrega la respuesta al JavaScript. El servidor no bloquea nada por CORS: solo declara.</desc>
+<defs><marker id="f751a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="40" width="210" height="80" rx="8"/>
+<text class="dg-small" x="119.0" y="76.5" text-anchor="middle">JavaScript de la página</text>
+<text class="dg-tiny dg-mono" x="119.0" y="91.5" text-anchor="middle">app.practicas.edu.gt</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="280" y="40" width="210" height="80" rx="8"/>
+<text class="dg-small" x="385.0" y="76.5" text-anchor="middle">Navegador</text>
+<text class="dg-tiny" x="385.0" y="91.5" text-anchor="middle">agrega Origin; compara y decide</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="546" y="40" width="210" height="80" rx="8"/>
+<text class="dg-small" x="651.0" y="76.5" text-anchor="middle">Servidor de la API</text>
+<text class="dg-tiny" x="651.0" y="91.5" text-anchor="middle">declara quién puede leer</text>
+<path class="dg-edge" d="M224 70 L278 70" marker-end="url(#f751a)"/>
+<text class="dg-tiny" x="251" y="62" text-anchor="middle">fetch</text>
+<path class="dg-edge" d="M490 70 L544 70" marker-end="url(#f751a)"/>
+<text class="dg-tiny" x="517" y="62" text-anchor="middle">Origin</text>
+<path class="dg-edge" d="M544 100 L490 100" marker-end="url(#f751a)"/>
+<text class="dg-tiny" x="517" y="116" text-anchor="middle">ACAO</text>
+<path class="dg-edge" d="M278 100 L224 100" marker-end="url(#f751a)"/>
+<text class="dg-tiny" x="251" y="116" text-anchor="middle">¿entrega?</text>
+<rect class="dg-box" x="14" y="150" width="742" height="62" rx="8"/>
+<text class="dg-small" x="385" y="174" text-anchor="middle">El servidor declara, el navegador hace cumplir.</text>
+<text class="dg-tiny" x="385" y="196" text-anchor="middle">curl, Postman o un script en un servidor ignoran CORS: no son navegadores y no hay a quién proteger.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 75.1.</b> Los papeles. El servidor no bloquea nada por CORS: declara. Quien bloquea es el navegador, y solo protege a su usuario.</figcaption>
+</figure>
+
+<p>Esto tiene una consecuencia que conviene fijar desde ya: CORS no es una protección del servidor. Una API sin ninguna cabecera CORS sigue recibiendo requests de cualquier lado, y una API con <code>Access-Control-Allow-Origin: *</code> no queda "más abierta" para curl, que nunca miró esa cabecera. CORS protege los datos que el navegador de <i>tu usuario</i> puede traer con su sesión.</p>
+<p>El mensaje que ves en la consola cuando falla:</p>
+<pre data-lang="shell"><code>Access to fetch at 'https://api.practicas.edu.gt/v1/postulaciones' from origin
+'https://app.practicas.edu.gt' has been blocked by CORS policy: No
+'Access-Control-Allow-Origin' header is present on the requested resource.</code></pre>
+<p>Si todo vive en el mismo origen, no necesitas CORS. Es el caso de tu sistema hoy: el frontend y la API están bajo <code>http://localhost</code>, y <code>response.php</code> no manda ninguna cabecera CORS, y está bien. Lo necesitarás en el laboratorio de WEB00, donde el frontend corre en otro puerto.</p>
+
+<h2 id="simple"><span class="sec-num">75.2</span>La request simple: sale sin preguntar</h2>
+<p>Para no romper la web anterior a CORS, el navegador deja salir sin consulta previa las requests que un formulario HTML ya podía mandar: método <code>GET</code>, <code>HEAD</code> o <code>POST</code>, solo cabeceras de una lista segura y un <code>Content-Type</code> de formulario o texto (<code>application/x-www-form-urlencoded</code>, <code>multipart/form-data</code> o <code>text/plain</code>) <span class="badge badge--doc">Documentado</span>.</p>
+<pre data-lang="js"><code>// Una request simple: método POST y Content-Type de formulario, sin cabeceras propias
+await fetch('https://api.practicas.edu.gt/v1/postulaciones', {
+  method: 'POST',
+  credentials: 'include',                       // manda la cookie, si SameSite la deja
+  body: new URLSearchParams({ oportunidad: '7' })
+});</code></pre>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 308" role="img" aria-labelledby="f752t f752d">
+<title id="f752t">Una request simple</title>
+<desc id="f752d">El JavaScript de app.practicas.edu.gt hace un POST con un formulario a la API. El navegador agrega Origin y lo manda de inmediato. PHP ejecuta el endpoint y responde con Access-Control-Allow-Origin. El navegador compara y entrega la respuesta al JavaScript solo si coincide.</desc>
+<defs><marker id="f752-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f752-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f752-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f752-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">JavaScript (app.)</text>
+<path class="dg-frame" d="M70.0 40 V298"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador</text>
+<path class="dg-frame" d="M385.0 40 V298"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">API (PHP)</text>
+<path class="dg-frame" d="M700.0 40 V298"/>
+<path class="dg-edge" d="M73.0 72 L380.0 72" marker-end="url(#f752-a)"/>
+<rect x="132.4" y="55" width="190.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="66" text-anchor="middle">fetch POST, form-urlencoded</text>
+<path class="dg-edge" d="M388.0 106 L695.0 106" marker-end="url(#f752-a)"/>
+<rect x="434.2" y="89" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="100" text-anchor="middle">POST /v1/postulaciones + Origin</text>
+<rect x="355.0" y="126" width="335" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="365.0" y="142">PHP ejecuta el endpoint: el efecto ya ocurrió</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 174 L390.0 174" marker-end="url(#f752-r)"/>
+<rect x="427.6" y="157" width="229.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="168" text-anchor="middle">200 + Access-Control-Allow-Origin</text>
+<rect x="395.0" y="194" width="202" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="405.0" y="210">compara ACAO con el Origin</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 242 L75.0 242" marker-end="url(#f752-r)"/>
+<rect x="99.4" y="225" width="256.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="236" text-anchor="middle">entrega la respuesta (o un TypeError)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 75.2.</b> Una request simple. El navegador mira las cabeceras CORS <b>después</b> de que PHP ejecutó el endpoint.</figcaption>
+</figure>
+
+<p>Mira la nota del medio: el efecto ocurre antes de cualquier comprobación de CORS. Por eso una request simple que cambia datos es una request que cualquier sitio puede disparar. Es exactamente la forma de CSRF (75.7).</p>
+
+<h2 id="preflight"><span class="sec-num">75.3</span>El preflight: preguntar antes</h2>
+<p>Todo lo que un formulario no podía mandar (un <code>PUT</code>, un <code>DELETE</code>, un cuerpo <code>application/json</code>, una cabecera propia como <code>X-CSRF-Token</code>) necesita permiso antes de salir. El navegador manda primero un <dfn data-term="preflight">preflight</dfn>: una request <code>OPTIONS</code> sin cookies ni body que pregunta por el método y las cabeceras <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f754t f754d">
+<title id="f754t">Cuándo hay preflight</title>
+<desc id="f754d">Tres preguntas en orden. Si el método no es GET, HEAD o POST, hay preflight. Si alguna cabecera agregada no está en la lista segura, hay preflight. Si el Content-Type no es text/plain, application/x-www-form-urlencoded o multipart/form-data, hay preflight. Si las tres respuestas son seguras, es una request simple y sale sin preguntar.</desc>
+<defs><marker id="f754a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="20" width="300" height="46" rx="8"/>
+<text class="dg-small" x="164.0" y="47.0" text-anchor="middle">¿Método GET, HEAD o POST?</text>
+<rect class="dg-warnbox" x="470" y="20" width="286" height="46" rx="8"/>
+<text class="dg-small" x="613.0" y="39.5" text-anchor="middle">preflight</text>
+<text class="dg-tiny dg-mono" x="613.0" y="54.5" text-anchor="middle">PUT, DELETE, PATCH</text>
+<path class="dg-edge" d="M314 43 L468 43" marker-end="url(#f754a)"/>
+<text class="dg-tiny" x="391" y="36" text-anchor="middle">no</text>
+<path class="dg-edge" d="M164 66 L164 84" marker-end="url(#f754a)"/>
+<text class="dg-tiny" x="182" y="80" text-anchor="start">sí</text>
+<rect class="dg-box" x="14" y="86" width="300" height="46" rx="8"/>
+<text class="dg-small" x="164.0" y="113.0" text-anchor="middle">¿Solo cabeceras de la lista segura?</text>
+<rect class="dg-warnbox" x="470" y="86" width="286" height="46" rx="8"/>
+<text class="dg-small" x="613.0" y="105.5" text-anchor="middle">preflight</text>
+<text class="dg-tiny dg-mono" x="613.0" y="120.5" text-anchor="middle">X-CSRF-Token, Authorization</text>
+<path class="dg-edge" d="M314 109 L468 109" marker-end="url(#f754a)"/>
+<text class="dg-tiny" x="391" y="102" text-anchor="middle">no</text>
+<path class="dg-edge" d="M164 132 L164 150" marker-end="url(#f754a)"/>
+<text class="dg-tiny" x="182" y="146" text-anchor="start">sí</text>
+<rect class="dg-box" x="14" y="152" width="300" height="46" rx="8"/>
+<text class="dg-small" x="164.0" y="179.0" text-anchor="middle">¿Content-Type de formulario o texto?</text>
+<rect class="dg-warnbox" x="470" y="152" width="286" height="46" rx="8"/>
+<text class="dg-small" x="613.0" y="171.5" text-anchor="middle">preflight</text>
+<text class="dg-tiny dg-mono" x="613.0" y="186.5" text-anchor="middle">application/json</text>
+<path class="dg-edge" d="M314 175 L468 175" marker-end="url(#f754a)"/>
+<text class="dg-tiny" x="391" y="168" text-anchor="middle">no</text>
+<path class="dg-edge" d="M164 178 L164 196" marker-end="url(#f754a)"/>
+<text class="dg-tiny" x="182" y="192" text-anchor="start">sí</text>
+<rect class="dg-ok" x="14" y="198" width="300" height="40" rx="8"/>
+<text class="dg-small" x="164.0" y="222.0" text-anchor="middle">request simple: sale sin preguntar</text>
+<text class="dg-tiny" x="613" y="222" text-anchor="middle">el servidor responde OPTIONS primero</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 75.3.</b> Las tres preguntas que deciden si hay preflight. Basta un "no" para que lo haya.</figcaption>
+</figure>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="f753t f753d">
+<title id="f753t">Una request con preflight</title>
+<desc id="f753d">El JavaScript hace un PUT con JSON y la cabecera X-CSRF-Token. El navegador manda primero un OPTIONS sin cookies ni body, preguntando por el método y las cabeceras. Si la respuesta los permite, manda la request real; si no, la request real nunca sale y el servidor solo vio el OPTIONS.</desc>
+<defs><marker id="f753-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f753-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f753-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f753-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">JavaScript (app.)</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador</text>
+<path class="dg-frame" d="M385.0 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">API (PHP)</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<path class="dg-edge" d="M73.0 72 L380.0 72" marker-end="url(#f753-a)"/>
+<rect x="125.80000000000001" y="55" width="203.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="66" text-anchor="middle">fetch PUT, JSON, X-CSRF-Token</text>
+<path class="dg-edge" d="M388.0 106 L695.0 106" marker-end="url(#f753-a)"/>
+<rect x="391.3" y="89" width="302.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="100" text-anchor="middle">OPTIONS + Access-Control-Request-Method: PUT</text>
+<rect x="383.0" y="126" width="307" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="393.0" y="142">sin cookie y sin body: no autenticar aquí</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 174 L390.0 174" marker-end="url(#f753-r)"/>
+<rect x="378.1" y="157" width="328.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="168" text-anchor="middle">204 + Allow-Origin, Allow-Methods, Allow-Headers</text>
+<rect x="395.0" y="194" width="279" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="405.0" y="210">¿PUT y x-csrf-token están permitidos?</text>
+<path class="dg-edge" d="M388.0 242 L695.0 242" marker-end="url(#f753-a)"/>
+<rect x="401.20000000000005" y="225" width="282.59999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="236" text-anchor="middle">PUT /v1/oportunidades/7 + Origin + Cookie</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 276 L390.0 276" marker-end="url(#f753-r)"/>
+<rect x="427.6" y="259" width="229.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="270" text-anchor="middle">200 + Access-Control-Allow-Origin</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 310 L75.0 310" marker-end="url(#f753-r)"/>
+<rect x="155.5" y="293" width="144.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="304" text-anchor="middle">entrega la respuesta</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 75.4.</b> Una request con preflight. Si el <code>OPTIONS</code> no autoriza, la request real nunca sale.</figcaption>
+</figure>
+
+<pre data-lang="http"><code>OPTIONS /v1/oportunidades/7 HTTP/1.1
+Host: api.practicas.edu.gt
+Origin: https://app.practicas.edu.gt
+Access-Control-Request-Method: PUT
+Access-Control-Request-Headers: content-type, x-csrf-token
+
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: https://app.practicas.edu.gt
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Methods: GET, POST, PUT
+Access-Control-Allow-Headers: Content-Type, X-CSRF-Token
+Access-Control-Max-Age: 600
+Vary: Origin</code></pre>
+<p><code>Access-Control-Max-Age</code> deja que el navegador recuerde la respuesta del preflight por unos segundos y no lo repita en cada request. Cada navegador pone su propio tope: Chrome lo limita a dos horas <span class="badge badge--doc">Documentado</span>.</p>
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>El preflight no lleva cookies. Si el endpoint llama a <code>requireAuth()</code> antes de responder el <code>OPTIONS</code>, contesta 401 y el navegador nunca manda la request real. El síntoma es un frontend que "no puede" hacer <code>PUT</code> aunque la sesión esté bien. El <code>OPTIONS</code> se responde primero, sin autenticar (75.9).</p>
+</aside>
+
+<h2 id="credenciales"><span class="sec-num">75.4</span>Credenciales: cookies con CORS</h2>
+<p>Por defecto, un <code>fetch</code> a otro origen no manda cookies. Con <code>credentials: 'include'</code> sí, y entonces el servidor tiene que cumplir dos reglas más para que el JavaScript lea la respuesta <span class="badge badge--doc">Documentado</span>:</p>
+<ul>
+  <li>responder <code>Access-Control-Allow-Credentials: true</code>;</li>
+  <li>poner en <code>Access-Control-Allow-Origin</code> el origen exacto, nunca <code>*</code>.</li>
+</ul>
+<p>La prohibición del comodín es deliberada: "cualquier origen puede leer con la sesión del usuario" es el agujero más grande que se puede abrir, y la especificación no deja escribirlo de una vez. Lo que sí deja es escribirlo a mano, origen por origen, y ese es el error de 75.6.</p>
+<p>Y una capa más, de M74: aunque CORS lo permita, la cookie viaja solo si su <code>SameSite</code> lo deja. Con <code>Lax</code>, un <code>fetch</code> desde otro sitio va sin la cookie. Entre <code>app.</code> y <code>api.</code> del mismo dominio sí viaja, porque son el <a href="m74-origen-cookies.html#sitio">mismo sitio</a>.</p>
+
+<h2 id="vary"><span class="sec-num">75.5</span>Vary: Origin y las cachés</h2>
+<p>Si la respuesta cambia según el <code>Origin</code>, una caché intermedia (un CDN, un proxy, la del propio navegador) tiene que saberlo. Si no, guarda la respuesta que se pidió desde un origen y se la sirve a otro <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f755t f755d">
+<title id="f755t">Por qué hace falta Vary: Origin</title>
+<desc id="f755d">Arriba, sin Vary: una caché intermedia guarda la respuesta pedida desde app.practicas.edu.gt, con su Access-Control-Allow-Origin, y se la sirve igual a una página del blog, que recibe una cabecera con otro origen y falla; o al revés, un origen permitido recibe una respuesta cacheada sin la cabecera. Abajo, con Vary: Origin, la caché guarda una copia por cada Origin.</desc>
+<defs><marker id="f755a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="14" y="24" text-anchor="start">Sin Vary: Origin</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="36" width="200" height="50" rx="8"/>
+<text class="dg-small" x="114.0" y="57.5" text-anchor="middle">request desde app.</text>
+<text class="dg-tiny dg-mono" x="114.0" y="72.5" text-anchor="middle">Origin: https://app…</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="285" y="36" width="200" height="50" rx="8"/>
+<text class="dg-small" x="385.0" y="57.5" text-anchor="middle">Caché</text>
+<text class="dg-tiny" x="385.0" y="72.5" text-anchor="middle">guarda una sola copia</text>
+<rect class="dg-bad" x="556" y="36" width="200" height="50" rx="8"/>
+<text class="dg-small" x="656.0" y="57.5" text-anchor="middle">request desde blog.</text>
+<text class="dg-tiny" x="656.0" y="72.5" text-anchor="middle">recibe la copia de app.</text>
+<path class="dg-edge" d="M214 61 L283 61" marker-end="url(#f755a)"/>
+<path class="dg-edge" d="M554 61 L487 61" marker-end="url(#f755a)"/>
+<text class="dg-tiny dg-mono" x="385" y="108" text-anchor="middle">la copia lleva Access-Control-Allow-Origin: https://app.practicas.edu.gt</text>
+<text class="dg-small" x="14" y="144" text-anchor="start">Con Vary: Origin</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="156" width="200" height="50" rx="8"/>
+<text class="dg-small" x="114.0" y="185.0" text-anchor="middle">request desde app.</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="285" y="156" width="200" height="70" rx="8"/>
+<text class="dg-small" x="385.0" y="187.5" text-anchor="middle">Caché</text>
+<text class="dg-tiny" x="385.0" y="202.5" text-anchor="middle">una copia por Origin</text>
+<rect class="dg-ok" x="556" y="156" width="200" height="50" rx="8"/>
+<text class="dg-small" x="656.0" y="177.5" text-anchor="middle">request desde blog.</text>
+<text class="dg-tiny" x="656.0" y="192.5" text-anchor="middle">su propia respuesta</text>
+<path class="dg-edge" d="M214 181 L283 181" marker-end="url(#f755a)"/>
+<path class="dg-edge" d="M554 181 L487 181" marker-end="url(#f755a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 75.5.</b> Sin <code>Vary: Origin</code>, la caché mezcla respuestas de distintos orígenes. Con él, guarda una por cada uno.</figcaption>
+</figure>
+
+<p>La regla práctica: si <code>Access-Control-Allow-Origin</code> depende del <code>Origin</code>, manda <code>Vary: Origin</code> siempre, también cuando el origen no está permitido. Ese es el tipo de envenenamiento de caché que M83 retoma.</p>
+
+<h2 id="errores"><span class="sec-num">75.6</span>Los errores que abren una API</h2>
+<p>Casi todos los fallos reales de CORS son el mismo: aceptar más orígenes de los que se quería <span class="badge badge--doc">Documentado</span>. Los típicos:</p>
+<ul>
+  <li><b>Reflejar el <code>Origin</code>.</b> Copiarlo en la respuesta es aceptar a todos, con credenciales.</li>
+  <li><b>Aceptar <code>null</code>.</b> Lo manda una página dentro de un <code>iframe</code> con <code>sandbox</code>, un archivo local o algunas redirecciones. Cualquiera puede producirlo.</li>
+  <li><b>Expresiones sin ancla.</b> <code>/practicas\.edu\.gt/</code> también acepta <code>practicas.edu.gt.ofertas-gratis.example</code>.</li>
+  <li><b>Confiar en todos los subdominios.</b> Si un subdominio cualquiera tiene un XSS, ese XSS lee tu API con la sesión del usuario.</li>
+</ul>
+<pre data-lang="php"><code>&lt;?php
+// MAL: refleja cualquier Origin y además permite credenciales
+header('Access-Control-Allow-Origin: ' . ($_SERVER['HTTP_ORIGIN'] ?? '*'));
+header('Access-Control-Allow-Credentials: true');</code></pre>
+<pre data-lang="php"><code>&lt;?php
+// MAL: la expresión no tiene ancla, así que acepta
+// https://practicas.edu.gt.ofertas-gratis.example y https://evilpracticas.edu.gt
+if (preg_match('/practicas\.edu\.gt/', $_SERVER['HTTP_ORIGIN'] ?? '')) {
+    header('Access-Control-Allow-Origin: ' . $_SERVER['HTTP_ORIGIN']);
+    header('Access-Control-Allow-Credentials: true');
+}</code></pre>
+<p>Prueba cada política con cada origen. Mira tres cosas: si hubo preflight, si la request llegó a PHP y si el JavaScript leyó la respuesta.</p>
+<div data-sim="cors"></div>
+<p>Tres lecturas. Con la política "reflejar", el frontend del blog lee la respuesta con la cookie: la política tiene un agujero, aunque la cookie sea <code>Lax</code>, porque el blog es el mismo sitio. Con "otro sitio" y un <code>POST</code> de formulario, ninguna política impide que la request llegue: solo cambia si se lee. Y con <code>application/json</code>, la política "sin cabeceras" frena el <code>PUT</code> en el preflight: un efecto secundario útil, pero no una defensa que puedas dar por sentada.</p>
+
+<h2 id="no-csrf"><span class="sec-num">75.7</span>CORS no protege contra CSRF</h2>
+<p>Es la confusión más común de esta parte. CORS decide quién <b>lee</b>; CSRF es alguien que <b>envía</b> con tu sesión. Un formulario de otro sitio manda una request simple, sin preflight, y el efecto ocurre antes de que el navegador mire CORS.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f756t f756d">
+<title id="f756t">CORS no protege contra CSRF</title>
+<desc id="f756d">Un formulario de otro sitio hace POST a la API. Es una request simple: no hay preflight. PHP la ejecuta y crea la postulación. CORS solo decide si el JavaScript del otro sitio lee la respuesta, y eso al atacante no le importa: el efecto ya ocurrió.</desc>
+<defs><marker id="f756a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-bad" x="14" y="40" width="200" height="70" rx="8"/>
+<text class="dg-small" x="114.0" y="71.5" text-anchor="middle">Formulario en otro sitio</text>
+<text class="dg-tiny dg-mono" x="114.0" y="86.5" text-anchor="middle">POST, form-urlencoded</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="285" y="40" width="200" height="70" rx="8"/>
+<text class="dg-small" x="385.0" y="71.5" text-anchor="middle">API (PHP)</text>
+<text class="dg-tiny" x="385.0" y="86.5" text-anchor="middle">crea la postulación</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="556" y="40" width="200" height="70" rx="8"/>
+<text class="dg-small" x="656.0" y="71.5" text-anchor="middle">CORS</text>
+<text class="dg-tiny" x="656.0" y="86.5" text-anchor="middle">solo decide si se lee</text>
+<path class="dg-edge" d="M214 75 L283 75" marker-end="url(#f756a)"/>
+<text class="dg-tiny" x="249" y="66" text-anchor="middle">request simple</text>
+<path class="dg-edge" d="M485 75 L554 75" marker-end="url(#f756a)"/>
+<text class="dg-tiny" x="520" y="66" text-anchor="middle">respuesta</text>
+<rect class="dg-warnbox" x="14" y="140" width="742" height="70" rx="8"/>
+<text class="dg-small" x="385" y="166" text-anchor="middle">El efecto ocurre antes de que el navegador mire una sola cabecera CORS.</text>
+<text class="dg-tiny" x="385" y="190" text-anchor="middle">Contra CSRF: SameSite, un token anti-CSRF y comprobar Origin o Sec-Fetch-Site (M76).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 75.6.</b> Una request simple de otro sitio. CORS llega tarde.</figcaption>
+</figure>
+
+<p>Que un endpoint exija <code>application/json</code> o una cabecera propia fuerza el preflight y, de rebote, frena los formularios de otros sitios. Es una capa útil, y tu <code>X-CSRF-Token</code> ya tiene ese efecto. Pero depende de que el servidor rechace los otros <code>Content-Type</code>, algo que PHP no hace solo: <code>$_POST</code> se llena con cualquier formulario. Las defensas de verdad son las de M76.</p>
+
+<h2 id="red-privada"><span class="sec-num">75.8</span>Las requests a la red local</h2>
+<p>Una página pública puede hacer requests a <code>http://localhost</code> o a <code>192.168.1.1</code>: a tu XAMPP, a tu router. Son requests simples que llegan, y si ese servicio no autentica, el efecto ocurre. Chrome agregó primero preflights especiales para esto (Private Network Access) y después los reemplazó por un permiso que el usuario concede, Local Network Access <span class="badge badge--doc">Documentado</span>.</p>
+<p>No cuentes con eso para tu laboratorio: es una protección del navegador, cambia entre versiones y no existe igual en todos. Un servicio local que no autentica es un servicio que cualquier página puede usar. La guía WEB00 deja Apache escuchando solo en <code>127.0.0.1</code>, y eso evita que lo usen otras máquinas de la red, no otras páginas de tu navegador.</p>
+
+<h2 id="php"><span class="sec-num">75.9</span>La política en PHP</h2>
+<p>La política de referencia para el sistema de prácticas, cuando el frontend viva en otro origen <span class="badge badge--ref">Diseño de referencia</span>:</p>
+<pre data-lang="php"><code>&lt;?php
+// api/core/cors.php (diseño de referencia): se incluye primero en cada endpoint
+declare(strict_types=1);
+
+const CORS_ORIGINS = [                       // comparación exacta, sin expresiones
+    'https://app.practicas.edu.gt',
+    'http://localhost:5173',                 // el frontend del laboratorio (WEB00)
+];
+
+function applyCors(): void
+{
+    header('Vary: Origin', false);           // la respuesta cambia según el Origin
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+    $allowed = in_array($origin, CORS_ORIGINS, true);
+
+    if ($allowed) {
+        header('Access-Control-Allow-Origin: ' . $origin);
+        header('Access-Control-Allow-Credentials: true');
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {   // preflight: sin cookie ni body
+        if ($allowed) {
+            header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE');
+            header('Access-Control-Allow-Headers: Content-Type, X-CSRF-Token');
+            header('Access-Control-Max-Age: 600');
+        }
+        http_response_code(204);
+        exit;                                // nunca llega a requireAuth ni al modelo
+    }
+}</code></pre>
+<p>Y el orden dentro del endpoint importa: primero el preflight, que no trae sesión; después la autenticación, y después el token, solo en lo que cambia datos.</p>
+<pre data-lang="php"><code>&lt;?php
+// Al principio de endpoints/oportunidades.php
+require_once __DIR__ . '/../core/cors.php';
+applyCors();                                 // 1. el preflight termina aquí
+require_once __DIR__ . '/../core/auth-middleware.php';
+$auth = requireAuth([ROL_RECLUTADOR]);       // 2. después, la sesión
+if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
+    requireCsrfToken();                      // 3. y el token, solo si cambia algo
+}</code></pre>
+<p>Hoy tus endpoints piden el token CSRF también en los <code>GET</code> (hallazgo 8 del plan). Con el orden de arriba, los <code>GET</code> no lo piden, y no deben cambiar nada. La guía WEB04 escribe <code>cors.php</code> completo, con sus pruebas desde los dos orígenes del laboratorio.</p>
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Poner el frontend y la API en el mismo origen, con un proxy que manda <code>/api</code> a PHP, elimina CORS del todo: sin preflight, sin política que mantener, sin errores de configuración. A cambio, el proxy es una pieza más. Para un sistema como el tuyo, el mismo origen suele ser la opción más simple y segura.</p>
+</aside>
+
+<h2 id="fallas"><span class="sec-num">75.10</span>Fallas típicas y cómo reconocerlas</h2>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+      <tr><td>"No 'Access-Control-Allow-Origin' header is present"</td><td>La API no manda la cabecera para ese origen, o respondió con un error de PHP antes de mandarla</td><td>Llamar a <code>applyCors()</code> antes de todo, también en los errores</td></tr>
+      <tr><td>El <code>GET</code> funciona y el <code>PUT</code> no</td><td>El preflight falla: <code>OPTIONS</code> pide sesión o no lista el método</td><td>Responder el <code>OPTIONS</code> antes de <code>requireAuth()</code></td></tr>
+      <tr><td>"The value of the 'Access-Control-Allow-Origin' header must not be the wildcard '*' when the request's credentials mode is 'include'"</td><td>Comodín con credenciales</td><td>El origen exacto, de una lista</td></tr>
+      <tr><td>Funciona en una pestaña y falla en otra, al azar</td><td>Una caché sirve la respuesta de otro origen</td><td><code>Vary: Origin</code></td></tr>
+      <tr><td>La consola dice "blocked by CORS" y el registro se creó</td><td>La request era simple: llegó y se ejecutó</td><td>Defensas de CSRF (M76)</td></tr>
+      <tr><td>Un origen ajeno lee la API en las pruebas</td><td>Reflejar el <code>Origin</code>, aceptar <code>null</code> o una regex sin ancla</td><td>Lista exacta con <code>in_array(…, true)</code></td></tr>
+    </tbody>
+  </table>
+</div>
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Prueba la política con curl, cambiando el <code>Origin</code> a mano: <code>curl -i -H "Origin: https://ofertas-gratis.example" …</code>. Si la respuesta trae ese origen en <code>Access-Control-Allow-Origin</code>, la política tiene un agujero. Ahora queda la otra mitad: cómo frenar a quien no necesita leer, solo enviar. Eso es CSRF (M76).</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m75"></div>
+<div data-exercise="m75-politica"></div>
+<div data-checkpoint="m75"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m75.data.js"></script>
+<script src="../assets/js/data/exercises/m75.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>
