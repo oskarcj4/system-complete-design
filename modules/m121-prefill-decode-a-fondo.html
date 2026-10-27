@@ -67,6 +67,18 @@
 
       <h2 id="mapa"><span class="sec-num">12.1.1</span>El mapa: un forward pass completo</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un LLM es una función que se ejecuta una vez por cada token nuevo: eso es un <b>forward pass</b> (una pasada). La pasada tiene tres partes: una tabla que convierte cada token en una lista de números (un vector), una pila de bloques iguales que van refinando esos vectores, y una capa final que da un puntaje a cada palabra posible. La lámina muestra todo eso de una vez; vuelve a ella cada vez que un nombre se te mezcle.</p>
+        <p class="jr-like"><b>Es como</b> una línea de montaje: la pieza (el vector del token) pasa por 80 estaciones iguales, y cada estación le agrega algo sin quitarle lo anterior.</p>
+        <dl class="jr-words">
+          <dt>Forward pass</dt><dd>una ejecución completa del modelo, de los tokens a los puntajes.</dd>
+          <dt>Vector</dt><dd>una lista de números que representa un token (aquí, 8 192 números).</dd>
+          <dt>Bloque</dt><dd>una etapa de la pila; Llama 3.1 70B tiene 80 iguales.</dd>
+          <dt>Logits</dt><dd>el puntaje de cada palabra posible al final de la pasada.</dd>
+        </dl>
+      </aside>
+
       <p>En M12 el modelo fue <a href="m12-llm-por-dentro.html#caja">una función</a>: entran tokens, salen logits. Esa función tiene una forma muy regular. Casi todos los LLM actuales son un <dfn data-term="transformer">transformer decoder-only</dfn>: una tabla que convierte cada token en un vector, una pila de bloques iguales que transforman esos vectores, y una capa final que convierte el último vector en un puntaje por token del vocabulario. Llamar al modelo una vez, con todos los tokens que entran en esa llamada, es un <dfn data-term="forward-pass">forward pass</dfn>, o una pasada. El prefill es una pasada con todos los tokens del prompt; cada paso de decode es una pasada con un solo token por request.</p>
 
       <p>La lámina muestra una pasada de Llama 3.1 70B, que usamos de ejemplo en todo el módulo porque es el de M12 y M13. Mírala entera antes de leer cada sección; vuelve a ella cuando un nombre se confunda con otro.</p>
@@ -207,6 +219,18 @@
 
       <h2 id="tensores"><span class="sec-num">12.1.2</span>De tokens a tensores: las piezas y sus pesos</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Todo el tamaño del modelo sale de unos pocos números de su configuración (ancho del vector, cantidad de capas, cabezas de atención). Con ellos se pueden contar los pesos a mano: una matriz que convierte un vector de ancho <i>a</i> en uno de ancho <i>b</i> tiene <i>a × b</i> pesos. Sumando todas las matrices de las 80 capas salen los 70 mil millones de parámetros.</p>
+        <p class="jr-like"><b>Es como</b> la receta de un mueble: con las medidas de cada tabla puedes calcular cuánta madera hace falta antes de comprarla.</p>
+        <dl class="jr-words">
+          <dt>Tensor</dt><dd>un arreglo de números con varias dimensiones (un vector es de 1, una matriz es de 2).</dd>
+          <dt>Peso / parámetro</dt><dd>un número aprendido en el entrenamiento; el modelo es la colección de todos.</dd>
+          <dt>config.json</dt><dd>el archivo que trae las medidas del modelo.</dd>
+          <dt>MLP</dt><dd>la parte de cada bloque que transforma cada token por separado.</dd>
+        </dl>
+      </aside>
+
       <p>Todo lo que hace el modelo sale de su configuración, un archivo <code>config.json</code> que viene con los pesos. Para Llama 3.1 70B: <span class="badge badge--doc">Documentado</span></p>
 
       <div class="table-wrap">
@@ -274,6 +298,17 @@ def forward(ids, modelo, cache):
       <p>Fíjate en que la función es la misma para el prefill y para el decode. Lo único que cambia es T: 2000 en el prefill de un prompt de 2000 tokens, 1 en cada paso de decode. Todo lo que sigue en el módulo sale de esa diferencia.</p>
 
       <h2 id="matmul"><span class="sec-num">12.1.3</span>Una multiplicación de matrices, contada</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Casi todo el tiempo de la GPU se va en multiplicar matrices. Cada multiplicación tiene dos costos: las <b>cuentas</b> (FLOPs) y los <b>bytes</b> que hay que leer de memoria. Los pesos se leen siempre enteros; lo que cambia es cuántos tokens los aprovechan. Con muchos tokens a la vez (prefill), sobran cuentas por byte; con uno solo (decode), la GPU pasa la mayor parte del tiempo esperando datos.</p>
+        <p class="jr-like"><b>Es como</b> fotocopiar un libro pesado: traer el libro del depósito cuesta lo mismo si haces una copia o cien. Si solo haces una, casi todo el tiempo fue el viaje.</p>
+        <dl class="jr-words">
+          <dt>FLOP</dt><dd>una operación de punto flotante (una suma o una multiplicación).</dd>
+          <dt>Intensidad aritmética</dt><dd>cuentas por byte leído; baja = la memoria limita, alta = el cómputo limita.</dd>
+          <dt>GEMM / GEMV</dt><dd>matriz por matriz (muchos tokens) / matriz por vector (un token).</dd>
+        </dl>
+      </aside>
 
       <p>Casi todo el tiempo de una pasada se va en multiplicar la matriz de activaciones [T, a] por una matriz de pesos [a, b]. Esa operación tiene dos costos que se cuentan por separado:</p>
 
@@ -356,6 +391,18 @@ def forward(ids, modelo, cache):
       </aside>
 
       <h2 id="atencion"><span class="sec-num">12.1.4</span>La atención por dentro</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>La atención es el paso donde cada token mira a los anteriores y decide cuáles le sirven. Para eso cada token produce tres vectores: una consulta (Q, lo que busca), una clave (K, cómo se describe) y un valor (V, lo que aporta). Comparar cada consulta con todas las claves cuesta más cuanto más largo es el texto. <b>FlashAttention</b> hace la misma cuenta por bloques dentro de la memoria rápida del chip, sin escribir la tabla gigante en la memoria lenta.</p>
+        <p class="jr-like"><b>Es como</b> el bibliotecario de la sección: compara tu pregunta con la etiqueta de cada libro y te arma un resumen mezclando los más parecidos.</p>
+        <dl class="jr-words">
+          <dt>Q, K, V</dt><dd>consulta, clave y valor de cada token.</dd>
+          <dt>Cabeza</dt><dd>una atención independiente; el modelo corre varias en paralelo.</dd>
+          <dt>GQA</dt><dd>varias consultas comparten el mismo par K y V, para que el caché ocupe menos.</dd>
+          <dt>FlashAttention</dt><dd>la atención calculada por bloques, sin guardar la matriz completa.</dd>
+        </dl>
+      </aside>
 
       <p>La <dfn data-term="self-attention">atención</dfn> responde, para cada token, una pregunta: de todo lo que vino antes, ¿qué me sirve? Lo hace con tres vectores por token y por cabeza, que salen de las proyecciones de la lámina (marca 5):</p>
       <ul>
@@ -674,6 +721,17 @@ print(np.allclose(fila, completo[-1]))                 # True: el mismo resultad
 
       <h2 id="prefill"><span class="sec-num">12.1.5</span>Prefill paso a paso</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El <b>prefill</b> es la primera pasada: procesa todo el prompt de una vez (aquí, 2 000 tokens) y guarda las K y V de cada token en el KV cache. Como muchos tokens aprovechan los mismos pesos, la GPU trabaja a pleno de cuentas. Su duración, más la espera en cola, es casi todo el tiempo hasta el primer token (TTFT).</p>
+        <p class="jr-like"><b>Es como</b> leer de corrido todo el enunciado de un examen antes de empezar a responder: lleva un rato, pero se hace una sola vez.</p>
+        <dl class="jr-words">
+          <dt>Prefill</dt><dd>la pasada que procesa el prompt entero.</dd>
+          <dt>TTFT</dt><dd>tiempo hasta el primer token: lo que el usuario espera antes de ver algo.</dd>
+          <dt>KV cache</dt><dd>las K y V guardadas de los tokens anteriores, para no recalcularlas.</dd>
+        </dl>
+      </aside>
+
       <p>Antes de que la GPU vea un token, la request recorre el servidor. El diagrama sigue a una request de 2000 tokens de prompt de punta a punta; esta sección se ocupa de su primera pasada, y la siguiente, de las demás.</p>
 
       <figure class="figure">
@@ -984,6 +1042,17 @@ print(np.allclose(fila, completo[-1]))                 # True: el mismo resultad
       </aside>
 
       <h2 id="decode"><span class="sec-num">12.1.6</span>Decode paso a paso</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Después del prefill viene el <b>decode</b>: una pasada por cada token nuevo, con un solo token por usuario. Cada paso lee todos los pesos y todo el KV cache para producir un token, así que lo que limita es la velocidad de la memoria, no las cuentas. Por eso se juntan muchos usuarios en el mismo paso: comparten la lectura de los pesos.</p>
+        <p class="jr-like"><b>Es como</b> escribir una carta de a una palabra, releyendo todo lo escrito antes de cada palabra.</p>
+        <dl class="jr-words">
+          <dt>Decode</dt><dd>cada pasada que genera un token nuevo.</dd>
+          <dt>Batch</dt><dd>el grupo de usuarios que el motor procesa en el mismo paso.</dd>
+          <dt>Bloque del KV cache</dt><dd>trozo de memoria de tamaño fijo donde se guardan las K y V de varios tokens.</dd>
+        </dl>
+      </aside>
 
       <p>Después del prefill, la request está en el batch de decode del motor. Cada paso hace la misma pasada de la lámina con un solo token por usuario. Para el token 2001 de nuestra request:</p>
 
@@ -1424,6 +1493,15 @@ print(np.allclose(fila, completo[-1]))                 # True: el mismo resultad
 
       <h2 id="pasada"><span class="sec-num">12.1.7</span>Dónde se va el tiempo de una pasada</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Esta sección junta todo en una calculadora. Una pasada es una fila de piezas que corren una detrás de otra (proyecciones, atención, MLP, capa final), y cada pieza tarda lo que diga el mayor de sus dos costos: las cuentas o la lectura de memoria. Cambiando cuántos tokens de prefill y cuántos usuarios de decode entran, ves qué pieza se lleva el tiempo.</p>
+        <p class="jr-like"><b>Es como</b> un viaje con varios tramos: cada tramo tarda según su cuello de botella (el tráfico o la distancia), y el total es la suma.</p>
+        <dl class="jr-words">
+          <dt>Limitado por memoria / por cómputo</dt><dd>la pieza espera bytes / espera cuentas.</dd>
+        </dl>
+      </aside>
+
       <p>La calculadora junta todo lo anterior. Elige cuántos tokens de prefill y cuántos usuarios en decode entran en la pasada, y mira qué pieza se lleva el tiempo y qué la limita. Cada pieza tarda lo que diga el mayor de sus dos costos, y las piezas corren una detrás de otra:</p>
 
       <div data-calc="fwdcost"></div>
@@ -1444,6 +1522,16 @@ print(np.allclose(fila, completo[-1]))                 # True: el mismo resultad
       </aside>
 
       <h2 id="juntas"><span class="sec-num">12.1.8</span>Cuando las dos fases comparten la GPU</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un motor real mezcla en el mismo paso el prefill de una request nueva con el decode de los que ya están generando. Un prompt largo entero frena a todos los demás por un instante; partirlo en trozos (<i>chunked prefill</i>) reparte esa demora en varios pasos chicos, así nadie nota un tirón.</p>
+        <p class="jr-like"><b>Es como</b> una caja de supermercado: si alguien pasa un carro enorme, la fila se detiene; si la cajera intercala sus productos con los de otros, todos avanzan.</p>
+        <dl class="jr-words">
+          <dt>Continuous batching</dt><dd>el batch cambia en cada paso: salen los que terminan, entran los nuevos.</dd>
+          <dt>Chunked prefill</dt><dd>partir el prefill de un prompt largo en trozos.</dd>
+        </dl>
+      </aside>
 
       <p>Un motor con continuous batching (<a href="m15-motores-inferencia.html#batching">M15.2</a>) arma un batch nuevo en cada paso: las requests que terminan salen y las que llegan entran. Cuando entra una request nueva, su prefill comparte el paso con el decode de los demás. ¿Qué ven los usuarios que ya estaban generando?</p>
 
@@ -1559,6 +1647,17 @@ print(np.allclose(fila, completo[-1]))                 # True: el mismo resultad
 
       <h2 id="muestreo"><span class="sec-num">12.1.9</span>Del logit al token</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>La pasada termina con un puntaje por cada palabra posible. El <b>muestreo</b> convierte esos puntajes en probabilidades y elige un token. La <b>temperatura</b> decide cuánto se favorece al más probable (baja = más predecible), y <b>top-p</b> descarta las opciones menos probables antes de elegir.</p>
+        <p class="jr-like"><b>Es como</b> una ruleta con casilleros de distinto tamaño: la temperatura agranda o achica la casilla del favorito, y top-p tapa las casillas más chicas.</p>
+        <dl class="jr-words">
+          <dt>Softmax</dt><dd>la fórmula que convierte puntajes en probabilidades que suman 1.</dd>
+          <dt>Temperatura</dt><dd>divide los puntajes antes del softmax; menor que 1 hace al favorito más probable.</dd>
+          <dt>Top-p</dt><dd>se queda con las opciones más probables hasta sumar p.</dd>
+        </dl>
+      </aside>
+
       <p>La pasada termina con 128 256 logits por usuario: medio megabyte en FP32. El <dfn data-term="sampling">muestreo</dfn> convierte eso en un token, en la GPU, en cuatro pasos:</p>
       <ol class="steps">
         <li><span class="step-title">Temperatura</span>Divide cada logit por T. Con T &lt; 1 las diferencias crecen y la distribución se afila; con T &gt; 1 se aplana.</li>
@@ -1662,6 +1761,15 @@ muestrear(np.array([5.0, 4.0, 3.0, 1.0]), temperatura=1.0, top_p=0.9)   # 0, 1 o
 
       <h2 id="bucle"><span class="sec-num">12.1.10</span>El bucle a mano</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Aquí se escribe a mano, en Python, el bucle de generación que normalmente esconde <code>generate()</code>: un prefill y después un paso de decode por token, con el KV cache a la vista. Usa un modelo chico (500 millones de parámetros) para que corra en cualquier GPU.</p>
+        <dl class="jr-words">
+          <dt>transformers</dt><dd>la biblioteca de Hugging Face para cargar y correr modelos.</dd>
+          <dt>past_key_values</dt><dd>el nombre que esa biblioteca le da al KV cache.</dd>
+        </dl>
+      </aside>
+
       <p>Con la biblioteca <code>transformers</code> de Hugging Face se puede escribir el bucle de generación sin <code>generate()</code>, con el prefill y cada paso de decode a la vista. El programa usa Qwen2.5-0.5B-Instruct, un modelo de 500 millones de parámetros que corre en cualquier GPU con CUDA; necesita PyTorch y <code>transformers</code> 4.56 o posterior. Lo escribes y lo corres tú; los tiempos dependen de tu GPU.</p>
 
 <pre data-lang="python"><code>import time
@@ -1708,6 +1816,12 @@ print(tok.decode(generados, skip_special_tokens=True))</code></pre>
       </ul>
 
       <h2 id="fallos"><span class="sec-num">12.1.11</span>Qué sale mal y cómo se nota</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Una tabla de síntomas: qué se ve desde afuera (primer token lento, generación que se frena, respuestas raras) y qué parte de la pasada suele causarlo. Sirve para diagnosticar una réplica lenta sabiendo lo que pasa adentro.</p>
+        <p class="jr-like"><b>Es como</b> la tabla de "si el auto hace este ruido, revisa esto" del manual del conductor.</p>
+      </aside>
 
       <div class="table-wrap">
         <table class="t">

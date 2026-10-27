@@ -205,6 +205,22 @@ Va al final de la ruta, después de la Fase 2. **Cuenta para el progreso.** Plan
 | M53 | **Caso: recomendar productos** | Comprados juntos, más como esto, inicio, sesiones, stock y margen, con mapa |
 | **CP-F** | **Checkpoint F** | Examen y diseño del recomendador de un marketplace con red social |
 
+### Parte VII — Blue Team y DevSecOps
+
+Va al final de la ruta, después de la Parte VI. **Cuenta para el progreso.** Completa la Parte IV, que enseña a prevenir: aquí se modela la amenaza, se asegura el pipeline que produce el software, se detecta y se responde. Todo defensivo, con las mismas reglas de la Parte IV. Plan detallado en `PLAN_DEVSECOPS.md`, con la serie de guías prácticas SEC00–SEC08 (`secTracks`). Se construye en bloques de cuatro: M54–M57, M58–M61 y el CP-G, SEC00–SEC03 y SEC04–SEC08.
+
+| # | Módulo | Contenido clave |
+|---|---|---|
+| M54 | **Threat modeling práctico** | Las cuatro preguntas, DFD y fronteras de confianza, STRIDE por elemento, árboles de ataque, priorizar sin DREAD, LINDDUN, el modelo en el ciclo de vida |
+| M55 | **AppSec en el ciclo de vida** | SSDF, OWASP Top 10:2025 y API Top 10, ASVS, SAST, SCA, secret scanning, DAST e IAST, dónde va cada herramienta, security champions |
+| M56 | **La cadena de suministro de software** | SolarWinds, xz, tj-actions y Shai-Hulud; lockfiles, typosquatting y dependency confusion; el CI como blanco; SBOM, SLSA, Sigstore y verificar antes de desplegar |
+| M57 | **Contenedores y Kubernetes** | Namespaces, cgroups, capabilities y seccomp; imágenes mínimas; escapes; Pod Security Standards; RBAC; NetworkPolicy; Secrets; admisión; Falco |
+| M58 | **Gestión de vulnerabilidades** | CVE y CWE, CVSS 4.0, EPSS, KEV, priorizar por riesgo, SLA de parcheo, VEX y alcanzabilidad, métricas |
+| M59 | **Detection engineering y el SOC** | Fuentes de logs, normalización, SIEM, ATT&CK, Sigma, detection-as-code, fatiga de alertas, caza de amenazas |
+| M60 | **Respuesta a incidentes y forense** | NIST 800-61r3, triaje, contención, orden de volatilidad, cadena de custodia, artefactos de Linux, nube y Kubernetes, timeline, postmortem; con mapa |
+| M61 | **Seguridad de red y del correo** | Zeek y Suricata, DNS como señal, JA4, SPF, DKIM, DMARC, MTA-STS |
+| **CP-G** | **Checkpoint G** | Examen y el programa de seguridad del primer año de una startup |
+
 ---
 
 ## 3. Checkpoints de construcción
@@ -229,6 +245,7 @@ En cada checkpoint **me detengo** para que abras el sitio en el navegador y lo r
 | **CP10–12** | Fase 2: Twitter, Google Docs + Checkpoint D (WhatsApp ya está como M29) | — |
 | **CP13** | Parte IV: Ciberseguridad (M32–M38 + Checkpoint E). Publicados M32–M38 y el Checkpoint E; la Parte IV está completa | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 | **CP14** | Parte V: Manejo de pagos (M39 en adelante). Publicado M39; M40 y M41 propuestos | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
+| **CP15** | Parte VII: Blue Team y DevSecOps (M54–M61 + Checkpoint G) y la serie SEC00–SEC08 | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 
 ---
 

@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M56. La cadena de suministro de software</title>
+<meta name="description" content="Cómo se mete alguien entre el código y el clúster: SolarWinds, xz-utils, tj-actions y Shai-Hulud; lockfiles, dependency confusion, el CI como blanco, OIDC, SBOM y VEX, SLSA, firmas con Sigstore y verificar antes de desplegar.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m56">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>La cadena de suministro de software</h1>
+        <p class="lead">Tu código puede estar perfecto y aun así desplegar algo que nadie del equipo escribió. La cadena de suministro es todo lo que hay entre un commit y un contenedor corriendo, y cada eslabón es una puerta.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M56</dd></div>
+          <div><dt>Parte</dt><dd>VII. Blue Team y DevSecOps</dd></div>
+          <div><dt>Duración</dt><dd>130 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M36, M55</dd></div>
+          <div><dt>Estado</dt><dd data-status="m56">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Recorrer los <b>seis eslabones</b> de la cadena y decir por cuál entró cada ataque real reciente.</li>
+    <li>Proteger las dependencias con <b>lockfiles con hash</b>, un proxy de paquetes y nombres reservados contra typosquatting y dependency confusion.</li>
+    <li>Endurecer el <b>CI</b>: acciones fijadas por SHA, permisos mínimos del token y OIDC en lugar de llaves.</li>
+    <li>Explicar qué dicen un <b>SBOM</b>, un <b>VEX</b> y una <b>provenance</b>, y qué pide cada nivel de SLSA.</li>
+    <li>Firmar sin llaves con <b>Sigstore</b> y verificar firma, identidad y provenance antes de desplegar.</li>
+  </ul>
+</section>
+
+<p>En <a href="m55-appsec.html#sca">M55.5</a> el SCA encontró una librería vulnerable que nadie había elegido. Ese es el caso fácil: una falla conocida, con un número de CVE y un parche. Este módulo trata del caso difícil, cuando alguien <b>mete código a propósito</b> en algún punto entre el repositorio y el clúster, y ese código llega a producción firmado, compilado y desplegado por tus propias herramientas.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una cadena de frío de vacunas: la vacuna puede salir perfecta de la fábrica y llegar inservible porque un camión se quedó sin refrigeración dos horas. Por eso cada caja lleva un sello que no se puede abrir sin romperlo y un registro de temperatura de todo el viaje. En software, el sello es la firma y el registro del viaje es la provenance.</p>
+</aside>
+
+<h2 id="cadena"><span class="sec-num">56.1</span>De la fuente al clúster</h2>
+
+<p>La <dfn data-term="supply-chain">cadena de suministro de software</dfn> es todo lo que interviene para que un cambio llegue a producción: el repositorio, las dependencias que se bajan, el sistema de CI que compila, el artefacto que sale (en Tienda Norte, una imagen de contenedor), el registro donde se guarda y el despliegue que la pone a correr. Cada eslabón confía en el anterior. Si uno se compromete, los siguientes procesan con toda tranquilidad lo que les llegó.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f561t f561d">
+<title id="f561t">La cadena de suministro de Tienda Norte</title>
+<desc id="f561d">Seis eslabones de izquierda a derecha: fuente, dependencias, CI, artefacto, registro y despliegue. Arriba, el ataque que entra por cada eslabón; abajo, el control que lo corta.</desc>
+<defs><marker id="f561a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="116" width="112" height="60" rx="8"/>
+<text class="dg-small" x="70.0" y="142.5" text-anchor="middle">Fuente</text>
+<text class="dg-tiny" x="70.0" y="157.5" text-anchor="middle">el repositorio</text>
+<rect class="dg-bad" x="14" y="26" width="112" height="44" rx="8"/>
+<text class="dg-tiny dg-fail-text" x="70.0" y="52.0" text-anchor="middle">cuenta robada</text>
+<path class="dg-edge" d="M70 70 L70 114" marker-end="url(#f561a)"/>
+<rect class="dg-ok" x="14" y="222" width="112" height="44" rx="8"/>
+<text class="dg-tiny" x="70.0" y="248.0" text-anchor="middle">revisión</text>
+<path class="dg-edge" d="M70 220 L70 178" marker-end="url(#f561a)" style="stroke-dasharray:5 4"/>
+<path class="dg-edge" d="M126 146 L144 146" marker-end="url(#f561a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="144" y="116" width="112" height="60" rx="8"/>
+<text class="dg-small" x="200.0" y="142.5" text-anchor="middle">Dependencias</text>
+<text class="dg-tiny" x="200.0" y="157.5" text-anchor="middle">npm, Maven</text>
+<rect class="dg-bad" x="144" y="26" width="112" height="44" rx="8"/>
+<text class="dg-tiny dg-fail-text" x="200.0" y="52.0" text-anchor="middle">paquete malicioso</text>
+<path class="dg-edge" d="M200 70 L200 114" marker-end="url(#f561a)"/>
+<rect class="dg-ok" x="144" y="222" width="112" height="44" rx="8"/>
+<text class="dg-tiny" x="200.0" y="248.0" text-anchor="middle">lockfile y proxy</text>
+<path class="dg-edge" d="M200 220 L200 178" marker-end="url(#f561a)" style="stroke-dasharray:5 4"/>
+<path class="dg-edge" d="M256 146 L274 146" marker-end="url(#f561a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="274" y="116" width="112" height="60" rx="8"/>
+<text class="dg-small" x="330.0" y="142.5" text-anchor="middle">CI</text>
+<text class="dg-tiny" x="330.0" y="157.5" text-anchor="middle">GitHub Actions</text>
+<rect class="dg-bad" x="274" y="26" width="112" height="44" rx="8"/>
+<text class="dg-tiny dg-fail-text" x="330.0" y="52.0" text-anchor="middle">acción alterada</text>
+<path class="dg-edge" d="M330 70 L330 114" marker-end="url(#f561a)"/>
+<rect class="dg-ok" x="274" y="222" width="112" height="44" rx="8"/>
+<text class="dg-tiny" x="330.0" y="248.0" text-anchor="middle">acciones por SHA</text>
+<path class="dg-edge" d="M330 220 L330 178" marker-end="url(#f561a)" style="stroke-dasharray:5 4"/>
+<path class="dg-edge" d="M386 146 L404 146" marker-end="url(#f561a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="404" y="116" width="112" height="60" rx="8"/>
+<text class="dg-small" x="460.0" y="142.5" text-anchor="middle">Artefacto</text>
+<text class="dg-tiny" x="460.0" y="157.5" text-anchor="middle">la imagen</text>
+<rect class="dg-bad" x="404" y="26" width="112" height="44" rx="8"/>
+<text class="dg-tiny dg-fail-text" x="460.0" y="52.0" text-anchor="middle">build envenenado</text>
+<path class="dg-edge" d="M460 70 L460 114" marker-end="url(#f561a)"/>
+<rect class="dg-ok" x="404" y="222" width="112" height="44" rx="8"/>
+<text class="dg-tiny" x="460.0" y="248.0" text-anchor="middle">build aislado</text>
+<path class="dg-edge" d="M460 220 L460 178" marker-end="url(#f561a)" style="stroke-dasharray:5 4"/>
+<path class="dg-edge" d="M516 146 L534 146" marker-end="url(#f561a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="534" y="116" width="112" height="60" rx="8"/>
+<text class="dg-small" x="590.0" y="142.5" text-anchor="middle">Registro</text>
+<text class="dg-tiny" x="590.0" y="157.5" text-anchor="middle">donde se guarda</text>
+<rect class="dg-bad" x="534" y="26" width="112" height="44" rx="8"/>
+<text class="dg-tiny dg-fail-text" x="590.0" y="52.0" text-anchor="middle">imagen cambiada</text>
+<path class="dg-edge" d="M590 70 L590 114" marker-end="url(#f561a)"/>
+<rect class="dg-ok" x="534" y="222" width="112" height="44" rx="8"/>
+<text class="dg-tiny" x="590.0" y="248.0" text-anchor="middle">firma Sigstore</text>
+<path class="dg-edge" d="M590 220 L590 178" marker-end="url(#f561a)" style="stroke-dasharray:5 4"/>
+<path class="dg-edge" d="M646 146 L664 146" marker-end="url(#f561a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="664" y="116" width="112" height="60" rx="8"/>
+<text class="dg-small" x="720.0" y="142.5" text-anchor="middle">Despliegue</text>
+<text class="dg-tiny" x="720.0" y="157.5" text-anchor="middle">el clúster</text>
+<rect class="dg-bad" x="664" y="26" width="112" height="44" rx="8"/>
+<text class="dg-tiny dg-fail-text" x="720.0" y="52.0" text-anchor="middle">sin verificar</text>
+<path class="dg-edge" d="M720 70 L720 114" marker-end="url(#f561a)"/>
+<rect class="dg-ok" x="664" y="222" width="112" height="44" rx="8"/>
+<text class="dg-tiny" x="720.0" y="248.0" text-anchor="middle">admisión</text>
+<path class="dg-edge" d="M720 220 L720 178" marker-end="url(#f561a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="14" y="16" text-anchor="start">Por dónde entra alguien</text>
+<text class="dg-tiny" x="14" y="290" text-anchor="start">Qué lo corta (56.3 a 56.8)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 56.1.</b> Los seis eslabones de Tienda Norte. Arriba, por dónde entra alguien; abajo, el control que lo corta. Cada sección del módulo desarrolla una columna.</figcaption>
+</figure>
+
+
+<p>Es la categoría A03 del <a href="m55-appsec.html#top10">OWASP Top 10:2025</a> y la amenaza 5 del modelo de <a href="m54-threat-modeling.html#tienda">M54</a>: "una dependencia comprometida en la imagen". Lo que la hace distinta de una vulnerabilidad común es que <b>el código malicioso pasa por todos los controles de M55</b>: el SAST no busca puertas traseras escritas a propósito, el SCA no conoce un paquete que se publicó ayer y las pruebas pasan, porque el código hace lo que prometía y además otra cosa.</p>
+
+<h2 id="casos"><span class="sec-num">56.2</span>Cinco ataques reales</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f562t f562d">
+<title id="f562t">Cinco ataques reales a la cadena</title>
+<desc id="f562d">Línea de tiempo de 2020 a 2025 con cinco casos: SolarWinds, dependency confusion, xz-utils, tj-actions/changed-files y Shai-Hulud, cada uno con el eslabón por donde entró.</desc>
+<defs><marker id="f562a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-edge" d="M20 120 L750 120" marker-end="url(#f562a)"/>
+<circle cx="70" cy="120" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny" x="70" y="145" text-anchor="middle">2020</text>
+<rect class="dg-box" x="0" y="30" width="140" height="62" rx="8"/>
+<text class="dg-small" x="70.0" y="50.0" text-anchor="middle">SolarWinds</text>
+<text class="dg-tiny" x="70.0" y="65.0" text-anchor="middle">build envenenado</text>
+<text class="dg-tiny" x="70.0" y="80.0" text-anchor="middle">artefacto</text>
+<path class="dg-feedback" d="M70 92 L70 114"/>
+<circle cx="210" cy="120" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny" x="210" y="104" text-anchor="middle">2021</text>
+<rect class="dg-box" x="140" y="160" width="140" height="62" rx="8"/>
+<text class="dg-small" x="210.0" y="180.0" text-anchor="middle">Dependency confusion</text>
+<text class="dg-tiny" x="210.0" y="195.0" text-anchor="middle">nombre interno en npm</text>
+<text class="dg-tiny" x="210.0" y="210.0" text-anchor="middle">dependencias</text>
+<path class="dg-feedback" d="M210 160 L210 126"/>
+<circle cx="360" cy="120" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny" x="360" y="145" text-anchor="middle">2024</text>
+<rect class="dg-box" x="290" y="30" width="140" height="62" rx="8"/>
+<text class="dg-small" x="360.0" y="50.0" text-anchor="middle">xz-utils</text>
+<text class="dg-tiny" x="360.0" y="65.0" text-anchor="middle">mantenedor infiltrado</text>
+<text class="dg-tiny" x="360.0" y="80.0" text-anchor="middle">fuente y tarball</text>
+<path class="dg-feedback" d="M360 92 L360 114"/>
+<circle cx="510" cy="120" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny" x="510" y="104" text-anchor="middle">mar 2025</text>
+<rect class="dg-box" x="440" y="160" width="140" height="62" rx="8"/>
+<text class="dg-small" x="510.0" y="180.0" text-anchor="middle">tj-actions</text>
+<text class="dg-tiny" x="510.0" y="195.0" text-anchor="middle">tags movidos</text>
+<text class="dg-tiny" x="510.0" y="210.0" text-anchor="middle">CI</text>
+<path class="dg-feedback" d="M510 160 L510 126"/>
+<circle cx="670" cy="120" r="6" class="dg-box dg-box--em"/>
+<text class="dg-tiny" x="670" y="145" text-anchor="middle">sep 2025</text>
+<rect class="dg-box" x="600" y="30" width="140" height="62" rx="8"/>
+<text class="dg-small" x="670.0" y="50.0" text-anchor="middle">Shai-Hulud</text>
+<text class="dg-tiny" x="670.0" y="65.0" text-anchor="middle">gusano en npm</text>
+<text class="dg-tiny" x="670.0" y="80.0" text-anchor="middle">dependencias y CI</text>
+<path class="dg-feedback" d="M670 92 L670 114"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 56.2.</b> Cinco casos en cinco años. Ningún eslabón queda sin su ejemplo.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Caso</th><th>Qué pasó</th><th>Eslabón</th><th>Qué lo habría cortado</th></tr></thead>
+    <tbody>
+      <tr><td>SolarWinds (2020) <span class="badge badge--doc">Documentado</span></td><td>Código malicioso inyectado durante el build de Orion; las actualizaciones salieron firmadas por el propio fabricante. CISA emitió la directiva de emergencia 21-01 el 13 de diciembre de 2020.</td><td>Artefacto</td><td>Builds aislados y reproducibles con provenance (SLSA L3)</td></tr>
+      <tr><td>Dependency confusion (2021) <span class="badge badge--doc">Documentado</span></td><td>Alex Birsan publicó en registros públicos paquetes con los nombres internos de más de 35 organizaciones, y sus sistemas los instalaron. Lo hizo como investigación con recompensas, y lo publicó el 9 de febrero de 2021.</td><td>Dependencias</td><td>Un solo origen por scope y nombres reservados</td></tr>
+      <tr><td>xz-utils (2024) <span class="badge badge--doc">Documentado</span></td><td>Tras años de construir confianza como mantenedor, alguien metió una puerta trasera en las versiones 5.6.0 y 5.6.1 (CVE-2024-3094, CVSS 10). El código malicioso estaba en los tarballs publicados, no en el repositorio de Git. Lo detectó Andres Freund el 29 de marzo de 2024 por una demora rara en SSH.</td><td>Fuente</td><td>Construir desde la fuente y comparar con el tarball</td></tr>
+      <tr><td>tj-actions/changed-files (2025) <span class="badge badge--doc">Documentado</span></td><td>Los tags de la acción, usada por más de 23 000 repositorios, se movieron a un commit que imprimía los secretos del CI en los logs (CVE-2025-30066). CISA lo alertó el 18 de marzo de 2025.</td><td>CI</td><td>Acciones fijadas por SHA y secretos de vida corta</td></tr>
+      <tr><td>Shai-Hulud (2025) <span class="badge badge--doc">Documentado</span></td><td>Un gusano en npm que, al instalarse, buscaba tokens en la máquina y los usaba para publicar versiones infectadas de otros paquetes de la misma persona. CISA lo alertó el 23 de septiembre de 2025, con más de 500 paquetes afectados.</td><td>Dependencias y CI</td><td>Lockfile, sin scripts de instalación, tokens de publicación de vida corta</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Tres de los cinco no explotaron una falla de código: explotaron <b>confianza</b>. En xz, la confianza en un mantenedor; en tj-actions, la confianza en que un tag apunta siempre a lo mismo; en SolarWinds, la confianza en que lo que sale del build es lo que entró. Los controles de este módulo convierten esa confianza en algo que se comprueba.</p>
+</aside>
+
+<h2 id="dependencias"><span class="sec-num">56.3</span>Dependencias: lockfiles, nombres y orígenes</h2>
+
+<p>Un <dfn data-term="lockfile">lockfile</dfn> (<code>package-lock.json</code>, <code>uv.lock</code>, <code>gradle.lockfile</code>) fija la versión exacta de cada dependencia, también las transitivas, y en la mayoría de los ecosistemas guarda el <a href="m36-criptografia.html#hash">hash</a> de cada paquete. Con él, dos builds del mismo commit bajan exactamente los mismos bytes; si alguien reemplaza un paquete en el registro, el hash no coincide y la instalación falla. En CI se instala en modo estricto (<code>npm ci</code>, <code>uv sync --locked</code>), que falla si el lockfile no corresponde, en lugar de resolverlo de nuevo.</p>
+
+<p>El lockfile protege lo que ya está. No protege de elegir mal un paquete nuevo:</p>
+
+<ul>
+  <li><b>Typosquatting.</b> El <dfn data-term="typosquatting">typosquatting</dfn> es publicar un paquete con un nombre parecido a uno popular (una letra cambiada, un guion de más) y esperar que alguien lo escriba mal. Lo frena revisar cada dependencia nueva en el PR y un proxy de paquetes con lista permitida.</li>
+  <li><b>Dependency confusion.</b> La <dfn data-term="dependency-confusion">dependency confusion</dfn> aprovecha que un gestor busque el mismo nombre en el registro privado y en el público y se quede con la versión más alta.</li>
+</ul>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f563t f563d">
+<title id="f563t">Dependency confusion</title>
+<desc id="f563d">El proyecto depende de un paquete interno llamado tn-utils, versión 1.2.0, en el registro privado. Alguien publica tn-utils 99.0.0 en el registro público. Si el gestor mira los dos registros y elige la versión más alta, instala la pública.</desc>
+<defs><marker id="f563a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="80" width="170" height="60" rx="8"/>
+<text class="dg-small" x="99.0" y="106.5" text-anchor="middle">package.json</text>
+<text class="dg-tiny dg-mono" x="99.0" y="121.5" text-anchor="middle">tn-utils: ^1.2.0</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="300" y="20" width="200" height="56" rx="8"/>
+<text class="dg-small" x="400.0" y="44.5" text-anchor="middle">Registro privado</text>
+<text class="dg-tiny" x="400.0" y="59.5" text-anchor="middle">tn-utils 1.2.0</text>
+<rect class="dg-bad" x="300" y="140" width="200" height="56" rx="8"/>
+<text class="dg-small dg-fail-text" x="400.0" y="164.5" text-anchor="middle">Registro público</text>
+<text class="dg-tiny" x="400.0" y="179.5" text-anchor="middle">tn-utils 99.0.0</text>
+<path class="dg-edge" d="M184 100 L298 50" marker-end="url(#f563a)"/>
+<text class="dg-tiny" x="230" y="64" text-anchor="middle">busca</text>
+<path class="dg-edge" d="M184 120 L298 166" marker-end="url(#f563a)"/>
+<text class="dg-tiny" x="222" y="162" text-anchor="middle">también busca</text>
+<rect class="dg-bad" x="570" y="80" width="186" height="60" rx="8"/>
+<text class="dg-small dg-fail-text" x="663.0" y="106.5" text-anchor="middle">Instala 99.0.0</text>
+<text class="dg-tiny" x="663.0" y="121.5" text-anchor="middle">la versión más alta gana</text>
+<path class="dg-edge" d="M500 168 L568 120" marker-end="url(#f563a)"/>
+<text class="dg-tiny" x="385" y="222" text-anchor="middle">Se corta con un solo origen por scope (@tienda-norte/*), el nombre reservado en el público y un lockfile con hash.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 56.3.</b> Dependency confusion. El problema no es el paquete público: es que el gestor tenga dos orígenes para el mismo nombre.</figcaption>
+</figure>
+
+
+<p>Las defensas son de configuración: un <b>scope</b> o namespace propio (<code>@tienda-norte/*</code> en npm, un <code>groupId</code> propio en Maven) que solo se resuelve contra el registro privado, reservar esos nombres también en el registro público y un <b>proxy de paquetes</b> (Artifactory, Nexus, el de la nube) por el que pasan todas las descargas, que puede bloquear paquetes publicados hace menos de unos días.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Shai-Hulud se propagaba con scripts que npm ejecuta al instalar (<code>postinstall</code>). Desactivarlos (<code>npm ci --ignore-scripts</code>) corta esa vía, pero rompe los paquetes que compilan código nativo al instalarse. Lo práctico: desactivarlos por defecto y permitirlos solo en una lista corta y revisada.</p>
+</aside>
+
+<h2 id="ci"><span class="sec-num">56.4</span>El pipeline como blanco</h2>
+
+<p>El CI es el lugar con más privilegios del sistema: lee todo el código, tiene credenciales para publicar imágenes y, muchas veces, para desplegar. Por eso es el blanco favorito. Cuatro prácticas para GitHub Actions, que valen con otros nombres en cualquier CI:</p>
+
+<h3 id="ci-sha">Acciones fijadas por SHA</h3>
+
+<p>Un tag como <code>@v45</code> es un puntero que su dueño (o quien le robe la cuenta) puede mover. Un SHA de commit completo no se puede mover: si el contenido cambia, el SHA cambia. Es exactamente lo que falló con tj-actions.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f564t f564d">
+<title id="f564t">Un tag se mueve, un SHA no</title>
+<desc id="f564d">Arriba, el workflow usa la acción por el tag v45; el atacante mueve el tag a un commit malicioso y el próximo build lo ejecuta. Abajo, el workflow usa el SHA completo del commit revisado; mover el tag no cambia nada.</desc>
+<defs><marker id="f564a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-tiny dg-mono" x="14" y="22" text-anchor="start">uses: tj-actions/changed-files@v45</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="34" width="150" height="44" rx="8"/>
+<text class="dg-small" x="89.0" y="52.5" text-anchor="middle">tag v45</text>
+<text class="dg-tiny" x="89.0" y="67.5" text-anchor="middle">un puntero</text>
+<rect class="dg-ok" x="260" y="34" width="170" height="44" rx="8"/>
+<text class="dg-small" x="345.0" y="52.5" text-anchor="middle">commit revisado</text>
+<text class="dg-tiny" x="345.0" y="67.5" text-anchor="middle">a1b2c3…</text>
+<rect class="dg-bad" x="520" y="34" width="236" height="44" rx="8"/>
+<text class="dg-small dg-fail-text" x="638.0" y="52.5" text-anchor="middle">commit malicioso</text>
+<text class="dg-tiny" x="638.0" y="67.5" text-anchor="middle">imprime secretos en el log</text>
+<path class="dg-edge" d="M164 56 L258 56" marker-end="url(#f564a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="210" y="48" text-anchor="middle">antes</text>
+<path class="dg-edge" d="M164 66 L190 92 L500 92 L518 70" marker-end="url(#f564a)"/>
+<text class="dg-tiny" x="340" y="92" text-anchor="middle">después: el tag se movió</text>
+<text class="dg-tiny dg-mono" x="14" y="132" text-anchor="start">uses: tj-actions/changed-files@a1b2c3d4e5f6… (40 caracteres)</text>
+<rect class="dg-ok" x="14" y="144" width="150" height="44" rx="8"/>
+<text class="dg-small" x="89.0" y="162.5" text-anchor="middle">SHA completo</text>
+<text class="dg-tiny" x="89.0" y="177.5" text-anchor="middle">inmutable</text>
+<rect class="dg-ok" x="260" y="144" width="170" height="44" rx="8"/>
+<text class="dg-small" x="345.0" y="162.5" text-anchor="middle">commit revisado</text>
+<text class="dg-tiny" x="345.0" y="177.5" text-anchor="middle">a1b2c3…</text>
+<path class="dg-edge" d="M164 166 L258 166" marker-end="url(#f564a)"/>
+<text class="dg-tiny" x="210" y="158" text-anchor="middle">siempre</text>
+<rect class="dg-box" x="520" y="144" width="236" height="44" rx="8"/>
+<text class="dg-small" x="638.0" y="162.5" text-anchor="middle">commit malicioso</text>
+<text class="dg-tiny" x="638.0" y="177.5" text-anchor="middle">no se ejecuta</text>
+<text class="dg-tiny" x="385" y="212" text-anchor="middle">Dependabot y Renovate actualizan los SHA con un PR que se revisa: fijar no significa congelar.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 56.4.</b> El mismo workflow con tag y con SHA. El tag sigue al commit que su dueño quiera; el SHA, al que tú revisaste.</figcaption>
+</figure>
+
+
+<h3 id="ci-permisos">Permisos mínimos del token</h3>
+
+<p>Cada job recibe un <code>GITHUB_TOKEN</code>. Se declaran sus permisos explícitamente, empezando por solo lectura, y se suben solo en el job que lo necesita:</p>
+
+<pre data-lang="shell"><code># .github/workflows/build.yml
+permissions:
+  contents: read          # por defecto, para todos los jobs
+
+jobs:
+  publicar:
+    permissions:
+      contents: read
+      id-token: write     # solo este job pide un token OIDC
+      packages: write     # y solo este publica la imagen</code></pre>
+
+<h3 id="ci-prt">Código de forks</h3>
+
+<p>Un PR desde un fork trae código de alguien de afuera. El evento <code>pull_request</code> lo corre sin secretos y con un token de solo lectura; <code>pull_request_target</code>, en cambio, corre en el contexto del repositorio, con secretos. Usar <code>pull_request_target</code> y además hacer checkout del código del PR es darle los secretos a quien abra el PR <span class="badge badge--doc">Documentado</span>. Si se necesita, se separa: un workflow sin privilegios procesa el código y otro con privilegios solo lee sus resultados.</p>
+
+<h3 id="ci-oidc">OIDC en lugar de llaves</h3>
+
+<p>La forma de que el CI no tenga llaves que filtrar es no darle llaves. Con <dfn data-term="oidc-ci">OIDC en el CI</dfn>, el job pide al proveedor del CI un token firmado que dice quién es (repositorio, rama, workflow) y lo cambia en la nube por credenciales que vencen en minutos. La nube solo acepta tokens que cumplan las condiciones de la política de confianza. Es la misma <a href="m10-seguridad.html#oauth">OpenID Connect</a> de M10, aplicada a máquinas, y las credenciales temporales de <a href="m37-nube.html#iam">M37</a>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f565t f565d">
+<title id="f565t">OIDC en lugar de llaves en el CI</title>
+<desc id="f565d">El job del CI pide un token OIDC al proveedor del CI, que firma quién es: repositorio, rama y workflow. El job se lo presenta al servicio de credenciales de la nube, que comprueba la firma y las condiciones de confianza y devuelve credenciales que vencen en minutos.</desc>
+<defs><marker id="f565a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="90" width="150" height="60" rx="8"/>
+<text class="dg-small" x="89.0" y="116.5" text-anchor="middle">Job del CI</text>
+<text class="dg-tiny" x="89.0" y="131.5" text-anchor="middle">deploy en main</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="300" y="14" width="190" height="60" rx="8"/>
+<text class="dg-small" x="395.0" y="40.5" text-anchor="middle">Proveedor OIDC</text>
+<text class="dg-tiny" x="395.0" y="55.5" text-anchor="middle">del CI (firma)</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="300" y="170" width="190" height="60" rx="8"/>
+<text class="dg-small" x="395.0" y="196.5" text-anchor="middle">STS de la nube</text>
+<text class="dg-tiny" x="395.0" y="211.5" text-anchor="middle">confía en ese emisor</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="600" y="90" width="156" height="60" rx="8"/>
+<text class="dg-small" x="678.0" y="116.5" text-anchor="middle">Registro</text>
+<text class="dg-tiny" x="678.0" y="131.5" text-anchor="middle">push de la imagen</text>
+<path class="dg-edge" d="M164 104 L298 44" marker-end="url(#f565a)"/>
+<text class="dg-tiny" x="214" y="62" text-anchor="middle">1. pide token</text>
+<path class="dg-edge" d="M298 58 L164 116" marker-end="url(#f565a)"/>
+<text class="dg-tiny" x="246" y="122" text-anchor="middle">2. JWT: repo, rama</text>
+<path class="dg-edge" d="M164 136 L298 196" marker-end="url(#f565a)"/>
+<text class="dg-tiny" x="212" y="184" text-anchor="middle">3. lo presenta</text>
+<path class="dg-edge" d="M490 196 L598 136" marker-end="url(#f565a)"/>
+<text class="dg-tiny" x="572" y="186" text-anchor="middle">4. credencial de 15 min</text>
+<text class="dg-tiny dg-mono" x="395" y="140" text-anchor="middle">condición: repo = tienda-norte/api</text>
+<text class="dg-tiny dg-mono" x="395" y="156" text-anchor="middle">y ref = refs/heads/main</text>
+<text class="dg-tiny" x="14" y="244" text-anchor="start">No hay ninguna llave guardada que se pueda filtrar: un fork o otra rama no cumple la condición.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 56.5.</b> OIDC en el CI. Si tj-actions hubiera impreso este token en el log, habría servido unos minutos y solo desde la rama main de este repositorio.</figcaption>
+</figure>
+
+
+<h2 id="sbom"><span class="sec-num">56.5</span>SBOM y VEX</h2>
+
+<p>Un <dfn data-term="sbom">SBOM</dfn> (Software Bill of Materials) es la lista de ingredientes de un artefacto: cada componente con su nombre, su versión, su proveedor y un identificador único (un <code>purl</code>, como <code>pkg:maven/org.apache.commons/commons-text@1.9</code>). Los dos formatos estándar son <b>SPDX</b> (de la Linux Foundation, estándar ISO/IEC 5962) y <b>CycloneDX</b> (de OWASP) <span class="badge badge--doc">Documentado</span>. La NTIA fijó en julio de 2021 los elementos mínimos que debe tener <span class="badge badge--doc">Documentado</span>.</p>
+
+<p>Su valor se ve el día que sale una vulnerabilidad nueva: en lugar de preguntar en un canal "¿alguien usa commons-text?", se busca en los SBOM de todas las imágenes desplegadas. Es lo que separó a los equipos que respondieron Log4Shell en minutos de los que tardaron semanas (<a href="m55-appsec.html#sca">M55.5</a>).</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="f566t f566d">
+<title id="f566t">SBOM y VEX</title>
+<desc id="f566d">A la izquierda, el SBOM de la imagen de la API: la lista de componentes con versión e identificador. Al centro, un aviso de vulnerabilidad que coincide con un componente. A la derecha, el VEX del equipo que dice que no afecta porque el código vulnerable no se usa.</desc>
+<defs><marker id="f566a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="20" width="250" height="196" rx="8"/>
+<text class="dg-label" x="139" y="42" text-anchor="middle">SBOM (CycloneDX)</text>
+<text class="dg-small dg-mono" x="30" y="66" text-anchor="start">spring-web 6.2.x</text>
+<text class="dg-small dg-mono" x="30" y="90" text-anchor="start">jackson-databind 2.x</text>
+<text class="dg-small dg-mono" x="30" y="114" text-anchor="start">postgresql 42.x</text>
+<text class="dg-small dg-mono" x="30" y="138" text-anchor="start">commons-text 1.9</text>
+<text class="dg-small dg-mono" x="30" y="162" text-anchor="start">log4j-api 2.x</text>
+<text class="dg-tiny" x="30" y="186" text-anchor="start">… 214 componentes</text>
+<rect class="dg-warnbox" x="24" y="122" width="230" height="22" rx="4" style="fill:none"/>
+<rect class="dg-warnbox" x="300" y="80" width="190" height="70" rx="8"/>
+<text class="dg-small" x="395.0" y="111.5" text-anchor="middle">Aviso nuevo</text>
+<text class="dg-tiny" x="395.0" y="126.5" text-anchor="middle">CVE en commons-text 1.9</text>
+<path class="dg-edge" d="M266 133 L298 120" marker-end="url(#f566a)"/>
+<rect class="dg-ok" x="530" y="70" width="226" height="90" rx="8"/>
+<text class="dg-small" x="643.0" y="104.0" text-anchor="middle">VEX del equipo</text>
+<text class="dg-tiny" x="643.0" y="119.0" text-anchor="middle">estado: not_affected</text>
+<text class="dg-tiny" x="643.0" y="134.0" text-anchor="middle">código vulnerable no alcanzable</text>
+<path class="dg-edge" d="M490 115 L528 115" marker-end="url(#f566a)"/>
+<text class="dg-tiny" x="385" y="234" text-anchor="middle">El SBOM dice qué hay. El VEX dice si una vulnerabilidad conocida te afecta de verdad.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 56.6.</b> El SBOM responde "¿lo tenemos?"; el VEX responde "¿nos afecta?".</figcaption>
+</figure>
+
+
+<p>Un <dfn data-term="vex">VEX</dfn> (Vulnerability Exploitability eXchange) es la otra mitad: un documento donde el dueño de un producto declara, por cada vulnerabilidad, si lo afecta (<code>affected</code>), si no (<code>not_affected</code>, con una justificación como "el código vulnerable no está presente o no se ejecuta"), si ya está arreglada o si está en análisis. Los escáneres que leen VEX dejan de reportar lo que ya se analizó, que es la mitad del ruido de M58.</p>
+
+<h2 id="slsa"><span class="sec-num">56.6</span>SLSA y la provenance</h2>
+
+<p>La <dfn data-term="provenance">provenance</dfn> es un documento firmado que dice cómo se construyó un artefacto: desde qué repositorio y commit, con qué workflow, en qué plataforma y cuál es el hash de lo que salió. <dfn data-term="slsa">SLSA</dfn> (Supply-chain Levels for Software Artifacts, "salsa") es un marco que define cuánto se puede confiar en esa provenance. La versión 1.1 define tres niveles de build <span class="badge badge--doc">Documentado</span>:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f567t f567d">
+<title id="f567t">Los niveles de build de SLSA 1.1</title>
+<desc id="f567d">Tres escalones. L1: el build produce provenance, un documento que dice cómo se construyó. L2: lo construye una plataforma alojada que firma la provenance. L3: la plataforma está endurecida y los builds aislados entre sí, de modo que un build no puede falsificar la provenance de otro.</desc>
+<defs><marker id="f567a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="30" y="150" width="220" height="60" rx="8"/>
+<text class="dg-small" x="140.0" y="169.0" text-anchor="middle">Build L1</text>
+<text class="dg-tiny" x="140.0" y="184.0" text-anchor="middle">existe la provenance</text>
+<text class="dg-tiny" x="140.0" y="199.0" text-anchor="middle">se ven errores, no fraudes</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="270" y="100" width="220" height="110" rx="8"/>
+<text class="dg-small" x="380.0" y="144.0" text-anchor="middle">Build L2</text>
+<text class="dg-tiny" x="380.0" y="159.0" text-anchor="middle">plataforma alojada que firma</text>
+<text class="dg-tiny" x="380.0" y="174.0" text-anchor="middle">falsificarla pide robar la llave</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="510" y="50" width="220" height="160" rx="8"/>
+<text class="dg-small" x="620.0" y="119.0" text-anchor="middle">Build L3</text>
+<text class="dg-tiny" x="620.0" y="134.0" text-anchor="middle">plataforma endurecida</text>
+<text class="dg-tiny" x="620.0" y="149.0" text-anchor="middle">builds aislados entre sí</text>
+<text class="dg-tiny" x="14" y="222" text-anchor="start">La provenance responde: qué fuente (repo y commit), qué build (workflow), qué salió (el hash del artefacto).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 56.7.</b> Los tres niveles de build de SLSA 1.1. Cada escalón responde a un atacante más capaz.</figcaption>
+</figure>
+
+
+<p>Con SLSA L3, un SolarWinds se vuelve mucho más difícil: el build corre aislado en una plataforma que el equipo no controla a mano, y la provenance la firma la plataforma, no el build. Si alguien mete código durante el build, o lo hace en la fuente (y queda en el commit que la provenance nombra) o tiene que comprometer la plataforma. En GitHub Actions, las attestations de artefactos dan L2, y generarlas desde un workflow reutilizable aislado (como los de <code>slsa-github-generator</code>) lleva a L3 <span class="badge badge--doc">Documentado</span>.</p>
+
+<h2 id="firmas"><span class="sec-num">56.7</span>Firmas sin llaves: Sigstore</h2>
+
+<p>Firmar imágenes resuelve "¿esto lo produjo mi pipeline?" con la <a href="m36-criptografia.html#asimetrico">criptografía asimétrica</a> de M36. El problema clásico es la llave privada: hay que guardarla, rotarla y protegerla, y si se filtra, el atacante firma lo que quiera. <dfn data-term="sigstore">Sigstore</dfn> lo resuelve sin llaves de larga vida <span class="badge badge--doc">Documentado</span>:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f568t f568d">
+<title id="f568t">Firmar sin llaves con Sigstore</title>
+<desc id="f568d">El CI presenta su token OIDC a Fulcio, que emite un certificado de pocos minutos atado a esa identidad. Con la llave efímera se firma la imagen, la firma queda registrada en Rekor, un registro de transparencia, y la llave se tira. Para verificar se comprueba la firma, que la identidad sea la esperada y que esté en Rekor.</desc>
+<defs><marker id="f568a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="96" width="150" height="60" rx="8"/>
+<text class="dg-small" x="89.0" y="122.5" text-anchor="middle">CI de main</text>
+<text class="dg-tiny" x="89.0" y="137.5" text-anchor="middle">token OIDC</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="260" y="14" width="180" height="60" rx="8"/>
+<text class="dg-small" x="350.0" y="40.5" text-anchor="middle">Fulcio</text>
+<text class="dg-tiny" x="350.0" y="55.5" text-anchor="middle">certificado de minutos</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="260" y="176" width="180" height="60" rx="8"/>
+<text class="dg-small" x="350.0" y="202.5" text-anchor="middle">Rekor</text>
+<text class="dg-tiny" x="350.0" y="217.5" text-anchor="middle">registro de transparencia</text>
+<rect class="dg-ok" x="560" y="96" width="196" height="60" rx="8"/>
+<text class="dg-small" x="658.0" y="122.5" text-anchor="middle">Imagen firmada</text>
+<text class="dg-tiny" x="658.0" y="137.5" text-anchor="middle">en el registro</text>
+<path class="dg-edge" d="M164 110 L258 48" marker-end="url(#f568a)"/>
+<text class="dg-tiny" x="196" y="68" text-anchor="middle">1. identidad</text>
+<path class="dg-edge" d="M258 60 L164 122" marker-end="url(#f568a)"/>
+<text class="dg-tiny" x="240" y="104" text-anchor="end">2. cert</text>
+<path class="dg-edge" d="M164 130 L558 126" marker-end="url(#f568a)"/>
+<text class="dg-tiny" x="470" y="118" text-anchor="middle">3. cosign sign</text>
+<path class="dg-edge" d="M164 146 L258 200" marker-end="url(#f568a)"/>
+<text class="dg-tiny" x="190" y="196" text-anchor="middle">4. queda registrada</text>
+<text class="dg-tiny" x="560" y="196" text-anchor="start">Verificar = firma válida</text>
+<text class="dg-tiny" x="560" y="212" text-anchor="start">+ identidad esperada</text>
+<text class="dg-tiny" x="560" y="228" text-anchor="start">+ entrada en Rekor</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 56.8.</b> Firma "keyless". La llave vive unos minutos; lo que se verifica a largo plazo es la identidad que firmó y el registro público de que firmó.</figcaption>
+</figure>
+
+
+<ol class="steps">
+  <li><span class="step-title">Identidad</span>El CI presenta su token OIDC (el de 56.4) a <b>Fulcio</b>, la autoridad certificadora de Sigstore.</li>
+  <li><span class="step-title">Certificado efímero</span>Fulcio emite un certificado de vida muy corta que ata una llave recién generada a esa identidad: "el workflow de main de tienda-norte/api".</li>
+  <li><span class="step-title">Firma</span><code>cosign</code> firma el digest de la imagen con esa llave y la llave se descarta.</li>
+  <li><span class="step-title">Registro</span>La firma y el certificado quedan en <b>Rekor</b>, un registro de transparencia: una lista de solo-adición que cualquiera puede auditar. Así se prueba que la firma se hizo mientras el certificado era válido.</li>
+</ol>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Verificar solo "tiene una firma válida" no sirve: cualquiera con una cuenta de GitHub puede firmar con Sigstore. La verificación tiene que exigir <b>la identidad esperada</b> (el emisor del token y el workflow exacto de tu repositorio y tu rama). Es el error más común al adoptar firmas.</p>
+</aside>
+
+<h2 id="verificar"><span class="sec-num">56.8</span>Verificar antes de desplegar</h2>
+
+<p>Firmar no sirve de nada si nadie verifica. El lugar natural es la <b>admisión</b> del clúster: el componente de Kubernetes que decide si un pod se crea. M57 lo desarrolla; aquí importa qué se comprueba.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 210" role="img" aria-labelledby="f569t f569d">
+<title id="f569t">Verificar antes de desplegar</title>
+<desc id="f569d">Una imagen llega al clúster y pasa por cuatro comprobaciones en orden: la firma, la identidad de quien firmó, la provenance y el resultado del escaneo. Si alguna falla, la admisión la rechaza.</desc>
+<defs><marker id="f569a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="70" width="120" height="60" rx="8"/>
+<text class="dg-small" x="74.0" y="96.5" text-anchor="middle">Imagen</text>
+<text class="dg-tiny dg-mono" x="74.0" y="111.5" text-anchor="middle">api@sha256:4f2a…</text>
+<path class="dg-edge" d="M134 100 L162 100" marker-end="url(#f569a)"/>
+<rect class="dg-ok" x="164" y="70" width="120" height="60" rx="8"/>
+<text class="dg-small" x="224.0" y="96.5" text-anchor="middle">Firma</text>
+<text class="dg-tiny" x="224.0" y="111.5" text-anchor="middle">¿es válida?</text>
+<path class="dg-edge" d="M280 100 L308 100" marker-end="url(#f569a)"/>
+<rect class="dg-ok" x="310" y="70" width="120" height="60" rx="8"/>
+<text class="dg-small" x="370.0" y="96.5" text-anchor="middle">Identidad</text>
+<text class="dg-tiny" x="370.0" y="111.5" text-anchor="middle">¿la firmó main?</text>
+<path class="dg-edge" d="M426 100 L454 100" marker-end="url(#f569a)"/>
+<rect class="dg-ok" x="456" y="70" width="120" height="60" rx="8"/>
+<text class="dg-small" x="516.0" y="96.5" text-anchor="middle">Provenance</text>
+<text class="dg-tiny" x="516.0" y="111.5" text-anchor="middle">¿de qué commit?</text>
+<path class="dg-edge" d="M572 100 L600 100" marker-end="url(#f569a)"/>
+<rect class="dg-ok" x="602" y="70" width="120" height="60" rx="8"/>
+<text class="dg-small" x="662.0" y="96.5" text-anchor="middle">Escaneo</text>
+<text class="dg-tiny" x="662.0" y="111.5" text-anchor="middle">¿críticas?</text>
+<path class="dg-edge" d="M718 100 L750 100" marker-end="url(#f569a)"/>
+<text class="dg-tiny" x="756" y="150" text-anchor="end">admitida</text>
+<text class="dg-small" x="385" y="168" text-anchor="middle">Cualquier "no" la rechaza en la admisión (M57). Se despliega por digest, nunca por un tag que se mueve.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 56.9.</b> Las cuatro comprobaciones en orden. La imagen se nombra por digest: <code>api@sha256:…</code> identifica bytes; <code>api:1.8.3</code> identifica lo que alguien decidió llamar así.</figcaption>
+</figure>
+
+
+<pre data-lang="shell"><code>$ cosign verify ghcr.io/tienda-norte/api@sha256:4f2a… \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity-regexp '^https://github.com/tienda-norte/api/\.github/workflows/build\.yml@refs/heads/main$'</code></pre>
+
+<p>El comando exige las dos cosas: quién emitió la identidad y qué workflow firmó. En la admisión, Kyverno o el Policy Controller de Sigstore hacen lo mismo para cada pod. Una ValidatingAdmissionPolicy sola no alcanza: evalúa reglas CEL sobre el objeto y no puede consultar firmas.</p>
+
+<p>El widget junta todo. Tienda Norte tiene seis eslabones y siete ataques posibles. Activa controles y mira cuáles quedan cortados, cuáles a medias y por dónde todavía puede entrar alguien.</p>
+
+<div data-sim="supplychain"></div>
+
+<p>Con el widget se ven dos cosas. Primero, la imagen reemplazada en el registro necesita <b>dos</b> controles a la vez: firmar sin verificar no corta nada, y verificar sin firmar no tiene qué verificar. Segundo, ningún control del pipeline corta un commit malicioso hecho con una cuenta robada si nadie más revisa: la cadena empieza en las personas.</p>
+
+<h2 id="tienda"><span class="sec-num">56.9</span>La cadena de Tienda Norte, endurecida</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Eslabón</th><th>Control</th><th>Comprobación</th></tr></thead>
+    <tbody>
+      <tr><td>Fuente</td><td>Rama main protegida, revisión de otra persona, commits firmados, MFA obligatoria</td><td>Las reglas de rama no permiten push directo</td></tr>
+      <tr><td>Dependencias</td><td>Lockfile con hash, scope <code>@tienda-norte</code>, proxy con cuarentena de paquetes nuevos, scripts de instalación desactivados</td><td><code>npm ci</code> y <code>mvn -o</code> fallan si algo no coincide</td></tr>
+      <tr><td>CI</td><td>Acciones por SHA con Renovate, permisos mínimos, sin <code>pull_request_target</code>, OIDC hacia la nube</td><td>Una regla del linter de workflows en el PR</td></tr>
+      <tr><td>Artefacto</td><td>Build en runners alojados, provenance SLSA L3, SBOM CycloneDX adjunto</td><td>La attestation existe para cada digest</td></tr>
+      <tr><td>Registro</td><td>Firma keyless con cosign; tags inmutables</td><td>Rekor tiene la entrada</td></tr>
+      <tr><td>Despliegue</td><td>Admisión que exige firma, identidad del workflow de main y provenance</td><td>Un pod con una imagen sin firmar es rechazado (prueba en staging)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Nada de esto evita que un mantenedor de una librería popular meta una puerta trasera tan bien hecha como la de xz. Lo que sí logra es que, el día que se descubra, Tienda Norte sepa en minutos qué imágenes la tienen (SBOM), cuáles están corriendo (admisión por digest) y pueda reconstruir sin ella. Ese día es un incidente, y M60 trata de cómo se maneja.</p>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m56"></div>
+<div data-exercise="m56-cadena"></div>
+<div data-checkpoint="m56"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m56.data.js"></script>
+<script src="../assets/js/data/exercises/m56.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-devsecops.js"></script>
+</body>
+</html>

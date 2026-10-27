@@ -168,6 +168,30 @@ window.SD.course = {
         { id: 'cpf', num: 'CP-F', kind: 'checkpoint', title: 'Checkpoint F: el recomendador de Mercado Barrio', short: 'Checkpoint F', mins: 120, href: 'modules/checkpoint-f.html', status: 'soon',
           summary: 'Examen de la Parte VI y diseño del feed, de comprados juntos y de personas que quizás conozcas de un marketplace con red social.' }
       ]
+    },
+    {
+      id: 'p7', label: 'Parte VII', title: 'Blue Team y DevSecOps', line: '--line-p7',
+      intro: 'La Parte IV enseña a prevenir; esta completa el ciclo. Modelar las amenazas antes de escribir código, asegurar el pipeline y la cadena de suministro que producen el software, endurecer contenedores y Kubernetes, priorizar vulnerabilidades, detectar con reglas que se prueban como código y responder a un incidente sin destruir la evidencia.',
+      items: [
+        { id: 'm54', num: 'M54', title: 'Threat modeling práctico', short: 'Threat modeling', mins: 100, href: 'modules/m54-threat-modeling.html', status: 'ready',
+          summary: 'Las cuatro preguntas, el diagrama de flujo de datos y sus fronteras de confianza, STRIDE por elemento, árboles de ataque, priorizar sin DREAD, LINDDUN y el modelo dentro del ciclo de vida.' },
+        { id: 'm55', num: 'M55', title: 'Seguridad en el ciclo de vida del software', short: 'AppSec en el ciclo de vida', mins: 130, href: 'modules/m55-appsec.html', status: 'ready',
+          summary: 'SSDF, OWASP Top 10:2025 y API Top 10, ASVS, SAST, SCA, secret scanning, DAST e IAST, dónde va cada herramienta en el pipeline y qué bloquea.' },
+        { id: 'm56', num: 'M56', title: 'La cadena de suministro de software', short: 'Cadena de suministro', mins: 130, href: 'modules/m56-supply-chain.html', status: 'ready',
+          summary: 'SolarWinds, xz, tj-actions y Shai-Hulud; lockfiles, typosquatting y dependency confusion; el CI como blanco; SBOM, SLSA, Sigstore y verificar antes de desplegar.' },
+        { id: 'm57', num: 'M57', title: 'Seguridad de contenedores y Kubernetes', short: 'Contenedores y Kubernetes', mins: 140, href: 'modules/m57-contenedores-k8s.html', status: 'soon',
+          summary: 'Namespaces, cgroups, capabilities y seccomp, imágenes mínimas, escapes, Pod Security Standards, RBAC, NetworkPolicy, Secrets, políticas de admisión y Falco.' },
+        { id: 'm58', num: 'M58', title: 'Gestión de vulnerabilidades', short: 'Vulnerabilidades', mins: 100, href: 'modules/m58-vulnerabilidades.html', status: 'soon',
+          summary: 'CVE y CWE, CVSS 4.0, EPSS, el catálogo KEV, priorizar por riesgo, SLA de parcheo, VEX y alcanzabilidad, y cómo se mide.' },
+        { id: 'm59', num: 'M59', title: 'Detection engineering y el SOC', short: 'Detección y SOC', mins: 140, href: 'modules/m59-deteccion.html', status: 'soon',
+          summary: 'Qué registrar, normalizar y guardar, el SIEM, MITRE ATT&CK, reglas Sigma, detection-as-code, fatiga de alertas y caza de amenazas.' },
+        { id: 'm60', num: 'M60', title: 'Respuesta a incidentes y forense', short: 'Respuesta y forense', mins: 140, href: 'modules/m60-respuesta-forense.html', status: 'soon',
+          summary: 'NIST 800-61r3, triaje, contener sin destruir evidencia, orden de volatilidad, cadena de custodia, artefactos de Linux, nube y Kubernetes, la línea de tiempo y el postmortem, con mapa.' },
+        { id: 'm61', num: 'M61', title: 'Seguridad de red y del correo', short: 'Red y correo', mins: 100, href: 'modules/m61-red-correo.html', status: 'soon',
+          summary: 'Zeek y Suricata, el DNS como señal, lo que se ve sin descifrar, SPF, DKIM, DMARC y MTA-STS.' },
+        { id: 'cpg', num: 'CP-G', kind: 'checkpoint', title: 'Checkpoint G: el blue team de una startup', short: 'Checkpoint G', mins: 90, href: 'modules/checkpoint-g.html', status: 'soon',
+          summary: 'Examen de la Parte VII y el programa de seguridad del primer año de una startup: threat model, pipeline, vulnerabilidades, detecciones y respuesta.' }
+      ]
     }
 
   ]

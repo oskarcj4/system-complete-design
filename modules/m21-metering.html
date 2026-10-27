@@ -61,6 +61,17 @@
 
       <h2 id="numeros"><span class="sec-num">21.1</span>Qué se mide y por qué es difícil</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Cada request a un modelo cuesta dinero en GPUs, y alguien tiene que contar cuánto usó cada cliente para cobrarle. Ese sistema se llama <i>metering</i> (medición). Es difícil por tres cosas: hay muchos tipos de unidad (tokens de entrada, de caché, de salida, imágenes, audio), hay muchísimos eventos (millones por día) y un error, aunque sea chico, es dinero de alguien.</p>
+        <p class="jr-like"><b>Es como</b> el medidor de luz de una casa, pero con un medidor por cada electrodoméstico, y con millones de casas mandando lecturas a la vez.</p>
+        <dl class="jr-words">
+          <dt>Metering</dt><dd>medir el uso de cada cliente con la exactitud suficiente para cobrarlo.</dd>
+          <dt>Unidad</dt><dd>lo que se cobra: un token de entrada, uno de salida, una imagen, un segundo de audio.</dd>
+          <dt>Dos niveles de consistencia</dt><dd>un número rápido y aproximado para decidir en el momento, y otro lento y exacto para la factura.</dd>
+        </dl>
+      </aside>
+
       <p>En el <a href="m19-router-flota.html#flota">M19</a> dimensionamos una flota de 125 réplicas que en el pico sostiene 6&#8239;000 conversaciones generando a la vez y cuesta 1.46 millones de dólares por mes. Ese costo lo pagan los clientes, request por request, y alguien tiene que contar cuánto consumió cada uno. Ese alguien es el <dfn data-term="metering">metering</dfn>: el sistema que mide el uso de cada cliente con la exactitud necesaria para cobrarlo.</p>
 
       <p>La primera sorpresa es que en una API de LLM no se cobra una sola cosa. Una request de la API de Anthropic, por ejemplo, se cobra por tipo de token y por herramienta: <span class="badge badge--doc">Documentado</span></p>
@@ -135,7 +146,12 @@
 
       <h2 id="arquitectura"><span class="sec-num">21.2</span>La arquitectura por planos</h2>
 
-      <p>El metering se entiende mejor como una cadena de planos, cada uno con su propia latencia y su propio contrato. Lo que cruza de uno al siguiente es siempre un registro inmutable: un evento, un agregado, un asiento, una factura.</p>
+      <p>El metering se entiende mejor como una cadena de etapas, que aquí llamamos <b>planos</b>. Cada plano hace una sola cosa: medir, transportar, contar, ponerle precio, cobrar. Y cada uno tiene su propio ritmo: medir tarda milisegundos y facturar, un mes. Lo que pasa de un plano al siguiente es siempre un registro que nadie modifica después: un evento, una fila por hora, un asiento contable, una factura.</p>
+
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Un restaurante con mucho movimiento. El mesero (el gateway) anota cada pedido en una comanda y la cuelga en el riel de la cocina (Kafka): no espera a que la cocina la lea, vuelve a atender. La cocina (el procesador) toma las comandas a su ritmo y descarta las repetidas. La caja (rating y saldo) cobra cada plato con el precio de la carta del día. Al cierre, el contador (la conciliación) compara las comandas, lo que salió de la cocina y lo que entró a la caja. Si algo no cuadra, se corrige con un asiento, nunca borrando.</p>
+      </aside>
 
       <figure class="figure">
         <div class="figure-frame">
@@ -215,23 +231,75 @@
 
       <div class="table-wrap">
         <table class="t">
-          <thead><tr><th>Plano</th><th>Pieza</th><th>Qué garantiza</th><th>Sección</th></tr></thead>
+          <thead><tr><th>Plano</th><th>Pieza</th><th>Qué hace, en palabras simples</th><th>Qué pasaría sin ella</th><th>Sección</th></tr></thead>
           <tbody>
-            <tr><td>Medir</td><td>Gateway al cerrar el stream; registro propio del motor</td><td>Todo uso produce un evento</td><td>21.3, 21.4</td></tr>
-            <tr><td>Transportar</td><td>Kafka, tópico <code>usage</code> con la organización como clave</td><td>Durable, ordenado por organización, releíble</td><td>21.4</td></tr>
-            <tr><td>Deduplicar y agregar</td><td>Procesador de streaming con estado</td><td>Cada evento cuenta una vez, en la hora en que ocurrió</td><td>21.5, 21.6</td></tr>
-            <tr><td>Tarifar</td><td>Rating con el catálogo de precios versionado</td><td>El precio de la hora del evento, en dinero entero</td><td>21.7</td></tr>
-            <tr><td>Saldo y topes</td><td>Ledger de créditos, reservas, alertas</td><td>Nadie gasta lo que no tiene, salvo un sobregiro acotado</td><td>21.8, 21.9</td></tr>
-            <tr><td>Facturar y cobrar</td><td>Job de cierre y Stripe Billing</td><td>Una factura por ciclo, que se puede explicar línea por línea</td><td>21.10</td></tr>
-            <tr><td>Conciliar</td><td>Comparación horaria de tres fuentes</td><td>Lo que se perdió aparece; los contadores aproximados se corrigen</td><td>21.11</td></tr>
+            <tr><td>Medir</td><td>Gateway al cerrar el stream; registro propio del motor</td><td>Anota cuántos tokens usó cada request. El motor lleva una segunda cuenta, por si el gateway falla.</td><td>No habría nada que cobrar. Sin la cuenta del motor, el uso de un gateway caído se perdería sin que nadie lo note.</td><td>21.3, 21.4</td></tr>
+            <tr><td>Transportar</td><td>Kafka, tópico <code>usage</code> con la organización como clave</td><td>Guarda los eventos en orden, 7 días, para que otros los lean cuando puedan.</td><td>El gateway tendría que esperar a la base en cada respuesta, y un corte de la base perdería eventos (figura 21.1b).</td><td>21.4</td></tr>
+            <tr><td>Deduplicar y agregar</td><td>Procesador de streaming con estado</td><td>Descarta los eventos repetidos y suma el uso por organización y por hora.</td><td>Un reintento cobraría dos veces; un evento atrasado caería en la hora equivocada.</td><td>21.5, 21.6</td></tr>
+            <tr><td>Tarifar</td><td>Rating con el catálogo de precios versionado</td><td>Multiplica tokens por el precio que valía a la hora del evento.</td><td>Un cambio de precio cobraría el uso de ayer con el precio de hoy.</td><td>21.7</td></tr>
+            <tr><td>Saldo y topes</td><td>Ledger de créditos, reservas, alertas</td><td>Descuenta los créditos prepagados y avisa o bloquea al llegar al tope.</td><td>Un cliente podría gastar lo que no pagó, o enterarse de su gasto con la factura.</td><td>21.8, 21.9</td></tr>
+            <tr><td>Facturar y cobrar</td><td>Job de cierre y Stripe Billing</td><td>Una vez al mes arma la factura y cobra la tarjeta.</td><td>Habría que construir el cobro de tarjetas, los impuestos y los reintentos de cobro.</td><td>21.10</td></tr>
+            <tr><td>Conciliar</td><td>Comparación horaria de tres fuentes</td><td>Cada hora compara tres cuentas independientes y corrige lo que no coincide.</td><td>Un error del pipeline solo aparecería cuando un cliente reclame.</td><td>21.11</td></tr>
           </tbody>
         </table>
       </div>
+      <h3 id="por-que-kafka">Por qué Kafka en el medio</h3>
+
+      <p>La pregunta natural es por qué el gateway no escribe el uso directamente en una base de datos. Funcionaría con poco tráfico. Con 22.5 millones de eventos por día, tres problemas aparecen, y Kafka resuelve los tres. <b>Kafka</b> es un log: una lista de mensajes a la que solo se agrega al final, que guarda cada mensaje varios días y que varios lectores pueden leer, cada uno desde donde se quedó (<a href="m07-mensajeria.html">M07</a>).</p>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f21kt f21kd">
+<title id="f21kt">Sin cola contra con Kafka</title>
+<desc id="f21kd">A la izquierda, el gateway escribe cada evento directo en la base y espera su respuesta: si la base está lenta, cada respuesta al cliente se frena; si está caída, el evento se pierde o la API falla; y solo hay un lector. A la derecha, el gateway publica en Kafka en unos 5 milisegundos y sigue; el procesador y el archivador leen el mismo evento cada uno a su ritmo; si el procesador cae, los eventos esperan en Kafka y se pueden releer durante 7 días.</desc>
+<defs><marker id="f21ka" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="192" y="24" text-anchor="middle">Sin cola: escribe directo en la base</text>
+<text class="dg-group" x="578" y="24" text-anchor="middle">Con Kafka en el medio</text>
+<path class="dg-frame" d="M385 12 V288"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="50" width="120" height="56" rx="8"/>
+<text class="dg-label" x="80" y="83" text-anchor="middle">Gateway</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="235" y="50" width="130" height="56" rx="8"/>
+<text class="dg-label" x="300" y="76" text-anchor="middle">Base</text>
+<text class="dg-tiny" x="300" y="94" text-anchor="middle">agregados</text>
+<path class="dg-edge" d="M140 78 H233" marker-end="url(#f21ka)"/>
+<text class="dg-tiny" x="187" y="70" text-anchor="middle">INSERT y espera</text>
+<rect class="dg-warnbox" x="20" y="134" width="345" height="140" rx="8"/>
+<text class="dg-small" x="34" y="160">1. Base lenta: cada respuesta al cliente</text>
+<text class="dg-small" x="50" y="178">espera a la base.</text>
+<text class="dg-small" x="34" y="204">2. Base caída: el evento se pierde,</text>
+<text class="dg-small" x="50" y="222">o la API entera falla.</text>
+<text class="dg-small" x="34" y="248">3. Un solo lector: para archivar en S3</text>
+<text class="dg-small" x="50" y="266">el gateway tendría que escribir dos veces.</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="405" y="64" width="100" height="56" rx="8"/>
+<text class="dg-label" x="455" y="97" text-anchor="middle">Gateway</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="545" y="44" width="80" height="96" rx="8"/>
+<text class="dg-label" x="585" y="88" text-anchor="middle">Kafka</text>
+<text class="dg-tiny" x="585" y="106" text-anchor="middle">7 días</text>
+<path class="dg-edge" d="M505 92 H543" marker-end="url(#f21ka)"/>
+<text class="dg-tiny" x="524" y="84" text-anchor="middle">5 ms</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="660" y="44" width="96" height="40" rx="8"/>
+<text class="dg-small" x="708" y="69" text-anchor="middle">Procesador</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="660" y="100" width="96" height="40" rx="8"/>
+<text class="dg-small" x="708" y="125" text-anchor="middle">Archivador</text>
+<path class="dg-edge" d="M625 64 H658" marker-end="url(#f21ka)"/>
+<path class="dg-edge" d="M625 120 H658" marker-end="url(#f21ka)"/>
+<rect class="dg-ok" x="405" y="160" width="351" height="114" rx="8"/>
+<text class="dg-small" x="419" y="186">1. El gateway publica en 5 ms y sigue atendiendo.</text>
+<text class="dg-small" x="419" y="212">2. Si el procesador cae, los eventos esperan</text>
+<text class="dg-small" x="435" y="230">en Kafka; al volver, sigue donde se quedó.</text>
+<text class="dg-small" x="419" y="256">3. Dos lectores del mismo evento, y releíble.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 21.1b.</b> Kafka separa a quien produce el evento de quien lo procesa. El gateway ya no depende de que la base responda, y el mismo evento sirve a varios lectores.</figcaption>
+      </figure>
+
+      <p>El precio es una pieza más que operar, y que el procesamiento deja de ser inmediato: el saldo se descuenta uno o dos segundos después del stream, no en el momento. Por eso, para decidir si una request puede empezar, se usa el limitador en Redis, rápido y aproximado, y la conciliación lo corrige cada hora. Esa división entre un camino rápido y aproximado y uno lento y exacto es la idea central del módulo.</p>
+
       <p><span class="badge badge--ref">Diseño de referencia</span> Las piezas son las de un proveedor de API típico. Los proveedores no publican su diseño interno de metering; lo que sí está documentado (las APIs de Stripe, las garantías de Kafka, Flink y ClickHouse) se marca donde aparece.</p>
 
       <h3 id="mapa">El mapa del metering</h3>
 
-      <p>Explora cada pieza: sus responsabilidades, su API, sus datos, cómo falla y sus números. Los escenarios recorren los casos de este módulo, del evento normal a la conciliación que corrige al limitador.</p>
+      <p>El mapa tiene las mismas piezas de la figura 21.1, ordenadas de arriba abajo: clientes, medir, el log de Kafka, procesar, dinero y cobro. Debajo hay nueve escenarios, del caso normal a las fallas. Pulsa <b>Reproducir</b> o <b>Siguiente</b>: el panel de la derecha dice qué escenario estás viendo, qué viaja en cada paso, entre qué piezas y <b>por qué se hace así</b>. Un clic en una pieza abre su detalle, que empieza con por qué existe. Empieza por el primer escenario: los demás son variaciones de ese.</p>
 
       <div data-map="m21-metering"></div>
 
@@ -319,6 +387,17 @@
 
       <h2 id="evento"><span class="sec-num">21.3</span>El evento de uso</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Cada request termina en un <b>evento de uso</b>: un registro que dice quién usó, cuándo, con qué modelo y cuántas unidades. El evento <b>no</b> dice cuánto cuesta: el precio se aplica después. Lo más importante es su <code>event_id</code>, un nombre único que permite reconocer si el mismo evento llega dos veces.</p>
+        <p class="jr-like"><b>Es como</b> el ticket de una caja registradora antes de pasar por caja: dice qué compraste y cuántas unidades, y lleva un número único para que no se cobre dos veces.</p>
+        <dl class="jr-words">
+          <dt>Evento de uso</dt><dd>el registro de lo que consumió una request.</dd>
+          <dt>event_id</dt><dd>su identificador; se arma con el id de la request, así un reenvío lleva el mismo id.</dd>
+          <dt>event_time</dt><dd>la hora en que ocurrió el uso (no la hora en que llegó el evento).</dd>
+        </dl>
+      </aside>
+
       <p>Todo empieza con un registro bien diseñado. El <dfn data-term="evento-uso">evento de uso</dfn> describe qué se consumió, quién, cuándo y con qué modelo. No dice cuánto cuesta.</p>
 
 <pre data-lang="json"><code>{
@@ -405,6 +484,18 @@ class UsageEvent:
         assert all(isinstance(v, int) and v &gt;= 0 for v in self.units.values())</code></pre>
 
       <h2 id="emitir"><span class="sec-num">21.4</span>Emitir sin perder</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El gateway arma el evento al terminar el stream y lo manda a Kafka. El problema es qué hacer si Kafka no responde justo en ese momento: no puede tirar el evento (se perdería dinero) ni hacer esperar al cliente. La solución es escribirlo primero en el disco local (un <i>outbox</i> o <i>spool</i>) y reenviarlo hasta que Kafka confirme. Lo peor que puede pasar así es un duplicado, que se descarta después.</p>
+        <p class="jr-like"><b>Es como</b> echar una carta al buzón: si el correo está cerrado, la guardas en tu cajón y la llevas mañana. Nunca la tiras.</p>
+        <dl class="jr-words">
+          <dt>Outbox / spool</dt><dd>archivo o tabla local donde el evento espera hasta que Kafka lo confirma.</dd>
+          <dt>acks=all</dt><dd>Kafka confirma solo cuando todas sus copias guardaron el mensaje.</dd>
+          <dt>Evento parcial</dt><dd>evento que se manda a mitad de un stream largo, para no perder todo si el gateway muere.</dd>
+          <dt>Huérfano</dt><dd>stream cuyo gateway murió antes de emitir el evento.</dd>
+        </dl>
+      </aside>
 
       <p>¿Quién emite el evento? Hay dos candidatos y cada uno ve una parte distinta:</p>
       <ul>
@@ -575,6 +666,18 @@ class UsageEvent:
 
       <h2 id="dedupe"><span class="sec-num">21.5</span>Exactamente una vez, en la práctica</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>La red no garantiza que un mensaje llegue exactamente una vez: puede llegar una vez o, con reintentos, varias. Lo que sí se puede lograr es que su <b>efecto</b> se aplique una sola vez. Aquí se logra con cuatro capas de protección, cada una tapa un hueco distinto: Kafka descarta reintentos del mismo productor, sus transacciones evitan dobles escrituras internas, el procesador recuerda los <code>event_id</code> ya vistos, y las escrituras finales se pueden repetir sin cambiar el resultado.</p>
+        <p class="jr-like"><b>Es como</b> cuatro filtros de agua en serie: cada uno atrapa un tipo de basura que el anterior deja pasar.</p>
+        <dl class="jr-words">
+          <dt>Al menos una vez</dt><dd>puede llegar repetido, nunca se pierde.</dd>
+          <dt>Exactamente una vez efectivo</dt><dd>puede llegar repetido, pero cuenta una sola vez.</dd>
+          <dt>Productor idempotente</dt><dd>Kafka numera los lotes de cada productor y descarta los repetidos.</dd>
+          <dt>Escritura idempotente</dt><dd>repetirla deja el mismo resultado (reemplazar un valor, no sumarlo).</dd>
+        </dl>
+      </aside>
+
       <p>El <a href="m07-mensajeria.html#semanticas">M07</a> dejó la regla: la red solo ofrece entregas de a lo sumo una vez o de al menos una vez. Lo que se construye encima es un <dfn data-term="exactly-once-efectivo">exactamente una vez efectivo</dfn>: un mensaje puede llegar varias veces, pero su efecto se aplica una sola. En el metering se logra con cuatro capas, y cada una cubre un hueco distinto.</p>
 
       
@@ -737,6 +840,18 @@ def process(ev, dedupe, hourly, now):
       </aside>
 
       <h2 id="agregar"><span class="sec-num">21.6</span>Agregar por hora: ventanas y eventos tardíos</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Nadie factura millones de eventos sueltos: se suman por cliente y por hora. La duda es en qué hora se cuenta un evento que llega tarde. La regla: en la hora en que <b>ocurrió</b>, no en la que llegó. Como el procesador nunca sabe si falta algún rezagado, usa una <b>marca de agua</b> para decidir cuándo cerrar cada hora, y los que llegan después de cerrar entran como corrección, nunca se tiran.</p>
+        <p class="jr-like"><b>Es como</b> cerrar la caja del día: esperas un rato por si alguien trae un recibo atrasado, y lo que aparece después del cierre va como ajuste, no a la basura.</p>
+        <dl class="jr-words">
+          <dt>Ventana</dt><dd>el intervalo en que se suma (aquí, una hora fija: 14:00 a 15:00).</dd>
+          <dt>Tiempo del evento / de procesamiento</dt><dd>cuándo ocurrió el uso / cuándo lo vio el procesador.</dd>
+          <dt>Marca de agua</dt><dd>"ya vi todo lo anterior a tal hora"; cuando pasa el cierre de una ventana, la ventana se cierra.</dd>
+          <dt>Evento tardío</dt><dd>llega después de que su ventana cerró.</dd>
+        </dl>
+      </aside>
 
       <p>Nadie factura 22.5 millones de eventos sueltos. Se factura la suma por organización, modelo y unidad, y para el tablero y la conciliación conviene tenerla por hora. Sumar parece trivial hasta que aparece la pregunta: ¿en qué hora se cuenta un evento?</p>
 
@@ -901,6 +1016,18 @@ def process(ev, dedupe, hourly, now):
 
       <h2 id="precios"><span class="sec-num">21.7</span>Tarifar: precios versionados y dinero entero</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El <b>rating</b> convierte tokens en dinero: cantidad × precio. Dos reglas lo hacen correcto. Una: el precio es el que valía a la <b>hora del evento</b>, por eso los precios se guardan con su fecha de vigencia. Dos: el dinero se cuenta en <b>enteros</b> muy chicos (nanodólares) y se redondea a centavos <b>una sola vez</b>, al final, para no acumular errores.</p>
+        <p class="jr-like"><b>Es como</b> una lista de precios de supermercado con la fecha de cada cambio: si devuelves algo, te reintegran lo que pagaste ese día, no el precio de hoy.</p>
+        <dl class="jr-words">
+          <dt>Rating</dt><dd>aplicar el precio al uso.</dd>
+          <dt>Catálogo versionado</dt><dd>cada precio guarda desde cuándo y hasta cuándo vale.</dd>
+          <dt>Nanodólar</dt><dd>una milmillonésima de dólar; permite cuentas exactas con enteros.</dd>
+          <dt>Redondear por línea</dt><dd>redondear el total de cada línea de la factura, no cada request.</dd>
+        </dl>
+      </aside>
+
       <p>El <dfn data-term="rating">rating</dfn> convierte cantidades en dinero: toma el uso agregado y le aplica el precio que corresponde. Ese precio sale de un <dfn data-term="catalogo-precios">catálogo de precios</dfn> versionado, en el que cada precio tiene una vigencia, y lo que decide qué versión se usa es la hora del evento.</p>
 
       <figure class="figure">
@@ -1039,6 +1166,18 @@ assert rate_line(1_200_000_000, 10_000) == 1_200_000</code></pre>
 
       <h2 id="creditos"><span class="sec-num">21.8</span>Créditos prepagados</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Muchos clientes pagan por adelantado (prepago) y el uso se va descontando. Eso obliga a conocer el saldo en segundos, porque al llegar a cero hay que dejar de atender. El saldo no es un número que se resta: es la suma de un <b>ledger</b>, un libro donde cada movimiento queda escrito. Mientras el stream sigue, el gateway aparta saldo por tramos para no pasarse.</p>
+        <p class="jr-like"><b>Es como</b> una tarjeta de transporte cargada: el saldo baja con cada viaje, y el registro de cada carga y cada viaje explica por qué tienes lo que tienes.</p>
+        <dl class="jr-words">
+          <dt>Prepago</dt><dd>el cliente paga antes y consume después.</dd>
+          <dt>Ledger de doble entrada</dt><dd>cada movimiento sale de una cuenta y entra en otra; nada se borra.</dd>
+          <dt>Ingreso diferido</dt><dd>dinero cobrado por un servicio que todavía no se entregó.</dd>
+          <dt>Lote de créditos</dt><dd>cada compra o promoción, con su saldo y su vencimiento.</dd>
+        </dl>
+      </aside>
+
       <p>Muchas APIs cobran por adelantado: el cliente compra un <dfn data-term="credito-prepagado">crédito prepagado</dfn> y el uso lo va descontando. Para el proveedor tiene dos ventajas, no hay riesgo de cobro (el dinero ya entró) y no hace falta verificar la identidad para una factura a 30 días. Para el diseño, cambia todo: el saldo se tiene que conocer en segundos, porque al llegar a cero hay que dejar de servir.</p>
 
       <h3 id="creditos-ledger">El saldo es un ledger</h3>
@@ -1124,6 +1263,17 @@ assert rate_line(1_200_000_000, 10_000) == 1_200_000</code></pre>
 
       <h2 id="topes"><span class="sec-num">21.9</span>Topes de gasto y alertas</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El cliente puede fijar un <b>tope de gasto</b> por mes. Un servicio suma su gasto, avisa al 50 y al 80 % (una sola vez cada uno) y al 100 % pone una marca para que los gateways rechacen. No es instantáneo: los streams que ya estaban en curso y el retraso del pipeline dejan pasar un poco de gasto extra, y esta sección calcula cuánto como máximo.</p>
+        <p class="jr-like"><b>Es como</b> el aviso del banco cuando te acercas al límite de la tarjeta: llega a tiempo, pero las compras que ya estaban pasando igual se cobran.</p>
+        <dl class="jr-words">
+          <dt>Tope de gasto</dt><dd>límite de dinero por mes que fija el cliente.</dd>
+          <dt>Umbral</dt><dd>porcentaje del tope en que se manda una alerta.</dd>
+          <dt>Exceso</dt><dd>lo que se gasta por encima del tope antes de que el bloqueo llegue a todos.</dd>
+        </dl>
+      </aside>
+
       <p>El <a href="m18-cuotas-tokens.html#jerarquia">M18</a> presentó el tope de gasto y sus códigos de error, y dejó dicho que se lleva con el metering. Este es el cómo.</p>
 
       <p>El servicio de topes consume la misma salida que el saldo: el costo de cada evento, segundos después de que ocurre. Lleva por organización y proyecto el gasto acumulado del mes y lo compara con los umbrales. Al cruzar el 50 y el 80&#8239;% manda una alerta (correo y webhook), una sola vez por umbral y por mes, con una clave idempotente <code>org_7:2026-10:80</code>. Al cruzar el 100&#8239;%, publica una marca en el servicio de configuración del limitador, y los gateways empiezan a rechazar con los códigos que ya viste.</p>
@@ -1196,6 +1346,18 @@ assert rate_line(1_200_000_000, 10_000) == 1_200_000</code></pre>
 
       <h2 id="factura"><span class="sec-num">21.10</span>La factura y el cobro</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Al final del mes, un job suma el uso de cada cliente, le pone precio, resta los créditos y arma la factura. El cobro de tarjetas, los impuestos y los reintentos se delegan en Stripe Billing. Para no saturar a Stripe, no se le manda cada request: se le manda el total de cada hora. Si el cobro falla, empieza el <i>dunning</i>: reintentar y avisar mientras se limita el riesgo.</p>
+        <p class="jr-like"><b>Es como</b> el resumen mensual de la tarjeta de crédito: no te llega cada compra por separado, sino una lista agrupada al final del mes.</p>
+        <dl class="jr-words">
+          <dt>Ciclo</dt><dd>el período que cubre una factura (aquí, un mes).</dd>
+          <dt>Meter / meter event</dt><dd>en Stripe, el contador de uso y cada dato que se le suma.</dd>
+          <dt>Dunning</dt><dd>el proceso de reintentar un cobro fallido y avisar al cliente.</dd>
+          <dt>Prorrateo</dt><dd>cobrar la parte proporcional cuando se cambia de plan a mitad de mes.</dd>
+        </dl>
+      </aside>
+
       <p>Al cerrar el ciclo, un job toma los agregados del mes de cada organización, les aplica los precios, resta lo que se pagó con créditos, agrega impuestos y produce una factura con una línea por modelo y unidad. Desde ahí el problema es el del M27: cobrar, enterarse del resultado por webhooks y reintentar si falla.</p>
 
       <h3 id="factura-stripe">Stripe Billing con meters</h3>
@@ -1255,6 +1417,17 @@ event_name=output_tokens_modelo_m
       <p>Si un cliente pasa de un compromiso de 1&#8239;000 USD por mes a uno de 3&#8239;000 el día 10 de un ciclo de 30 días, el <dfn data-term="prorrateo">prorrateo</dfn> cobra la diferencia por los días que quedan: (3&#8239;000 − 1&#8239;000) × 20 ÷ 30 = 1&#8239;333.33 USD. El uso no se prorratea: cada evento se tarifa con el precio vigente en su hora, y el catálogo ya lo resuelve, porque el contrato nuevo es una fila de precio con <code>valid_from</code> en el día 10.</p>
 
       <h2 id="conciliacion"><span class="sec-num">21.11</span>Conciliación de tres vías</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Todo lo anterior puede fallar en silencio. La red de seguridad es comparar, cada hora, tres cuentas hechas por caminos distintos: los eventos guardados, los agregados y la cuenta propia del motor. Si coinciden, todo bien; si no, cada diferencia tiene una acción (reconstruir un evento, reprocesar una hora, corregir el limitador). Nunca se corrige editando: se agrega un registro nuevo.</p>
+        <p class="jr-like"><b>Es como</b> el arqueo de caja al cerrar un turno: lo que dice el sistema, lo que hay en el cajón y los tickets tienen que dar lo mismo.</p>
+        <dl class="jr-words">
+          <dt>Conciliación</dt><dd>comparar fuentes independientes y explicar cada diferencia.</dd>
+          <dt>Tres vías</dt><dd>tres fuentes: log crudo, agregados y registro del motor.</dd>
+          <dt>Corregir al limitador</dt><dd>la cuenta exacta corrige a la aproximada, nunca al revés.</dd>
+        </dl>
+      </aside>
 
       <p>Todo lo anterior puede fallar sin hacer ruido: un gateway que muere antes de emitir, un estado de dedupe que se pierde, un consumidor que se salta un offset. La red de seguridad es la misma del <a href="m27-pagos-stripe.html#conciliacion">M27</a>: comparar el registro propio con fuentes independientes y explicar cada diferencia. En el metering hay tres fuentes que cuentan lo mismo por caminos distintos.</p>
 
@@ -1336,6 +1509,17 @@ event_name=output_tokens_modelo_m
 
       <h2 id="correcciones"><span class="sec-num">21.12</span>Correcciones y reprocesos</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Los errores van a pasar: un precio mal cargado, un evento contado dos veces, un crédito por una caída. La regla es la del ledger: nada se edita, todo se corrige con un registro nuevo. <b>Reprocesar</b> (volver a pasar eventos viejos por el pipeline) es seguro gracias a lo que se construyó antes: ids estables y escrituras que reemplazan en lugar de sumar.</p>
+        <p class="jr-like"><b>Es como</b> corregir un error en un cuaderno contable con una línea nueva de ajuste, en lugar de borrar con corrector.</p>
+        <dl class="jr-words">
+          <dt>Reproceso</dt><dd>volver a calcular una hora o un día desde los eventos guardados.</dd>
+          <dt>Backfill</dt><dd>calcular por primera vez algo nuevo (un desglose nuevo) sobre eventos viejos.</dd>
+          <dt>Ajuste</dt><dd>registro que corrige uno anterior sin modificarlo.</dd>
+        </dl>
+      </aside>
+
       <p>Los errores van a ocurrir: un precio mal cargado, un evento contado dos veces, una caída que da derecho a un crédito por SLA. La regla del ledger se aplica a todo el metering: nada se edita, todo se corrige con un registro nuevo.</p>
 
       <div class="table-wrap">
@@ -1364,6 +1548,17 @@ event_name=output_tokens_modelo_m
       <p>Un <i>backfill</i> es lo mismo en otra dirección: calcular por primera vez algo nuevo sobre eventos viejos, como un desglose por proyecto que antes no existía. Por eso el log crudo se guarda con todos los campos aunque hoy no se usen, y por un plazo que cubra las disputas y las auditorías.</p>
 
       <h2 id="margen"><span class="sec-num">21.13</span>Costo interno y margen</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El mismo pipeline que mide lo que paga el cliente puede medir lo que le cuesta al proveedor: basta otro catálogo de precios, con el costo de la GPU. Así se sabe si un cliente o un plan deja ganancia. En una suscripción fija (como 20 USD al mes) es la única forma de descubrir al usuario pesado que cuesta más de lo que paga.</p>
+        <p class="jr-like"><b>Es como</b> un restaurante de tenedor libre: el precio es fijo, y solo contando lo que come cada uno sabes si alguien te hace perder plata.</p>
+        <dl class="jr-words">
+          <dt>Costo interno</dt><dd>lo que le cuesta al proveedor servir el uso (GPU, sobre todo).</dd>
+          <dt>Margen</dt><dd>precio menos costo.</dd>
+          <dt>Showback</dt><dd>informe de cuánto consume cada equipo interno, sin cobrarle.</dd>
+        </dl>
+      </aside>
 
       <p>El metering mide lo que paga el cliente. El mismo pipeline puede medir lo que le cuesta al proveedor, con otro catálogo de precios: el costo de la GPU. Las cuentas salen del <a href="m19-router-flota.html#flota">M19</a> y del <a href="m13-gpus.html#cifras">M13</a>: <span class="badge badge--ref">Diseño de referencia</span></p>
 
@@ -1447,6 +1642,16 @@ event_name=output_tokens_modelo_m
 
       <h2 id="fallas"><span class="sec-num">21.14</span>Fallas</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Las fallas del metering casi nunca hacen ruido: los servicios siguen verdes mientras se pierde o se duplica dinero. Por eso se vigila con <b>métricas de negocio</b> (ingresos por hora contra la semana anterior, duplicados, tardíos, diferencias de la conciliación), además de las técnicas. Una caída de ingresos sin caída de tráfico es un incidente.</p>
+        <p class="jr-like"><b>Es como</b> un medidor de agua que se traba: la casa sigue teniendo agua, pero la cuenta llega en cero, y solo lo notas comparando con el mes anterior.</p>
+        <dl class="jr-words">
+          <dt>Métrica de negocio</dt><dd>una medida en dinero o en eventos, no en CPU o latencia.</dd>
+          <dt>Lag del consumidor</dt><dd>cuántos mensajes de Kafka faltan por leer.</dd>
+        </dl>
+      </aside>
+
       <div class="table-wrap">
         <table class="t">
           <thead><tr><th>Falla</th><th>Qué se ve</th><th>Impacto</th><th>Qué hacer</th></tr></thead>
@@ -1468,6 +1673,14 @@ event_name=output_tokens_modelo_m
       </aside>
 
       <h2 id="implementalo"><span class="sec-num">21.15</span>Impleméntalo en AWS</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Cómo se armaría todo esto con servicios administrados de AWS, en orden: cada paso ya sirve solo. Casi todo corre en CPU barata; lo único que toca las GPUs es el registro propio del motor. Al final, la factura de AWS en tres tamaños.</p>
+        <dl class="jr-words">
+          <dt>Servicio administrado</dt><dd>AWS opera el servidor (MSK para Kafka, por ejemplo) y tú solo lo usas.</dd>
+        </dl>
+      </aside>
 
       <figure class="figure">
         <div class="figure-frame">

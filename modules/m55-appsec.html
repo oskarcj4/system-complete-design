@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M55. Seguridad en el ciclo de vida del software</title>
+<meta name="description" content="AppSec del lado de quien construye: el ciclo de vida seguro, el OWASP Top 10:2025, requisitos con ASVS, SAST, SCA, secret scanning, DAST e IAST, dónde va cada herramienta en el pipeline y cuatro fallas de Tienda Norte con su arreglo.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m55">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Seguridad en el ciclo de vida del software</h1>
+        <p class="lead">Las fallas de M10 no aparecen solas: alguien las escribe en un pull request un martes. Este módulo trata de dónde se atrapa cada una, con qué herramienta, cuánto ruido hace y qué conviene bloquear.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M55</dd></div>
+          <div><dt>Parte</dt><dd>VII. Blue Team y DevSecOps</dd></div>
+          <div><dt>Duración</dt><dd>130 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M10, M54</dd></div>
+          <div><dt>Estado</dt><dd data-status="m55">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Explicar el <b>ciclo de vida seguro</b> y por qué una falla cuesta más cuanto más tarde se encuentra.</li>
+    <li>Ubicar las diez categorías del <b>OWASP Top 10:2025</b> y saber cuáles se resuelven en el código y cuáles en el diseño o la plataforma.</li>
+    <li>Convertir amenazas del threat model en <b>requisitos verificables</b> con ASVS y casos de abuso.</li>
+    <li>Distinguir qué encuentra y qué pierde cada herramienta: <b>SAST, SCA, secret scanning, DAST e IAST</b>.</li>
+    <li>Armar un pipeline que <b>bloquee lo que casi nunca da falso positivo</b> y avise del resto.</li>
+    <li>Reconocer y arreglar cuatro patrones vulnerables: SSRF, deserialización insegura, asignación masiva y path traversal.</li>
+  </ul>
+</section>
+
+<p>En <a href="m10-seguridad.html#ataques">M10.8</a> viste los ataques que más se repiten en una API: BOLA, BFLA, inyección SQL, XSS y CSRF, tokens mal validados. En <a href="m54-threat-modeling.html#tienda">M54</a> modelaste Tienda Norte y saliste con diez amenazas, varias marcadas "sigue en M55". Este módulo no repite cómo funcionan esos ataques: responde otra pregunta. <b>¿En qué momento del trabajo de un equipo se atrapa cada falla, y con qué?</b></p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una fábrica de autos no prueba los frenos solo al final de la línea. Revisa el plano, inspecciona cada pieza que llega, prueba el sistema de frenos armado y, al final, hace una prueba en pista. Cada control atrapa cosas que los otros no ven, y un defecto que se escapa hasta el cliente cuesta un retiro del mercado.</p>
+</aside>
+
+<h2 id="sdlc"><span class="sec-num">55.1</span>El ciclo de vida seguro</h2>
+
+<p>Un <dfn data-term="sdlc-seguro">ciclo de vida de desarrollo seguro</dfn> (secure SDLC) es el ciclo de siempre, de requisitos a producción, con una práctica de seguridad en cada etapa. No es un equipo aparte que revisa al final: es lo que hace el equipo que construye. El marco de referencia más citado es el <b>Secure Software Development Framework</b> del NIST (SP 800-218, versión 1.1 de febrero de 2022) <span class="badge badge--doc">Documentado</span>, que agrupa las prácticas en cuatro familias: preparar a la organización, proteger el software (el código y el pipeline), producir software bien asegurado y responder a las vulnerabilidades.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f551t f551d">
+<title id="f551t">El ciclo de vida seguro</title>
+<desc id="f551d">Siete etapas de izquierda a derecha, de requisitos a producción, cada una con la práctica de seguridad que le toca. Una flecha debajo indica que arreglar una falla cuesta más cuanto más a la derecha se encuentra.</desc>
+<defs><marker id="f551a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="40" width="98" height="64" rx="8"/>
+<text class="dg-small" x="63.0" y="68.5" text-anchor="middle">Requisitos</text>
+<text class="dg-tiny" x="63.0" y="83.5" text-anchor="middle">ASVS, abuso</text>
+<path class="dg-edge" d="M112 72 L122 72" marker-end="url(#f551a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="122" y="40" width="98" height="64" rx="8"/>
+<text class="dg-small" x="171.0" y="68.5" text-anchor="middle">Diseño</text>
+<text class="dg-tiny" x="171.0" y="83.5" text-anchor="middle">threat model</text>
+<path class="dg-edge" d="M220 72 L230 72" marker-end="url(#f551a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="230" y="40" width="98" height="64" rx="8"/>
+<text class="dg-small" x="279.0" y="68.5" text-anchor="middle">Commit</text>
+<text class="dg-tiny" x="279.0" y="83.5" text-anchor="middle">pre-commit</text>
+<path class="dg-edge" d="M328 72 L338 72" marker-end="url(#f551a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="338" y="40" width="98" height="64" rx="8"/>
+<text class="dg-small" x="387.0" y="68.5" text-anchor="middle">Pull request</text>
+<text class="dg-tiny" x="387.0" y="83.5" text-anchor="middle">SAST, revisión</text>
+<path class="dg-edge" d="M436 72 L446 72" marker-end="url(#f551a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="446" y="40" width="98" height="64" rx="8"/>
+<text class="dg-small" x="495.0" y="68.5" text-anchor="middle">Build</text>
+<text class="dg-tiny" x="495.0" y="83.5" text-anchor="middle">SCA, imagen</text>
+<path class="dg-edge" d="M544 72 L554 72" marker-end="url(#f551a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="554" y="40" width="98" height="64" rx="8"/>
+<text class="dg-small" x="603.0" y="68.5" text-anchor="middle">Staging</text>
+<text class="dg-tiny" x="603.0" y="83.5" text-anchor="middle">DAST, IAST</text>
+<path class="dg-edge" d="M652 72 L662 72" marker-end="url(#f551a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="662" y="40" width="98" height="64" rx="8"/>
+<text class="dg-small" x="711.0" y="68.5" text-anchor="middle">Producción</text>
+<text class="dg-tiny" x="711.0" y="83.5" text-anchor="middle">WAF, alertas</text>
+<text class="dg-tiny" x="118" y="26" text-anchor="middle">diseñar</text>
+<text class="dg-tiny" x="392.0" y="26" text-anchor="middle">construir</text>
+<text class="dg-tiny" x="662" y="26" text-anchor="middle">operar</text>
+<path class="dg-edge" d="M20 150 L750 150" marker-end="url(#f551a)"/>
+<text class="dg-tiny" x="20" y="140" text-anchor="start">barato: se cambia un párrafo o una línea</text>
+<text class="dg-tiny" x="750" y="140" text-anchor="end">caro: hotfix, incidente, aviso a clientes</text>
+<text class="dg-small" x="385" y="178" text-anchor="middle">Cuanto más a la derecha aparece una falla, más gente, más código y más datos hay que tocar para arreglarla.</text>
+<text class="dg-small" x="385" y="204" text-anchor="middle">"Shift left" no es quitar controles de la derecha: es sumar controles a la izquierda.</text>
+<text class="dg-tiny" x="385" y="230" text-anchor="middle">Prácticas del NIST SSDF (SP 800-218): preparar, proteger, producir software seguro y responder.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 55.1.</b> Las siete etapas y lo que se hace en cada una. La flecha de abajo no tiene números a propósito: el famoso "cuesta 100 veces más en producción" no tiene una fuente sólida, pero la dirección sí es clara.</figcaption>
+</figure>
+
+
+<p>La figura tiene dos lecturas. La de izquierda a derecha es la del costo: una falla de autorización encontrada en el threat model se arregla cambiando un párrafo; la misma falla encontrada en producción pide un hotfix, revisar los logs para saber si alguien la usó y, si se usó, avisar a los clientes. La otra lectura es la de cobertura: cada etapa ve cosas distintas. El SAST ve el código pero no la configuración de producción; el WAF ve el tráfico real pero no sabe qué pedidos le pertenecen a quién.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>"Shift left" (correr la seguridad hacia la izquierda) se malinterpreta como "pongamos todo en el pull request". Si cada PR tarda 25 minutos en pasar seis escáneres con cientos de avisos, el equipo aprende a ignorarlos o a saltarlos. Lo de la izquierda tiene que ser rápido y preciso; lo lento y ruidoso va más a la derecha, fuera del camino del merge.</p>
+</aside>
+
+<h2 id="top10"><span class="sec-num">55.2</span>El OWASP Top 10:2025</h2>
+
+<p>El OWASP Top 10 es una lista de las categorías de riesgo más importantes en aplicaciones web, armada con datos de fallas reales y una encuesta a la comunidad. La edición 2025 <span class="badge badge--doc">Documentado</span> trae dos cambios grandes respecto de la de 2021: las fallas de la cadena de suministro suben como categoría propia (A03, que crece desde "componentes vulnerables y desactualizados") y aparece una categoría nueva, el mal manejo de condiciones excepcionales (A10). SSRF, que en 2021 tenía su propio lugar, pasa a estar dentro de Broken Access Control.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f552t f552d">
+<title id="f552t">OWASP Top 10:2025 y dónde se trata cada una</title>
+<desc id="f552d">Diez cajas en dos columnas con las categorías del OWASP Top 10 de 2025 y, a la derecha de cada una, el módulo del curso donde se explica.</desc>
+<defs><marker id="f552a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="20" width="364" height="44" rx="8"/>
+<text class="dg-label dg-mono" x="26" y="47" text-anchor="start">A01</text>
+<text class="dg-small" x="70" y="47" text-anchor="start">Broken Access Control</text>
+<text class="dg-tiny" x="366" y="47" text-anchor="end">M10 · 55.9</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="392" y="20" width="364" height="44" rx="8"/>
+<text class="dg-label dg-mono" x="404" y="47" text-anchor="start">A02</text>
+<text class="dg-small" x="448" y="47" text-anchor="start">Security Misconfiguration</text>
+<text class="dg-tiny" x="744" y="47" text-anchor="end">M33 · M37</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="74" width="364" height="44" rx="8"/>
+<text class="dg-label dg-mono" x="26" y="101" text-anchor="start">A03</text>
+<text class="dg-small" x="70" y="101" text-anchor="start">Software Supply Chain Failures</text>
+<text class="dg-tiny" x="366" y="101" text-anchor="end">M56</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="392" y="74" width="364" height="44" rx="8"/>
+<text class="dg-label dg-mono" x="404" y="101" text-anchor="start">A04</text>
+<text class="dg-small" x="448" y="101" text-anchor="start">Cryptographic Failures</text>
+<text class="dg-tiny" x="744" y="101" text-anchor="end">M36</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="128" width="364" height="44" rx="8"/>
+<text class="dg-label dg-mono" x="26" y="155" text-anchor="start">A05</text>
+<text class="dg-small" x="70" y="155" text-anchor="start">Injection</text>
+<text class="dg-tiny" x="366" y="155" text-anchor="end">M10 · 55.4</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="392" y="128" width="364" height="44" rx="8"/>
+<text class="dg-label dg-mono" x="404" y="155" text-anchor="start">A06</text>
+<text class="dg-small" x="448" y="155" text-anchor="start">Insecure Design</text>
+<text class="dg-tiny" x="744" y="155" text-anchor="end">M54</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="182" width="364" height="44" rx="8"/>
+<text class="dg-label dg-mono" x="26" y="209" text-anchor="start">A07</text>
+<text class="dg-small" x="70" y="209" text-anchor="start">Authentication Failures</text>
+<text class="dg-tiny" x="366" y="209" text-anchor="end">M10</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="392" y="182" width="364" height="44" rx="8"/>
+<text class="dg-label dg-mono" x="404" y="209" text-anchor="start">A08</text>
+<text class="dg-small" x="448" y="209" text-anchor="start">Software or Data Integrity Failures</text>
+<text class="dg-tiny" x="744" y="209" text-anchor="end">M56 · 55.9</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="236" width="364" height="44" rx="8"/>
+<text class="dg-label dg-mono" x="26" y="263" text-anchor="start">A09</text>
+<text class="dg-small" x="70" y="263" text-anchor="start">Security Logging and Alerting Failures</text>
+<text class="dg-tiny" x="366" y="263" text-anchor="end">M59</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="392" y="236" width="364" height="44" rx="8"/>
+<text class="dg-label dg-mono" x="404" y="263" text-anchor="start">A10</text>
+<text class="dg-small" x="448" y="263" text-anchor="start">Mishandling of Exceptional Conditions</text>
+<text class="dg-tiny" x="744" y="263" text-anchor="end">55.9</text>
+<text class="dg-tiny" x="385" y="292" text-anchor="middle">Resaltadas: las que más aparecen en el código de una API. El resto se resuelve en diseño, plataforma u operación.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 55.2.</b> Las diez categorías de 2025 y dónde las trata el curso. Las resaltadas son las que un SAST y una revisión de código atrapan mejor.</figcaption>
+</figure>
+
+
+<p>Para una API conviene leerlo junto al <b>OWASP API Security Top 10:2023</b> <span class="badge badge--doc">Documentado</span>, que pone primero a BOLA (API1), autenticación rota (API2) y autorización a nivel de propiedad (API3, la que incluye la asignación masiva). Las dos listas no son un estándar ni un checklist: son un mapa de dónde suelen estar los problemas. Para exigir y verificar se usa otra cosa, que es lo que sigue.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Categoría</th><th>Dónde se resuelve sobre todo</th><th>Qué herramienta ayuda</th></tr></thead>
+    <tbody>
+      <tr><td>A01 Broken Access Control</td><td>Código y pruebas</td><td>Revisión y pruebas de abuso; el SAST casi no la ve</td></tr>
+      <tr><td>A02 Security Misconfiguration</td><td>Plataforma</td><td>Escaneo de configuración, CIS Benchmarks (<a href="m33-hardening-linux.html#checklist">M33</a>)</td></tr>
+      <tr><td>A03 Supply Chain Failures</td><td>Pipeline</td><td>SCA, SBOM, firmas (M56)</td></tr>
+      <tr><td>A05 Injection</td><td>Código</td><td>SAST, DAST, IAST</td></tr>
+      <tr><td>A06 Insecure Design</td><td>Diseño</td><td>Threat modeling (<a href="m54-threat-modeling.html">M54</a>)</td></tr>
+      <tr><td>A09 Logging and Alerting Failures</td><td>Operación</td><td>Reglas de detección probadas (M59)</td></tr>
+      <tr><td>A10 Exceptional Conditions</td><td>Código</td><td>Revisión, pruebas de fallas y SAST con reglas de manejo de errores</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="requisitos"><span class="sec-num">55.3</span>De amenazas a requisitos</h2>
+
+<p>"La API tiene que ser segura" no se puede verificar. "Toda consulta a <code>pedidos</code> filtra por el dueño de la sesión, y existe una prueba que pide el pedido de otra cuenta y recibe 404" sí. El paso de una amenaza del threat model a un requisito verificable es la bisagra entre el diseño y el código.</p>
+
+<p>Para no inventar los requisitos desde cero existe el <dfn data-term="asvs">ASVS</dfn> (Application Security Verification Standard) de OWASP. La versión 5.0.0 se publicó el 30 de mayo de 2025 <span class="badge badge--doc">Documentado</span>, con unos 350 requisitos en 17 capítulos y tres niveles: L1 para cualquier aplicación, L2 para la mayoría de las que manejan datos sensibles y L3 para las críticas. Cada requisito tiene un identificador estable que se puede citar en un ticket o en el nombre de una prueba.</p>
+
+<ol class="steps">
+  <li><span class="step-title">Amenaza</span>De M54: "un cliente lee pedidos de otro" (I sobre la API).</li>
+  <li><span class="step-title">Requisito</span>El capítulo de autorización del ASVS pide que el acceso a cada objeto se compruebe contra el usuario, no solo contra el rol.</li>
+  <li><span class="step-title">Caso de abuso</span>"Como cliente autenticado A, pido <code>GET /pedidos/{id}</code> con un id de B." Resultado esperado: 404, sin cuerpo.</li>
+  <li><span class="step-title">Prueba</span>Una prueba de integración que crea dos usuarios y hace exactamente eso. Corre en cada pull request.</li>
+</ol>
+
+<p>Un <b>caso de abuso</b> es una historia de usuario escrita desde el lado del atacante. Sirve porque se puede automatizar: si la prueba existe y pasa, la mitigación existe. Es la respuesta a la cuarta pregunta de <a href="m54-threat-modeling.html#proceso">M54.7</a>, "¿hicimos un buen trabajo?".</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Las pruebas de abuso son lo único que atrapa BOLA de forma fiable. Ningún escáner sabe que el pedido 1043 es de otra persona: hace falta que alguien escriba esa expectativa. Por eso en el widget de 55.8 la columna "Pruebas de abuso" es la que más fallas de lógica atrapa.</p>
+</aside>
+
+<h2 id="sast"><span class="sec-num">55.4</span>Análisis estático (SAST)</h2>
+
+<p>El <dfn data-term="sast">SAST</dfn> (Static Application Security Testing) lee el código sin ejecutarlo y busca patrones peligrosos. Los más útiles siguen el dato: marcan como <b>fuente</b> todo lo que viene de afuera (un parámetro, un header, un cuerpo JSON), como <b>sumidero</b> todo lo que es peligroso si recibe un dato sin controlar (una consulta SQL, una ruta de archivo, un comando, una URL a la que el servidor va a llamar) y reportan cuando hay un camino de una a otro sin un <b>sanitizador</b> en el medio. Esto se llama análisis de taint.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f553t f553d">
+<title id="f553t">Fuente, propagación y sumidero en un SAST</title>
+<desc id="f553d">Un dato entra por un parámetro de la request (fuente), pasa por dos variables y llega a una consulta SQL concatenada (sumidero). Debajo, el mismo camino con una consulta parametrizada: el análisis ve que el dato no llega como código y no reporta.</desc>
+<defs><marker id="f553a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="14" y="24" text-anchor="start">Con falla</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="36" width="170" height="56" rx="8"/>
+<text class="dg-small" x="99.0" y="60.5" text-anchor="middle">Fuente</text>
+<text class="dg-tiny" x="99.0" y="75.5" text-anchor="middle">param "q" de la request</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="214" y="36" width="170" height="56" rx="8"/>
+<text class="dg-small" x="299.0" y="60.5" text-anchor="middle">Propagación</text>
+<text class="dg-tiny" x="299.0" y="75.5" text-anchor="middle">termino = q.trim()</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="414" y="36" width="170" height="56" rx="8"/>
+<text class="dg-small" x="499.0" y="60.5" text-anchor="middle">Propagación</text>
+<text class="dg-tiny" x="499.0" y="75.5" text-anchor="middle">sql = "..." + termino</text>
+<rect class="dg-bad" x="614" y="36" width="142" height="56" rx="8"/>
+<text class="dg-small dg-fail-text" x="685.0" y="60.5" text-anchor="middle">Sumidero</text>
+<text class="dg-tiny" x="685.0" y="75.5" text-anchor="middle">stmt.executeQuery(sql)</text>
+<path class="dg-edge" d="M184 64 L212 64" marker-end="url(#f553a)"/>
+<path class="dg-edge" d="M384 64 L412 64" marker-end="url(#f553a)"/>
+<path class="dg-edge" d="M584 64 L612 64" marker-end="url(#f553a)"/>
+<text class="dg-tiny dg-fail-text" x="685" y="110" text-anchor="middle">reporta: inyección SQL</text>
+<text class="dg-group" x="14" y="150" text-anchor="start">Arreglada</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="162" width="170" height="56" rx="8"/>
+<text class="dg-small" x="99.0" y="186.5" text-anchor="middle">Fuente</text>
+<text class="dg-tiny" x="99.0" y="201.5" text-anchor="middle">param "q" de la request</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="214" y="162" width="170" height="56" rx="8"/>
+<text class="dg-small" x="299.0" y="186.5" text-anchor="middle">Propagación</text>
+<text class="dg-tiny" x="299.0" y="201.5" text-anchor="middle">termino = q.trim()</text>
+<rect class="dg-ok" x="414" y="162" width="170" height="56" rx="8"/>
+<text class="dg-small" x="499.0" y="186.5" text-anchor="middle">Parámetro</text>
+<text class="dg-tiny" x="499.0" y="201.5" text-anchor="middle">ps.setString(1, termino)</text>
+<rect class="dg-ok" x="614" y="162" width="142" height="56" rx="8"/>
+<text class="dg-small" x="685.0" y="186.5" text-anchor="middle">Consulta fija</text>
+<text class="dg-tiny" x="685.0" y="201.5" text-anchor="middle">WHERE nombre LIKE ?</text>
+<path class="dg-edge" d="M184 190 L212 190" marker-end="url(#f553a)"/>
+<path class="dg-edge" d="M384 190 L412 190" marker-end="url(#f553a)"/>
+<path class="dg-edge" d="M584 190 L612 190" marker-end="url(#f553a)"/>
+<text class="dg-tiny" x="685" y="236" text-anchor="middle">sin reporte: el dato es valor, no código</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 55.3.</b> El mismo camino del dato con y sin falla. El SAST no entiende qué hace el código: ve que un valor de afuera llega a un lugar donde se interpreta como código.</figcaption>
+</figure>
+
+
+<p>Las herramientas más usadas son <b>Semgrep</b> (reglas que se parecen al código que buscan, rápido sobre el diff de un PR) y <b>CodeQL</b> (el código se convierte en una base de datos que se consulta, más lento y más profundo) <span class="badge badge--doc">Documentado</span>. Las dos tienen reglas para Java y Spring.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Encuentra bien</th><th>Encuentra mal o nada</th></tr></thead>
+    <tbody>
+      <tr><td>Inyección SQL, de comandos y de rutas</td><td>BOLA y BFLA: no sabe qué es de quién</td></tr>
+      <tr><td>Deserialización de datos externos</td><td>Lógica de negocio (cambiar el precio)</td></tr>
+      <tr><td>Criptografía débil (MD5, ECB, <code>Random</code> para tokens)</td><td>Configuración de producción</td></tr>
+      <tr><td>Uso de APIs peligrosas</td><td>Fallas que dependen de la versión de una librería</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>El problema clásico del SAST son los <b>falsos positivos</b>: reportes de caminos que en la práctica no se pueden recorrer, o donde el dato ya se validó de una forma que la herramienta no reconoce. Si el primer escaneo trae 800 hallazgos, nadie los mira. La salida es empezar con pocas reglas de alta precisión, escanear solo el código nuevo de cada PR y dejar el histórico como una deuda aparte (M58).</p>
+</aside>
+
+<h2 id="sca"><span class="sec-num">55.5</span>Dependencias vulnerables (SCA)</h2>
+
+<p>La mayoría del código que corre en la API de Tienda Norte no lo escribió nadie del equipo: viene de dependencias. El <dfn data-term="sca">SCA</dfn> (Software Composition Analysis) arma la lista de todas las librerías que usa el proyecto, incluidas las <b>transitivas</b> (las que traen tus dependencias), y la cruza con las bases de vulnerabilidades conocidas.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f554t f554d">
+<title id="f554t">Una dependencia transitiva vulnerable</title>
+<desc id="f554d">Árbol de dependencias de la API de Tienda Norte. La API declara tres dependencias directas; una de ellas trae log4j-core 2.14.1 como dependencia transitiva, que nadie declaró y que tiene la vulnerabilidad Log4Shell.</desc>
+<defs><marker id="f554a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box dg-box--em" x="300" y="14" width="170" height="46" rx="8"/>
+<text class="dg-small" x="385.0" y="33.5" text-anchor="middle">api-tienda</text>
+<text class="dg-tiny" x="385.0" y="48.5" text-anchor="middle">tu pom.xml</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="40" y="100" width="170" height="46" rx="8"/>
+<text class="dg-small" x="125.0" y="119.5" text-anchor="middle">spring-boot-starter-web</text>
+<text class="dg-tiny" x="125.0" y="134.5" text-anchor="middle">3.x</text>
+<path class="dg-edge" d="M385 60 L125 98" marker-end="url(#f554a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="300" y="100" width="170" height="46" rx="8"/>
+<text class="dg-small" x="385.0" y="119.5" text-anchor="middle">cliente-envios</text>
+<text class="dg-tiny" x="385.0" y="134.5" text-anchor="middle">1.4.0 (de un tercero)</text>
+<path class="dg-edge" d="M385 60 L385 98" marker-end="url(#f554a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="560" y="100" width="170" height="46" rx="8"/>
+<text class="dg-small" x="645.0" y="119.5" text-anchor="middle">jackson-databind</text>
+<text class="dg-tiny" x="645.0" y="134.5" text-anchor="middle">2.x</text>
+<path class="dg-edge" d="M385 60 L645 98" marker-end="url(#f554a)"/>
+<rect class="dg-bad" x="300" y="190" width="170" height="46" rx="8"/>
+<text class="dg-small dg-fail-text" x="385.0" y="209.5" text-anchor="middle">log4j-core</text>
+<text class="dg-tiny" x="385.0" y="224.5" text-anchor="middle">2.14.1</text>
+<path class="dg-edge" d="M385 146 L385 188" marker-end="url(#f554a)"/>
+<text class="dg-tiny" x="480" y="206" text-anchor="start">transitiva: nadie la escribió</text>
+<text class="dg-tiny dg-fail-text" x="480" y="222" text-anchor="start">CVE-2021-44228, CVSS 10.0</text>
+<text class="dg-tiny" x="14" y="80" text-anchor="start">directas</text>
+<text class="dg-tiny" x="14" y="170" text-anchor="start">transitivas</text>
+<text class="dg-tiny" x="385" y="260" text-anchor="middle">El SCA lee el árbol resuelto (el lockfile o mvn dependency:tree), no solo lo que declaraste.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 55.4.</b> Nadie en el equipo escribió <code>log4j-core</code> en el <code>pom.xml</code>, pero está en la aplicación. El SCA trabaja sobre el árbol resuelto, no sobre lo declarado.</figcaption>
+</figure>
+
+
+<p>El caso que lo volvió obligatorio es <b>Log4Shell</b> (CVE-2021-44228), publicado en diciembre de 2021 con CVSS 10.0 <span class="badge badge--doc">Documentado</span>: una función de búsqueda de log4j 2 permitía que un texto escrito en un log terminara cargando código remoto. Lo difícil no fue entender la falla sino responder "¿dónde la tenemos?". Los equipos con un inventario de dependencias lo contestaron en minutos; los que no, en semanas. Ese inventario se llama SBOM y es tema de M56.</p>
+
+<p>Herramientas comunes: Dependabot y el grafo de dependencias de GitHub, OWASP Dependency-Check, Trivy y Grype (que también escanean imágenes de contenedores). Todas tienen el mismo límite: dicen que una versión es vulnerable, no si tu código usa la función vulnerable. Qué hacer con cada hallazgo (actualizar, mitigar o aceptar con justificación) es el tema de M58.</p>
+
+<h2 id="secretos"><span class="sec-num">55.6</span>Secretos en el código</h2>
+
+<p>Una llave de AWS en un archivo de configuración subido a un repositorio es una de las fallas más simples y más caras. El <dfn data-term="secret-scanning">secret scanning</dfn> busca en el código y en el historial patrones de credenciales conocidas (llaves de nube, tokens de GitHub, claves privadas) y textos de alta entropía.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f555t f555d">
+<title id="f555t">Tres barreras para un secreto</title>
+<desc id="f555d">Un secreto escrito en el código pasa por tres barreras: un hook de pre-commit en la máquina, el push protection del servidor de Git y el escaneo del historial. Si las tres fallan, la única salida es revocar y rotar la credencial.</desc>
+<defs><marker id="f555a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="40" width="120" height="56" rx="8"/>
+<text class="dg-small" x="74.0" y="64.5" text-anchor="middle">Desarrollo</text>
+<text class="dg-tiny" x="74.0" y="79.5" text-anchor="middle">escribe AKIA...</text>
+<path class="dg-edge" d="M134 68 L172 68" marker-end="url(#f555a)"/>
+<rect class="dg-ok" x="174" y="40" width="140" height="56" rx="8"/>
+<text class="dg-small" x="244.0" y="64.5" text-anchor="middle">Pre-commit</text>
+<text class="dg-tiny" x="244.0" y="79.5" text-anchor="middle">gitleaks en local</text>
+<path class="dg-edge" d="M314 68 L342 68" marker-end="url(#f555a)"/>
+<rect class="dg-ok" x="344" y="40" width="140" height="56" rx="8"/>
+<text class="dg-small" x="414.0" y="64.5" text-anchor="middle">Push protection</text>
+<text class="dg-tiny" x="414.0" y="79.5" text-anchor="middle">el servidor rechaza</text>
+<path class="dg-edge" d="M484 68 L512 68" marker-end="url(#f555a)"/>
+<rect class="dg-ok" x="514" y="40" width="140" height="56" rx="8"/>
+<text class="dg-small" x="584.0" y="64.5" text-anchor="middle">Escaneo</text>
+<text class="dg-tiny" x="584.0" y="79.5" text-anchor="middle">historial y PR</text>
+<path class="dg-edge" d="M654 68 L668 68" marker-end="url(#f555a)"/>
+<rect class="dg-bad" x="670" y="40" width="86" height="56" rx="8"/>
+<text class="dg-small dg-fail-text" x="713.0" y="64.5" text-anchor="middle">Filtrado</text>
+<text class="dg-tiny" x="713.0" y="79.5" text-anchor="middle">en el repo</text>
+<text class="dg-tiny" x="244" y="120" text-anchor="middle">se puede saltar</text>
+<text class="dg-tiny" x="414" y="120" text-anchor="middle">se puede saltar con motivo</text>
+<text class="dg-tiny" x="584" y="120" text-anchor="middle">llega tarde: ya está en Git</text>
+<rect class="dg-warnbox" x="214" y="160" width="340" height="56" rx="8"/>
+<text class="dg-small" x="384.0" y="184.5" text-anchor="middle">Revocar y rotar la credencial</text>
+<text class="dg-tiny" x="384.0" y="199.5" text-anchor="middle">borrar el commit no alcanza: ya pudo copiarse</text>
+<path class="dg-edge" d="M712 96 L712 186 L556 186" marker-end="url(#f555a)"/>
+<text class="dg-tiny" x="385" y="248" text-anchor="middle">Lo que más protege es no tener secretos de larga vida: OIDC en el CI (M56) y un gestor de secretos (M37).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 55.5.</b> Tres barreras en orden. Cuanto más temprano se para, menos hay que limpiar; si llega al repositorio, la credencial se da por comprometida.</figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Pre-commit.</b> Un hook local (gitleaks, por ejemplo) revisa el commit antes de que exista. Es rápido y privado, pero se puede saltar y depende de que cada persona lo tenga instalado.</li>
+  <li><b>Push protection.</b> El servidor rechaza el push si detecta un secreto conocido. GitHub la activó por defecto para los pushes a repositorios públicos de todas las cuentas a comienzos de 2024 <span class="badge badge--doc">Documentado</span>; en repositorios privados de organizaciones depende del plan. Se puede saltar indicando un motivo, y ese salto queda registrado.</li>
+  <li><b>Escaneo del historial.</b> Encuentra lo que ya entró. Llega tarde, pero es la única forma de saber qué hay en los repositorios viejos.</li>
+</ul>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Borrar el archivo en un commit nuevo no saca el secreto del historial, y reescribir el historial no lo saca de los clones ni de las copias que ya se hicieron. La única respuesta correcta a un secreto filtrado es <b>revocarlo y rotarlo</b>, y después revisar los logs del proveedor para ver si alguien lo usó. Ver también <a href="m10-seguridad.html#credenciales-detalle">M10.8</a>.</p>
+</aside>
+
+<p>La defensa de fondo es no tener secretos de larga vida que se puedan filtrar: el pipeline se autentica con OIDC (M56) y la aplicación lee sus credenciales del gestor de secretos (<a href="m37-nube.html#kms">M37</a>).</p>
+
+<h2 id="dast"><span class="sec-num">55.7</span>Análisis dinámico (DAST e IAST)</h2>
+
+<p>El <dfn data-term="dast">DAST</dfn> (Dynamic Application Security Testing) ataca la aplicación corriendo, desde afuera, como lo haría un cliente: recorre las páginas o la especificación OpenAPI, manda entradas maliciosas y mira las respuestas. No necesita el código. El más usado en software libre es <b>ZAP</b> <span class="badge badge--doc">Documentado</span>, que tiene un modo "baseline" pasivo (solo observa, apto para correr contra staging en cada despliegue) y un modo activo (manda ataques, solo contra entornos propios y de prueba).</p>
+
+<p>El <dfn data-term="iast">IAST</dfn> (Interactive Application Security Testing) pone un <span class="no-autolink">agente</span> dentro de la aplicación mientras corren las pruebas de integración. Como ve el dato desde que entra hasta que llega a la consulta, reporta con muy pocos falsos positivos, pero solo encuentra fallas en el código que las pruebas recorren.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f556t f556d">
+<title id="f556t">Dónde mira cada análisis</title>
+<desc id="f556d">Tres columnas. SAST lee el código sin ejecutarlo. DAST ataca la aplicación corriendo desde afuera, como un cliente. IAST pone un agente dentro de la aplicación mientras corren las pruebas y ve el camino del dato por dentro.</desc>
+<defs><marker id="f556a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box dg-box--em" x="14" y="14" width="238" height="50" rx="8"/>
+<text class="dg-label" x="133.0" y="35.5" text-anchor="middle">SAST</text>
+<text class="dg-tiny" x="133.0" y="50.5" text-anchor="middle">lee el código, sin ejecutar</text>
+<rect class="dg-box dg-box--em" x="266" y="14" width="238" height="50" rx="8"/>
+<text class="dg-label" x="385.0" y="35.5" text-anchor="middle">DAST</text>
+<text class="dg-tiny" x="385.0" y="50.5" text-anchor="middle">ataca desde afuera, app corriendo</text>
+<rect class="dg-box dg-box--em" x="518" y="14" width="238" height="50" rx="8"/>
+<text class="dg-label" x="637.0" y="35.5" text-anchor="middle">IAST</text>
+<text class="dg-tiny" x="637.0" y="50.5" text-anchor="middle">agente adentro, durante las pruebas</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="44" y="90" width="178" height="80" rx="8"/>
+<text class="dg-small" x="133.0" y="126.5" text-anchor="middle">Código fuente</text>
+<text class="dg-tiny" x="133.0" y="141.5" text-anchor="middle">fuentes, sumideros, flujos</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="296" y="80" width="70" height="40" rx="8"/>
+<text class="dg-small" x="331.0" y="104.0" text-anchor="middle">Escáner</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="404" y="80" width="82" height="100" rx="8"/>
+<text class="dg-small" x="445.0" y="126.5" text-anchor="middle">App</text>
+<text class="dg-tiny" x="445.0" y="141.5" text-anchor="middle">caja negra</text>
+<path class="dg-edge" d="M366 94 L402 94" marker-end="url(#f556a)"/>
+<path class="dg-edge" d="M402 110 L366 110" marker-end="url(#f556a)"/>
+<text class="dg-tiny" x="330" y="146" text-anchor="middle">requests y</text>
+<text class="dg-tiny" x="330" y="160" text-anchor="middle">respuestas</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="548" y="80" width="178" height="100" rx="8"/>
+<text class="dg-small" x="637.0" y="134.0" text-anchor="middle">App</text>
+<rect class="dg-box dg-box--em" x="568" y="118" width="138" height="44" rx="8"/>
+<text class="dg-small" x="637.0" y="136.5" text-anchor="middle">Agente</text>
+<text class="dg-tiny" x="637.0" y="151.5" text-anchor="middle">sigue el dato</text>
+<text class="dg-tiny" x="14" y="200" text-anchor="start" style="font-weight:600">Encuentra</text>
+<text class="dg-tiny" x="133" y="200" text-anchor="middle">el patrón en el código</text>
+<text class="dg-tiny" x="385" y="200" text-anchor="middle">lo que responde mal</text>
+<text class="dg-tiny" x="637" y="200" text-anchor="middle">el camino real</text>
+<text class="dg-tiny" x="14" y="220" text-anchor="start" style="font-weight:600">Pierde</text>
+<text class="dg-tiny" x="133" y="220" text-anchor="middle">lo que pasa en ejecución</text>
+<text class="dg-tiny" x="385" y="220" text-anchor="middle">el código que no recorre</text>
+<text class="dg-tiny" x="637" y="220" text-anchor="middle">lo que las pruebas no tocan</text>
+<text class="dg-tiny" x="14" y="240" text-anchor="start" style="font-weight:600">Cuándo</text>
+<text class="dg-tiny" x="133" y="240" text-anchor="middle">en cada pull request</text>
+<text class="dg-tiny" x="385" y="240" text-anchor="middle">contra staging</text>
+<text class="dg-tiny" x="637" y="240" text-anchor="middle">con las pruebas de CI</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 55.6.</b> Tres formas de mirar. Se complementan: el SAST ve código que nunca se ejecuta en las pruebas, el DAST ve configuración que no está en el código y el IAST confirma cuáles caminos son reales.</figcaption>
+</figure>
+
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>El DAST activo es lento (minutos a horas) y necesita un entorno con datos de prueba y usuarios. No va en el pull request: va contra staging, de noche o después de cada despliegue, y sus hallazgos entran a la cola de M58. El baseline pasivo, en cambio, tarda poco y atrapa headers que faltan, cookies sin <code>Secure</code> y errores que filtran la pila de llamadas.</p>
+</aside>
+
+<h2 id="pipeline"><span class="sec-num">55.8</span>Dónde va cada herramienta</h2>
+
+<p>Con todas las piezas sobre la mesa, la pregunta de diseño es qué corre en cada etapa y qué <b>bloquea</b>. La regla que funciona en la práctica: bloquear solo con lo que casi nunca da falso positivo (un secreto con formato de llave real, una dependencia con una vulnerabilidad crítica explotable, una regla de SAST de alta precisión sobre código nuevo) y dejar que el resto avise.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f557t f557d">
+<title id="f557t">El pipeline de seguridad de Tienda Norte</title>
+<desc id="f557d">Cinco carriles: commit, pull request, build, staging y producción. Cada uno con sus herramientas, y una marca de si bloquea el avance o solo avisa. Los bloqueos están en lo que tiene pocos falsos positivos.</desc>
+<defs><marker id="f557a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="14" width="140" height="232" rx="8"/>
+<text class="dg-group" x="84" y="34" text-anchor="middle">Commit</text>
+<rect class="dg-box" x="22" y="50" width="124" height="54" rx="8"/>
+<text class="dg-small" x="84.0" y="73.5" text-anchor="middle">gitleaks</text>
+<text class="dg-tiny" x="84.0" y="88.5" text-anchor="middle">■ bloquea</text>
+<path class="dg-edge" d="M154 130 L166 130" marker-end="url(#f557a)"/>
+<rect class="dg-frame" x="166" y="14" width="140" height="232" rx="8"/>
+<text class="dg-group" x="236" y="34" text-anchor="middle">Pull request</text>
+<rect class="dg-box" x="174" y="50" width="124" height="54" rx="8"/>
+<text class="dg-small" x="236.0" y="73.5" text-anchor="middle">Semgrep (diff)</text>
+<text class="dg-tiny" x="236.0" y="88.5" text-anchor="middle">■ bloquea alta</text>
+<rect class="dg-box" x="174" y="114" width="124" height="54" rx="8"/>
+<text class="dg-small" x="236.0" y="137.5" text-anchor="middle">revisión</text>
+<text class="dg-tiny" x="236.0" y="152.5" text-anchor="middle">■ bloquea</text>
+<rect class="dg-box" x="174" y="178" width="124" height="54" rx="8"/>
+<text class="dg-small" x="236.0" y="201.5" text-anchor="middle">pruebas de abuso</text>
+<text class="dg-tiny" x="236.0" y="216.5" text-anchor="middle">■ bloquea</text>
+<path class="dg-edge" d="M306 130 L318 130" marker-end="url(#f557a)"/>
+<rect class="dg-frame" x="318" y="14" width="140" height="232" rx="8"/>
+<text class="dg-group" x="388" y="34" text-anchor="middle">Build</text>
+<rect class="dg-box" x="326" y="50" width="124" height="54" rx="8"/>
+<text class="dg-small" x="388.0" y="73.5" text-anchor="middle">SCA + SBOM</text>
+<text class="dg-tiny" x="388.0" y="88.5" text-anchor="middle">■ bloquea crítica</text>
+<rect class="dg-box" x="326" y="114" width="124" height="54" rx="8"/>
+<text class="dg-small" x="388.0" y="137.5" text-anchor="middle">escaneo de imagen</text>
+<text class="dg-tiny" x="388.0" y="152.5" text-anchor="middle">□ avisa</text>
+<path class="dg-edge" d="M458 130 L470 130" marker-end="url(#f557a)"/>
+<rect class="dg-frame" x="470" y="14" width="140" height="232" rx="8"/>
+<text class="dg-group" x="540" y="34" text-anchor="middle">Staging</text>
+<rect class="dg-box" x="478" y="50" width="124" height="54" rx="8"/>
+<text class="dg-small" x="540.0" y="73.5" text-anchor="middle">ZAP baseline</text>
+<text class="dg-tiny" x="540.0" y="88.5" text-anchor="middle">□ avisa</text>
+<rect class="dg-box" x="478" y="114" width="124" height="54" rx="8"/>
+<text class="dg-small" x="540.0" y="137.5" text-anchor="middle">IAST en pruebas</text>
+<text class="dg-tiny" x="540.0" y="152.5" text-anchor="middle">□ avisa</text>
+<path class="dg-edge" d="M610 130 L622 130" marker-end="url(#f557a)"/>
+<rect class="dg-frame" x="622" y="14" width="140" height="232" rx="8"/>
+<text class="dg-group" x="692" y="34" text-anchor="middle">Producción</text>
+<rect class="dg-box" x="630" y="50" width="124" height="54" rx="8"/>
+<text class="dg-small" x="692.0" y="73.5" text-anchor="middle">WAF</text>
+<text class="dg-tiny" x="692.0" y="88.5" text-anchor="middle">■ bloquea</text>
+<rect class="dg-box" x="630" y="114" width="124" height="54" rx="8"/>
+<text class="dg-small" x="692.0" y="137.5" text-anchor="middle">alertas</text>
+<text class="dg-tiny" x="692.0" y="152.5" text-anchor="middle">□ avisa</text>
+<text class="dg-tiny" x="14" y="270" text-anchor="start">■ bloquea el merge o el despliegue   □ solo avisa (va a la cola de hallazgos, M58)</text>
+<text class="dg-tiny" x="14" y="290" text-anchor="start">Regla: bloquea lo que casi nunca da falso positivo; lo ruidoso avisa hasta que se ajusta.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 55.7.</b> El pipeline de Tienda Norte. Los bloqueos están en el commit y el pull request, donde el arreglo es barato; staging avisa y producción protege mientras se arregla.</figcaption>
+</figure>
+
+
+<p>El widget pone a prueba ese diseño. Tienda Norte tiene ocho fallas plantadas. Elige qué herramientas usa el equipo y mira cuáles se atrapan, en qué etapa y cuál es el costo relativo de arreglarlas ahí.</p>
+
+<div data-sim="appsecpipe"></div>
+
+<p>Tres cosas para notar con el widget. Primero, ninguna herramienta sola atrapa las ocho. Segundo, BOLA y la asignación masiva se escapan de todos los escáneres: solo las atrapan la revisión de código y las pruebas de abuso. Tercero, el WAF "atrapa" en producción, que es la etapa más cara, y solo parcialmente: protege mientras se arregla el código, pero no lo arregla.</p>
+
+<h2 id="casos"><span class="sec-num">55.9</span>Cuatro fallas de Tienda Norte</h2>
+
+<p>Las fallas de <a href="m10-seguridad.html#ataques">M10.8</a> siguen valiendo. Estas cuatro son las que faltaban, cada una con el patrón vulnerable, el arreglo y qué la atrapa. El código es Java con Spring, como la API de <a href="../proyectos/a02-api.html">A02</a>.</p>
+
+<h3 id="casos-ssrf">SSRF: "importar imagen desde una URL"</h3>
+
+<p>El panel permite cargar la foto de un producto desde una URL. El servidor la descarga. Si no se controla a dónde, alguien con acceso al panel puede hacer que el servidor pida <code>http://169.254.169.254/</code>, el servicio de metadatos de la nube, y obtener las credenciales de la instancia. Es la <a href="m10-seguridad.html#ataques">SSRF</a> que M10 nombra y que <a href="m37-nube.html#iam">M37</a> mitiga con IMDSv2.</p>
+
+<pre data-lang="java"><code>// Vulnerable: el servidor va a cualquier lado
+byte[] img = http.get(URI.create(urlDelUsuario)).body();
+
+// Arreglado: lista de esquemas y hosts, y se resuelve el DNS antes de conectar
+URI u = URI.create(urlDelUsuario);
+if (!"https".equals(u.getScheme()) || !HOSTS_PERMITIDOS.contains(u.getHost()))
+    throw new SolicitudInvalida("origen no permitido");
+InetAddress ip = InetAddress.getByName(u.getHost());
+if (ip.isLoopbackAddress() || ip.isSiteLocalAddress() || ip.isLinkLocalAddress())
+    throw new SolicitudInvalida("destino interno");</code></pre>
+
+<p>Lo atrapan la revisión y el IAST; el SAST lo marca si tiene la regla de "URL controlada por el usuario". La defensa de fondo es de red: que el servicio que descarga imágenes no pueda llegar a direcciones internas, con una regla de salida (<a href="m32-firewalls.html">M32</a>).</p>
+
+<h3 id="casos-deser">Deserialización insegura</h3>
+
+<p>La <dfn data-term="deserializacion-insegura">deserialización insegura</dfn> ocurre cuando la aplicación convierte bytes que vienen de afuera en objetos usando un formato que puede elegir qué clases crear. En Java, <code>ObjectInputStream.readObject()</code> sobre datos externos permite que un atacante arme una cadena de objetos de librerías que ya están en el classpath y que, al reconstruirse, ejecutan código. La categoría A08 del Top 10 la incluye.</p>
+
+<pre data-lang="java"><code>// Vulnerable: bytes de afuera reconstruidos como cualquier clase
+Object o = new ObjectInputStream(request.getInputStream()).readObject();
+
+// Arreglado: un formato de datos sin clases (JSON) a un tipo fijo
+CarritoDto c = mapper.readValue(request.getInputStream(), CarritoDto.class);</code></pre>
+
+<p>Si no se puede dejar la serialización nativa, Java tiene filtros de deserialización (<code>ObjectInputFilter</code>, desde Java 9) para aceptar solo una lista de clases. Lo atrapan el SAST (la llamada es muy reconocible) y el IAST. Con Jackson también hay que mirar: activar el "default typing" vuelve al mismo problema.</p>
+
+<h3 id="casos-mass">Asignación masiva</h3>
+
+<p>La <a href="m10-seguridad.html#ataques">asignación masiva</a> ya la viste en M10. Aquí importa por qué se escapa de los escáneres: el código vulnerable es perfectamente normal.</p>
+
+<pre data-lang="java"><code>// Vulnerable: la entidad completa se llena con el JSON del cliente
+@PutMapping("/cuenta") Cliente actualizar(@RequestBody Cliente c) { return repo.save(c); }
+
+// Arreglado: un DTO con solo los campos que el cliente puede cambiar
+record CuentaDto(String nombre, String telefono) {}
+@PutMapping("/cuenta") Cliente actualizar(@RequestBody CuentaDto d, Sesion s) {
+    return servicio.actualizarPerfil(s.clienteId(), d.nombre(), d.telefono());
+}</code></pre>
+
+<p>No hay un dato que llegue a un sumidero peligroso: un <code>save</code> es lo esperable. Lo atrapan la revisión ("¿por qué entra la entidad entera?") y una prueba de abuso que manda <code>"rol": "ADMIN"</code> y comprueba que no cambió.</p>
+
+<h3 id="casos-traversal">Path traversal en las facturas</h3>
+
+<p>El <dfn data-term="path-traversal">path traversal</dfn> es armar una ruta de archivo con un dato de afuera sin comprobar que el resultado quede dentro de la carpeta permitida. Con <code>../</code>, el nombre sale de la carpeta.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f558t f558d">
+<title id="f558t">Path traversal: normalizar antes de comparar</title>
+<desc id="f558d">La API arma la ruta de una factura con el nombre que manda el cliente. Con ../ el nombre sale de la carpeta de facturas. El arreglo normaliza la ruta y comprueba que siga dentro de la carpeta base.</desc>
+<defs><marker id="f558a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="30" width="220" height="50" rx="8"/>
+<text class="dg-small dg-mono" x="124.0" y="59.0" text-anchor="middle">nombre = "../../etc/passwd"</text>
+<path class="dg-edge" d="M234 55 L262 55" marker-end="url(#f558a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="264" y="30" width="230" height="50" rx="8"/>
+<text class="dg-small dg-mono" x="379.0" y="51.5" text-anchor="middle">base.resolve(nombre)</text>
+<text class="dg-tiny" x="379.0" y="66.5" text-anchor="middle">/srv/facturas/../../etc/passwd</text>
+<path class="dg-edge" d="M494 55 L522 55" marker-end="url(#f558a)"/>
+<rect class="dg-bad" x="524" y="30" width="232" height="50" rx="8"/>
+<text class="dg-small dg-fail-text" x="640.0" y="51.5" text-anchor="middle">Lee /etc/passwd</text>
+<text class="dg-tiny" x="640.0" y="66.5" text-anchor="middle">salió de la carpeta</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="130" width="220" height="50" rx="8"/>
+<text class="dg-small" x="124.0" y="159.0" text-anchor="middle">mismo nombre</text>
+<path class="dg-edge" d="M234 155 L262 155" marker-end="url(#f558a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="264" y="130" width="230" height="50" rx="8"/>
+<text class="dg-small dg-mono" x="379.0" y="151.5" text-anchor="middle">.normalize()</text>
+<text class="dg-tiny" x="379.0" y="166.5" text-anchor="middle">/etc/passwd</text>
+<path class="dg-edge" d="M494 155 L522 155" marker-end="url(#f558a)"/>
+<rect class="dg-ok" x="524" y="130" width="232" height="50" rx="8"/>
+<text class="dg-small" x="640.0" y="151.5" text-anchor="middle">¿empieza con /srv/facturas?</text>
+<text class="dg-tiny" x="640.0" y="166.5" text-anchor="middle">no: 404</text>
+<text class="dg-tiny" x="385" y="208" text-anchor="middle">Mejor aún: no aceptar rutas. El cliente pide la factura por id y el servidor busca el archivo de ese id.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 55.8.</b> <span class="no-autolink">Normalizar</span> y después comparar. Comparar antes de <span class="no-autolink">normalizar</span> no sirve: <code>/srv/facturas/../../etc</code> empieza con <code>/srv/facturas</code>.</figcaption>
+</figure>
+
+
+<pre data-lang="java"><code>Path base = Path.of("/srv/facturas").toRealPath();
+Path pedido = base.resolve(nombre).normalize();
+if (!pedido.startsWith(base)) throw new NoEncontrado();</code></pre>
+
+<p>Lo atrapan el SAST, el DAST (prueba variantes de <code>../</code>) y el IAST. El arreglo de fondo es de diseño: el cliente pide <code>/facturas/{id}</code>, el servidor comprueba que la factura sea suya (otra vez BOLA) y busca el archivo por un nombre que genera él.</p>
+
+<h2 id="cultura"><span class="sec-num">55.10</span>Personas, revisión y métricas</h2>
+
+<p>Las herramientas no escalan sin gente que las ajuste y que sepa qué mirar. Tres prácticas que funcionan:</p>
+
+<ul>
+  <li><b>Security champions.</b> Un <dfn data-term="security-champion">security champion</dfn> es una persona de cada equipo de desarrollo, no del equipo de seguridad, que dedica parte de su tiempo a la seguridad: facilita el threat model, triagea los hallazgos de su equipo y ajusta las reglas que hacen ruido. Es la forma de que un equipo de seguridad de tres personas acompañe a treinta equipos.</li>
+  <li><b>Revisión con foco.</b> La revisión de código atrapa lo que ningún escáner ve (autorización, lógica, asignación masiva), pero solo si quien revisa sabe qué buscar. Una lista corta en la plantilla del PR ayuda: ¿filtra por dueño?, ¿entra un DTO o la entidad?, ¿hay un dato de afuera que llega a una ruta, una URL o un comando?</li>
+  <li><b>Métricas que no se puedan ganar haciendo trampa.</b> "Cantidad de hallazgos" premia apagar reglas. Sirven más: tiempo hasta arreglar una vulnerabilidad crítica, porcentaje de servicios con threat model vigente y cuántas fallas de producción tenían una prueba de abuso que debió atraparlas.</li>
+</ul>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>En Tienda Norte <span class="badge badge--ref">Diseño de referencia</span>, el pipeline de la figura 55.7 corre en cada PR en menos de cinco minutos porque el SAST solo mira el diff y el SCA usa la caché del lockfile. El DAST activo corre cada noche contra staging. Lo que bloquea son tres cosas: secretos, vulnerabilidades críticas con exploit público en dependencias y las pruebas de abuso. Todo lo demás llega como hallazgo a la cola que M58 enseña a priorizar.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m55"></div>
+<div data-exercise="m55-pipeline"></div>
+<div data-checkpoint="m55"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m55.data.js"></script>
+<script src="../assets/js/data/exercises/m55.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-devsecops.js"></script>
+</body>
+</html>

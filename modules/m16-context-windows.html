@@ -60,6 +60,16 @@
 
       <h2 id="limites"><span class="sec-num">16.1</span>Qué limita el contexto</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>La <b>ventana de contexto</b> es cuánto texto (en tokens, sumando pregunta y respuesta) puede procesar el modelo en una request. La limitan el máximo con que se entrenó, la memoria para el KV cache y el tiempo: el prefill crece más que proporcionalmente con el largo. Y aunque el texto entre, el modelo encuentra peor lo que está en el medio que lo que está al principio o al final.</p>
+        <p class="jr-like"><b>Es como</b> una mesa de trabajo: tiene un tamaño máximo, cuanto más papeles pones más tardas en ordenarlos, y lo que queda en el centro de la pila se te pasa por alto.</p>
+        <dl class="jr-words">
+          <dt>Ventana de contexto</dt><dd>máximo de tokens por request.</dd>
+          <dt>Lost in the middle</dt><dd>el modelo usa peor la información del medio de un contexto largo.</dd>
+        </dl>
+      </aside>
+
       <p>La <dfn data-term="context-window">ventana de contexto</dfn> es la cantidad máxima de tokens que el modelo procesa en una request, sumando la entrada y la respuesta. Tres cosas la limitan, y solo la primera es un número fijo:</p>
       <ul>
         <li><b>El entrenamiento.</b> Un modelo funciona bien hasta el largo con el que se entrenó o se extendió (16.5). Llama 3.1 llega a 128 000 tokens. <span class="badge badge--doc">Documentado</span></li>
@@ -123,6 +133,16 @@
       </figure>
 
       <h2 id="costo"><span class="sec-num">16.2</span>El costo de una conversación larga</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El modelo no recuerda nada entre requests: en cada turno se le reenvía toda la conversación. Por eso cada turno manda más que el anterior y el costo total crece con el cuadrado de la cantidad de turnos. El prompt caching (16.6) abarata mucho la parte repetida.</p>
+        <p class="jr-like"><b>Es como</b> contarle a alguien sin memoria toda la historia desde el principio cada vez que quieres agregar una frase.</p>
+        <dl class="jr-words">
+          <dt>Sin estado</dt><dd>el servidor no guarda la conversación; la manda el cliente en cada request.</dd>
+          <dt>Crecimiento cuadrático</dt><dd>duplicar los turnos multiplica el total por cuatro, aproximadamente.</dd>
+        </dl>
+      </aside>
 
       <p>El modelo no guarda estado entre requests (M12): cada turno reenvía el prompt de sistema y toda la conversación anterior. Si cada turno agrega T tokens, el turno i envía unos i × T, y la suma de toda la conversación crece con el cuadrado de la cantidad de turnos:</p>
 
@@ -229,6 +249,16 @@
       <div data-calc="convcost"></div>
 
       <h2 id="estrategias"><span class="sec-num">16.3</span>Qué hacer cuando no entra</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Cuando la conversación ya no entra, el producto tiene que elegir qué mandar. Las opciones van de simples a elaboradas: cortar lo más viejo, quedarse con una ventana de los últimos mensajes, resumir lo anterior, guardar hechos clave aparte o buscar lo relevante en un índice. Ninguna es perfecta: todas pueden perder un detalle del principio.</p>
+        <p class="jr-like"><b>Es como</b> una mochila que ya no cierra: puedes sacar lo de abajo, resumir tus apuntes en una hoja o dejar cosas en un casillero y buscarlas cuando las necesites.</p>
+        <dl class="jr-words">
+          <dt>Truncar</dt><dd>cortar los mensajes más viejos.</dd>
+          <dt>Resumir</dt><dd>reemplazar mensajes viejos por un resumen hecho por un modelo.</dd>
+        </dl>
+      </aside>
 
       <p>Tarde o temprano una conversación, un documento pegado o el resultado de una herramienta no entran en la ventana, y el producto tiene que decidir qué enviar. Las estrategias, de la más simple a la más elaborada:</p>
 
@@ -391,6 +421,17 @@
 
       <h2 id="rag"><span class="sec-num">16.4</span>RAG o contexto largo</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p><b>RAG</b> busca en un índice los trozos de documento que parecen relevantes y solo manda esos. El <b>contexto largo</b> manda los documentos completos. RAG es barato por pregunta pero necesita infraestructura de búsqueda y puede no encontrar el trozo correcto; el contexto largo es simple pero caro. Lo habitual es combinar: RAG para elegir qué documentos, y contexto suficiente para verlos enteros.</p>
+        <p class="jr-like"><b>Es como</b> buscar en el índice de un libro y leer solo esas páginas, contra leer el libro entero cada vez que tienes una pregunta.</p>
+        <dl class="jr-words">
+          <dt>RAG</dt><dd>Retrieval-Augmented Generation: buscar primero y generar con lo encontrado.</dd>
+          <dt>Chunk</dt><dd>trozo de documento que se indexa por separado.</dd>
+          <dt>Embedding</dt><dd>vector que representa el significado de un texto, para buscar por parecido.</dd>
+        </dl>
+      </aside>
+
       <p>Con ventanas de cientos de miles de tokens, la pregunta ya no es solo "qué entra" sino "qué conviene". <dfn data-term="rag">RAG</dfn> (Retrieval-Augmented Generation) busca en un índice los fragmentos relevantes y los agrega al prompt; el contexto largo mete los documentos completos.</p>
 
       <div class="table-wrap">
@@ -479,6 +520,17 @@
       <p>La respuesta habitual es combinar: RAG para elegir qué documentos o secciones importan, y contexto generoso para que el modelo los vea completos, no en fragmentos de 300 tokens. Para un documento que el usuario acaba de subir y sobre el que va a preguntar varias veces, meterlo entero con prompt caching suele ser más simple y mejor que indexarlo.</p>
 
       <h2 id="rope"><span class="sec-num">16.5</span>Cómo se extiende una ventana</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El modelo sabe en qué posición está cada token gracias a la <b>codificación posicional</b>; la más usada, <b>RoPE</b>, gira los vectores según la posición. Un modelo entrenado con textos cortos nunca vio giros de posiciones lejanas y falla ahí, así que para alargar la ventana se ajusta esa rotación. Otra opción es que cada token solo mire los últimos miles (ventana deslizante), que ahorra memoria.</p>
+        <p class="jr-like"><b>Es como</b> las agujas de un reloj: la posición de cada token es un ángulo, y lo que importa es cuánto se separan dos agujas, no dónde está cada una.</p>
+        <dl class="jr-words">
+          <dt>Codificación posicional</dt><dd>cómo el modelo sabe el orden de los tokens.</dd>
+          <dt>RoPE</dt><dd>Rotary Position Embedding: codifica la posición como una rotación.</dd>
+          <dt>Ventana deslizante</dt><dd>cada token solo atiende a los últimos N.</dd>
+        </dl>
+      </aside>
 
       <p>El modelo sabe en qué posición está cada token gracias a la codificación posicional. La mayoría de los modelos abiertos usa <dfn data-term="rope">RoPE</dfn>, que rota los vectores de consulta y clave según la posición. Un modelo entrenado con 8000 tokens nunca vio rotaciones de la posición 100 000, y ahí falla. Las técnicas de extensión (Position Interpolation, escalado NTK, YaRN) estiran las rotaciones para que las posiciones nuevas caigan en rangos conocidos, y se completan con un entrenamiento corto con textos largos: así se llevó Llama 3.1 a 128 000 tokens. <span class="badge badge--doc">Documentado</span></p>
 
@@ -712,6 +764,17 @@
       </figure>
 
       <h2 id="prompt-caching"><span class="sec-num">16.6</span>Prompt caching</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Si el comienzo de tu prompt es idéntico al de una request reciente, el proveedor reutiliza el cálculo guardado y te cobra esos tokens con descuento. Es el prefix caching del M15 visto desde la factura. La regla práctica: lo que no cambia (instrucciones, herramientas, documentos) va primero, y lo que cambia (la fecha, la pregunta) va al final. Un solo carácter distinto al principio anula el caché.</p>
+        <p class="jr-like"><b>Es como</b> un mozo que ya conoce tu pedido de siempre: si empiezas igual, se ahorra anotar; si cambias el primer plato, tiene que anotar todo de nuevo.</p>
+        <dl class="jr-words">
+          <dt>Prompt caching</dt><dd>descuento por reutilizar un prefijo idéntico.</dd>
+          <dt>Prefijo</dt><dd>la parte inicial del prompt.</dd>
+          <dt>Cache hit / miss</dt><dd>el prefijo se encontró / no se encontró.</dd>
+        </dl>
+      </aside>
 
       <p>El <dfn data-term="prompt-caching">prompt caching</dfn> es el prefix caching del M15 visto desde la factura: si el comienzo de tu prompt coincide exactamente con uno reciente, el proveedor reutiliza su KV cache y cobra esos tokens con descuento. OpenAI lo aplica solo a partir de 1024 tokens; Anthropic lo activa con marcas explícitas en el prompt, cobra algo más por escribir en el caché y mucho menos por leerlo, con una vida de 5 minutos o de 1 hora. <span class="badge badge--doc">Documentado</span> Los porcentajes cambian con los modelos: revisa los de tu proveedor.</p>
 

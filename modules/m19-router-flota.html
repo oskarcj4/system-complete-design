@@ -61,6 +61,16 @@
 
       <h2 id="flota"><span class="sec-num">19.1</span>La flota en números</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Una <b>flota</b> son todas las copias del modelo que atienden a los usuarios. Las cuentas: en el pico hay 6 000 conversaciones generando a la vez, cada réplica (4 GPUs H100) aguanta 64, eso da 94 réplicas, y con un margen para picos, 125. Son 500 GPUs y 1.46 millones de dólares por mes. Con esa factura, cada punto de eficiencia vale mucho dinero.</p>
+        <p class="jr-like"><b>Es como</b> una flota de taxis: cuántos autos necesitas sale de cuántos viajes hay a la vez en la hora pico, más unos de reserva.</p>
+        <dl class="jr-words">
+          <dt>Réplica</dt><dd>una copia del modelo cargada en un grupo de GPUs.</dd>
+          <dt>Objetivo de uso</dt><dd>qué tan llena se deja cada réplica (aquí 75 %) para absorber ráfagas.</dd>
+        </dl>
+      </aside>
+
       <p>Seguimos con el ejemplo del M15: Llama 3.1 70B en BF16, servido con vLLM en réplicas de 4 H100 unidas por tensor parallelism. <span class="badge badge--ref">Diseño de referencia</span> Las cuentas de una réplica salen del M12 y del M13:</p>
 
       <div class="table-wrap">
@@ -133,6 +143,17 @@
       </ul>
 
       <h2 id="planos"><span class="sec-num">19.2</span>Plano de control y plano de datos</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Hay dos tipos de decisión. El <b>plano de control</b> decide sobre la flota, en minutos: qué versiones hay y cuántas réplicas. El <b>plano de datos</b> decide sobre cada request, en milisegundos: a qué réplica va. Regla de oro: el plano de datos sigue funcionando aunque el de control se caiga, con la última información que recibió.</p>
+        <p class="jr-like"><b>Es como</b> una aerolínea: la oficina central decide qué aviones vuelan cada día; la torre de control decide, avión por avión, por qué pista sale. Si la oficina se cae, los vuelos de hoy salen igual.</p>
+        <dl class="jr-words">
+          <dt>Plano de control</dt><dd>decisiones lentas sobre la flota (versiones, réplicas).</dd>
+          <dt>Plano de datos</dt><dd>decisiones rápidas sobre cada request (a qué réplica va).</dd>
+          <dt>Tabla de rutas</dt><dd>lo que el control publica y el router consulta en memoria.</dd>
+        </dl>
+      </aside>
 
       <p>Conviene separar dos clases de decisión. El <dfn data-term="plano-control">plano de control</dfn> decide sobre la flota, en minutos: qué versiones existen, cuánto tráfico recibe cada una, cuántas réplicas hay y en qué nodos corren. El plano de datos decide sobre cada request, en milisegundos: a qué réplica va y por dónde vuelve el stream.</p>
 
@@ -209,11 +230,27 @@
 
       <h2 id="mapa"><span class="sec-num">19.3</span>El mapa de la flota</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El mapa muestra la flota entera: arriba, el plano de control; abajo, el camino de una request hasta las réplicas. Los escenarios recorren los casos del módulo: conversaciones que reencuentran su caché, picos, una réplica que se apaga, una región caída. Mira el mapa antes de cada sección y vuelve a él cuando una pieza se confunda.</p>
+      </aside>
+
       <p>Explora la flota antes de entrar en cada pieza. Arriba está el plano de control; abajo, el camino de una request hasta las réplicas. Reproduce los ocho escenarios: un turno que encuentra su historial en una réplica, una conversación nueva, un prefijo tan pedido que desborda a su réplica, un pico con autoscaling, una réplica que muere a mitad de una respuesta, un aviso de spot, la caída de otra región y el canary de una versión nueva.</p>
 
       <div data-map="m19-flota"></div>
 
       <h2 id="registry"><span class="sec-num">19.4</span>Model registry y versiones</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El <b>model registry</b> es el catálogo oficial de modelos: qué versiones existen, dónde están sus pesos y en qué estado están. Una versión publicada nunca se modifica. Los clientes usan <b>alias</b> (un nombre que apunta a una versión) y cambiar de versión es mover el alias de a poco con un <b>canary</b>: primero un porcentaje chico de organizaciones, y si va bien, más.</p>
+        <p class="jr-like"><b>Es como</b> el nombre "la tienda del centro" que primero apunta al local viejo y un día pasa a apuntar al nuevo, mientras la dirección exacta de cada local nunca cambia.</p>
+        <dl class="jr-words">
+          <dt>Model registry</dt><dd>catálogo de versiones de modelos y sus metadatos.</dd>
+          <dt>Alias / snapshot</dt><dd>nombre móvil / versión fija con fecha.</dd>
+          <dt>Canary</dt><dd>probar una versión nueva con una parte chica del tráfico.</dd>
+        </dl>
+      </aside>
 
       <p>El <dfn data-term="model-registry">model registry</dfn> es la fuente de verdad de los modelos: qué versiones existen, dónde están sus pesos, con qué checksum, con qué configuración se sirven y en qué estado está cada una. Una versión publicada no se modifica: si cambian los pesos, el tipo de dato o la versión del motor, es otra versión. Así, "¿qué respondía el martes a las 14:00?" tiene una respuesta exacta, y eso importa para investigar una regresión de calidad.</p>
 
@@ -314,6 +351,17 @@
       </figure>
 
       <h2 id="elegir"><span class="sec-num">19.5</span>Elegir réplica</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El router decide en capas: el modelo (lo pide el cliente), la versión (de la tabla de rutas), la región (según de dónde viene y cuánta capacidad queda) y, al final, la réplica. Elegir réplica es lo difícil: contar requests no alcanza porque pueden diferir mil veces en trabajo, y si todos los routers eligen con la misma información vieja, todos mandan a la misma réplica (efecto manada).</p>
+        <p class="jr-like"><b>Es como</b> elegir la fila del supermercado: no mires solo cuántas personas hay, mira cuántos productos llevan; y si todos eligen la misma fila "más corta" al mismo tiempo, deja de serlo.</p>
+        <dl class="jr-words">
+          <dt>Router</dt><dd>el servicio que elige a qué réplica va cada request.</dd>
+          <dt>Efecto manada</dt><dd>muchos eligen lo mismo con la misma información vieja y lo saturan.</dd>
+          <dt>Power of two choices</dt><dd>mirar dos réplicas al azar y elegir la menos cargada.</dd>
+        </dl>
+      </aside>
 
       <p>El router decide en capas. El modelo lo pide el cliente; la versión sale de la tabla de rutas; la región, de dónde llegó la request y de cuánta capacidad queda. Esas tres son reglas. La última capa, la réplica, es el problema interesante.</p>
 
@@ -447,6 +495,17 @@
       </figure>
 
       <h2 id="prefijo"><span class="sec-num">19.6</span>Routing consciente del prefijo</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Cada turno de una conversación repite todo lo anterior. Si llega a la réplica que ya tiene ese prefijo en su caché, el prefill casi no cuesta (21 ms contra 610 ms en el ejemplo). El router intenta mandar cada conversación a "su" réplica, pero sin saturarla: si esa réplica está muy cargada, va a otra (afinidad con carga acotada).</p>
+        <p class="jr-like"><b>Es como</b> volver al mismo peluquero, que ya sabe cómo te gusta el corte; pero si tiene una fila de dos horas, vas a otro.</p>
+        <dl class="jr-words">
+          <dt>Afinidad</dt><dd>preferir la réplica que ya atendió a esa conversación.</dd>
+          <dt>Carga acotada</dt><dd>la afinidad se rompe si la réplica pasa cierto límite (aquí 1.25 × el promedio).</dd>
+          <dt>Índice de prefijos</dt><dd>lo que el router sabe de qué prefijos tiene cada réplica.</dd>
+        </dl>
+      </aside>
 
       <p>El prefix caching del M15 guarda el KV cache de los prefijos que se repiten y se saltea su prefill, pero solo funciona si la request llega a la réplica que lo tiene. En una conversación, cada turno repite todo el anterior:</p>
 
@@ -685,6 +744,17 @@ def match(index, hashes, replicas):
 
       <h2 id="autoscaling"><span class="sec-num">19.7</span>Autoscaling: qué medir y con cuánta anticipación</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El <b>autoscaling</b> agrega o quita réplicas según la demanda. La métrica obvia, el "uso de GPU" de nvidia-smi, engaña: dice si hay algo corriendo, no cuánto lugar queda. La métrica útil es el uso del KV cache. Y hay que escalar con anticipación, porque una réplica nueva tarda minutos en llegar.</p>
+        <p class="jr-like"><b>Es como</b> abrir otra caja en el supermercado cuando ves que la fila crece, no cuando ya da la vuelta a la manzana, porque la cajera tarda en llegar.</p>
+        <dl class="jr-words">
+          <dt>Autoscaler</dt><dd>servicio que ajusta la cantidad de réplicas.</dd>
+          <dt>HPA</dt><dd>Horizontal Pod Autoscaler, el autoscaler de Kubernetes.</dd>
+          <dt>Uso de KV cache</dt><dd>qué fracción de la memoria para conversaciones está ocupada.</dd>
+        </dl>
+      </aside>
+
       <p>El <dfn data-term="autoscaling">autoscaling</dfn> ajusta la cantidad de réplicas a la demanda. La primera decisión es la métrica, y la más obvia es la equivocada. La utilización de GPU que reporta <code>nvidia-smi</code> es la fracción del tiempo en que algún kernel estaba corriendo, no cuánto de la GPU se usa. <span class="badge badge--doc">Documentado</span> Una réplica con una request y otra con 64 marcan casi lo mismo. Sirven mejor:</p>
       <ul>
         <li><b>El uso de KV cache:</b> dice cuánto falta para que el motor empiece a pausar requests.</li>
@@ -813,6 +883,16 @@ def match(index, hashes, replicas):
 
       <h2 id="cold-start"><span class="sec-num">19.8</span>Cold start y carga de pesos</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Arrancar una réplica nueva tarda porque hay que conseguir una máquina con GPU, bajar la imagen, cargar decenas de GB de pesos e iniciar el motor. Cada parte se acelera distinto. Un <b>pool precalentado</b> deja máquinas listas esperando, a cambio de pagarlas aunque no atiendan.</p>
+        <p class="jr-like"><b>Es como</b> tener un auto con el motor tibio en invierno: sale enseguida, pero gastaste combustible esperando.</p>
+        <dl class="jr-words">
+          <dt>Cold start</dt><dd>el tiempo hasta que una réplica nueva puede atender.</dd>
+          <dt>Pool precalentado</dt><dd>máquinas ya preparadas que solo esperan arrancar el motor.</dd>
+        </dl>
+      </aside>
+
       <p>El cold start de una réplica de LLM no se parece al de una función serverless (M28). Tiene cuatro partes, y cada una se ataca distinto:</p>
 
       <figure class="figure">
@@ -887,6 +967,17 @@ def match(index, hashes, replicas):
       <p>Con 100 réplicas en el pico y un crecimiento del 3&#8239;% por minuto: un nodo nuevo tarda 8.7 minutos y necesita 30 réplicas de colchón, 350&#8239;400 dólares por mes; con los pesos en NVMe, 84 s y 5 réplicas, 58&#8239;400 dólares; con un pool precalentado, 27 s y 2 réplicas, 23&#8239;360 dólares. Acortar el arranque se paga solo, y lo que más pesa es no depender de conseguir un nodo en el momento del pico.</p>
 
       <h2 id="spot"><span class="sec-num">19.9</span>Preemption, spot y drenaje</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Las réplicas se pierden por fallas, por interrupciones de la nube (las GPUs <b>spot</b> son más baratas pero la nube las puede recuperar con un aviso corto) o por decisión propia en un despliegue. Para no cortar a los usuarios, la réplica se <b>drena</b>: deja de recibir requests nuevas y, si hace falta, sus streams largos se continúan en otra réplica sin que el cliente lo note.</p>
+        <p class="jr-like"><b>Es como</b> cerrar un local: primero cuelgas el cartel de "no se aceptan más clientes", atiendes a los que ya están, y a los que van a tardar mucho los mandas con su pedido a la otra sucursal.</p>
+        <dl class="jr-words">
+          <dt>Spot</dt><dd>capacidad con descuento que la nube puede recuperar con poco aviso.</dd>
+          <dt>Preemption</dt><dd>que te quiten la máquina.</dd>
+          <dt>Drenar</dt><dd>dejar de recibir trabajo nuevo y terminar el que hay.</dd>
+        </dl>
+      </aside>
 
       <p>La capacidad se va de tres maneras: por una falla, sin aviso; por una interrupción de la nube, con un aviso corto; y por decisión propia, en un despliegue o al bajar réplicas. Las tres terminan igual, con requests en curso que hay que salvar.</p>
 
@@ -1025,6 +1116,16 @@ def match(index, hashes, replicas):
       </aside>
 
       <h2 id="fallback"><span class="sec-num">19.10</span>Fallback entre modelos y entre regiones</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Cuando no alcanza la capacidad hay cinco salidas, de la más barata a la más cara para el usuario: esperar en una cola corta, recortar el tráfico de menor prioridad, responder con un modelo más chico, mandar a otra región o rechazar con un 503. En un producto de chat cambiar de modelo puede estar bien; en una API rompe lo que el cliente pidió. Y para sobrevivir a perder una región, las demás necesitan lugar de sobra.</p>
+        <p class="jr-like"><b>Es como</b> un restaurante lleno: lista de espera, menú reducido, mandarte a la sucursal de al lado, o decirte que no.</p>
+        <dl class="jr-words">
+          <dt>Fallback</dt><dd>plan alternativo cuando lo principal no está disponible.</dd>
+          <dt>Región</dt><dd>un conjunto de datacenters en una zona geográfica.</dd>
+        </dl>
+      </aside>
 
       <p>Cuando la capacidad no alcanza, hay cinco salidas, de la más barata a la más cara para el usuario: esperar en una cola acotada, recortar el tráfico de menor prioridad (M18), contestar con un modelo más chico, mandar la request a otra región, o rechazarla con un 503.</p>
 

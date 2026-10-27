@@ -61,6 +61,16 @@
 
       <h2 id="distinto"><span class="sec-num">22.1</span>Por qué operar un modelo es distinto</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Cuando falla el código, aparecen errores y latencia alta. Cuando falla un modelo, casi nunca: responde rápido, con código 200, pero peor (más errores de hecho, otro tono, menos útil). Por eso operar un modelo necesita otras señales y otros controles. El ejemplo del módulo: pasar los pesos a FP8 y cambiar el prompt de sistema a la vez, sin que nadie note una caída de calidad.</p>
+        <p class="jr-like"><b>Es como</b> un cocinero nuevo: la comida sale a tiempo y caliente, pero solo probándola sabes si quedó peor.</p>
+        <dl class="jr-words">
+          <dt>Regresión</dt><dd>una versión nueva que hace algo peor que la anterior.</dd>
+          <dt>Determinismo</dt><dd>misma entrada, misma salida; un modelo servido en batch no siempre lo cumple.</dd>
+        </dl>
+      </aside>
+
       <p>Seguimos con la flota del <a href="m19-router-flota.html#flota">M19</a>: Llama 3.1 70B en BF16 sobre 125 réplicas de 4 H100, con 400 requests por segundo en el pico y unos 17.3 millones por día (las cuentas están en el <a href="m21-metering.html#numeros-volumen">M21</a>). El equipo quiere hacer dos cambios a la vez: pasar los pesos a FP8, que en el <a href="m14-cuantizacion.html#impacto">M14</a> vimos que libera la mitad de la memoria de pesos para KV cache, y estrenar la versión 41 del prompt del sistema. Ninguno de los dos cambia el código del gateway ni el esquema de la base. Los dos pueden romper el producto.</p>
 
       <p>En el <a href="m11-observabilidad.html#despliegues">M11</a> desplegamos código con canary y rollback automático, mirando errores y latencia. Con un modelo eso no alcanza, porque sus fallas típicas no dan errores:</p>
@@ -154,6 +164,16 @@
 
       <h2 id="senales"><span class="sec-num">22.2</span>Las señales de calidad</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>No hay una métrica de "responde bien". Hay varias familias, cada una con su demora: métricas técnicas (segundos), señales implícitas de los usuarios como regenerar o abandonar (horas), calificaciones de un modelo juez (horas) y evaluaciones de personas (días). Las rápidas miden poco de la calidad; las lentas, mucho.</p>
+        <p class="jr-like"><b>Es como</b> saber si una película es buena: la boletería del primer día es rápida pero dice poco; las críticas tardan más y dicen más.</p>
+        <dl class="jr-words">
+          <dt>Señal implícita</dt><dd>algo que el usuario hace sin calificar (regenerar, copiar, abandonar).</dd>
+          <dt>Señal explícita</dt><dd>pulgar arriba o abajo.</dd>
+        </dl>
+      </aside>
+
       <p>No hay una métrica que diga "el modelo responde bien". Hay varias familias, y cada una ve una parte con su propio retraso:</p>
 
       <figure class="figure">
@@ -243,6 +263,17 @@ GROUP BY m.model_version;</code></pre>
       </aside>
 
       <h2 id="evals"><span class="sec-num">22.3</span>Evals offline y sus barras de error</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un <b>eval offline</b> es un examen que se le toma a cada versión antes de que toque tráfico real: un conjunto de casos (golden set) con la respuesta esperada, separado por tareas. Dos reglas: mirar el resultado por categoría (el promedio esconde caídas) y calcular la barra de error (con 100 casos, una diferencia de 2 puntos es ruido; con 2 000, empieza a ser real).</p>
+        <p class="jr-like"><b>Es como</b> un examen de manejo con varias pruebas: sacar buena nota promedio no sirve si reprobaste estacionar.</p>
+        <dl class="jr-words">
+          <dt>Golden set</dt><dd>conjunto curado de casos con su respuesta correcta.</dd>
+          <dt>Barra de error / intervalo</dt><dd>cuánto podría variar el resultado solo por azar.</dd>
+          <dt>Eval pareado</dt><dd>las dos versiones responden los mismos casos y se compara caso por caso.</dd>
+        </dl>
+      </aside>
 
       <p>Un <dfn data-term="eval-offline">eval offline</dfn> es una batería de casos que se corre contra una versión antes de que toque tráfico real. Su materia prima es un <dfn data-term="golden-set">golden set</dfn>: un conjunto curado de entradas con la respuesta esperada, o con un criterio para corregirlas, separado por tareas. Lo que hace a un eval útil no es su tamaño sino que se parezca al tráfico del producto:</p>
 
@@ -428,6 +459,16 @@ print(1.96 * se)           # ≈ 0.0243: el intervalo (-0.004, 0.044) sí toca e
 
       <h2 id="shadow"><span class="sec-num">22.4</span>Shadow traffic</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El tráfico real trae preguntas que nadie imaginó. El <b>shadow traffic</b> copia una parte de las requests reales a la versión nueva, pero sus respuestas no las ve nadie: solo se comparan. Así se prueba con tráfico real sin riesgo, siempre que la versión en sombra no tenga efectos (no mande correos ni cobre).</p>
+        <p class="jr-like"><b>Es como</b> un piloto en entrenamiento que maneja un simulador conectado al vuelo real: ve todo lo que pasa, pero sus mandos no mueven el avión.</p>
+        <dl class="jr-words">
+          <dt>Shadow traffic</dt><dd>copia del tráfico real a una versión cuyas respuestas se descartan.</dd>
+          <dt>Efecto lateral</dt><dd>algo que la request cambia fuera de la respuesta (un correo, un pago).</dd>
+        </dl>
+      </aside>
+
       <p>Un eval offline usa casos elegidos por el equipo. El tráfico real tiene preguntas que nadie imaginó. El <dfn data-term="shadow-traffic">shadow traffic</dfn> une las dos cosas: el gateway copia una parte de las requests reales a la versión nueva, cuyas respuestas no ve nadie. En la tabla de estrategias del <a href="m11-observabilidad.html#despliegues">M11</a> era una fila; para un modelo es la primera vez que la versión nueva ve tráfico de verdad sin riesgo para los usuarios.</p>
 
       <div data-sim="shadowflow"></div>
@@ -445,6 +486,17 @@ print(1.96 * se)           # ≈ 0.0243: el intervalo (-0.004, 0.044) sí toca e
       <p>Qué se compara, request por request: el largo, si alguna de las dos rechazó, las herramientas que pidió cada una, la latencia y, sobre una muestra, un juez que elige la mejor de las dos (22.7). Supongamos que la primera lectura de la versión FP8 da respuestas un 3&#8239;% más cortas, la misma tasa de rechazos y una herramienta distinta en un 0.4&#8239;% de los casos, casi todos de búsqueda con contexto largo.</p>
 
       <h2 id="canary"><span class="sec-num">22.5</span>El canary de un modelo</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El <b>canary</b> manda una parte chica del tráfico real a la versión nueva y la agranda si va bien. Lo nuevo aquí: una "versión" no son solo los pesos, es todo lo que cambia el comportamiento (pesos, prompt de sistema, parámetros de muestreo, configuración del motor). Y se define de antemano qué número hace avanzar y qué número hace volver atrás.</p>
+        <p class="jr-like"><b>Es como</b> el canario en la mina: si algo anda mal, lo nota primero un grupo chico.</p>
+        <dl class="jr-words">
+          <dt>Canary</dt><dd>despliegue gradual a una parte del tráfico.</dd>
+          <dt>Rollback</dt><dd>volver a la versión anterior.</dd>
+          <dt>Criterio de avance</dt><dd>la condición medible para pasar al siguiente porcentaje.</dd>
+        </dl>
+      </aside>
 
       <p>El <a href="m19-router-flota.html#registry-canary">M19</a> ya armó la mecánica: la versión entra al registry, arranca réplicas, la tabla de rutas le da un porcentaje del tráfico asignado por un hash de la organización, y el rollback es volver al 0&#8239;% en segundos. Falta decidir qué es una versión, cuándo avanzar y cuándo volver.</p>
 
@@ -538,6 +590,16 @@ print(1.96 * se)           # ≈ 0.0243: el intervalo (-0.004, 0.044) sí toca e
 
       <h2 id="ab"><span class="sec-num">22.6</span>A/B tests y comparaciones por pares</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El canary pregunta "¿se rompió algo?"; el <b>A/B test</b> pregunta "¿es mejor para el producto?". Se reparte a los usuarios al azar entre dos versiones durante semanas y se miran métricas de producto (retención, tareas completadas). Las <b>comparaciones por pares</b> muestran dos respuestas a la misma pregunta y alguien elige la mejor: necesitan muchos menos casos.</p>
+        <p class="jr-like"><b>Es como</b> una degustación a ciegas: dos vasos sin etiqueta, ¿cuál prefieres?</p>
+        <dl class="jr-words">
+          <dt>A/B test</dt><dd>experimento con usuarios repartidos al azar entre dos variantes.</dd>
+          <dt>Comparación por pares</dt><dd>elegir la mejor de dos respuestas a lo mismo.</dd>
+        </dl>
+      </aside>
+
       <p>El canary responde "¿se rompió algo?". Un <dfn data-term="ab-test">A/B test</dfn> responde otra pregunta: "¿es mejor para el producto?". Se reparte a los usuarios al azar entre dos versiones durante semanas y se comparan métricas de producto, no de respuesta:</p>
 
       <div class="table-wrap">
@@ -567,6 +629,17 @@ print(1.96 * se)           # ≈ 0.0243: el intervalo (-0.004, 0.044) sí toca e
       <p>Sus límites enseñan qué cuidar en una comparación propia. Los votantes prefieren respuestas más largas y con más formato, y LMArena agregó un "control de estilo" que descuenta el largo y el markdown de la puntuación. <span class="badge badge--doc">Documentado</span> Y un trabajo de 2025, "The Leaderboard Illusion", mostró que algunos proveedores prueban muchas variantes privadas y publican solo la mejor, lo que infla su posición. <span class="badge badge--doc">Documentado</span> Dentro de tu producto, la versión del eval online de 22.2 es la misma idea con dos respuestas de tus versiones y un juez o un usuario que elige.</p>
 
       <h2 id="juez"><span class="sec-num">22.7</span>LLM como juez</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Ninguna empresa puede pagar personas para leer millones de respuestas. Un <b>LLM como juez</b> es un modelo que califica las respuestas de otro según una rúbrica. Tiene sesgos conocidos (prefiere la primera opción, las respuestas largas, las suyas), así que se calibra contra personas y se le pregunta en los dos órdenes.</p>
+        <p class="jr-like"><b>Es como</b> un ayudante de cátedra que corrige con la grilla del profesor: rápido y útil, pero el profesor revisa una muestra para ver que corrija bien.</p>
+        <dl class="jr-words">
+          <dt>Rúbrica</dt><dd>los criterios escritos para calificar.</dd>
+          <dt>Sesgo de posición</dt><dd>tendencia del juez a elegir la opción que aparece primero.</dd>
+          <dt>Calibrar</dt><dd>medir cuánto coincide el juez con personas.</dd>
+        </dl>
+      </aside>
 
       <p>Un <dfn data-term="llm-juez">LLM como juez</dfn> es un modelo que califica las respuestas de otro según una rúbrica escrita. Es lo que vuelve posibles los evals online: ninguna empresa puede pagar personas para leer el 2&#8239;% de 17 millones de respuestas por día. El paper de referencia, el de MT-Bench y Chatbot Arena (2023), encontró que GPT-4 como juez coincidía con las personas más del 80&#8239;% de las veces, tanto como las personas entre sí, y describió tres sesgos: <span class="badge badge--doc">Documentado</span></p>
 
@@ -663,6 +736,16 @@ def comparar(pregunta, a, b, juez):
       <p>El juez no necesita contestar en tiempo real, así que va por la API de batch con el 50&#8239;% de descuento (<a href="m17-api-streaming.html#batches">M17</a>). Frente a los 1.46 millones de dólares por mes de la flota, la muestra del 2&#8239;% es un 3&#8239;% del costo, y la del 0.2&#8239;%, un 0.3&#8239;%. Preguntar en los dos órdenes duplica la cuenta. La muestra no tiene que ser uniforme: se sobremuestrean las categorías chicas que importan, como las legales en español del trade-off de 22.5, y la versión nueva durante su canary.</p>
 
       <h2 id="deriva"><span class="sec-num">22.8</span>Regresiones silenciosas</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Las regresiones más caras no vienen de cambiar el modelo, sino de cambios que nadie trató como tales: una configuración del motor, un bug en la infraestructura, o el tráfico que cambia solo (<b>deriva</b>). Esta sección cuenta casos reales: tres bugs que degradaron respuestas durante semanas y una versión que daba la razón a todo.</p>
+        <p class="jr-like"><b>Es como</b> un horno que se descalibra de a poco: el pan sale cada día un poco peor, y nadie cambió la receta.</p>
+        <dl class="jr-words">
+          <dt>Deriva</dt><dd>el tráfico de entrada cambia y el modelo responde a cosas distintas de las que se probaron.</dd>
+          <dt>Servilismo (sycophancy)</dt><dd>el modelo da la razón al usuario aunque no la tenga.</dd>
+        </dl>
+      </aside>
 
       <p>Las regresiones más caras no vienen de cambiar el modelo. Vienen de cambios que nadie trató como un cambio de modelo:</p>
 
@@ -774,6 +857,17 @@ def comparar(pregunta, a, b, juez):
       <p>OpenAI anunció que los problemas de comportamiento pasarían a bloquear lanzamientos aunque las métricas sean positivas, una fase alfa opcional con usuarios que dan feedback antes del lanzamiento, y comunicación anticipada de los cambios, incluso los chicos. Lo que vale para cualquier equipo: un golden set de servilismo (preguntas donde la respuesta correcta es contradecir al usuario), y una regla escrita que diga que una alarma cualitativa de alguien que conoce el modelo detiene el canary hasta que se entienda.</p>
 
       <h2 id="guardrails"><span class="sec-num">22.9</span>Guardrails en capas</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un <b>guardrail</b> es un control fuera del modelo que revisa lo que entra o lo que sale y puede bloquearlo. Se ponen en capas: reglas baratas primero, clasificadores después. Ojo con la <b>tasa base</b>: si casi todo el tráfico es legítimo, un clasificador que se equivoca poco igual bloquea muchas más requests buenas que malas.</p>
+        <p class="jr-like"><b>Es como</b> el control de seguridad de un aeropuerto: si casi nadie lleva nada peligroso, la mayoría de las alarmas son falsas aunque la máquina sea buena.</p>
+        <dl class="jr-words">
+          <dt>Guardrail</dt><dd>control externo al modelo sobre su entrada o su salida.</dd>
+          <dt>Falso positivo</dt><dd>bloquear algo legítimo.</dd>
+          <dt>Tasa base</dt><dd>qué fracción del total es realmente el caso que buscas.</dd>
+        </dl>
+      </aside>
 
       <p>El <a href="m20-producto-chatgpt.html#moderacion">M20</a> ubicó la moderación: la entrada se clasifica en paralelo con el armado del contexto, la salida por tramos mientras se genera, y los casos dudosos van a una cola. Un <dfn data-term="guardrail">guardrail</dfn> generaliza esa idea: cualquier control fuera del modelo que revisa lo que entra o lo que sale y puede bloquear, modificar o marcar. Se arman en capas, de la más barata a la más cara:</p>
 
@@ -954,6 +1048,16 @@ def comparar(pregunta, a, b, juez):
 
       <h2 id="injection"><span class="sec-num">22.10</span>Prompt injection</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Una <b>prompt injection</b> es un texto que hace que el modelo siga instrucciones que no vienen de quien lo opera; la peor viene escondida en un documento o página que el modelo lee. No tiene solución completa porque el modelo recibe instrucciones y datos por el mismo canal. La defensa real es limitar qué puede hacer el modelo: nunca juntar datos privados, contenido no confiable y una forma de enviar datos afuera.</p>
+        <p class="jr-like"><b>Es como</b> un empleado que lee el correo de la empresa en voz alta y obedece cualquier orden que escuche, incluso si la orden estaba dentro de una carta de un desconocido.</p>
+        <dl class="jr-words">
+          <dt>Injection directa / indirecta</dt><dd>la escribe el usuario / viene escondida en contenido que el modelo lee.</dd>
+          <dt>Trifecta letal</dt><dd>datos privados + contenido no confiable + canal de salida en la misma sesión.</dd>
+        </dl>
+      </aside>
+
       <p>Una <dfn data-term="prompt-injection">prompt injection</dfn> es un texto que logra que el modelo siga instrucciones que no vienen de quien lo opera. Es el primer riesgo del OWASP Top 10 para aplicaciones con LLM desde su primera edición. <span class="badge badge--doc">Documentado</span> La versión directa la escribe el usuario ("ignora tus instrucciones anteriores…") y su daño suele limitarse a lo que ese usuario ya podía hacer. La peligrosa es la <dfn data-term="injection-indirecta">injection indirecta</dfn>: la instrucción viene escondida en un contenido que el modelo lee para hacer su trabajo, como una página web, un PDF, un correo o el resultado de una herramienta, y se ejecuta con los permisos del usuario víctima.</p>
 
       <div data-sim="injection"></div>
@@ -1091,6 +1195,17 @@ def comparar(pregunta, a, b, juez):
 
       <h2 id="abuso"><span class="sec-num">22.11</span>Abuso, jailbreaks y red teaming</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Una API de modelos es un recurso caro abierto a internet y atrae abuso: cuentas robadas, reventa, generación masiva de spam. Un <b>jailbreak</b> es cuando el usuario intenta saltarse las reglas del modelo; el <b>red teaming</b> es atacar tu propio sistema a propósito para encontrar esas grietas antes.</p>
+        <p class="jr-like"><b>Es como</b> un cerrajero que contratas para que intente entrar a tu casa y te diga por dónde pudo.</p>
+        <dl class="jr-words">
+          <dt>Jailbreak</dt><dd>el usuario ataca las reglas del modelo.</dd>
+          <dt>Red teaming</dt><dd>ataques controlados para encontrar fallas.</dd>
+          <dt>OWASP Top 10 para LLM</dt><dd>la lista de riesgos más comunes en aplicaciones con LLM.</dd>
+        </dl>
+      </aside>
+
       <p>Una API de modelos es un recurso caro abierto a internet, y atrae abuso de varias formas:</p>
 
       <div class="table-wrap">
@@ -1134,6 +1249,17 @@ def comparar(pregunta, a, b, juez):
       </div>
 
       <h2 id="datos"><span class="sec-num">22.12</span>Los datos de los usuarios</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Las conversaciones guardan lo que la gente no cuenta a nadie. Operar un modelo es cuidar esos datos, y el riesgo está en las copias: logs, traces, evals, datasets de entrenamiento, el proveedor de la API. Esta sección lista doce lugares donde queda una conversación y cuáles se borran, cuáles vencen y cuáles hay que perseguir.</p>
+        <p class="jr-like"><b>Es como</b> un papel con tu contraseña: tirarlo a la basura no sirve si antes le sacaste diez fotocopias.</p>
+        <dl class="jr-words">
+          <dt>Subencargado</dt><dd>un tercero que procesa los datos por ti (el proveedor del modelo).</dd>
+          <dt>Retención</dt><dd>cuánto tiempo se guarda un dato.</dd>
+          <dt>Borrado en cascada</dt><dd>borrar un dato y todas sus copias derivadas.</dd>
+        </dl>
+      </aside>
 
       <p>Una conversación con un modelo contiene lo que la gente no le cuenta a nadie: contratos, diagnósticos, código propietario, problemas personales. Operar un modelo es custodiar esos datos, y el riesgo no está donde parece.</p>
 
@@ -1233,6 +1359,17 @@ def redactar(texto):
     return TARJETA.sub("[TARJETA]", CORREO.sub("[CORREO]", texto))</code></pre>
 
       <h2 id="incidentes"><span class="sec-num">22.13</span>Incidentes de modelos</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un incidente de modelo se maneja como cualquier otro (un responsable, un canal, un postmortem sin culpas), pero con <b>runbooks</b> propios: cómo saber si la calidad cayó, dónde mirar primero y cómo encontrar una GPU que calcula mal sin dar ningún error (se compara con sus réplicas hermanas). Al final hay cinco incidentes para practicar.</p>
+        <p class="jr-like"><b>Es como</b> la checklist de un piloto ante una alarma: no se improvisa, se sigue una lista de pasos.</p>
+        <dl class="jr-words">
+          <dt>Runbook</dt><dd>guía paso a paso para un tipo de incidente.</dd>
+          <dt>SDC</dt><dd>Silent Data Corruption: hardware que calcula mal sin avisar.</dd>
+          <dt>Postmortem</dt><dd>informe posterior: qué pasó, por qué y qué se cambia.</dd>
+        </dl>
+      </aside>
 
       <p>Los incidentes de un modelo usan el mismo proceso del <a href="m11-observabilidad.html#incidentes">M11</a>: un responsable, un canal, comunicación con horario y un postmortem sin culpas. Lo que cambia son las severidades y los runbooks.</p>
 
@@ -1397,6 +1534,15 @@ def redactar(texto):
       <div data-exercise="m22-borrar"></div>
 
       <h2 id="ciclo"><span class="sec-num">22.14</span>El ciclo de vida de una versión</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Todo el módulo en una figura: una versión recorre compuertas que miran cada vez más tráfico real (eval offline, shadow, canary, A/B), y en cualquiera puede volver atrás. La sección termina con la checklist de lanzamiento de la versión del ejemplo.</p>
+        <p class="jr-like"><b>Es como</b> los controles de calidad de una fábrica: cada estación revisa algo que la anterior no podía ver.</p>
+        <dl class="jr-words">
+          <dt>Compuerta</dt><dd>un control que la versión tiene que pasar para avanzar.</dd>
+        </dl>
+      </aside>
 
       <p>Todo el módulo cabe en una figura: una versión recorre compuertas que miran cada vez más tráfico real, y cualquiera puede devolverla.</p>
 

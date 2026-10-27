@@ -60,6 +60,17 @@
 
       <h2 id="motor"><span class="sec-num">15.1</span>Qué hace un motor de inferencia</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un <b>motor de inferencia</b> (vLLM, SGLang, TensorRT-LLM) es el programa que toma un modelo y lo sirve a muchos usuarios a la vez. Por dentro es un bucle que da decenas de vueltas por segundo. En cada vuelta, un <b>scheduler</b> decide quién avanza (¿hay memoria para su KV cache?, ¿cuánto prefill cabe?, ¿a quién sacar si se llena?) y después la GPU corre una pasada para todos los elegidos.</p>
+        <p class="jr-like"><b>Es como</b> el jefe de cocina de un restaurante lleno: en cada ronda decide qué platos entran a la plancha, cuáles siguen y cuál se aparta si no hay lugar.</p>
+        <dl class="jr-words">
+          <dt>Motor de inferencia</dt><dd>el servidor que ejecuta el modelo para muchas requests.</dd>
+          <dt>Scheduler</dt><dd>la parte que decide qué requests entran en cada vuelta.</dd>
+          <dt>Iteración</dt><dd>una vuelta del bucle: una pasada del modelo para el batch.</dd>
+        </dl>
+      </aside>
+
       <p>Un motor de inferencia (vLLM, SGLang, TensorRT-LLM, TGI) toma un modelo y lo sirve a muchos usuarios a la vez. Por fuera expone una API, casi siempre compatible con la de OpenAI; por dentro es un bucle que corre decenas de veces por segundo:</p>
 
       <figure class="figure">
@@ -108,6 +119,16 @@
 
       <h2 id="batching"><span class="sec-num">15.2</span>De static batching a continuous batching</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Juntar usuarios en el mismo paso hace rendir la GPU. La forma ingenua (<b>static batching</b>) arma un grupo y espera a que termine la respuesta más larga antes de dejar entrar a otros. El <b>continuous batching</b> decide el grupo en cada paso: el que termina sale y el que espera entra en ese mismo paso. Hoy lo usan todos los motores.</p>
+        <p class="jr-like"><b>Es como</b> un ascensor que espera a que bajen todos antes de subir a nadie, contra una escalera mecánica donde cada uno sube y baja cuando quiere.</p>
+        <dl class="jr-words">
+          <dt>Static batching</dt><dd>el grupo es fijo hasta que termina el último.</dd>
+          <dt>Continuous batching</dt><dd>el grupo se rearma en cada paso de decode.</dd>
+        </dl>
+      </aside>
+
       <p>La forma ingenua de juntar requests es el static batching: se arma un batch, se generan todas sus respuestas y recién cuando termina la más larga entra el siguiente grupo. Una respuesta de 10 tokens ocupa su lugar tanto tiempo como una de 240, y las requests nuevas esperan afuera aunque haya lugares vacíos.</p>
 
       <p>El <dfn data-term="continuous-batching">continuous batching</dfn>, o scheduling por iteración, lo resuelve decidiendo el batch en cada paso de decode: la request que terminó sale y una que esperaba entra en ese mismo paso. La idea se publicó como Orca (OSDI 2022) y hoy la usan todos los motores. <span class="badge badge--doc">Documentado</span> Compara los dos con las mismas llegadas:</p>
@@ -117,6 +138,17 @@
       <p>Con respuestas de largo parecido, la diferencia es chica; con largos muy variables, que es lo normal en un chat, el static batching deja la mayor parte de la GPU esperando a la respuesta más larga de cada grupo, y la cola crece aunque la GPU esté medio vacía.</p>
 
       <h2 id="paged"><span class="sec-num">15.3</span>PagedAttention: el KV cache como memoria virtual</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Cada usuario necesita memoria para su KV cache, pero no se sabe de antemano cuánto va a escribir. Reservar el máximo para todos desperdicia casi toda la memoria. <b>PagedAttention</b> reparte la memoria en bloques chicos que se piden a medida que hacen falta, con una tabla que dice dónde quedó cada bloque. Así el desperdicio se limita al último bloque de cada request, y dos requests pueden compartir bloques iguales.</p>
+        <p class="jr-like"><b>Es como</b> un estacionamiento que te da un lugar libre cualquiera cada vez que llegas, en vez de reservarte diez lugares juntos por si vienes con más autos.</p>
+        <dl class="jr-words">
+          <dt>Fragmentación</dt><dd>memoria reservada que nadie usa.</dd>
+          <dt>Bloque</dt><dd>trozo fijo de KV cache (por ejemplo, 16 tokens).</dd>
+          <dt>Tabla de bloques</dt><dd>traduce los bloques de una request a lugares físicos de la memoria.</dd>
+        </dl>
+      </aside>
 
       <p>Continuous batching necesita memoria para el KV cache de cada request que entra. Los primeros sistemas reservaban de una vez el espacio para el contexto máximo, contiguo: una request que termina usando 2000 tokens de una reserva de 32 768 desperdicia el 94&#8239;% de su espacio. El paper de vLLM midió que los sistemas de entonces desperdiciaban entre el 60 y el 80&#8239;% de la memoria del KV cache. <span class="badge badge--doc">Documentado</span></p>
 
@@ -327,6 +359,17 @@
 
       <h2 id="prefix"><span class="sec-num">15.4</span>Prefix caching</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Muchas requests empiezan igual: el mismo prompt de sistema o toda la conversación anterior. El <b>prefix caching</b> guarda el KV cache de ese comienzo y lo reutiliza, así esos tokens no se vuelven a calcular. Cada bloque se identifica con un hash de sus tokens y de todo lo anterior: se reutiliza solo si todo lo previo es idéntico.</p>
+        <p class="jr-like"><b>Es como</b> una fotocopia de las primeras páginas de un formulario que todos llenan igual: solo escribes a mano lo que cambia.</p>
+        <dl class="jr-words">
+          <dt>Prefijo</dt><dd>el comienzo común de varios prompts.</dd>
+          <dt>Hash encadenado</dt><dd>huella que depende del bloque y de todos los anteriores.</dd>
+          <dt>Desalojar</dt><dd>borrar del caché lo que hace rato no se usa para hacer lugar.</dd>
+        </dl>
+      </aside>
+
       <p>Muchas requests empiezan igual: el mismo prompt de sistema de miles de tokens, los mismos ejemplos, o toda la conversación anterior cuando el usuario manda un mensaje nuevo. El <dfn data-term="prefix-caching">prefix caching</dfn> guarda el KV cache de esos prefijos y lo reutiliza: si los primeros 3000 tokens de una request coinciden con algo que ya está en memoria, su prefill empieza en el token 3001.</p>
 
       <p>El motor identifica cada bloque por un hash de sus tokens y de todos los anteriores, así dos requests comparten un bloque solo si todo lo previo es idéntico. SGLang organiza estos prefijos en un árbol (RadixAttention) y vLLM, en una tabla de hashes; en los dos casos los bloques sin uso se desalojan por LRU cuando falta memoria. El efecto es enorme en un chat: cada mensaje nuevo de una conversación reutiliza el prefill de todos los anteriores, siempre que la request caiga en la réplica que tiene ese cache. Esa condición la resuelve el router con routing consciente del prefijo (M19), y el mismo mecanismo es lo que las APIs cobran más barato como prompt caching (M16).</p>
@@ -402,6 +445,16 @@
       </figure>
 
       <h2 id="chunked"><span class="sec-num">15.5</span>Chunked prefill: mezclar las dos fases</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un prompt muy largo, procesado de una vez, congela a todos los que están generando (en el ejemplo, 1.7 segundos sin tokens). El <b>chunked prefill</b> lo parte en trozos y mete un trozo por paso junto con el decode de los demás. El tamaño del trozo reparte el costo: trozos grandes = el nuevo arranca antes, los demás sienten saltos más grandes.</p>
+        <p class="jr-like"><b>Es como</b> una caja de supermercado que intercala los productos de un carro enorme con los de las personas de una sola compra.</p>
+        <dl class="jr-words">
+          <dt>Chunked prefill</dt><dd>procesar el prompt en trozos repartidos en varios pasos.</dd>
+          <dt>TPOT</dt><dd>tiempo entre un token y el siguiente para un usuario.</dd>
+        </dl>
+      </aside>
 
       <p>Un prefill de 30&#8239;000 tokens ocupa a una réplica del 70B en FP8 sobre 4 H100 unos 1.7 segundos (<a href="m121-prefill-decode-a-fondo.html#juntas">M12.1</a>). Si el scheduler lo mete entero en una iteración, todos los usuarios que están en decode ven un salto de 1.7 segundos entre dos tokens: el TPOT de todos empeora por culpa de una sola request. El <dfn data-term="chunked-prefill">chunked prefill</dfn> parte el prompt en trozos de, por ejemplo, 2048 tokens y en cada iteración mezcla un trozo con los pasos de decode de los demás, sin pasar de un presupuesto de tokens por iteración. <span class="badge badge--doc">Documentado</span></p>
 
@@ -592,6 +645,16 @@
 
       <h2 id="desagregado"><span class="sec-num">15.6</span>Prefill y decode en máquinas distintas</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Prefill y decode necesitan cosas opuestas: el primero, cómputo; el segundo, memoria rápida. La <b>desagregación</b> los pone en grupos de GPUs distintos, cada uno dimensionado para lo suyo, y pasa el KV cache de uno al otro por la red. Conviene con prompts largos y metas de latencia exigentes; con prompts cortos, no compensa el costo de mover datos.</p>
+        <p class="jr-like"><b>Es como</b> una panadería donde un equipo amasa y otro hornea, en salas distintas, y la masa viaja en carritos de una sala a la otra.</p>
+        <dl class="jr-words">
+          <dt>Desagregación</dt><dd>separar prefill y decode en máquinas distintas.</dd>
+          <dt>SLO</dt><dd>la meta de servicio (por ejemplo, primer token en menos de 1 s).</dd>
+        </dl>
+      </aside>
+
       <p>El chunked prefill convive con un problema de fondo: las dos fases compiten por las mismas GPUs y tienen cuellos de botella opuestos. La <dfn data-term="desagregacion">desagregación</dfn> las separa en dos grupos de GPUs, cada uno dimensionado para lo suyo, y mueve el KV cache del uno al otro:</p>
 
       <figure class="figure">
@@ -625,6 +688,17 @@
       <p>La propusieron DistServe y Splitwise en 2024; Mooncake, el sistema de serving de Kimi, la usa en producción, y NVIDIA Dynamo y llm-d la ofrecen como opción de despliegue. <span class="badge badge--doc">Documentado</span> Conviene cuando los prompts son largos y los SLOs de TTFT y de TPOT son exigentes a la vez; con prompts cortos, el costo de mover el cache y de operar dos grupos no se paga.</p>
 
       <h2 id="speculative"><span class="sec-num">15.7</span>Speculative decoding</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>En el decode la GPU tiene cuentas de sobra, porque espera a la memoria. El <b>speculative decoding</b> aprovecha eso: un modelo chico adivina los próximos tokens y el grande los verifica todos en una sola pasada. Los aciertos se quedan; al primer error se corrige. Si el chico acierta seguido, el grande produce varios tokens por pasada en lugar de uno.</p>
+        <p class="jr-like"><b>Es como</b> un ayudante que escribe un borrador de la frase y el jefe la revisa de un vistazo: si está bien, se ahorraron varias palabras dictadas una por una.</p>
+        <dl class="jr-words">
+          <dt>Draft</dt><dd>el modelo chico que propone tokens.</dd>
+          <dt>Tasa de aceptación (α)</dt><dd>probabilidad de que el grande acepte cada token propuesto.</dd>
+          <dt>k</dt><dd>cuántos tokens propone el draft por vuelta.</dd>
+        </dl>
+      </aside>
 
       <p>En el decode con pocos usuarios, la GPU tiene cómputo de sobra. El <dfn data-term="speculative-decoding">speculative decoding</dfn> lo aprovecha: un modelo chico y rápido (el draft) propone los próximos k tokens, y el modelo grande los verifica todos en una sola pasada, como si fuera un pequeño prefill. Los tokens se aceptan mientras coincidan con lo que el modelo grande habría elegido; en el primer desacuerdo se corrige y se sigue. El resultado sale con la misma distribución que el modelo grande solo, no es una aproximación. <span class="badge badge--doc">Documentado</span></p>
 
@@ -694,6 +768,18 @@
       </aside>
 
       <h2 id="paralelismo"><span class="sec-num">15.8</span>Paralelismo: tensor, pipeline, expertos y datos</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Cuando el modelo no entra en una GPU se reparte, y hay cuatro formas que se combinan: partir cada capa (<b>tensor</b>), poner grupos de capas en GPUs distintas (<b>pipeline</b>), poner los expertos de un modelo MoE en GPUs distintas (<b>expertos</b>) y tener réplicas completas (<b>datos</b>). Debajo, los kernels como FlashAttention hacen que cada pieza mueva menos memoria.</p>
+        <p class="jr-like"><b>Es como</b> una obra grande: puedes dividir cada pared entre varios albañiles, dar un piso a cada cuadrilla, tener especialistas que solo hacen baños, o construir varias casas iguales a la vez.</p>
+        <dl class="jr-words">
+          <dt>Tensor parallelism</dt><dd>cada capa partida entre GPUs.</dd>
+          <dt>Pipeline parallelism</dt><dd>cada GPU tiene un tramo de capas.</dd>
+          <dt>MoE / expertos</dt><dd>modelo con muchas sub-redes; cada token usa solo algunas.</dd>
+          <dt>Kernel</dt><dd>función que corre en la GPU (por ejemplo, la atención).</dd>
+        </dl>
+      </aside>
 
       <figure class="figure">
         <div class="figure-frame">
@@ -767,6 +853,14 @@
       <p>Por debajo de todo esto hay trabajo a nivel de kernel que también es parte del motor. FlashAttention calcula la atención por bloques que caben en la SRAM del chip, sin escribir en la HBM la matriz de atención completa: el mismo resultado exacto con mucho menos tráfico de memoria (M13). Los CUDA graphs graban la secuencia de kernels de un paso de decode y la relanzan de una vez, porque con batches chicos el tiempo de lanzar cientos de kernels uno por uno llega a pesar tanto como el cómputo.</p>
 
       <h2 id="elegir"><span class="sec-num">15.9</span>Elegir y configurar un motor</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un ejemplo completo: el comando para servir el modelo de 70B con vLLM, con las opciones de este módulo, y un cliente en Python que lo llama con la librería de OpenAI. Cada opción del comando se conecta con una caja del motor de 15.1.</p>
+        <dl class="jr-words">
+          <dt>Compatible con OpenAI</dt><dd>expone la misma API, así cualquier cliente de OpenAI funciona.</dd>
+        </dl>
+      </aside>
 
       <div class="table-wrap">
         <table class="t">
