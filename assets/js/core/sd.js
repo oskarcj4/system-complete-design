@@ -141,7 +141,7 @@
   SD.fmt = { num: num, sig: sig, words: words, bytes: bytes, bitrate: bitrate, pct: pct, nines: nines, duration: duration };
 
   /* ---------------------------------------------------------------------------
-     Resaltado mínimo para <pre data-lang="json|http|sse|sql|python|shell|js|java">. Las guías de proyectos resaltan "javascript" con su propio resaltador (project-guide.js).
+     Resaltado mínimo para <pre data-lang="json|http|sse|sql|python|shell|js|java|php|html">. Las guías de proyectos resaltan "javascript" con su propio resaltador (project-guide.js).
      --------------------------------------------------------------------------- */
   function span(cls, text) { return '<span class="' + cls + '">' + SD.escape(text) + '</span>'; }
 
@@ -287,7 +287,52 @@
     return out + SD.escape(src.slice(last));
   }
 
-  var HL = { json: hlJSON, http: hlHTTP, sse: hlSSE, sql: hlSQL, python: hlPython, shell: hlShell, js: hlJS, java: hlJava };
+  /* PHP de la Parte IX: variables con $, cadenas, comentarios (//, # y bloque), las etiquetas <?php ?> y llamadas */
+  var PHP_KW = /^(function|return|if|else|elseif|foreach|for|while|as|new|try|catch|finally|throw|class|final|private|public|protected|static|const|require|require_once|include|include_once|echo|null|true|false|array|fn|match|declare|use|namespace|exit|isset|empty|int|string|bool|void)$/;
+  function hlPHP(src) {
+    var re = /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\/\/[^\n]*|#(?!\[)[^\n]*|\/\*[\s\S]*?\*\/)|(<\?php|<\?=|\?>)|(\$[A-Za-z_]\w*)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_]\w*)(\s*\()?/g;
+    var out = '', last = 0, m;
+    while ((m = re.exec(src))) {
+      out += SD.escape(src.slice(last, m.index));
+      if (m[6]) {
+        if (PHP_KW.test(m[6])) out += span('c-m', m[6]);
+        else if (m[7]) out += span('c-k', m[6]);
+        else out += SD.escape(m[6]);
+        if (m[7]) out += SD.escape(m[7]);
+      } else if (m[1]) out += span('c-s', m[1]);
+      else if (m[2]) out += span('c-c', m[2]);
+      else if (m[3]) out += span('c-m', m[3]);
+      else if (m[4]) out += span('c-h', m[4]);
+      else out += span('c-n', m[5]);
+      last = re.lastIndex;
+    }
+    return out + SD.escape(src.slice(last));
+  }
+
+  /* HTML: comentarios, nombres de etiqueta, atributos y sus valores */
+  function hlHTML(src) {
+    var re = /(<!--[\s\S]*?-->)|(<\/?)([A-Za-z][\w-]*)([^>]*)(>)/g;
+    var out = '', last = 0, m;
+    function attrs(a) {
+      return a.replace(/([^\s=]+)(=)?("[^"]*"|'[^']*'|[^\s"'>]+)?/g, function (all, n, eq, v) {
+        return '\u0001' + n + '\u0002' + (eq || '') + (v ? '\u0003' + v + '\u0004' : '');
+      }).split(/(\u0001|\u0002|\u0003|\u0004)/).reduce(function (acc, part) {
+        if (part === '\u0001') acc.mode = 'n'; else if (part === '\u0003') acc.mode = 'v';
+        else if (part === '\u0002' || part === '\u0004') acc.mode = '';
+        else acc.html += acc.mode === 'n' ? span('c-h', part) : acc.mode === 'v' ? span('c-s', part) : SD.escape(part);
+        return acc;
+      }, { html: '', mode: '' }).html;
+    }
+    while ((m = re.exec(src))) {
+      out += SD.escape(src.slice(last, m.index));
+      if (m[1]) out += span('c-c', m[1]);
+      else out += SD.escape(m[2]) + span('c-m', m[3]) + attrs(m[4]) + SD.escape(m[5]);
+      last = re.lastIndex;
+    }
+    return out + SD.escape(src.slice(last));
+  }
+
+  var HL = { json: hlJSON, http: hlHTTP, sse: hlSSE, sql: hlSQL, python: hlPython, shell: hlShell, js: hlJS, java: hlJava, php: hlPHP, html: hlHTML };
 
   SD.highlight = function (root) {
     (root || document).querySelectorAll('pre[data-lang]').forEach(function (pre) {

@@ -1,0 +1,962 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M59. Detection engineering y el SOC</title>
+<meta name="description" content="Qué hace un SOC y cómo se construyen las detecciones: qué registrar y cuánto cuesta, normalizar con ECS u OCSF, SIEM y retención, MITRE ATT&CK como mapa de cobertura, reglas Sigma, detection as code, precisión, fatiga de alertas, la pirámide del dolor y la caza de amenazas.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m59">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Detection engineering y el SOC</h1>
+        <p class="lead">Prevenir no alcanza: algún control va a fallar. Detectar es la capacidad de enterarte a tiempo, y no sale de comprar un SIEM sino de escribir, probar y medir reglas como se escribe el resto del software.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M59</dd></div>
+          <div><dt>Parte</dt><dd>VII. Blue Team y DevSecOps</dd></div>
+          <div><dt>Duración</dt><dd>140 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M11, M32, M54</dd></div>
+          <div><dt>Estado</dt><dd data-status="m59">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Explicar qué hace un <b>SOC</b> y recorrer el ciclo de una alerta, del evento al caso.</li>
+    <li>Elegir <b>qué registrar</b> según la señal que aporta y lo que cuesta guardarlo, y hacer la cuenta del volumen.</li>
+    <li>Describir el camino de un log: recolectar, <b>normalizar</b> con ECS u OCSF, enriquecer y guardar en un <b>SIEM</b> con retención por niveles.</li>
+    <li>Usar <b>MITRE ATT&amp;CK</b> como mapa de cobertura y escribir una regla <b>Sigma</b> con su correlación.</li>
+    <li>Tratar las detecciones como código: <b>pruebas, backtest, revisión y métricas</b> de precisión y recall.</li>
+    <li>Explicar la <b>fatiga de alertas</b>, la tasa base y la <b>pirámide del dolor</b>, y cuándo conviene salir a cazar.</li>
+  </ul>
+</section>
+
+<p>En <a href="m54-threat-modeling.html#tienda">M54</a> la tienda decidió qué amenazas mitigar. Algunas quedaron mitigadas a medias o aceptadas, y M54 lo dijo claro: cada una de ellas es una candidata a detección. En <a href="m11-observabilidad.html#logs">M11</a> aprendiste a registrar y a alertar sobre síntomas de un servicio. Este módulo junta las dos cosas: <b>registrar y alertar para encontrar a una persona que no debería estar ahí</b>.</p>
+
+<p>La diferencia con la observabilidad de M11 es el adversario. Un disco que se llena no se esconde; un atacante sí. Las reglas de seguridad buscan comportamientos de alguien que intenta parecer normal, y por eso el problema central del módulo no es detectar, sino <b>detectar sin ahogarse en falsos positivos</b>.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>La sala de monitoreo de un centro comercial. Las cámaras son las fuentes; las pantallas, el SIEM; el guardia que mira, el analista. Una alarma que suena cada vez que alguien corre hacia la salida hace que el guardia deje de mirar. Las buenas reglas se parecen a "alguien entró al depósito fuera de horario con una tarjeta de otra persona": pocas veces, y cuando suena, vale la pena ir.</p>
+</aside>
+
+<h2 id="lamina">La lámina: el vocabulario en una imagen</h2>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 420" role="img" aria-labelledby="f59Lt f59Ld">
+<title id="f59Lt">Lámina 59.A: el camino de una detección</title>
+<desc id="f59Ld">De izquierda a derecha: seis fuentes de telemetría (autenticación, procesos con EDR, red y DNS, nube, audit log de Kubernetes y aplicación) llegan a un colector, pasan por normalización y enriquecimiento y se guardan en el SIEM. Un motor de reglas, alimentado por reglas Sigma versionadas en git y ordenadas con MITRE ATT&amp;CK, genera alertas. Un analista del SOC hace el triaje, abre un caso que pasa a respuesta a incidentes, y también busca a mano en el SIEM (caza de amenazas). Once marcas numeradas señalan el vocabulario.</desc>
+<defs><marker id="f59La" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="46" width="140" height="38" rx="8"/>
+<text class="dg-tiny" x="84.0" y="69.0" text-anchor="middle">Autenticación</text>
+<path class="dg-edge" d="M154 65 L186 165" marker-end="url(#f59La)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="96" width="140" height="38" rx="8"/>
+<text class="dg-tiny" x="84.0" y="119.0" text-anchor="middle">Procesos (EDR)</text>
+<path class="dg-edge" d="M154 115 L186 165" marker-end="url(#f59La)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="146" width="140" height="38" rx="8"/>
+<text class="dg-tiny" x="84.0" y="169.0" text-anchor="middle">Red y DNS</text>
+<path class="dg-edge" d="M154 165 L186 165" marker-end="url(#f59La)"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="196" width="140" height="38" rx="8"/>
+<text class="dg-tiny" x="84.0" y="219.0" text-anchor="middle">Nube (CloudTrail)</text>
+<path class="dg-edge" d="M154 215 L186 165" marker-end="url(#f59La)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="14" y="246" width="140" height="38" rx="8"/>
+<text class="dg-tiny" x="84.0" y="269.0" text-anchor="middle">Kubernetes audit</text>
+<path class="dg-edge" d="M154 265 L186 165" marker-end="url(#f59La)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="296" width="140" height="38" rx="8"/>
+<text class="dg-tiny" x="84.0" y="319.0" text-anchor="middle">Aplicación</text>
+<path class="dg-edge" d="M154 315 L186 165" marker-end="url(#f59La)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="188" y="140" width="104" height="50" rx="8"/>
+<text class="dg-small" x="240.0" y="161.5" text-anchor="middle">Colector</text>
+<text class="dg-tiny" x="240.0" y="176.5" text-anchor="middle">agentes, syslog</text>
+<path class="dg-edge" d="M292 165 L318 165" marker-end="url(#f59La)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="320" y="140" width="120" height="50" rx="8"/>
+<text class="dg-small" x="380.0" y="161.5" text-anchor="middle">Normalizar</text>
+<text class="dg-tiny" x="380.0" y="176.5" text-anchor="middle">y enriquecer</text>
+<path class="dg-edge" d="M440 165 L466 165" marker-end="url(#f59La)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="468" y="130" width="120" height="70" rx="8"/>
+<text class="dg-label" x="528.0" y="161.5" text-anchor="middle">SIEM</text>
+<text class="dg-tiny" x="528.0" y="176.5" text-anchor="middle">caliente y frío</text>
+<path class="dg-edge" d="M588 165 L614 165" marker-end="url(#f59La)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="616" y="140" width="140" height="50" rx="8"/>
+<text class="dg-small" x="686.0" y="161.5" text-anchor="middle">Motor de reglas</text>
+<text class="dg-tiny" x="686.0" y="176.5" text-anchor="middle">corre cada regla</text>
+<rect class="dg-box dg-box--em" x="616" y="40" width="140" height="50" rx="8"/>
+<text class="dg-small" x="686.0" y="61.5" text-anchor="middle">Reglas en git</text>
+<text class="dg-tiny" x="686.0" y="76.5" text-anchor="middle">Sigma, con pruebas</text>
+<path class="dg-edge" d="M686 90 L686 138" marker-end="url(#f59La)"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="468" y="40" width="120" height="50" rx="8"/>
+<text class="dg-small" x="528.0" y="61.5" text-anchor="middle">MITRE ATT&amp;CK</text>
+<text class="dg-tiny" x="528.0" y="76.5" text-anchor="middle">mapa de cobertura</text>
+<path class="dg-edge" d="M588 65 L614 65" marker-end="url(#f59La)" style="stroke-dasharray:5 4"/>
+<rect class="dg-warnbox" x="616" y="290" width="140" height="50" rx="8"/>
+<text class="dg-small" x="686.0" y="311.5" text-anchor="middle">Alerta</text>
+<text class="dg-tiny" x="686.0" y="326.5" text-anchor="middle">con su contexto</text>
+<path class="dg-edge" d="M686 190 L686 288" marker-end="url(#f59La)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="430" y="290" width="150" height="50" rx="8"/>
+<text class="dg-small" x="505.0" y="311.5" text-anchor="middle">Analista del SOC</text>
+<text class="dg-tiny" x="505.0" y="326.5" text-anchor="middle">triaje</text>
+<path class="dg-edge" d="M616 315 L582 315" marker-end="url(#f59La)"/>
+<rect class="dg-box" x="214" y="290" width="170" height="50" rx="8"/>
+<text class="dg-small" x="299.0" y="311.5" text-anchor="middle">Caso y respuesta</text>
+<text class="dg-tiny" x="299.0" y="326.5" text-anchor="middle">a incidentes (M60)</text>
+<path class="dg-edge" d="M430 315 L386 315" marker-end="url(#f59La)"/>
+<path class="dg-edge" d="M505 290 L520 202" marker-end="url(#f59La)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="548" y="252" text-anchor="middle">caza</text>
+<text class="dg-tiny" x="14" y="30" text-anchor="start">Fuentes de telemetría</text>
+<text class="dg-tiny" x="400" y="400" text-anchor="middle">Cada flecha es un lugar donde una señal se puede perder: sin fuente, sin parseo, sin regla o sin nadie que mire.</text>
+<g class="pl-pin"><circle cx="16" cy="48" r="11"/><text x="16" y="52" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="16" cy="98" r="11"/><text x="16" y="102" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="190" cy="142" r="11"/><text x="190" y="146" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="322" cy="142" r="11"/><text x="322" y="146" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="470" cy="132" r="11"/><text x="470" y="136" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="618" cy="142" r="11"/><text x="618" y="146" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="618" cy="42" r="11"/><text x="618" y="46" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="470" cy="42" r="11"/><text x="470" y="46" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="618" cy="292" r="11"/><text x="618" y="296" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="432" cy="292" r="11"/><text x="432" y="296" text-anchor="middle">10</text></g>
+<g class="pl-pin"><circle cx="522" cy="234" r="11"/><text x="522" y="238" text-anchor="middle">11</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 59.A.</b> El camino de una detección en Tienda Norte, de la fuente al caso. Todo el módulo recorre este dibujo de izquierda a derecha.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Fuente de telemetría</b><span>Cualquier sistema que produce eventos: un servidor, la nube, el clúster, la aplicación. <a href="#fuentes">59.2</a></span></li>
+  <li><b>EDR</b><span><span class="no-autolink">Agente</span> en cada máquina que registra procesos, archivos y conexiones, y puede aislar el equipo. <a href="#fuentes">59.2</a></span></li>
+  <li><b>Colector</b><span>Lo que junta los eventos y los saca de la máquina antes de que alguien los borre. <a href="#pipeline-logs">59.3</a></span></li>
+  <li><b class="no-autolink">Normalización</b><span>Dar a todos los eventos los mismos nombres de campo (ECS u OCSF) y agregar contexto. <a href="#pipeline-logs">59.3</a></span></li>
+  <li><b>SIEM</b><span>Donde se guardan, se buscan y se correlacionan los eventos de seguridad. <a href="#siem">59.4</a></span></li>
+  <li><b>Regla de detección</b><span>Una condición sobre los eventos que, si se cumple, genera una alerta. <a href="#sigma">59.6</a></span></li>
+  <li><b>Detection as code</b><span>Las reglas viven en git, con pruebas, revisión y despliegue automático. <a href="#detection-as-code">59.7</a></span></li>
+  <li><b>MITRE ATT&amp;CK</b><span>El catálogo de tácticas y técnicas reales que sirve de mapa de cobertura. <a href="#attack">59.5</a></span></li>
+  <li><b>Alerta</b><span>El resultado de una regla: qué pasó, sobre qué y con qué contexto. <a href="#soc">59.1</a></span></li>
+  <li><b>SOC y triaje</b><span>Las personas que deciden si una alerta es real. <a href="#soc">59.1</a></span></li>
+  <li><b>Caza de amenazas</b><span>Buscar a mano, sin esperar una alerta, suponiendo que alguien ya entró. <a href="#hunting">59.9</a></span></li>
+</ol>
+
+<h2 id="soc"><span class="sec-num">59.1</span>Qué hace un SOC</h2>
+
+<p>Un <dfn data-term="soc">SOC</dfn> (Security Operations Center) es el equipo que vigila la seguridad de una organización: recibe las alertas, decide cuáles son reales, investiga y dispara la respuesta. En una empresa grande es una sala con turnos las 24 horas; en Tienda Norte son dos personas de plataforma que reciben las alertas en un canal y una guardia rotativa. La función es la misma; cambia la escala.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f591t f591d">
+<title id="f591t">El ciclo de una alerta</title>
+<desc id="f591d">Un evento coincide con una regla y genera una alerta. El triaje decide: si es un falso positivo, se cierra y la regla se afina; si es verdadero, se investiga y, si es un incidente, pasa a respuesta. Las dos salidas vuelven a la regla.</desc>
+<defs><marker id="f591a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="40" width="130" height="56" rx="8"/>
+<text class="dg-small" x="79.0" y="64.5" text-anchor="middle">Evento</text>
+<text class="dg-tiny" x="79.0" y="79.5" text-anchor="middle">una línea de log</text>
+<path class="dg-edge" d="M144 68 L172 68" marker-end="url(#f591a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="172" y="40" width="130" height="56" rx="8"/>
+<text class="dg-small" x="237.0" y="64.5" text-anchor="middle">Regla</text>
+<text class="dg-tiny" x="237.0" y="79.5" text-anchor="middle">coincide</text>
+<path class="dg-edge" d="M302 68 L330 68" marker-end="url(#f591a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="330" y="40" width="130" height="56" rx="8"/>
+<text class="dg-small" x="395.0" y="64.5" text-anchor="middle">Alerta</text>
+<text class="dg-tiny" x="395.0" y="79.5" text-anchor="middle">con contexto</text>
+<path class="dg-edge" d="M460 68 L488 68" marker-end="url(#f591a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="488" y="40" width="130" height="56" rx="8"/>
+<text class="dg-small" x="553.0" y="64.5" text-anchor="middle">Triaje</text>
+<text class="dg-tiny" x="553.0" y="79.5" text-anchor="middle">minutos</text>
+<rect class="dg-bad" x="500" y="150" width="120" height="56" rx="8"/>
+<text class="dg-small dg-fail-text" x="560.0" y="174.5" text-anchor="middle">Falso positivo</text>
+<text class="dg-tiny" x="560.0" y="189.5" text-anchor="middle">cerrar con motivo</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="636" y="40" width="124" height="56" rx="8"/>
+<text class="dg-small" x="698.0" y="64.5" text-anchor="middle">Investigar</text>
+<text class="dg-tiny" x="698.0" y="79.5" text-anchor="middle">horas</text>
+<path class="dg-edge" d="M604 68 L634 68" marker-end="url(#f591a)"/>
+<text class="dg-tiny" x="619" y="58" text-anchor="middle">real</text>
+<path class="dg-edge" d="M550 96 L556 148" marker-end="url(#f591a)"/>
+<text class="dg-tiny" x="590" y="128" text-anchor="middle">no lo es</text>
+<rect class="dg-warnbox" x="636" y="150" width="124" height="56" rx="8"/>
+<text class="dg-small" x="698.0" y="174.5" text-anchor="middle">Incidente</text>
+<text class="dg-tiny" x="698.0" y="189.5" text-anchor="middle">respuesta (M60)</text>
+<path class="dg-edge" d="M698 96 L698 148" marker-end="url(#f591a)"/>
+<rect class="dg-ok" x="172" y="150" width="200" height="56" rx="8"/>
+<text class="dg-small" x="272.0" y="174.5" text-anchor="middle">Afinar la regla</text>
+<text class="dg-tiny" x="272.0" y="189.5" text-anchor="middle">exclusión, umbral, contexto</text>
+<path class="dg-edge" d="M498 178 L374 178" marker-end="url(#f591a)"/>
+<path class="dg-edge" d="M698 206 L698 232 L272 232 L272 206" marker-end="url(#f591a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="485" y="226" text-anchor="middle">el postmortem también vuelve a la regla</text>
+<path class="dg-edge" d="M272 150 L236 98" marker-end="url(#f591a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 59.1.</b> El ciclo de una alerta. Las dos salidas del triaje vuelven a la regla: un falso positivo la afina, un incidente real deja una lección para el postmortem.</figcaption>
+</figure>
+
+
+<p>Lo que hace funcionar el ciclo es que el triaje sea rápido. Una alerta tiene que llegar con todo lo necesario para decidir en minutos: qué regla saltó, el evento que la disparó, quién es el usuario o la máquina, qué tan crítica es, qué pasó antes y después, y qué hacer. Una alerta que dice solo "actividad sospechosa en bastion-1" obliga al analista a reconstruir todo desde cero.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Rol</th><th>Qué hace</th><th>En Tienda Norte</th></tr></thead>
+    <tbody>
+      <tr><td>Triaje (nivel 1)</td><td>Mira cada alerta, cierra las falsas con motivo y escala las reales</td><td>Quien está de guardia esa semana</td></tr>
+      <tr><td>Investigación (nivel 2)</td><td>Reconstruye qué pasó, mide el alcance y contiene</td><td>La misma persona con la otra de apoyo; si crece, <a href="m60-respuesta-forense.html#triaje">M60</a></td></tr>
+      <tr><td>Detection engineering</td><td>Escribe, prueba y mide las reglas; decide qué fuentes hacen falta</td><td>Medio día por semana de cada una</td></tr>
+      <tr><td>Caza de amenazas</td><td>Busca lo que ninguna regla vio</td><td>Una vez por mes, con una hipótesis</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Muchas empresas chicas tercerizan el nivel 1 con un servicio de detección y respuesta administrado (MDR) que mira las alertas de noche. Funciona si el proveedor recibe los mismos datos y las mismas reglas que usarías tú; lo que no se puede tercerizar es saber qué es normal en tu sistema. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<h2 id="fuentes"><span class="sec-num">59.2</span>Qué registrar y cuánto cuesta</h2>
+
+<p>No se detecta lo que no se registra, y no se puede registrar todo. La pregunta útil es qué fuentes cuentan la historia de un ataque. Las del threat model de M54 son un buen punto de partida: la amenaza 4 (soporte borra pedidos sin rastro) necesita el log de auditoría del panel; la 2 (webhooks falsos) necesita los rechazos de firma del worker.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f592t f592d">
+<title id="f592t">Qué registrar: volumen contra señal</title>
+<desc id="f592d">Seis fuentes de Tienda Norte con su volumen diario supuesto en barras y la señal de ataque que aportan: aplicación 20 GB por día con señal media, red 8 GB media, procesos 3 GB alta, Kubernetes audit 2 GB alta, nube 0.5 GB alta, autenticación 0.2 GB alta. Las fuentes con más señal son las que menos pesan.</desc>
+<defs><marker id="f592a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-tiny" x="14" y="28" text-anchor="start">Fuente</text>
+<text class="dg-tiny" x="200" y="28" text-anchor="start">GB por día (supuesto)</text>
+<text class="dg-tiny" x="690" y="28" text-anchor="middle">Señal</text>
+<text class="dg-small" x="14" y="62" text-anchor="start">Aplicación (requests)</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="200" y="48" width="440" height="20" rx="4"/>
+<text class="dg-tiny" x="646" y="62" text-anchor="start">20 GB</text>
+<rect class="dg-warnbox" x="650" y="46" width="80" height="24" rx="8"/>
+<text class="dg-tiny" x="690.0" y="62.0" text-anchor="middle">media</text>
+<text class="dg-small" x="14" y="100" text-anchor="start">Red y DNS (flujos)</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="200" y="86" width="176" height="20" rx="4"/>
+<text class="dg-tiny" x="382" y="100" text-anchor="start">8 GB</text>
+<rect class="dg-warnbox" x="650" y="84" width="80" height="24" rx="8"/>
+<text class="dg-tiny" x="690.0" y="100.0" text-anchor="middle">media</text>
+<text class="dg-small" x="14" y="138" text-anchor="start">Procesos (EDR)</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="200" y="124" width="66" height="20" rx="4"/>
+<text class="dg-tiny" x="272" y="138" text-anchor="start">3 GB</text>
+<rect class="dg-ok" x="650" y="122" width="80" height="24" rx="8"/>
+<text class="dg-tiny" x="690.0" y="138.0" text-anchor="middle">alta</text>
+<text class="dg-small" x="14" y="176" text-anchor="start">Kubernetes audit</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="200" y="162" width="44" height="20" rx="4"/>
+<text class="dg-tiny" x="250" y="176" text-anchor="start">2 GB</text>
+<rect class="dg-ok" x="650" y="160" width="80" height="24" rx="8"/>
+<text class="dg-tiny" x="690.0" y="176.0" text-anchor="middle">alta</text>
+<text class="dg-small" x="14" y="214" text-anchor="start">Nube (CloudTrail)</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="200" y="200" width="11" height="20" rx="4"/>
+<text class="dg-tiny" x="217.0" y="214" text-anchor="start">0.5 GB</text>
+<rect class="dg-ok" x="650" y="198" width="80" height="24" rx="8"/>
+<text class="dg-tiny" x="690.0" y="214.0" text-anchor="middle">alta</text>
+<text class="dg-small" x="14" y="252" text-anchor="start">Autenticación</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="200" y="238" width="4" height="20" rx="4"/>
+<text class="dg-tiny" x="210.4" y="252" text-anchor="start">0.2 GB</text>
+<rect class="dg-ok" x="650" y="236" width="80" height="24" rx="8"/>
+<text class="dg-tiny" x="690.0" y="252.0" text-anchor="middle">alta</text>
+<text class="dg-tiny" x="385" y="288" text-anchor="middle">Total: 33.7 GB por día. Las cuatro fuentes de señal alta suman 5.7 GB, el 17 % del volumen.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 59.2.</b> Volumen diario supuesto de cada fuente de Tienda Norte y la señal que aporta. Las fuentes con más señal son las más baratas de guardar.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Fuente</th><th>Qué cuenta</th><th>Ejemplo de detección</th></tr></thead>
+    <tbody>
+      <tr><td>Autenticación (SSO, VPN, SSH)</td><td>Quién entró, desde dónde, con qué factor</td><td>Inicio de sesión exitoso después de muchos fallidos</td></tr>
+      <tr><td>Procesos de cada máquina</td><td>Qué se ejecutó, con qué padre y qué usuario</td><td>Una shell lanzada por el proceso de la API</td></tr>
+      <tr><td>Red y DNS</td><td>Quién habló con quién; qué nombres se resolvieron</td><td>Un servidor que resuelve un dominio registrado ayer</td></tr>
+      <tr><td>Nube (CloudTrail)</td><td>Cada llamada a la API del proveedor</td><td>Alguien desactiva el registro o crea una llave de acceso</td></tr>
+      <tr><td>Kubernetes audit log</td><td>Cada request al API server</td><td>Un pod que lee los Secrets de otro namespace</td></tr>
+      <tr><td>Aplicación</td><td>Acciones de negocio: pedidos, reembolsos, borrados</td><td>Una cuenta de soporte que borra 50 pedidos en una hora</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Los procesos de cada máquina los registra un <dfn data-term="edr">EDR</dfn> (Endpoint Detection and Response): un <span class="no-autolink">agente</span> que anota cada proceso, archivo y conexión, los manda al SIEM y, si hace falta, aísla la máquina de la red con una orden remota. En un servidor Linux sin EDR, <a href="m33-hardening-linux.html#auditoria">auditd</a> cubre parte de lo mismo. En un clúster, el equivalente es Falco, que mira las llamadas al sistema de cada contenedor (<a href="m57-contenedores-k8s.html#runtime">M57</a>).</p>
+
+<p>La cuenta del volumen de Tienda Norte, con supuestos dichos como supuestos: 20 millones de requests por día con un log de 1 KB cada uno son <b>20 GB por día</b> de aplicación; los flujos de red, 8 GB; los procesos, 3 GB; el audit log de Kubernetes, 2 GB; CloudTrail, 0.5 GB; la autenticación, 0.2 GB. En total, 33.7 GB por día. Las cuatro fuentes de señal alta suman 5.7 GB, el 17&#8239;% del total. Si el presupuesto obliga a recortar, se recorta el log de aplicación (muestreo, solo acciones de negocio), nunca la autenticación ni la auditoría.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>El log que nadie mira se rompe en silencio. Un <span class="no-autolink">agente</span> que dejó de mandar eventos después de una actualización se parece mucho a "no pasó nada". Cada fuente necesita su propia alerta de <b>silencio</b>: si una fuente que siempre manda dejó de hacerlo en la última hora, eso es una alerta. También es lo primero que intenta un atacante con oficio.</p>
+</aside>
+
+<h2 id="pipeline-logs"><span class="sec-num">59.3</span>Recolectar, <span class="no-autolink">normalizar</span>, enriquecer y guardar</h2>
+
+<p>Entre la máquina y el SIEM hay un pipeline, igual que el de logs de <a href="m11-observabilidad.html#logs">M11</a>, con dos diferencias. La primera: los eventos tienen que salir de la máquina <b>rápido</b>, porque un atacante con permisos de administrador puede borrar los locales (el mismo motivo del <a href="m10-seguridad.html#audit-log">log de auditoría de M10</a>). La segunda: todos los eventos tienen que hablar el mismo idioma, para que una regla sobre "inicio de sesión fallido" funcione igual con SSH, la VPN y el panel.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f593t f593d">
+<title id="f593t">Del log crudo al evento normalizado</title>
+<desc id="f593d">Cinco etapas: recolectar, parsear, normalizar, enriquecer y guardar. Abajo, una línea de sshd que se convierte en campos con nombres comunes (user.name, source.ip, event.outcome) y después gana contexto: país de la IP, criticidad del servidor y rol de la cuenta.</desc>
+<defs><marker id="f593a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="14" y="30" width="130" height="52" rx="8"/>
+<text class="dg-small" x="79.0" y="52.5" text-anchor="middle">Recolectar</text>
+<text class="dg-tiny" x="79.0" y="67.5" text-anchor="middle">agente o syslog</text>
+<path class="dg-edge" d="M144 56 L166 56" marker-end="url(#f593a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="167" y="30" width="130" height="52" rx="8"/>
+<text class="dg-small" x="232.0" y="52.5" text-anchor="middle">Parsear</text>
+<text class="dg-tiny" x="232.0" y="67.5" text-anchor="middle">texto a campos</text>
+<path class="dg-edge" d="M297 56 L319 56" marker-end="url(#f593a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="320" y="30" width="130" height="52" rx="8"/>
+<text class="dg-small" x="385.0" y="52.5" text-anchor="middle">Normalizar</text>
+<text class="dg-tiny" x="385.0" y="67.5" text-anchor="middle">ECS u OCSF</text>
+<path class="dg-edge" d="M450 56 L472 56" marker-end="url(#f593a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="473" y="30" width="130" height="52" rx="8"/>
+<text class="dg-small" x="538.0" y="52.5" text-anchor="middle">Enriquecer</text>
+<text class="dg-tiny" x="538.0" y="67.5" text-anchor="middle">contexto</text>
+<path class="dg-edge" d="M603 56 L625 56" marker-end="url(#f593a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="626" y="30" width="130" height="52" rx="8"/>
+<text class="dg-small" x="691.0" y="52.5" text-anchor="middle">Guardar</text>
+<text class="dg-tiny" x="691.0" y="67.5" text-anchor="middle">SIEM</text>
+<rect class="dg-box" x="14" y="112" width="742" height="40" rx="8"/>
+<text class="dg-tiny dg-mono" x="385.0" y="136.0" text-anchor="middle">sshd[812]: Failed password for ana from 198.51.100.10 port 52144 ssh2</text>
+<text class="dg-tiny" x="14" y="104" text-anchor="start">Crudo</text>
+<text class="dg-tiny" x="14" y="172" text-anchor="start">Normalizado</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="180" width="170" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="99.0" y="201.0" text-anchor="middle">user.name: ana</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="200" y="180" width="200" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="300.0" y="201.0" text-anchor="middle">source.ip: 198.51.100.10</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="414" y="180" width="172" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="500.0" y="201.0" text-anchor="middle">event.outcome: failure</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="600" y="180" width="156" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="678.0" y="201.0" text-anchor="middle">host.name: bastion-1</text>
+<text class="dg-tiny" x="14" y="236" text-anchor="start">Enriquecido</text>
+<rect class="dg-ok" x="14" y="244" width="230" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="129.0" y="265.0" text-anchor="middle">source.geo: fuera del país</text>
+<rect class="dg-ok" x="260" y="244" width="230" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="375.0" y="265.0" text-anchor="middle">host.criticidad: alta</text>
+<rect class="dg-ok" x="506" y="244" width="230" height="34" rx="8"/>
+<text class="dg-tiny dg-mono" x="621.0" y="265.0" text-anchor="middle">user.rol: soporte</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 59.3.</b> Una línea de sshd que se vuelve campos con nombres comunes y después gana contexto. Sin la <span class="no-autolink">normalización</span>, cada regla tendría que conocer el formato de cada fuente.</figcaption>
+</figure>
+
+
+<p><span class="no-autolink">Normalizar</span> es elegir un esquema común. Hay dos muy usados:</p>
+
+<ul>
+  <li><b>Elastic Common Schema (ECS)</b>: campos con puntos como <code>user.name</code>, <code>source.ip</code> y <code>event.outcome</code>. En 2023 Elastic lo donó a OpenTelemetry para fusionarlo con sus convenciones semánticas. <span class="badge badge--doc">Documentado</span></li>
+  <li><b>OCSF</b> (Open Cybersecurity Schema Framework): un esquema abierto lanzado en 2022 por AWS, Splunk y otros, organizado en clases de eventos (autenticación, actividad de procesos, actividad de red). Security Lake de AWS guarda los datos en OCSF. <span class="badge badge--doc">Documentado</span></li>
+</ul>
+
+<p>Cuál elegir importa menos que elegir uno y aplicarlo en el pipeline, no en cada regla. Este módulo usa nombres de ECS porque son fáciles de leer.</p>
+
+<p>Enriquecer es agregar lo que el evento no trae y el analista necesita: el país de la IP, si la máquina es crítica, el rol de la cuenta, si la IP aparece en una lista de amenazas conocidas. Se hace al ingresar el dato, porque meses después la IP puede ser de otra persona y la cuenta puede no existir.</p>
+
+<h2 id="siem"><span class="sec-num">59.4</span>El SIEM y la retención</h2>
+
+<p>Un <dfn data-term="siem">SIEM</dfn> (Security Information and Event Management) es el sistema que guarda los eventos de seguridad <span class="no-autolink">normalizados</span>, permite buscarlos, corre las reglas sobre ellos y gestiona las alertas que salen. Splunk, Microsoft Sentinel, Elastic Security, Google SecOps y Wazuh son ejemplos; también se arma uno con Loki y Grafana si las reglas se escriben aparte. Las preguntas que lo definen son tres: cuánto tiempo guarda, qué tan rápido busca y cuánto cuesta por GB.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f594t f594d">
+<title id="f594t">Retención por niveles</title>
+<desc id="f594d">Tres niveles de almacenamiento del SIEM de Tienda Norte. Caliente: 30 días, búsqueda en segundos, alrededor de 1 TB. Frío: un año, búsqueda en minutos, alrededor de 1.2 TB comprimido. Archivo: más de un año, para auditoría, se restaura en horas.</desc>
+<defs><marker id="f594a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="40" width="236" height="110" rx="8"/>
+<text class="dg-label" x="132.0" y="84.0" text-anchor="middle">Caliente</text>
+<text class="dg-tiny" x="132.0" y="99.0" text-anchor="middle">30 días</text>
+<text class="dg-tiny" x="132.0" y="114.0" text-anchor="middle">se busca en segundos</text>
+<text class="dg-tiny dg-mono" x="132" y="176" text-anchor="middle">33.7 GB × 30 ≈ 1 TB</text>
+<path class="dg-edge" d="M250 95 L268 95" marker-end="url(#f594a)"/>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="268" y="40" width="236" height="110" rx="8"/>
+<text class="dg-label" x="386.0" y="84.0" text-anchor="middle">Frío</text>
+<text class="dg-tiny" x="386.0" y="99.0" text-anchor="middle">1 año</text>
+<text class="dg-tiny" x="386.0" y="114.0" text-anchor="middle">se busca en minutos</text>
+<text class="dg-tiny dg-mono" x="386" y="176" text-anchor="middle">12.3 TB ÷ 10 ≈ 1.2 TB</text>
+<path class="dg-edge" d="M504 95 L522 95" marker-end="url(#f594a)"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="522" y="40" width="236" height="110" rx="8"/>
+<text class="dg-label" x="640.0" y="84.0" text-anchor="middle">Archivo</text>
+<text class="dg-tiny" x="640.0" y="99.0" text-anchor="middle">más de 1 año</text>
+<text class="dg-tiny" x="640.0" y="114.0" text-anchor="middle">se restaura en horas</text>
+<text class="dg-tiny dg-mono" x="640" y="176" text-anchor="middle">objeto inmutable</text>
+<text class="dg-tiny" x="385" y="214" text-anchor="middle">La compresión 10 a 1 es un supuesto típico para logs de texto; mide la tuya.</text>
+<text class="dg-tiny" x="385" y="232" text-anchor="middle">Las reglas corren sobre lo caliente; la investigación de M60 suele necesitar lo frío.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 59.4.</b> Tres niveles de retención con la cuenta de Tienda Norte. La compresión es un supuesto; mídela con tus datos.</figcaption>
+</figure>
+
+
+<p>La retención no es solo un tema técnico. PCI DSS 4.0, que le toca a cualquier tienda que procese tarjetas (<a href="m39-manejo-pagos.html">M39</a>), pide en el requisito 10.5.1 guardar los logs de auditoría al menos 12 meses, con los últimos 3 disponibles de inmediato. <span class="badge badge--doc">Documentado</span> Y la investigación de un incidente suele mirar hacia atrás más de lo que imaginas: un atacante que entró hace cuatro meses solo se puede rastrear si el dato de hace cuatro meses existe.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Guardar todo en caliente durante un año es lo más cómodo y lo más caro. Guardar casi todo en frío es barato, pero una búsqueda de investigación tarda horas. La regla práctica: las reglas corren sobre 30 días calientes; lo frío se busca con paciencia durante un incidente; el archivo se guarda para la auditoría y casi nunca se lee.</p>
+</aside>
+
+<h2 id="attack"><span class="sec-num">59.5</span>MITRE ATT&amp;CK como mapa de cobertura</h2>
+
+<p><dfn data-term="mitre-attack">MITRE ATT&amp;CK</dfn> es una base de conocimiento pública de cómo atacan los grupos reales, armada a partir de incidentes documentados. Se organiza en <b>tácticas</b> (el objetivo del atacante en ese momento: entrar, persistir, conseguir credenciales), <b>técnicas</b> (cómo lo logra) y <b>procedimientos</b> (cómo lo hizo un grupo concreto). A las tres juntas se las llama <dfn data-term="ttp">TTP</dfn>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f596t f596d">
+<title id="f596t">Táctica, técnica y procedimiento</title>
+<desc id="f596d">Cuatro niveles de ATT&amp;CK de lo general a lo concreto: la táctica Credential Access (el porqué), la técnica T1110 Brute Force (el cómo), la subtécnica T1110.003 Password Spraying y el procedimiento observado: una IP prueba una contraseña común contra ocho cuentas del panel en diez minutos.</desc>
+<defs><marker id="f596a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="50" width="176" height="92" rx="8"/>
+<text class="dg-label" x="102.0" y="85.0" text-anchor="middle">Táctica</text>
+<text class="dg-tiny" x="102.0" y="100.0" text-anchor="middle">Credential Access</text>
+<text class="dg-tiny" x="102.0" y="115.0" text-anchor="middle">el porqué</text>
+<path class="dg-edge" d="M190 96 L206 96" marker-end="url(#f596a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="206" y="50" width="176" height="92" rx="8"/>
+<text class="dg-label" x="294.0" y="85.0" text-anchor="middle">Técnica</text>
+<text class="dg-tiny" x="294.0" y="100.0" text-anchor="middle">T1110 Brute Force</text>
+<text class="dg-tiny" x="294.0" y="115.0" text-anchor="middle">el cómo, en general</text>
+<path class="dg-edge" d="M382 96 L398 96" marker-end="url(#f596a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="398" y="50" width="176" height="92" rx="8"/>
+<text class="dg-label" x="486.0" y="85.0" text-anchor="middle">Subtécnica</text>
+<text class="dg-tiny" x="486.0" y="100.0" text-anchor="middle">T1110.003 Password Spraying</text>
+<text class="dg-tiny" x="486.0" y="115.0" text-anchor="middle">una clave, muchas cuentas</text>
+<path class="dg-edge" d="M574 96 L590 96" marker-end="url(#f596a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="590" y="50" width="176" height="92" rx="8"/>
+<text class="dg-label" x="678.0" y="85.0" text-anchor="middle">Procedimiento</text>
+<text class="dg-tiny" x="678.0" y="100.0" text-anchor="middle">lo que viste en tus logs</text>
+<text class="dg-tiny" x="678.0" y="115.0" text-anchor="middle">1 IP, 8 cuentas, 10 minutos</text>
+<text class="dg-tiny" x="385" y="30" text-anchor="middle">De lo general a lo concreto</text>
+<text class="dg-tiny" x="385" y="176" text-anchor="middle">Una regla de detección apunta a la técnica; el procedimiento te da los valores para probarla.</text>
+<text class="dg-tiny" x="385" y="196" text-anchor="middle">TTP = tácticas, técnicas y procedimientos.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 59.5.</b> De la táctica al procedimiento. La regla apunta a la técnica; el procedimiento observado da los valores concretos para probarla.</figcaption>
+</figure>
+
+
+<p>La versión vigente es la v20, publicada el 13 de octubre de 2026. La matriz Enterprise tiene 15 tácticas: esta versión dividió la antigua Defense Evasion en dos, Stealth (esconderse) y Defense Impairment (debilitar las defensas). <span class="badge badge--doc">Documentado</span> Además de técnicas, ATT&amp;CK publica estrategias de detección y analíticas para muchas de ellas, que son un buen punto de partida para escribir reglas propias.</p>
+
+<p>El uso más útil para un equipo chico no es memorizar la matriz, sino <b>pintarla</b>: para cada táctica, cuántas reglas tienes y cuánto confías en ellas. Los huecos dicen dónde estás ciego.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f595t f595d">
+<title id="f595t">Cobertura de ATT&amp;CK de Tienda Norte</title>
+<desc id="f595d">Las 15 tácticas de ATT&amp;CK Enterprise v20 en filas. Para cada una, una barra dice la cobertura de detección de Tienda Norte con sus primeras diez reglas: buena en Initial Access, Credential Access e Impact; parcial en Execution, Persistence, Privilege Escalation, Defense Impairment, Lateral Movement, Command and Control y Exfiltration; ninguna en Reconnaissance, Resource Development, Stealth, Discovery y Collection.</desc>
+<defs><marker id="f595a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-tiny" x="14" y="24" text-anchor="start">Táctica (el porqué del atacante)</text>
+<text class="dg-tiny" x="330" y="24" text-anchor="start">Cobertura con las diez reglas de 59.10</text>
+<text class="dg-small dg-mono" x="14" y="51" text-anchor="start">Reconnaissance</text>
+<rect class="dg-bad" x="330" y="38" width="70" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="51" text-anchor="start">sin regla</text>
+<text class="dg-small dg-mono" x="14" y="74" text-anchor="start">Resource Development</text>
+<rect class="dg-bad" x="330" y="61" width="70" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="74" text-anchor="start">sin regla</text>
+<text class="dg-small dg-mono" x="14" y="97" text-anchor="start">Initial Access</text>
+<rect class="dg-ok" x="330" y="84" width="300" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="97" text-anchor="start">buena</text>
+<text class="dg-small dg-mono" x="14" y="120" text-anchor="start">Execution</text>
+<rect class="dg-warnbox" x="330" y="107" width="170" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="120" text-anchor="start">parcial</text>
+<text class="dg-small dg-mono" x="14" y="143" text-anchor="start">Persistence</text>
+<rect class="dg-warnbox" x="330" y="130" width="170" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="143" text-anchor="start">parcial</text>
+<text class="dg-small dg-mono" x="14" y="166" text-anchor="start">Privilege Escalation</text>
+<rect class="dg-warnbox" x="330" y="153" width="170" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="166" text-anchor="start">parcial</text>
+<text class="dg-small dg-mono" x="14" y="189" text-anchor="start">Stealth</text>
+<rect class="dg-bad" x="330" y="176" width="70" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="189" text-anchor="start">sin regla</text>
+<text class="dg-small dg-mono" x="14" y="212" text-anchor="start">Defense Impairment</text>
+<rect class="dg-warnbox" x="330" y="199" width="170" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="212" text-anchor="start">parcial</text>
+<text class="dg-small dg-mono" x="14" y="235" text-anchor="start">Credential Access</text>
+<rect class="dg-ok" x="330" y="222" width="300" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="235" text-anchor="start">buena</text>
+<text class="dg-small dg-mono" x="14" y="258" text-anchor="start">Discovery</text>
+<rect class="dg-bad" x="330" y="245" width="70" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="258" text-anchor="start">sin regla</text>
+<text class="dg-small dg-mono" x="14" y="281" text-anchor="start">Lateral Movement</text>
+<rect class="dg-warnbox" x="330" y="268" width="170" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="281" text-anchor="start">parcial</text>
+<text class="dg-small dg-mono" x="14" y="304" text-anchor="start">Collection</text>
+<rect class="dg-bad" x="330" y="291" width="70" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="304" text-anchor="start">sin regla</text>
+<text class="dg-small dg-mono" x="14" y="327" text-anchor="start">Command and Control</text>
+<rect class="dg-warnbox" x="330" y="314" width="170" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="327" text-anchor="start">parcial</text>
+<text class="dg-small dg-mono" x="14" y="350" text-anchor="start">Exfiltration</text>
+<rect class="dg-warnbox" x="330" y="337" width="170" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="350" text-anchor="start">parcial</text>
+<text class="dg-small dg-mono" x="14" y="373" text-anchor="start">Impact</text>
+<rect class="dg-ok" x="330" y="360" width="300" height="18" rx="4"/>
+<text class="dg-tiny" x="336" y="373" text-anchor="start">buena</text>
+<text class="dg-tiny" x="700" y="120" text-anchor="middle">Reconnaissance y</text>
+<text class="dg-tiny" x="700" y="136" text-anchor="middle">Resource Development</text>
+<text class="dg-tiny" x="700" y="152" text-anchor="middle">pasan fuera de tu</text>
+<text class="dg-tiny" x="700" y="168" text-anchor="middle">red: casi no se ven</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 59.6.</b> La cobertura de Tienda Norte con las diez reglas de <a href="#tienda">59.10</a>. Una barra verde no significa "protegido": significa que hay al menos una regla probada para una técnica probable de esa táctica.</figcaption>
+</figure>
+
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>El error clásico es medir el éxito por el porcentaje de técnicas cubiertas. Una regla que detecta una técnica solo en su variante más obvia pinta la celda de verde y no detecta nada real. Lo que importa es la cobertura de las técnicas <b>probables para tu sistema</b>, las que salieron del threat model de M54, y que cada regla tenga una prueba que demuestre que funciona.</p>
+</aside>
+
+<h2 id="sigma"><span class="sec-num">59.6</span>Reglas Sigma</h2>
+
+<p><dfn data-term="sigma">Sigma</dfn> es un formato abierto de reglas de detección en YAML: describe qué buscar en los logs sin atarse a un SIEM. Una herramienta (pySigma, o su línea de comandos <code>sigma-cli</code>) convierte la regla a la consulta nativa de cada uno. La especificación vigente es la 2.1.0, de agosto de 2025, que suma correlaciones y filtros. <span class="badge badge--doc">Documentado</span></p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="f597t f597d">
+<title id="f597t">Una regla Sigma, muchos SIEM</title>
+<desc id="f597d">Una regla Sigma en YAML entra a pySigma, que con un pipeline de campos y un backend la convierte en la consulta nativa de cada SIEM: Splunk, Elastic, Microsoft Sentinel o Loki. La regla se escribe una vez.</desc>
+<defs><marker id="f597a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box dg-box--em" x="14" y="80" width="150" height="70" rx="8"/>
+<text class="dg-label" x="89.0" y="111.5" text-anchor="middle">Regla Sigma</text>
+<text class="dg-tiny" x="89.0" y="126.5" text-anchor="middle">YAML en git</text>
+<path class="dg-edge" d="M164 115 L206 115" marker-end="url(#f597a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="208" y="64" width="170" height="102" rx="8"/>
+<text class="dg-label" x="293.0" y="104.0" text-anchor="middle">pySigma</text>
+<text class="dg-tiny" x="293.0" y="119.0" text-anchor="middle">pipeline: los campos</text>
+<text class="dg-tiny" x="293.0" y="134.0" text-anchor="middle">backend: el lenguaje</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="470" y="20" width="200" height="44" rx="8"/>
+<text class="dg-small" x="570.0" y="38.5" text-anchor="middle">Splunk</text>
+<text class="dg-tiny" x="570.0" y="53.5" text-anchor="middle">SPL</text>
+<path class="dg-edge" d="M378 115 L468 42" marker-end="url(#f597a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="470" y="72" width="200" height="44" rx="8"/>
+<text class="dg-small" x="570.0" y="90.5" text-anchor="middle">Elastic</text>
+<text class="dg-tiny" x="570.0" y="105.5" text-anchor="middle">ES|QL o Lucene</text>
+<path class="dg-edge" d="M378 115 L468 94" marker-end="url(#f597a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="470" y="124" width="200" height="44" rx="8"/>
+<text class="dg-small" x="570.0" y="142.5" text-anchor="middle">Microsoft Sentinel</text>
+<text class="dg-tiny" x="570.0" y="157.5" text-anchor="middle">KQL</text>
+<path class="dg-edge" d="M378 115 L468 146" marker-end="url(#f597a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="470" y="176" width="200" height="44" rx="8"/>
+<text class="dg-small" x="570.0" y="194.5" text-anchor="middle">Grafana Loki</text>
+<text class="dg-tiny" x="570.0" y="209.5" text-anchor="middle">LogQL</text>
+<path class="dg-edge" d="M378 115 L468 198" marker-end="url(#f597a)"/>
+<text class="dg-tiny" x="720" y="120" text-anchor="middle">una consulta</text>
+<text class="dg-tiny" x="720" y="136" text-anchor="middle">por destino</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 59.7.</b> Una regla, muchos SIEM. El pipeline de pySigma traduce los nombres de campos; el backend, el lenguaje de consulta.</figcaption>
+</figure>
+
+
+<p>La regla de Tienda Norte busca <b>password spraying</b> contra el panel de soporte (técnica T1110.003): una IP que prueba una contraseña común contra muchas cuentas, un intento por cuenta, para no activar el bloqueo por intentos. Una regla que cuenta fallos por usuario no lo ve; hace falta contar <b>cuentas distintas por IP</b>. Son dos documentos en el mismo archivo: la regla base y su correlación.</p>
+
+<pre data-lang="shell"><code>title: Inicio de sesión fallido en el panel de soporte
+id: 6e995dc7-6c37-4562-b67c-c39f477f4b90
+name: panel_login_fallido
+status: test
+description: Un intento de inicio de sesión rechazado en el panel de soporte de Tienda Norte.
+references:
+    - https://attack.mitre.org/techniques/T1110/003/
+author: Equipo de seguridad de Tienda Norte
+date: 2026-10-26
+tags:
+    - attack.credential-access
+    - attack.t1110.003
+logsource:
+    product: tienda-norte
+    service: panel-soporte
+detection:
+    selection:
+        event.action: login
+        event.outcome: failure
+    filter_monitor:
+        user.name: monitor-sintetico
+    condition: selection and not filter_monitor
+fields:
+    - user.name
+    - source.ip
+falsepositives:
+    - Una persona que olvidó su contraseña
+level: low
+---
+title: Una IP prueba muchas cuentas del panel
+id: aed9f05d-240e-4d74-b105-8d21796801ff
+status: test
+correlation:
+    type: value_count
+    rules:
+        - panel_login_fallido
+    group-by:
+        - source.ip
+    timespan: 10m
+    condition:
+        gte: 8
+        field: user.name
+falsepositives:
+    - La salida NAT de la oficina después de una rotación de contraseñas
+level: high</code></pre>
+
+<ol class="steps">
+  <li><span class="step-title">Metadatos</span><code>id</code> estable para siempre (las alertas y los tickets lo referencian), <code>status</code> y <code>tags</code> con la táctica y la técnica de ATT&amp;CK.</li>
+  <li><span class="step-title">logsource</span>De dónde vienen los eventos. Aquí es una fuente propia (<code>product: tienda-norte</code>); el pipeline de conversión dice en qué índice viven.</li>
+  <li><span class="step-title">detection</span>Bloques con nombre (<code>selection</code>, <code>filter_monitor</code>) y una <code>condition</code> que los combina. Los campos de un bloque se unen con Y; una lista de valores, con O.</li>
+  <li><span class="step-title">correlation</span><code>value_count</code> cuenta valores distintos de <code>user.name</code> por cada <code>source.ip</code> en 10 minutos. Otros tipos: <code>event_count</code> (cuántos eventos), <code>temporal</code> (varias reglas en la misma ventana) y <code>temporal_ordered</code> (en orden).</li>
+  <li><span class="step-title">falsepositives y level</span>Lo que ya sabes que la dispara sin ataque, y la severidad. Le dicen al analista qué revisar primero.</li>
+</ol>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Definición</p>
+  <p class="def-term">Indicador de compromiso <span class="def-en">IOC, Indicator of Compromise</span></p>
+  <p class="def-one">Un dato concreto que delata un ataque conocido: un hash de archivo, una IP, un dominio.</p>
+  <dl class="def-rows">
+    <dt>Intuición</dt><dd>Una huella digital de algo que ya se vio.</dd>
+    <dt>Ejemplo</dt><dd>"La IP 203.0.113.50 se usó en la campaña de la semana pasada."</dd>
+    <dt>Por qué importa en producción</dt><dd>Es lo más fácil de detectar y lo más fácil de esquivar: se cambia en minutos (<a href="#calidad">59.8</a>).</dd>
+  </dl>
+</aside>
+
+<p>La regla de arriba no usa ningún <dfn data-term="ioc">IOC</dfn>: no le importa qué IP ataca, sino el comportamiento. Por eso sigue sirviendo cuando el atacante cambia de IP. Las listas de IOC se cargan en el enriquecimiento de <a href="#pipeline-logs">59.3</a>, no como reglas sueltas.</p>
+
+<h2 id="detection-as-code"><span class="sec-num">59.7</span>Detection as code</h2>
+
+<p><dfn data-term="detection-as-code">Detection as code</dfn> es tratar las reglas como el resto del software: viven en un repositorio, cada cambio pasa por un pull request con pruebas y revisión, y un pipeline las despliega al SIEM. Lo contrario, reglas editadas a mano en la consola del SIEM, termina siempre igual: nadie sabe quién cambió qué, una regla dejó de funcionar hace meses y no hay forma de volver atrás.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f598t f598d">
+<title id="f598t">Detection as code</title>
+<desc id="f598d">El ciclo de vida de una regla como código: un pull request con la regla y sus eventos de prueba, un CI que valida el formato, convierte la regla, corre las pruebas positivas y negativas y la pasa sobre 30 días de datos reales para contar cuántas alertas habría dado; revisión de otra persona, despliegue y medición de la precisión, que vuelve al repositorio.</desc>
+<defs><marker id="f598a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="50" width="112" height="58" rx="8"/>
+<text class="dg-small" x="70.0" y="75.5" text-anchor="middle">Pull request</text>
+<text class="dg-tiny" x="70.0" y="90.5" text-anchor="middle">regla + eventos</text>
+<path class="dg-edge" d="M126 79 L140 79" marker-end="url(#f598a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="140" y="50" width="112" height="58" rx="8"/>
+<text class="dg-small" x="196.0" y="75.5" text-anchor="middle">Validar</text>
+<text class="dg-tiny" x="196.0" y="90.5" text-anchor="middle">esquema Sigma</text>
+<path class="dg-edge" d="M252 79 L266 79" marker-end="url(#f598a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="266" y="50" width="112" height="58" rx="8"/>
+<text class="dg-small" x="322.0" y="75.5" text-anchor="middle">Probar</text>
+<text class="dg-tiny" x="322.0" y="90.5" text-anchor="middle">casos + y −</text>
+<path class="dg-edge" d="M378 79 L392 79" marker-end="url(#f598a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="392" y="50" width="112" height="58" rx="8"/>
+<text class="dg-small" x="448.0" y="75.5" text-anchor="middle">Backtest</text>
+<text class="dg-tiny" x="448.0" y="90.5" text-anchor="middle">30 días de datos</text>
+<path class="dg-edge" d="M504 79 L518 79" marker-end="url(#f598a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="518" y="50" width="112" height="58" rx="8"/>
+<text class="dg-small" x="574.0" y="75.5" text-anchor="middle">Revisar</text>
+<text class="dg-tiny" x="574.0" y="90.5" text-anchor="middle">otra persona</text>
+<path class="dg-edge" d="M630 79 L644 79" marker-end="url(#f598a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="644" y="50" width="112" height="58" rx="8"/>
+<text class="dg-small" x="700.0" y="75.5" text-anchor="middle">Desplegar</text>
+<text class="dg-tiny" x="700.0" y="90.5" text-anchor="middle">al SIEM</text>
+<rect class="dg-ok" x="260" y="170" width="250" height="52" rx="8"/>
+<text class="dg-small" x="385.0" y="192.5" text-anchor="middle">Medir en producción</text>
+<text class="dg-tiny" x="385.0" y="207.5" text-anchor="middle">alertas por día y precisión</text>
+<path class="dg-edge" d="M706 108 L706 196 L512 196" marker-end="url(#f598a)"/>
+<path class="dg-edge" d="M258 196 L70 196 L70 110" marker-end="url(#f598a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="160" y="186" text-anchor="middle">ajuste = nuevo PR</text>
+<text class="dg-tiny" x="385" y="30" text-anchor="middle">Lo mismo que el código de la tienda: nada llega al SIEM sin pasar por aquí</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 59.8.</b> El ciclo de vida de una regla. El backtest sobre 30 días reales es lo que evita desplegar una regla que da 400 alertas el primer día.</figcaption>
+</figure>
+
+
+<pre data-lang="shell"><code>detecciones/
+├── rules/
+│   └── panel/
+│       └── spraying_panel.yml        # la regla de 59.6
+├── tests/
+│   └── panel/
+│       ├── spraying_positivo.jsonl   # 8 cuentas desde una IP en 10 min: tiene que alertar
+│       └── spraying_negativo.jsonl   # la oficina a las 9:00: no tiene que alertar
+├── docs/
+│   └── spraying_panel.md             # la estrategia (ADS): objetivo, puntos ciegos, respuesta
+└── .github/workflows/detecciones.yml</code></pre>
+
+<p>Cada regla trae dos archivos de eventos: los <b>positivos</b>, que tienen que disparar la alerta (sintéticos, escritos a mano a partir del procedimiento de la figura 59.5), y los <b>negativos</b>, que no la tienen que disparar (casos reales de falsos positivos conocidos, como la oficina a las 9 de la mañana). El CI corre las cuatro cosas en orden:</p>
+
+<pre data-lang="shell"><code>$ sigma check rules/
+$ sigma convert -t loki --without-pipeline rules/panel/spraying_panel.yml
+$ python -m pytest tests/        # cada regla contra sus eventos positivos y negativos
+$ python backtest.py --dias 30   # cuántas alertas habría dado el último mes</code></pre>
+
+<p>El backtest es la prueba que más se salta y la que más importa. Es una cuenta simple: pasar la regla sobre los eventos del último mes y contar cuántas alertas habría dado. Este es el núcleo, en Python, para la correlación de 59.6:</p>
+
+<pre data-lang="python"><code>import json
+from collections import defaultdict, deque
+from datetime import datetime, timedelta
+
+VENTANA = timedelta(minutes=10)
+UMBRAL = 8  # cuentas distintas por IP
+
+def backtest(ruta):
+    """Cuenta cuántas alertas habría dado la regla sobre eventos ya normalizados."""
+    recientes = defaultdict(deque)        # IP -&gt; deque de (hora, usuario)
+    alertas = []
+    with open(ruta, encoding="utf-8") as f:   # un evento JSON por línea, en orden
+        for linea in f:
+            e = json.loads(linea)
+            if e["event.action"] != "login" or e["event.outcome"] != "failure":
+                continue
+            if e["user.name"] == "monitor-sintetico":
+                continue
+            t = datetime.fromisoformat(e["@timestamp"])
+            q = recientes[e["source.ip"]]
+            q.append((t, e["user.name"]))
+            while q and t - q[0][0] &gt; VENTANA:
+                q.popleft()
+            if len({u for _, u in q}) &gt;= UMBRAL:
+                alertas.append((t, e["source.ip"]))
+                q.clear()                      # una alerta por ráfaga
+    return alertas</code></pre>
+
+<p>Cada regla, además, lleva su documento de estrategia. El formato que más se copia es el <b>Alerting and Detection Strategy</b> (ADS) que Palantir publicó en 2017, con nueve secciones: objetivo, categorización en ATT&amp;CK, resumen de la estrategia, contexto técnico, <b>puntos ciegos y supuestos</b>, falsos positivos, validación, prioridad y respuesta. <span class="badge badge--doc">Documentado</span> La sección de puntos ciegos es la más valiosa: obliga a escribir qué no ve la regla, por ejemplo "si el atacante usa más de una IP, la regla no lo ve; la cubre la regla de inicio exitoso desde un país nuevo".</p>
+
+<h2 id="calidad"><span class="sec-num">59.8</span>Calidad: precisión, recall y fatiga de alertas</h2>
+
+<p>Una regla se mide con las dos métricas de cualquier clasificador. La <b>precisión</b> es qué fracción de sus alertas son reales. El <b>recall</b> es qué fracción de los ataques reales detecta. Subir una casi siempre baja la otra: bajar el umbral atrapa más ataques y también más falsos positivos.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f5910t f5910d">
+<title id="f5910t">La tasa base: por qué una regla buena da casi solo falsos positivos</title>
+<desc id="f5910d">Un millón de eventos por día, diez de ellos de un ataque. Una regla que detecta 99 de cada 100 ataques y se equivoca en uno de cada mil eventos normales da unas 1000 alertas falsas y 10 verdaderas: una precisión del 1 %.</desc>
+<defs><marker id="f5910a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="40" width="220" height="70" rx="8"/>
+<text class="dg-small" x="124.0" y="71.5" text-anchor="middle">1 000 000 eventos por día</text>
+<text class="dg-tiny" x="124.0" y="86.5" text-anchor="middle">10 de un ataque</text>
+<path class="dg-edge" d="M234 75 L276 75" marker-end="url(#f5910a)"/>
+<text class="dg-tiny" x="255" y="64" text-anchor="middle">la regla</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="278" y="40" width="220" height="70" rx="8"/>
+<text class="dg-small" x="388.0" y="71.5" text-anchor="middle">Recall 99 %</text>
+<text class="dg-tiny" x="388.0" y="86.5" text-anchor="middle">falsos positivos: 0.1 %</text>
+<path class="dg-edge" d="M498 60 L540 46" marker-end="url(#f5910a)"/>
+<path class="dg-edge" d="M498 92 L540 140" marker-end="url(#f5910a)"/>
+<rect class="dg-ok" x="542" y="20" width="214" height="52" rx="8"/>
+<text class="dg-small" x="649.0" y="42.5" text-anchor="middle">≈ 10 verdaderas</text>
+<text class="dg-tiny" x="649.0" y="57.5" text-anchor="middle">10 × 0.99</text>
+<rect class="dg-bad" x="542" y="110" width="214" height="70" rx="8"/>
+<text class="dg-small dg-fail-text" x="649.0" y="141.5" text-anchor="middle">≈ 1 000 falsas</text>
+<text class="dg-tiny" x="649.0" y="156.5" text-anchor="middle">999 990 × 0.001</text>
+<text class="dg-small" x="385" y="214" text-anchor="middle">Precisión = 10 ÷ (10 + 1 000) ≈ 1 %. El analista mira cien alertas para encontrar una.</text>
+<text class="dg-tiny" x="385" y="236" text-anchor="middle">Bajar los falsos positivos a uno en cien mil deja 10 falsas y sube la precisión al 50 %.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 59.9.</b> La tasa base. Con muy pocos ataques entre muchos eventos normales, incluso una regla que se equivoca una vez cada mil da casi solo alertas falsas.</figcaption>
+</figure>
+
+
+<p>La figura explica por qué los equipos de seguridad sufren de <dfn data-term="fatiga-alertas">fatiga de alertas</dfn>: tantas alertas falsas que las personas dejan de mirarlas con atención, y la real pasa de largo. La cuenta es directa. Con 200 alertas por día y 10 minutos de triaje cada una, son 2&#8239;000 minutos, 33 horas de analista por día: más de cuatro personas solo cerrando alertas. Una regla con precisión baja no es "un poco ruidosa": se come el tiempo del equipo y entrena a todos a ignorar la herramienta.</p>
+
+<p>Prueba el efecto con un día del panel de soporte. Son 40 eventos de inicio de sesión fallido: la mayoría normales, más dos ataques sintéticos, un password spraying y un ataque lento contra una sola cuenta. Ajusta cómo agrupa la regla, el umbral, la ventana y las exclusiones, y mira qué atrapa y qué te cuesta.</p>
+
+<div data-sim="detrule"></div>
+
+<p>Dos lecciones salen del widget. Una sola regla no atrapa los dos ataques con pocos falsos positivos: el spraying se ve agrupando por IP, el ataque lento agrupando por usuario con una ventana larga. <b>Una regla por comportamiento</b>. Y cada exclusión es un punto ciego: excluir la red de la oficina limpia el ruido, pero un atacante dentro de la oficina queda invisible para esa regla. Va escrito en la sección de puntos ciegos del ADS.</p>
+
+<p>Qué tan difícil le resulta al atacante esquivar una regla depende de qué mira. David Bianco lo ordenó en 2013 en la <dfn data-term="piramide-dolor">pirámide del dolor</dfn>. <span class="badge badge--doc">Documentado</span></p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 320" role="img" aria-labelledby="f599t f599d">
+<title id="f599t">La pirámide del dolor</title>
+<desc id="f599d">Seis niveles de abajo hacia arriba: hashes, direcciones IP, dominios, artefactos de red y de host, herramientas y TTP. Abajo, el atacante cambia el indicador en segundos y tu detección deja de servir; arriba, cambiar le cuesta días o semanas.</desc>
+<defs><marker id="f599a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<polygon class="dg-bad" points="20,280 540,280 507,236 53,236"/>
+<text class="dg-small" x="280" y="263" text-anchor="middle">Hashes</text>
+<text class="dg-tiny" x="560" y="263" text-anchor="start">trivial</text>
+<path class="dg-feedback" d="M536 258 H552"/>
+<polygon class="dg-bad" points="53,236 507,236 473,192 87,192"/>
+<text class="dg-small" x="280" y="219" text-anchor="middle">Direcciones IP</text>
+<text class="dg-tiny" x="560" y="219" text-anchor="start">fácil</text>
+<path class="dg-feedback" d="M503 214 H552"/>
+<polygon class="dg-warnbox" points="87,192 473,192 440,148 120,148"/>
+<text class="dg-small" x="280" y="175" text-anchor="middle">Dominios</text>
+<text class="dg-tiny" x="560" y="175" text-anchor="start">simple</text>
+<path class="dg-feedback" d="M469 170 H552"/>
+<polygon class="dg-warnbox" points="120,148 440,148 407,104 153,104"/>
+<text class="dg-small" x="280" y="131" text-anchor="middle">Artefactos de red y host</text>
+<text class="dg-tiny" x="560" y="131" text-anchor="start">molesto</text>
+<path class="dg-feedback" d="M436 126 H552"/>
+<polygon class="dg-ok" points="153,104 407,104 373,60 187,60"/>
+<text class="dg-small" x="280" y="87" text-anchor="middle">Herramientas</text>
+<text class="dg-tiny" x="560" y="87" text-anchor="start">difícil</text>
+<path class="dg-feedback" d="M403 82 H552"/>
+<polygon class="dg-ok" points="187,60 373,60 340,16 220,16"/>
+<text class="dg-small" x="280" y="43" text-anchor="middle">TTP</text>
+<text class="dg-tiny" x="560" y="43" text-anchor="start">muy difícil</text>
+<path class="dg-feedback" d="M369 38 H552"/>
+<text class="dg-tiny" x="600" y="28" text-anchor="start">Cuánto le cuesta al</text>
+<text class="dg-tiny" x="600" y="44" text-anchor="start">atacante cambiarlo</text>
+<text class="dg-tiny" x="280" y="304" text-anchor="middle">Abajo están los IOC; arriba, el comportamiento. David Bianco, 2013.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 59.10.</b> La pirámide del dolor. Detectar más arriba le cuesta más al atacante y a ti, pero dura.</figcaption>
+</figure>
+
+
+<p>Una regla que busca un hash deja de servir en cuanto el atacante recompila. Una que busca "una IP prueba muchas cuentas" sigue sirviendo con cualquier IP, cualquier herramienta y cualquier lista de contraseñas. Las reglas de comportamiento cuestan más de escribir y de afinar, pero son las que sobreviven.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Mide cada regla todos los meses: alertas por día, precisión (las cerradas como reales sobre el total) y tiempo de triaje. Una regla con menos del 10&#8239;% de precisión durante dos meses se afina o se apaga; una que nunca disparó se prueba de nuevo con sus eventos positivos, porque puede estar rota. Las alertas de severidad baja van a un ticket diario, no al teléfono de la guardia. <span class="badge badge--ref">Diseño de referencia</span></p>
+</aside>
+
+<h2 id="hunting"><span class="sec-num">59.9</span>La caza de amenazas</h2>
+
+<p>En <a href="m32-firewalls.html#deteccion">M32</a> viste la idea: en lugar de esperar una alerta, buscar a mano suponiendo que el atacante ya está dentro. La <a href="m32-firewalls.html#deteccion">caza de amenazas</a> es el complemento de las reglas: encuentra lo que ninguna regla vio, y cada caza bien hecha termina en una regla nueva o en una fuente que faltaba.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f5911t f5911d">
+<title id="f5911t">El ciclo de la caza de amenazas</title>
+<desc id="f5911d">Cuatro pasos en ciclo: una hipótesis basada en una técnica de ATT&amp;CK, los datos que la responderían, la búsqueda a mano en el SIEM y el resultado. Si aparece algo, es un incidente; si no, la búsqueda se vuelve una regla o se descubre que falta una fuente.</desc>
+<defs><marker id="f5911a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="30" y="40" width="300" height="56" rx="8"/>
+<text class="dg-small" x="180.0" y="64.5" text-anchor="middle">Hipótesis</text>
+<text class="dg-tiny" x="180.0" y="79.5" text-anchor="middle">una técnica de ATT&amp;CK</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="420" y="40" width="300" height="56" rx="8"/>
+<text class="dg-small" x="570.0" y="64.5" text-anchor="middle">Datos</text>
+<text class="dg-tiny" x="570.0" y="79.5" text-anchor="middle">¿tengo la fuente?</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="420" y="160" width="300" height="56" rx="8"/>
+<text class="dg-small" x="570.0" y="184.5" text-anchor="middle">Buscar</text>
+<text class="dg-tiny" x="570.0" y="199.5" text-anchor="middle">consultas a mano</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="30" y="160" width="300" height="56" rx="8"/>
+<text class="dg-small" x="180.0" y="184.5" text-anchor="middle">Resultado</text>
+<text class="dg-tiny" x="180.0" y="199.5" text-anchor="middle">tres salidas posibles</text>
+<path class="dg-edge" d="M330 68 L418 68" marker-end="url(#f5911a)"/>
+<path class="dg-edge" d="M570 96 L570 158" marker-end="url(#f5911a)"/>
+<path class="dg-edge" d="M420 188 L332 188" marker-end="url(#f5911a)"/>
+<path class="dg-edge" d="M180 158 L180 98" marker-end="url(#f5911a)"/>
+<text class="dg-tiny" x="560" y="236" text-anchor="middle">Salidas: un incidente, una regla nueva o una fuente que falta.</text>
+<text class="dg-tiny" x="14" y="236" text-anchor="start">Supone que el atacante ya está dentro</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 59.11.</b> El ciclo de la caza. Empieza con una hipótesis concreta, no con "a ver qué hay".</figcaption>
+</figure>
+
+
+<p>Una caza de Tienda Norte, como ejemplo. <b>Hipótesis:</b> si alguien robó un token del CI (<a href="m56-supply-chain.html#ci">M56.4</a>), lo usaría desde fuera de GitHub Actions. <b>Datos:</b> CloudTrail, con la identidad de cada llamada y su IP de origen. <b>Búsqueda:</b> llamadas hechas con el rol del CI desde IPs que no son de los runners de GitHub en los últimos 90 días. <b>Resultado:</b> si no aparece nada, la búsqueda se convierte en una regla; si aparece algo, es un incidente (<a href="m60-respuesta-forense.html#marco">M60</a>).</p>
+
+<p>Los señuelos son la forma más barata de cazar sin buscar: una credencial o una cuenta que nadie usa, como la <a href="m38-active-directory.html#detectar">cuenta señuelo de M38</a>. Cualquier uso es, por definición, un ataque, y la regla que lo detecta tiene precisión casi perfecta. En Tienda Norte, una llave de acceso falsa en el repositorio de configuración y una fila trampa en la tabla de clientes cumplen esa función.</p>
+
+<h2 id="tienda"><span class="sec-num">59.10</span>Las primeras diez detecciones de Tienda Norte</h2>
+
+<p>Con dos personas y medio día por semana, Tienda Norte no puede escribir cien reglas. Estas son las diez primeras, elegidas por el threat model de M54, con su fuente y su técnica de ATT&amp;CK. Ninguna depende de un IOC. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f5912t f5912d">
+<title id="f5912t">Dónde mira cada una de las diez detecciones de Tienda Norte</title>
+<desc id="f5912d">La arquitectura de Tienda Norte: GitHub Actions y el registro de imágenes a la izquierda; el clúster de Kubernetes con la API, el panel de soporte y el worker de pagos al centro; la base de pedidos y la cuenta de la nube a la derecha. Diez marcas numeradas indican la fuente de cada una de las diez primeras detecciones de la tabla.</desc>
+<defs><marker id="f5912a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="14" y="40" width="150" height="50" rx="8"/>
+<text class="dg-small" x="89.0" y="61.5" text-anchor="middle">GitHub Actions</text>
+<text class="dg-tiny" x="89.0" y="76.5" text-anchor="middle">CI</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="130" width="150" height="50" rx="8"/>
+<text class="dg-small" x="89.0" y="151.5" text-anchor="middle">Registro</text>
+<text class="dg-tiny" x="89.0" y="166.5" text-anchor="middle">imágenes</text>
+<rect class="dg-frame" x="200" y="20" width="360" height="230" rx="10"/>
+<text class="dg-group" x="380" y="40" text-anchor="middle">Clúster de Kubernetes</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="220" y="60" width="150" height="50" rx="8"/>
+<text class="dg-small" x="295.0" y="81.5" text-anchor="middle">API</text>
+<text class="dg-tiny" x="295.0" y="96.5" text-anchor="middle">pedidos</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="390" y="60" width="150" height="50" rx="8"/>
+<text class="dg-small" x="465.0" y="81.5" text-anchor="middle">Panel de soporte</text>
+<text class="dg-tiny" x="465.0" y="96.5" text-anchor="middle">detrás de la VPN</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="220" y="140" width="150" height="50" rx="8"/>
+<text class="dg-small" x="295.0" y="161.5" text-anchor="middle">Worker de pagos</text>
+<text class="dg-tiny" x="295.0" y="176.5" text-anchor="middle">webhooks</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="390" y="140" width="150" height="50" rx="8"/>
+<text class="dg-small" x="465.0" y="161.5" text-anchor="middle">API server</text>
+<text class="dg-tiny" x="465.0" y="176.5" text-anchor="middle">audit log</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="600" y="40" width="156" height="50" rx="8"/>
+<text class="dg-small" x="678.0" y="61.5" text-anchor="middle">Base de pedidos</text>
+<text class="dg-tiny" x="678.0" y="76.5" text-anchor="middle">PostgreSQL</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="600" y="130" width="156" height="50" rx="8"/>
+<text class="dg-small" x="678.0" y="151.5" text-anchor="middle">Cuenta de la nube</text>
+<text class="dg-tiny" x="678.0" y="166.5" text-anchor="middle">CloudTrail</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="600" y="210" width="156" height="44" rx="8"/>
+<text class="dg-small" x="678.0" y="228.5" text-anchor="middle">Identidad</text>
+<text class="dg-tiny" x="678.0" y="243.5" text-anchor="middle">SSO y VPN</text>
+<path class="dg-edge" d="M164 155 L218 165" marker-end="url(#f5912a)"/>
+<g class="pl-pin"><circle cx="380" cy="62" r="11"/><text x="380" y="66" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="364" cy="112" r="11"/><text x="364" y="116" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="550" cy="62" r="11"/><text x="550" y="66" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="230" cy="194" r="11"/><text x="230" y="198" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="550" cy="142" r="11"/><text x="550" y="146" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="550" cy="194" r="11"/><text x="550" y="198" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="166" cy="42" r="11"/><text x="166" y="46" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="166" cy="132" r="11"/><text x="166" y="136" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="760" cy="132" r="11"/><text x="760" y="136" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="760" cy="212" r="11"/><text x="760" y="216" text-anchor="middle">10</text></g>
+<text class="dg-tiny" x="380" y="280" text-anchor="middle">Los números corresponden a las filas de la tabla de 59.10.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 59.12.</b> Dónde mira cada detección. Los números son las filas de la tabla.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>#</th><th>Detección</th><th>Fuente</th><th>ATT&amp;CK</th><th>De dónde sale</th></tr></thead>
+    <tbody>
+      <tr><td class="r">1</td><td>Password spraying contra el panel (la regla de 59.6)</td><td>Panel</td><td><code>T1110.003</code></td><td>Amenaza 3 de M54 (llegar al panel)</td></tr>
+      <tr><td class="r">2</td><td>Una cuenta lee más de 500 pedidos ajenos en una hora</td><td>API</td><td><code>T1213</code></td><td>Amenaza 1 (BOLA)</td></tr>
+      <tr><td class="r">3</td><td>Una cuenta de soporte borra más de 20 pedidos en una hora</td><td>Panel</td><td><code>T1485</code></td><td>Amenaza 4</td></tr>
+      <tr><td class="r">4</td><td>Webhooks con firma inválida: más de 10 en 5 minutos</td><td>Worker</td><td><code>T1190</code></td><td>Amenaza 2</td></tr>
+      <tr><td class="r">5</td><td>Un pod lee Secrets de otro namespace</td><td>Kubernetes audit</td><td><code>T1552</code></td><td><a href="m57-contenedores-k8s.html#secretos-k8s">M57</a></td></tr>
+      <tr><td class="r">6</td><td>Una shell dentro de un contenedor de la API</td><td>Falco</td><td><code>T1059</code></td><td><a href="m57-contenedores-k8s.html#runtime">M57</a></td></tr>
+      <tr><td class="r">7</td><td>Un workflow cambia sus permisos o deja de fijar una acción por SHA</td><td>GitHub</td><td><code>T1195</code></td><td><a href="m56-supply-chain.html#ci">M56</a></td></tr>
+      <tr><td class="r">8</td><td>Una imagen sin firma intenta entrar al clúster</td><td>Admisión</td><td><code>T1525</code></td><td><a href="m56-supply-chain.html#verificar">M56</a></td></tr>
+      <tr><td class="r">9</td><td>Alguien apaga CloudTrail o crea una llave de acceso</td><td>CloudTrail</td><td><code>T1562.008</code>, <code>T1098</code></td><td><a href="m37-nube.html#auditoria">M37</a></td></tr>
+      <tr><td class="r">10</td><td>Inicio de sesión exitoso desde un país nuevo para esa cuenta</td><td>SSO y VPN</td><td><code>T1078</code></td><td>Puntos ciegos de la regla 1</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Además de las diez, cada fuente tiene su alerta de silencio (<a href="#fuentes">59.2</a>). Con estas reglas, la cobertura de la figura 59.6 deja huecos a la vista, y es honesto que los deje: Discovery y Collection casi no se ven sin un EDR en cada nodo, y es la próxima inversión. Lo que pasa cuando una de estas reglas dispara de verdad, desde el triaje hasta el postmortem que cambia la regla, es el tema de <a href="m60-respuesta-forense.html#postmortem">M60</a>. Lo que se ve en la red y en el correo, el canal por el que entran la mayoría de los ataques, sigue en <a href="m61-red-correo.html#nsm">M61</a>.</p>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m59"></div>
+<div data-exercise="m59-reglas"></div>
+<div data-checkpoint="m59"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m59.data.js"></script>
+<script src="../assets/js/data/exercises/m59.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-detect.js"></script>
+</body>
+</html>

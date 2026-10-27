@@ -72,7 +72,7 @@ SD.defineQuiz('m32', {
         'Queda abierto solo desde localhost, porque Docker publica por defecto en 127.0.0.1.'
       ],
       answer: 2,
-      explain: 'Docker hace NAT hacia la IP del contenedor antes de la decisión de ruteo; el paquete ya no es para el host y nunca pasa por la cadena <code>input</code> de UFW. Docker publica por defecto en <code>0.0.0.0</code> y <code>[::]</code> (32.9).'
+      explain: 'Docker hace NAT hacia la IP del contenedor antes de la decisión de ruteo; el paquete ya no es para el host y nunca pasa por la cadena <code>input</code> de UFW. Docker publica por defecto en <code>0.0.0.0</code> y <code>[::]</code> (32.10).'
     },
     {
       id: 'ipv6', type: 'single',
@@ -84,7 +84,37 @@ SD.defineQuiz('m32', {
         'Que todo esté abierto por IPv6: ip6tables es otra tabla, con otras reglas, y empieza vacía.'
       ],
       answer: 3,
-      explain: 'iptables solo filtra IPv4. La familia <code>inet</code> de nftables, <code>IPV6=yes</code> en UFW y las reglas con <code>::/0</code> en la nube cierran el hueco; y se prueba contra las dos direcciones (32.9).'
+      explain: 'iptables solo filtra IPv4. La familia <code>inet</code> de nftables, <code>IPV6=yes</code> en UFW y las reglas con <code>::/0</code> en la nube cierran el hueco; y se prueba contra las dos direcciones (32.10).'
+    },
+    {
+      id: 'orden-borde', type: 'order',
+      prompt: 'Ordena las capas que atraviesa una request a una API pública, de afuera hacia adentro.',
+      items: ['La mitigación de DDoS del proveedor', 'El filtro de red (NACL o security group)', 'El balanceador que termina TLS, con el WAF', 'El API gateway, que valida el token y la cuota', 'El servicio, que decide si el recurso es tuyo'],
+      explain: 'Va de lo barato a lo caro y de lo que se puede ver antes a lo que se ve después: volumen, puertos, contenido HTTP en claro, identidad y por último la regla del negocio (32.9).'
+    },
+    {
+      id: 'ha-estado', type: 'single',
+      prompt: 'Dos firewalls que enrutan comparten una IP virtual con keepalived. Cuando el activo se apaga, el pasivo toma la IP en unos segundos, pero las descargas largas que estaban en curso se cortan igual. ¿Qué falta?',
+      options: [
+        'Bajar el intervalo de VRRP a 100 ms, para que el pasivo tome la IP antes de que expiren las conexiones.',
+        'Copiar la tabla de conntrack al pasivo con conntrackd, para que reconozca las conexiones abiertas.',
+        'Poner los dos firewalls en activo-activo, porque el activo-pasivo siempre corta las conexiones abiertas.',
+        'Cambiar las reglas a sin estado en los dos equipos, ya que el estado nunca puede sobrevivir a un cambio.'
+      ],
+      answer: 1,
+      explain: 'La IP virtual se mueve bien; lo que no se mueve es el estado. El pasivo no conoce esas conexiones y descarta sus paquetes como inválidos. conntrackd sincroniza la tabla. En activo-activo el problema existe igual, y se resuelve con la simetría del hash (32.9).'
+    },
+    {
+      id: 'waf-falla', type: 'single',
+      prompt: 'Tu WAF y tu firewall de red pueden fallar. ¿Qué configuración es la más habitual y por qué?',
+      options: [
+        'Los dos fallan abiertos, porque la disponibilidad pesa más que cualquier capa de seguridad del borde.',
+        'Los dos fallan cerrados, porque una capa de seguridad que se abre sola no protege en el peor momento.',
+        'El firewall falla cerrado y el WAF suele fallar abierto: el código sigue defendiendo y el servicio no cae.',
+        'El firewall falla abierto y el WAF cerrado, porque el WAF es la única capa que entiende el contenido.'
+      ],
+      answer: 2,
+      explain: 'Abrir la red entera es inaceptable; dejar pasar requests sin inspeccionar durante una falla del WAF es un riesgo acotado si la aplicación valida y autoriza. Es una decisión que se escribe de antemano (32.9).'
     },
     {
       id: 'icmp', type: 'single',
@@ -120,7 +150,7 @@ SD.defineQuiz('m32', {
         'La NACL de la subred, que niega los puertos efímeros de la respuesta que sale hacia los clientes.'
       ],
       answer: 0,
-      explain: 'Quien ya está dentro casi siempre necesita hablar hacia afuera para recibir órdenes y sacar datos, y suele hacerlo a intervalos regulares (beaconing) dentro de tráfico permitido. El registro de salida es el detector más barato y delator; el firewall de entrada ya no ve este tramo (32.5 y 32.10).'
+      explain: 'Quien ya está dentro casi siempre necesita hablar hacia afuera para recibir órdenes y sacar datos, y suele hacerlo a intervalos regulares (beaconing) dentro de tráfico permitido. El registro de salida es el detector más barato y delator; el firewall de entrada ya no ve este tramo (32.5 y 32.11).'
     }
   ]
 });

@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M64. Anatomía de un harness</title>
+<meta name="description" content="Qué hay dentro de un harness de agentes de código y por qué: el system prompt por capas, las herramientas para leer, editar, buscar y ejecutar, la lista de tareas, la gestión del contexto, los archivos de memoria, los subagentes y la sesión, con Claude Code, Codex CLI, OpenCode, Aider y Cursor leídos como decisiones de diseño.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m64">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Anatomía de un harness</h1>
+        <p class="lead">El harness de 40 líneas de M62 funciona y se rompe en la primera tarea seria: reescribe archivos enteros, se ahoga con la salida de un build, se olvida del plan y no sabe nada de tu proyecto. Cada pieza de un harness de verdad es la respuesta a una de esas fallas.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M64</dd></div>
+          <div><dt>Parte</dt><dd>VIII. AI Engineering: modelos, harnesses y agentes</dd></div>
+          <div><dt>Duración</dt><dd>120 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M25, M62, M63</dd></div>
+          <div><dt>Estado</dt><dd data-status="m64">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Nombrar las piezas de un harness de código y la falla que resuelve cada una.</li>
+    <li>Ordenar un system prompt por capas para que se cachee y para que el modelo encuentre lo que importa.</li>
+    <li>Elegir cómo lee, edita, busca y ejecuta un agente, con lo que cada opción gana y pierde.</li>
+    <li>Calcular cuánto contexto ocupa una sesión y cuándo compacta, con y sin caché.</li>
+    <li>Escribir un archivo de memoria útil y decidir cuándo una tarea va a un subagente.</li>
+    <li>Leer Claude Code, Codex CLI, OpenCode, Aider y Cursor como conjuntos de decisiones de diseño.</li>
+  </ul>
+</section>
+
+<h2 id="piezas"><span class="sec-num">64.1</span>Las piezas de un harness</h2>
+
+<p>En <a href="m62-pila-agente.html#propio">M62.6</a> escribiste un <a href="m62-pila-agente.html#harness">harness</a> en 40 líneas y viste una tabla: cada falla del harness mínimo y lo que agregan los de verdad. Este módulo abre esa tabla. Todas las piezas giran alrededor del mismo bucle (<a href="m25-agentes.html#bucle">M25.2</a>) y de las llamadas que viste por dentro en <a href="m63-tool-calling.html#lamina">M63</a>.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un cirujano muy bueno que entra a un quirófano que no conoce. El talento es el modelo. El harness es todo lo demás: la ficha del paciente que le dan al entrar (memoria), el instrumental a mano y bien ordenado (herramientas), la enfermera que pregunta antes de cortar (permisos), la lista de pasos en la pared (tareas) y alguien que anota todo lo que pasa (sesión).</p>
+</aside>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 340" role="img" aria-labelledby="f64Lt f64Ld">
+<title id="f64Lt">Lámina 64.A: las piezas de un harness</title>
+<desc id="f64Ld">En el centro, el bucle. Alrededor, de izquierda a derecha y de arriba abajo: el ensamblador del prompt con el system por capas y los archivos de memoria; el registro de herramientas con leer, editar, buscar y bash; los permisos; el gestor de contexto con recorte, compactación y caché; la lista de tareas; los subagentes; la sesión guardada en disco; y la interfaz.</desc>
+<defs><marker id="f64La" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="285" y="130" width="200" height="76" rx="8"/>
+<text class="dg-big" x="385.0" y="164.5" text-anchor="middle">Bucle</text>
+<text class="dg-tiny" x="385.0" y="179.5" text-anchor="middle">modelo, herramientas, repetir</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="20" width="200" height="70" rx="8"/>
+<text class="dg-label" x="120.0" y="51.5" text-anchor="middle">Ensamblador del prompt</text>
+<text class="dg-tiny" x="120.0" y="66.5" text-anchor="middle">system por capas</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="285" y="20" width="200" height="70" rx="8"/>
+<text class="dg-label" x="385.0" y="51.5" text-anchor="middle">Archivos de memoria</text>
+<text class="dg-tiny" x="385.0" y="66.5" text-anchor="middle">CLAUDE.md, AGENTS.md</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="550" y="20" width="200" height="70" rx="8"/>
+<text class="dg-label" x="650.0" y="51.5" text-anchor="middle">Registro de herramientas</text>
+<text class="dg-tiny" x="650.0" y="66.5" text-anchor="middle">leer, editar, buscar, bash</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="130" width="200" height="70" rx="8"/>
+<text class="dg-label" x="120.0" y="161.5" text-anchor="middle">Interfaz</text>
+<text class="dg-tiny" x="120.0" y="176.5" text-anchor="middle">terminal, IDE, headless</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="550" y="130" width="200" height="70" rx="8"/>
+<text class="dg-label" x="650.0" y="161.5" text-anchor="middle">Permisos</text>
+<text class="dg-tiny" x="650.0" y="176.5" text-anchor="middle">allow, ask, deny</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="240" width="200" height="70" rx="8"/>
+<text class="dg-label" x="120.0" y="271.5" text-anchor="middle">Sesión en disco</text>
+<text class="dg-tiny" x="120.0" y="286.5" text-anchor="middle">transcript, reanudar</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="285" y="240" width="200" height="70" rx="8"/>
+<text class="dg-label" x="385.0" y="271.5" text-anchor="middle">Gestor de contexto</text>
+<text class="dg-tiny" x="385.0" y="286.5" text-anchor="middle">recorte, compactación, caché</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="550" y="240" width="200" height="70" rx="8"/>
+<text class="dg-label" x="650.0" y="271.5" text-anchor="middle">Tareas y subagentes</text>
+<text class="dg-tiny" x="650.0" y="286.5" text-anchor="middle">plan, contexto aparte</text>
+<path class="dg-edge" d="M283 55 L222 55" marker-end="url(#f64La)"/>
+<path class="dg-edge" d="M120 90 L300 128" marker-end="url(#f64La)"/>
+<path class="dg-edge" d="M650 90 L470 128" marker-end="url(#f64La)"/>
+<path class="dg-edge" d="M220 168 L283 168" marker-end="url(#f64La)"/>
+<path class="dg-edge" d="M487 168 L548 168" marker-end="url(#f64La)"/>
+<path class="dg-edge" d="M385 206 L385 238" marker-end="url(#f64La)"/>
+<path class="dg-edge" d="M285 200 L220 252" marker-end="url(#f64La)"/>
+<path class="dg-edge" d="M487 200 L548 252" marker-end="url(#f64La)"/>
+<g class="pl-pin"><circle cx="30" cy="28" r="11"/><text x="30" y="32" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="295" cy="28" r="11"/><text x="295" y="32" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="560" cy="28" r="11"/><text x="560" y="32" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="560" cy="138" r="11"/><text x="560" y="142" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="295" cy="248" r="11"/><text x="295" y="252" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="560" cy="248" r="11"/><text x="560" y="252" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="30" cy="248" r="11"/><text x="30" y="252" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="30" cy="138" r="11"/><text x="30" y="142" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="295" cy="138" r="11"/><text x="295" y="142" text-anchor="middle">9</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 64.A.</b> Las piezas de un harness alrededor del bucle. Cada una existe porque sin ella el agente falla de una forma concreta.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Ensamblador del prompt</b><span>Arma el system por capas en cada request, en un orden que se puede cachear. <a href="#system">64.2</a></span></li>
+  <li><b>Archivos de memoria</b><span>Lo que el proyecto le cuenta al agente al empezar: comandos, reglas, trampas. <a href="#memoria">64.9</a></span></li>
+  <li><b>Registro de herramientas</b><span>Leer, editar, buscar, ejecutar: qué existe y cómo está descrito. <a href="#herramientas">64.3</a></span></li>
+  <li><b>Permisos</b><span>Qué se hace solo, qué se pregunta y qué no se hace nunca; a fondo en M66. <a href="m62-pila-agente.html#capas-harness">M62.10</a></span></li>
+  <li><b>Gestor de contexto</b><span>Recorta resultados, compacta la conversación y marca el prefijo cacheable. <a href="#contexto">64.8</a></span></li>
+  <li><b>Tareas y subagentes</b><span>Un plan que no se olvida y un contexto aparte para explorar. <a href="#tareas">64.7</a></span></li>
+  <li><b>Sesión en disco</b><span>El transcript para reanudar, retroceder y auditar. <a href="#sesion">64.11</a></span></li>
+  <li><b>Interfaz</b><span>Terminal, IDE o modo headless: el mismo núcleo con otra cara. <a href="m69-orquestadores.html#headless">M69.2</a></span></li>
+  <li><b>Bucle</b><span>Llamar al modelo, ejecutar lo que pidió, repetir hasta que termine o se acabe el presupuesto. <a href="m63-tool-calling.html#stop">M63.9</a></span></li>
+</ol>
+
+<h2 id="system"><span class="sec-num">64.2</span>El system prompt por capas</h2>
+
+<p>El <dfn data-term="system-prompt">system prompt</dfn> de un harness no es un párrafo: es un documento que se arma en cada request a partir de varias fuentes. En el de Claude Code, por ejemplo, entran las reglas del harness, las definiciones de herramientas, datos del entorno (sistema operativo, directorio de trabajo, si es un repositorio de git), los archivos de memoria y la lista de skills y servidores MCP disponibles <span class="badge badge--doc">Documentado</span>. Lo que no entra en el system llega como mensajes, incluidos recordatorios que el harness intercala durante la sesión.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f642t f642d">
+<title id="f642t">El system prompt por capas</title>
+<desc id="f642d">Una pila de capas de arriba abajo, con su tamaño típico y si cambia: identidad y reglas del harness, estable; definiciones de herramientas, estable; entorno con sistema operativo y directorio, casi estable; archivos de memoria, cambian poco; skills listadas, cambian poco; después vienen los mensajes, que crecen cada turno, y los recordatorios del sistema intercalados. A la derecha, una llave marca el prefijo que se puede cachear.</desc>
+<defs><marker id="f642a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="20" width="470" height="34" rx="6"/>
+<text class="dg-small" x="36" y="42" text-anchor="start">Identidad y reglas del harness</text>
+<text class="dg-tiny" x="474" y="42" text-anchor="end">estable</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="62" width="470" height="34" rx="6"/>
+<text class="dg-small" x="36" y="84" text-anchor="start">Definiciones de herramientas</text>
+<text class="dg-tiny" x="474" y="84" text-anchor="end">estable</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="104" width="470" height="34" rx="6"/>
+<text class="dg-small" x="36" y="126" text-anchor="start">Entorno: OS, cwd, fecha, git status</text>
+<text class="dg-tiny" x="474" y="126" text-anchor="end">casi estable</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="146" width="470" height="34" rx="6"/>
+<text class="dg-small" x="36" y="168" text-anchor="start">Archivos de memoria (CLAUDE.md, AGENTS.md)</text>
+<text class="dg-tiny" x="474" y="168" text-anchor="end">cambia poco</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="188" width="470" height="34" rx="6"/>
+<text class="dg-small" x="36" y="210" text-anchor="start">Skills y servidores MCP disponibles</text>
+<text class="dg-tiny" x="474" y="210" text-anchor="end">cambia poco</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="20" y="230" width="470" height="34" rx="6"/>
+<text class="dg-small" x="36" y="252" text-anchor="start">Mensajes: tú, el modelo, resultados</text>
+<text class="dg-tiny" x="474" y="252" text-anchor="end">crece cada turno</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="272" width="470" height="34" rx="6"/>
+<text class="dg-small" x="36" y="294" text-anchor="start">Recordatorios del harness intercalados</text>
+<text class="dg-tiny" x="474" y="294" text-anchor="end">cada tanto</text>
+<path class="dg-edge" d="M510 22 H526 V222 H510"/>
+<text class="dg-small" x="540" y="112" text-anchor="start">Prefijo estable:</text>
+<text class="dg-small" x="540" y="132" text-anchor="start">se cachea entre turnos</text>
+<path class="dg-edge" d="M510 232 H526 V310 H510"/>
+<text class="dg-small" x="540" y="266" text-anchor="start">Cola variable:</text>
+<text class="dg-small" x="540" y="286" text-anchor="start">se paga nueva</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 64.1.</b> Las capas ordenadas de la más estable a la más variable. El orden no es estético: decide qué se cachea.</figcaption>
+</figure>
+
+
+<p>Dos reglas salen de la figura:</p>
+<ul>
+  <li><b>Lo estable primero.</b> El <a href="m16-context-windows.html#prompt-caching">prompt caching</a> (<a href="m16-context-windows.html#prompt-caching">M16</a>) guarda el prefijo: todo lo que está antes del primer byte que cambia. Si la fecha y la hora con segundos estuvieran en la primera línea, ninguna request compartiría caché. Por eso los harnesses ponen lo variable al final, y por eso cambiar una herramienta o editar el <code>CLAUDE.md</code> a mitad de sesión hace que el turno siguiente se pague entero.</li>
+  <li><b>Lo importante, cerca del final.</b> Un modelo atiende peor lo que está en el medio de un contexto largo (<a href="m16-context-windows.html#limites">lost in the middle</a>, M16). Los harnesses repiten lo crítico cerca del final con recordatorios cortos: "hay una lista de tareas abierta", "este archivo cambió desde que lo leíste".</li>
+</ul>
+
+<h2 id="herramientas"><span class="sec-num">64.3</span>Las herramientas de un agente de código</h2>
+
+<p>Con <code>bash</code> solo, un modelo puede hacer todo: leer con <code>cat</code>, editar con <code>sed</code>, buscar con <code>grep</code>. Los harnesses igual definen herramientas dedicadas, por tres razones: el resultado es predecible (un formato fijo que el modelo aprende), el permiso es fino (leer se aprueba solo, ejecutar se pregunta) y el harness puede validar antes de actuar (la edición falla si el texto no coincide). Las de Claude Code son un buen catálogo <span class="badge badge--doc">Documentado</span>:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Herramienta</th><th>Qué hace</th><th>La decisión de diseño</th></tr></thead>
+    <tbody>
+      <tr><td><code>Read</code></td><td>Lee un archivo con números de línea, por tramos con <code>offset</code> y <code>limit</code></td><td>Los números de línea permiten citar y ubicar; los tramos evitan meter un archivo de 20&#8239;000 líneas</td></tr>
+      <tr><td><code>Edit</code></td><td>Reemplaza un fragmento exacto por otro</td><td>El modelo escribe solo lo que cambia, y la herramienta falla si el fragmento no es único</td></tr>
+      <tr><td><code>Write</code></td><td>Crea o reemplaza un archivo entero</td><td>Para archivos nuevos; sobre uno existente, exige haberlo leído antes</td></tr>
+      <tr><td><code>Glob</code>, <code>Grep</code></td><td>Buscar archivos por patrón y contenido (Grep usa ripgrep)</td><td>Búsqueda exacta y barata, sin índice</td></tr>
+      <tr><td><code>Bash</code></td><td>Ejecuta un comando con timeout</td><td>Todo lo que no tiene herramienta propia; se recorta la salida</td></tr>
+      <tr><td><code>TodoWrite</code></td><td>Escribe y actualiza una lista de tareas</td><td>El plan como estado visible, no como recuerdo</td></tr>
+      <tr><td><code>Task</code> (subagentes)</td><td>Lanza otro agente con contexto propio</td><td>Explorar sin ensuciar el contexto principal</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Así se ve un <code>Read</code> por dentro: el formato de <code>cat -n</code>, con el número de línea y una tabulación antes de cada línea <span class="badge badge--doc">Documentado</span>.</p>
+
+<pre data-lang="text"><code>     1	def precio(item):
+     2	    if item is None:
+     3	        return None
+     4	    return item.precio * 1.21</code></pre>
+
+<p>El número de línea no es para el humano: sirve para que el modelo pueda decir "en la línea 4" y para que el harness detecte cuando el modelo, al editar, copia el número por error junto con el código. Las tres herramientas que más deciden cómo trabaja un agente son las de editar, buscar y ejecutar.</p>
+
+<h2 id="editar"><span class="sec-num">64.4</span>Editar: reescribir, reemplazar o parchear</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f644t f644d">
+<title id="f644t">Tres formas de editar un archivo</title>
+<desc id="f644d">Tres columnas. Reescribir el archivo entero: el modelo genera todas las líneas; es simple pero caro y puede borrar algo sin querer. Reemplazo exacto: el modelo escribe el fragmento viejo y el nuevo; falla si el viejo no aparece o aparece más de una vez. Parche o diff: el modelo escribe un bloque con contexto, líneas que salen y líneas que entran; sirve para varios cambios en varios archivos pero el formato es más fácil de romper.</desc>
+<defs><marker id="f644a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="20" width="230" height="60" rx="8"/>
+<text class="dg-label" x="135.0" y="46.5" text-anchor="middle">Reescribir entero</text>
+<text class="dg-tiny dg-mono" x="135.0" y="61.5" text-anchor="middle">write_file</text>
+<text class="dg-small" x="34" y="112" text-anchor="start">salen las 400 líneas</text>
+<text class="dg-small" x="34" y="136" text-anchor="start">simple de entender</text>
+<text class="dg-small" x="34" y="160" text-anchor="start">caro y riesgoso:</text>
+<text class="dg-small" x="34" y="184" text-anchor="start">puede perder líneas</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="270" y="20" width="230" height="60" rx="8"/>
+<text class="dg-label" x="385.0" y="46.5" text-anchor="middle">Reemplazo exacto</text>
+<text class="dg-tiny dg-mono" x="385.0" y="61.5" text-anchor="middle">old_string / new_string</text>
+<text class="dg-small" x="284" y="112" text-anchor="start">salen 2 a 10 líneas</text>
+<text class="dg-small" x="284" y="136" text-anchor="start">falla si no es único</text>
+<text class="dg-small" x="284" y="160" text-anchor="start">o si no coincide:</text>
+<text class="dg-small" x="284" y="184" text-anchor="start">el error vuelve al modelo</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="520" y="20" width="230" height="60" rx="8"/>
+<text class="dg-label" x="635.0" y="46.5" text-anchor="middle">Parche (diff)</text>
+<text class="dg-tiny dg-mono" x="635.0" y="61.5" text-anchor="middle">apply_patch, SEARCH/REPLACE</text>
+<text class="dg-small" x="534" y="112" text-anchor="start">contexto, - y +</text>
+<text class="dg-small" x="534" y="136" text-anchor="start">varios archivos</text>
+<text class="dg-small" x="534" y="160" text-anchor="start">formato frágil:</text>
+<text class="dg-small" x="534" y="184" text-anchor="start">un @@ mal puesto falla</text>
+<rect class="dg-frame" x="20" y="222" width="730" height="50" rx="8"/>
+<text class="dg-small" x="385" y="244" text-anchor="middle">Claude Code y OpenCode: reemplazo exacto. Codex CLI: apply_patch.</text>
+<text class="dg-tiny" x="385" y="262" text-anchor="middle">Aider: varios formatos, elegidos por modelo según su benchmark de edición.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 64.2.</b> Tres estrategias de edición y quién usa cada una.</figcaption>
+</figure>
+
+
+<p><b>Reemplazo exacto.</b> La herramienta recibe <code>old_string</code> y <code>new_string</code>, busca el viejo en el archivo y lo cambia. Falla en tres casos, y los tres son a propósito: si no aparece (el modelo recordó mal el código), si aparece más de una vez (no se sabe cuál cambiar) y si el archivo cambió desde la última lectura (el modelo trabaja sobre una versión vieja). El error vuelve al modelo, que relee y reintenta. Es la <dfn data-term="edicion-exacta">edición por reemplazo exacto</dfn> que usan Claude Code y OpenCode, y la de <code>str_replace</code> en la herramienta de editor de texto de Anthropic <span class="badge badge--doc">Documentado</span>.</p>
+
+<div data-sim="editexact"></div>
+
+<p><b>Parche.</b> Codex CLI edita con <code>apply_patch</code>, un formato de diff propio que los modelos de OpenAI aprendieron en el entrenamiento: encabezados por archivo, una línea <code>@@</code> con contexto y líneas con <code>-</code> y <code>+</code> <span class="badge badge--doc">Documentado</span>. Un parche puede tocar varios archivos de una vez, crear y borrar.</p>
+
+<pre data-lang="text"><code>*** Begin Patch
+*** Update File: src/precios.py
+@@ def precio(item):
+     if item is None:
+         return None
+-    return item.precio * 1.21
++    return round(item.precio * 1.21, 2)
+*** End Patch</code></pre>
+
+<p><b>Varios formatos, elegidos por modelo.</b> Aider soporta archivos enteros (<code>whole</code>), bloques SEARCH/REPLACE (<code>diff</code>) y diffs unificados (<code>udiff</code>), y elige el formato según el modelo con los resultados de su propio benchmark de edición: un mismo modelo puede rendir bastante distinto según el formato <span class="badge badge--doc">Documentado</span>.</p>
+
+<pre data-lang="text"><code>src/precios.py
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH
+    return item.precio * 1.21
+=======
+    return round(item.precio * 1.21, 2)
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE</code></pre>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Reescribir el archivo entero es lo que mejor sale con modelos chicos (no hay formato que romper) y lo peor con archivos largos: 400 líneas de salida para cambiar una, que cuestan tiempo y tokens de salida (los más caros) y pueden perder una línea sin que nadie lo note. El reemplazo exacto es el término medio para la mayoría; el parche gana cuando un cambio toca muchos archivos a la vez y el modelo fue entrenado con ese formato. La lección de <a href="m63-tool-calling.html#entrenamiento">M63.11</a> se repite: el mejor formato es el que el modelo practicó.</p>
+</aside>
+
+<h2 id="buscar"><span class="sec-num">64.5</span>Buscar: grep contra un índice</h2>
+
+<p>Para editar, primero hay que encontrar. Hay dos familias de respuesta, y los harnesses populares eligieron distinto.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f645t f645d">
+<title id="f645t">Buscar con grep contra buscar con un índice de embeddings</title>
+<desc id="f645d">Izquierda, búsqueda agéntica: el modelo pide glob y grep, lee los resultados, refina y vuelve a buscar; siempre ve el código actual y no hay índice que mantener, pero cada vuelta es un turno. Derecha, RAG sobre el código: un índice de embeddings hecho antes; una pregunta trae los fragmentos más parecidos en una sola consulta, pero el índice puede estar viejo, pierde las coincidencias exactas y vive en un servicio.</desc>
+<defs><marker id="f645a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="14" width="362" height="262" rx="10"/>
+<rect class="dg-frame" x="394" y="14" width="362" height="262" rx="10"/>
+<text class="dg-label" x="195" y="40" text-anchor="middle">Búsqueda agéntica (grep, glob)</text>
+<text class="dg-label" x="575" y="40" text-anchor="middle">RAG sobre el código (embeddings)</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="40" y="60" width="200" height="36" rx="8"/>
+<text class="dg-tiny dg-mono" x="140.0" y="82.0" text-anchor="middle">glob "**/*auth*"</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="40" y="110" width="200" height="36" rx="8"/>
+<text class="dg-tiny dg-mono" x="140.0" y="132.0" text-anchor="middle">grep "verifyToken"</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="40" y="160" width="200" height="36" rx="8"/>
+<text class="dg-tiny dg-mono" x="140.0" y="182.0" text-anchor="middle">read middleware.ts</text>
+<path class="dg-edge" d="M140 96 L140 108" marker-end="url(#f645a)"/>
+<path class="dg-edge" d="M140 146 L140 158" marker-end="url(#f645a)"/>
+<path class="dg-feedback" d="M240 178 L300 178 L300 78 L240 78" marker-end="url(#f645a)"/>
+<text class="dg-tiny" x="318" y="132" text-anchor="start">refina</text>
+<text class="dg-small" x="40" y="226" text-anchor="start">+ siempre el código de ahora</text>
+<text class="dg-small" x="40" y="244" text-anchor="start">+ coincidencias exactas</text>
+<text class="dg-small" x="40" y="262" text-anchor="start">− una vuelta por búsqueda</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="420" y="60" width="140" height="36" rx="8"/>
+<text class="dg-tiny" x="490.0" y="82.0" text-anchor="middle">índice previo</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="590" y="60" width="140" height="36" rx="8"/>
+<text class="dg-tiny" x="660.0" y="82.0" text-anchor="middle">pregunta</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="500" y="130" width="160" height="40" rx="8"/>
+<text class="dg-tiny" x="580.0" y="154.0" text-anchor="middle">top 10 fragmentos</text>
+<path class="dg-edge" d="M490 96 L560 128" marker-end="url(#f645a)"/>
+<path class="dg-edge" d="M660 96 L600 128" marker-end="url(#f645a)"/>
+<text class="dg-small" x="420" y="226" text-anchor="start">+ una consulta, ideas parecidas</text>
+<text class="dg-small" x="420" y="244" text-anchor="start">− índice viejo tras cada cambio</text>
+<text class="dg-small" x="420" y="262" text-anchor="start">− pierde el nombre exacto</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 64.3.</b> Búsqueda agéntica contra RAG sobre el código. Una paga en turnos; la otra, en un índice que hay que mantener.</figcaption>
+</figure>
+
+
+<p>La <dfn data-term="busqueda-agentica">búsqueda agéntica</dfn> es la que hace el agente con <code>glob</code>, <code>grep</code> y <code>read</code>, refinando en cada vuelta como lo harías tú en una terminal. Claude Code trabaja así, sin un índice de embeddings del repositorio <span class="badge badge--doc">Documentado</span>. Cursor, en cambio, indexa el código con embeddings para la búsqueda semántica, y también tiene grep <span class="badge badge--doc">Documentado</span>. Aider usa un tercer camino: un <i>repo map</i>, un resumen de las definiciones del repositorio extraídas con tree-sitter y ordenadas por cuánto se usan, que entra al contexto como un mapa <span class="badge badge--doc">Documentado</span>.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th></th><th>Grep y glob</th><th>Índice de embeddings</th><th>Repo map</th></tr></thead>
+    <tbody>
+      <tr><td>Frescura</td><td>Siempre el código de ahora</td><td>Lo que había al indexar</td><td>Se recalcula al cambiar</td></tr>
+      <tr><td>Encuentra <code>verifyToken</code></td><td>Exacto</td><td>Puede traer algo parecido</td><td>Si es una definición</td></tr>
+      <tr><td>Encuentra "dónde se valida la sesión"</td><td>Si el modelo adivina las palabras</td><td>Bien</td><td>Por los nombres</td></tr>
+      <tr><td>Costo</td><td>Turnos del modelo</td><td>Indexar y un servicio</td><td>Tokens del mapa en cada request</td></tr>
+      <tr><td>Privacidad</td><td>Nada sale de la máquina salvo lo leído</td><td>Los embeddings se calculan en algún lado</td><td>Local</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Con un modelo bueno usando herramientas, la búsqueda agéntica rinde muy bien en repositorios medianos y no tiene nada que se desactualice. En un monorepo de millones de líneas, un índice o un mapa ahorra muchas vueltas. Lo que RAG sobre documentos es y cuándo conviene está en <a href="m16-context-windows.html#rag">M16</a>; la comparación a fondo de cómo entra el contexto es M68.</p>
+
+<h2 id="bash"><span class="sec-num">64.6</span>Ejecutar: timeout, recorte y nada interactivo</h2>
+
+<p>La herramienta de comandos es la más poderosa y la que más formas tiene de fallar. Las decisiones que la vuelven usable:</p>
+
+<pre data-lang="python"><code>import subprocess
+
+def bash(cmd: str, timeout_s: int = 120, cabeza: int = 50, cola: int = 50) -&gt; str:
+    try:
+        p = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                           timeout=timeout_s, stdin=subprocess.DEVNULL)    # (1) sin stdin
+    except subprocess.TimeoutExpired:
+        return f"Error: el comando superó {timeout_s} s y se detuvo."      # (2) el modelo decide qué hacer
+    lineas = (p.stdout + p.stderr).splitlines()
+    if len(lineas) &gt; cabeza + cola:                                        # (3) cabeza y cola
+        omitidas = len(lineas) - cabeza - cola
+        lineas = lineas[:cabeza] + [f"[… {omitidas} líneas omitidas …]"] + lineas[-cola:]
+    return "\n".join(lineas) + f"\n(exit code {p.returncode})"             # (4) el código, siempre</code></pre>
+
+<ol class="code-key">
+  <li>Sin entrada estándar. Un comando que espera una respuesta (<code>npm init</code>, un <code>git rebase -i</code>, una confirmación) se cuelga para siempre; sin stdin falla enseguida.</li>
+  <li>Timeout con mensaje claro. En Claude Code el valor por defecto es de 2 minutos y se configura (<code>BASH_DEFAULT_TIMEOUT_MS</code>, <code>BASH_MAX_TIMEOUT_MS</code>) <span class="badge badge--doc">Documentado</span>. Un servidor de desarrollo no termina nunca: va en segundo plano, no en esta herramienta.</li>
+  <li>Cabeza y cola. El error de un build suele estar al final y el contexto, al principio.</li>
+  <li>El exit code, siempre. Es la señal más confiable de si algo funcionó.</li>
+</ol>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f646t f646d">
+<title id="f646t">Recortar la salida de un comando</title>
+<desc id="f646d">Una barra larga representa 12 000 líneas de salida de un comando. El harness conserva las primeras líneas y las últimas, y en el medio pone un aviso con cuántas líneas se omitieron. Las últimas suelen tener el error y el resumen; las primeras, el comando y el contexto.</desc>
+<defs><marker id="f646a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="40" width="730" height="34" rx="6"/>
+<text class="dg-small" x="385" y="62" text-anchor="middle">salida completa: 12 000 líneas (npm test, un build, un log)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="120" width="180" height="34" rx="6"/>
+<text class="dg-small" x="110" y="142" text-anchor="middle">primeras 50 líneas</text>
+<rect class="dg-warnbox" x="220" y="120" width="330" height="34" rx="6"/>
+<text class="dg-small dg-mono" x="385" y="142" text-anchor="middle">[… 11 900 líneas omitidas …]</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="570" y="120" width="180" height="34" rx="6"/>
+<text class="dg-small" x="660" y="142" text-anchor="middle">últimas 50 líneas</text>
+<path class="dg-edge" d="M110 74 L110 118" marker-end="url(#f646a)"/>
+<path class="dg-edge" d="M660 74 L660 118" marker-end="url(#f646a)"/>
+<text class="dg-tiny" x="385" y="188" text-anchor="middle">Lo que vuelve al modelo: cabeza, aviso y cola. El exit code va aparte.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 64.4.</b> Lo que vuelve al modelo de un comando ruidoso. El tope de Claude Code se mide en caracteres y se configura con <code>BASH_MAX_OUTPUT_LENGTH</code>.</figcaption>
+</figure>
+
+
+<p>Hay una decisión más, menos visible: si cada comando corre en un proceso nuevo o en una shell que persiste. Con una shell persistente, un <code>cd</code> o un <code>export</code> sigue valiendo en el comando siguiente, como en tu terminal; con procesos nuevos, cada comando empieza limpio y el modelo tiene que repetir el contexto. Claude Code conserva el directorio de trabajo entre comandos, pero no las variables de entorno ni la shell <span class="badge badge--doc">Documentado</span>.</p>
+
+<h2 id="tareas"><span class="sec-num">64.7</span>La lista de tareas</h2>
+
+<p>En una tarea de 80 turnos, el plan del turno 3 queda enterrado bajo 70 resultados de herramientas. Un modelo que no lo ve, lo olvida: arregla el bug, se distrae con un warning y termina sin agregar el test que había prometido. La solución de los harnesses es convertir el plan en estado: una herramienta como <code>TodoWrite</code> con la que el modelo escribe la lista, y que el harness vuelve a poner delante en cada turno.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="f647t f647d">
+<title id="f647t">La lista de tareas como herramienta</title>
+<desc id="f647d">A la izquierda, la lista que el modelo escribió con una herramienta: cinco ítems, dos hechos, uno en curso y dos pendientes. A la derecha, el bucle: en cada turno la lista vuelve al contexto, el modelo trabaja en el ítem en curso y la actualiza. Así una tarea de 80 turnos no olvida el plan del turno 3.</desc>
+<defs><marker id="f647a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="20" width="330" height="200" rx="8"/>
+<text class="dg-label" x="40" y="46" text-anchor="start">todo (escrita por el modelo)</text>
+<text class="dg-small" x="44" y="80" text-anchor="start">✓  leer el test que falla</text>
+<text class="dg-small" x="44" y="108" text-anchor="start">✓  encontrar dónde se calcula el IVA</text>
+<text class="dg-small" x="44" y="136" text-anchor="start">◐  corregir el redondeo</text>
+<text class="dg-small" x="44" y="164" text-anchor="start">○  agregar un test del caso</text>
+<text class="dg-small" x="44" y="192" text-anchor="start">○  correr toda la suite</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="440" y="30" width="300" height="50" rx="8"/>
+<text class="dg-small" x="590.0" y="51.5" text-anchor="middle">La lista vuelve al contexto</text>
+<text class="dg-tiny" x="590.0" y="66.5" text-anchor="middle">en cada turno</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="440" y="110" width="300" height="50" rx="8"/>
+<text class="dg-small" x="590.0" y="131.5" text-anchor="middle">Trabaja en el ítem en curso</text>
+<text class="dg-tiny" x="590.0" y="146.5" text-anchor="middle">herramientas normales</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="440" y="170" width="300" height="50" rx="8"/>
+<text class="dg-small" x="590.0" y="191.5" text-anchor="middle">La actualiza</text>
+<text class="dg-tiny" x="590.0" y="206.5" text-anchor="middle">marca hecho, agrega lo que apareció</text>
+<path class="dg-edge" d="M590 80 L590 108" marker-end="url(#f647a)"/>
+<path class="dg-edge" d="M590 160 L590 168" marker-end="url(#f647a)"/>
+<path class="dg-feedback" d="M440 195 L410 195 L410 55 L440 55" marker-end="url(#f647a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 64.5.</b> El plan como estado visible. El modelo no tiene que recordarlo: lo lee.</figcaption>
+</figure>
+
+
+<p>Es la misma idea que el estado explícito de <a href="../proyectos/ia00-laboratorio.html#ae-estado">LangGraph en IA00</a>: lo que importa para seguir no puede vivir solo en la memoria implícita de una conversación larga. Y sirve para la persona: ver la lista avanzar es la forma más barata de saber si el agente va por buen camino o hay que frenarlo.</p>
+
+<h2 id="contexto"><span class="sec-num">64.8</span>Gestionar el contexto</h2>
+
+<p>Cada turno reenvía todo lo anterior (<a href="m62-pila-agente.html#bucle">M62.5</a>). La ventana tiene un tope y la factura crece con cada vuelta. Un harness tiene tres herramientas para eso, y las usa en este orden:</p>
+<ol class="steps">
+  <li><span class="step-title">Recortar en la entrada</span>Ningún resultado entra entero si es grande: lectura por tramos, salida de comandos con cabeza y cola, búsquedas con un máximo de resultados.</li>
+  <li><span class="step-title">Cachear el prefijo</span>Marcar dónde termina la parte estable para que el proveedor no la vuelva a procesar. La lectura de caché cuesta un décimo del precio de entrada en Anthropic, y escribirla, 1.25 veces <span class="badge badge--doc">Documentado</span>.</li>
+  <li><span class="step-title">Compactar</span>Cuando la conversación se acerca al límite, resumirla y seguir con el resumen en lugar del historial. Claude Code lo hace solo al acercarse al tope, y con <code>/compact</code> se puede pedir antes, con instrucciones de qué conservar <span class="badge badge--doc">Documentado</span>.</li>
+</ol>
+
+<p>La <a href="m25-agentes.html#contexto">compactación</a> (<a href="m25-agentes.html#contexto">M25.7</a>) tiene un costo doble que conviene ver con números: pierde detalles (el nombre exacto de un archivo, un error que ya se probó) y tira la caché de todo lo que venía después del prefijo fijo. Mueve los escenarios:</p>
+
+<div data-calc="ctxbudget"></div>
+
+<p>El escenario "Muchos servidores MCP" muestra el problema que menos se ve: 40&#8239;000 tokens de definiciones de herramientas son un 20&#8239;% de una ventana de 200&#8239;000 ocupado antes de empezar, pagado en cada turno, y una compactación que llega antes. Por eso los harnesses cargan herramientas bajo demanda (M67). Qué se pone en la ventana, en qué orden y qué se pierde al compactar, a fondo, es M68.</p>
+
+<h2 id="memoria"><span class="sec-num">64.9</span>Archivos de memoria</h2>
+
+<p>Un agente empieza cada sesión sin saber nada de tu proyecto: ni cómo se corren las pruebas, ni que los precios se guardan en centavos, ni que la carpeta de migraciones no se toca. Un <dfn data-term="archivo-memoria">archivo de memoria</dfn> es un Markdown que el harness lee al empezar y pone en el system prompt. Claude Code lee <code>CLAUDE.md</code>; Codex CLI, OpenCode, Cursor y otros leen <code>AGENTS.md</code>, un formato abierto pensado para eso <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f649t f649d">
+<title id="f649t">De dónde salen los archivos de memoria</title>
+<desc id="f649d">Cuatro capas que se suman en el system prompt, de la más amplia a la más específica: la política de la organización, la memoria del usuario en su carpeta personal, la del proyecto en el repositorio, compartida con el equipo, y la de una subcarpeta, que se carga cuando el agente trabaja ahí. A la derecha, AGENTS.md como el formato abierto que leen varios harnesses.</desc>
+<defs><marker id="f649a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="20" width="420" height="46" rx="8"/>
+<text class="dg-label" x="230.0" y="39.5" text-anchor="middle">Organización</text>
+<text class="dg-tiny" x="230.0" y="54.5" text-anchor="middle">política gestionada por TI</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="44" y="78" width="396" height="46" rx="8"/>
+<text class="dg-label" x="242.0" y="97.5" text-anchor="middle">Usuario</text>
+<text class="dg-tiny" x="242.0" y="112.5" text-anchor="middle">~/.claude/CLAUDE.md: tus preferencias</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="68" y="136" width="372" height="46" rx="8"/>
+<text class="dg-label" x="254.0" y="155.5" text-anchor="middle">Proyecto</text>
+<text class="dg-tiny" x="254.0" y="170.5" text-anchor="middle">./CLAUDE.md: reglas del repositorio, en git</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="92" y="194" width="348" height="46" rx="8"/>
+<text class="dg-label" x="266.0" y="213.5" text-anchor="middle">Subcarpeta</text>
+<text class="dg-tiny" x="266.0" y="228.5" text-anchor="middle">modules/CLAUDE.md: al trabajar ahí</text>
+<text class="dg-tiny" x="250" y="262" text-anchor="middle">se suman en el system; lo más específico va después</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="500" y="60" width="250" height="120" rx="8"/>
+<text class="dg-label dg-mono" x="625.0" y="109.0" text-anchor="middle">AGENTS.md</text>
+<text class="dg-tiny" x="625.0" y="124.0" text-anchor="middle">formato abierto: Codex CLI,</text>
+<text class="dg-tiny" x="625.0" y="139.0" text-anchor="middle">OpenCode, Cursor y otros</text>
+<text class="dg-tiny" x="625" y="206" text-anchor="middle">Claude Code lee CLAUDE.md;</text>
+<text class="dg-tiny dg-mono" x="625" y="224" text-anchor="middle">puede importar @AGENTS.md</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 64.6.</b> Las capas de memoria de Claude Code se suman de la más general a la más específica. Una subcarpeta con su propio archivo se carga cuando el agente trabaja ahí.</figcaption>
+</figure>
+
+
+<pre data-lang="text"><code># CLAUDE.md
+
+## Comandos
+- Pruebas: `pnpm test -- --run` (no uses `pnpm test` solo: queda en modo watch)
+- Lint: `pnpm lint --fix`
+
+## Reglas
+- Los precios se guardan en centavos (enteros), nunca en float.
+- No toques `migrations/`: las migraciones se generan con `pnpm db:gen`.
+- Antes de terminar, corre las pruebas del paquete que cambiaste.
+
+@docs/arquitectura.md</code></pre>
+
+<p>Lo que funciona en un archivo de memoria es lo que un colega nuevo necesitaría en su primer día y no puede deducir leyendo el código: comandos exactos (con la trampa del modo watch), reglas que no se ven (centavos), lugares prohibidos y cómo saber que terminó. Lo que no funciona: descripciones largas del código, que el agente puede leer solo y que cuestan tokens en cada request. La línea <code>@docs/arquitectura.md</code> importa otro archivo <span class="badge badge--doc">Documentado</span>; un import es cómodo y es tamaño, así que conviene que lo importado sea corto.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Un ejemplo a mano: el <code>CLAUDE.md</code> de este mismo curso tiene las reglas de cada tipo de página, la tabla de widgets y los comandos de prueba. Funciona porque son cosas que no se deducen del código (que no se usa <code>fetch</code> para que todo ande con <code>file://</code>, que los colores van siempre con tokens). Un archivo de memoria es también una superficie de ataque: lo escribe quien controla el repositorio, y un harness que lo carga sin preguntar ejecuta las instrucciones de un tercero si clonaste algo ajeno. Por eso <code>claude --bare</code> no lo carga (<a href="m69-orquestadores.html#headless-claude">M69.2</a>).</p>
+</aside>
+
+<h2 id="subagentes"><span class="sec-num">64.10</span>Subagentes</h2>
+
+<p>Un <a href="m25-agentes.html#patrones-multi">subagente</a> (<a href="m25-agentes.html#patrones-multi">M25.3</a>) es otra sesión de agente que el principal lanza con una tarea en texto. Tiene su propio contexto, sus herramientas (a veces menos) y devuelve un resumen. El beneficio es de contexto: la exploración que llena 80&#8239;000 tokens queda del otro lado.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f6410t f6410d">
+<title id="f6410t">Un subagente: contexto aparte, resumen de vuelta</title>
+<desc id="f6410d">A la izquierda, el agente principal con su contexto. Lanza un subagente con una tarea en texto. El subagente tiene su propio contexto, hace 30 llamadas de exploración que llenan 80 000 tokens y devuelve un resumen de 800 tokens. Al contexto principal solo entra el resumen.</desc>
+<defs><marker id="f6410a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="20" y="40" width="250" height="170" rx="8"/>
+<text class="dg-label" x="145" y="66" text-anchor="middle">Agente principal</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="40" y="86" width="210" height="40" rx="4"/>
+<text class="dg-small" x="145" y="110" text-anchor="middle">su conversación</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="40" y="140" width="210" height="22" rx="4"/>
+<text class="dg-tiny" x="145" y="156" text-anchor="middle">+ 800 tokens de resumen</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="480" y="40" width="270" height="170" rx="8"/>
+<text class="dg-label" x="615" y="66" text-anchor="middle">Subagente</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="500" y="88" width="32" height="70" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="538" y="88" width="32" height="70" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="576" y="88" width="32" height="70" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="614" y="88" width="32" height="70" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="652" y="88" width="32" height="70" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="690" y="88" width="32" height="70" rx="3"/>
+<text class="dg-small" x="615" y="182" text-anchor="middle">30 llamadas, 80 000 tokens</text>
+<path class="dg-edge" d="M270 80 L478 80" marker-end="url(#f6410a)"/>
+<text class="dg-tiny" x="374" y="72" text-anchor="middle">tarea en texto</text>
+<path class="dg-edge" d="M478 150 L252 150" marker-end="url(#f6410a)"/>
+<text class="dg-tiny" x="365" y="142" text-anchor="middle">resumen</text>
+<text class="dg-tiny" x="374" y="236" text-anchor="middle">La exploración se queda del otro lado: el principal no paga ese contexto en sus turnos.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 64.7.</b> El principal paga 800 tokens en lugar de 80&#8239;000. El subagente paga los suyos una vez.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Conviene un subagente</th><th>No conviene</th></tr></thead>
+    <tbody>
+      <tr><td>Explorar mucho para responder poco: "¿dónde se valida la sesión?"</td><td>Una edición que necesita todo lo que el principal ya sabe</td></tr>
+      <tr><td>Trabajos independientes en paralelo: revisar tres módulos</td><td>Pasos que dependen uno del otro</td></tr>
+      <tr><td>Una revisión con otro punto de vista, sin el sesgo de lo ya hecho</td><td>Tareas cortas: el arranque cuesta su system prompt entero</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>El costo está en lo que se pierde al resumir: si el subagente encontró tres lugares y el resumen nombra dos, el principal nunca sabrá del tercero. Un subagente bien usado devuelve un resultado con forma (rutas, líneas, conclusión), no una narración. Es la misma idea que el esquema común de los orquestadores (<a href="m69-orquestadores.html#salida">M69.8</a>), en pequeño.</p>
+
+<h2 id="sesion"><span class="sec-num">64.11</span>La sesión: reanudar, retroceder y auditar</h2>
+
+<p>Todo lo que pasa en una sesión se guarda en disco: los mensajes, las llamadas y sus resultados. En Claude Code, como un transcript por sesión que se retoma con <code>--resume</code> o <code>--continue</code>; Codex CLI y OpenCode hacen lo mismo con sus propios formatos <span class="badge badge--doc">Documentado</span>. Eso da tres capacidades:</p>
+<ul>
+  <li><b>Reanudar:</b> cerrar la terminal no pierde el trabajo. Es lo que usan los orquestadores con el <code>session_id</code> (<a href="m69-orquestadores.html#headless">M69.2</a>).</li>
+  <li><b>Retroceder:</b> volver a un punto anterior de la conversación y de los archivos. Claude Code guarda checkpoints de las ediciones que hace y permite volver con <code>/rewind</code> <span class="badge badge--doc">Documentado</span>. No cubre lo que hizo un comando de bash (una migración, un <code>rm</code>): para eso está git, y la buena práctica es que el agente trabaje sobre una rama o un worktree.</li>
+  <li><b>Auditar:</b> qué leyó, qué ejecutó y por qué. Es la materia prima de los evals de trayectoria de M72.</li>
+</ul>
+
+<h2 id="leidos"><span class="sec-num">64.12</span>Cinco harnesses, leídos como decisiones</h2>
+
+<p>Con las piezas anteriores, los harnesses de <a href="m62-pila-agente.html#comparados">M62.7</a> dejan de ser marcas y se vuelven combinaciones de decisiones <span class="badge badge--doc">Documentado</span>:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Decisión</th><th>Claude Code</th><th>Codex CLI</th><th>OpenCode</th><th>Aider</th><th>Cursor</th></tr></thead>
+    <tbody>
+      <tr><td>Editar</td><td>Reemplazo exacto</td><td><code>apply_patch</code></td><td>Reemplazo exacto y parche</td><td>Formato por modelo</td><td>Aplicación por el IDE</td></tr>
+      <tr><td>Buscar</td><td>Grep y glob</td><td>Comandos de shell (<code>rg</code>)</td><td>Grep y glob</td><td>Repo map</td><td>Índice semántico y grep</td></tr>
+      <tr><td>Memoria</td><td><code>CLAUDE.md</code></td><td><code>AGENTS.md</code></td><td><code>AGENTS.md</code></td><td>Archivos de convenciones</td><td>Reglas y <code>AGENTS.md</code></td></tr>
+      <tr><td>Contención</td><td>Permisos y sandbox opcional</td><td>Sandbox del sistema operativo</td><td>Permisos por herramienta</td><td>Confirmaciones</td><td>Permisos del IDE</td></tr>
+      <tr><td>Interfaz</td><td>Terminal, IDE, headless, SDK</td><td>Terminal, IDE, <code>exec</code></td><td>Terminal y servidor</td><td>Terminal</td><td>IDE</td></tr>
+      <tr><td>Licencia</td><td>Propietaria</td><td>Apache 2.0</td><td>MIT</td><td>Apache 2.0</td><td>Propietaria</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Leída así, la tabla dice cosas útiles. Si tu modelo edita mal con reemplazo exacto, un harness con parche o con formato por modelo puede rendir más con el mismo modelo. Si necesitas correrlo en CI, importan el modo headless y el SDK. Si los datos no pueden salir, importa poder apuntarlo a un servidor propio y qué telemetría manda. Cómo pesar todo eso para tu caso es <a href="m65-elegir-harness.html">M65</a>.</p>
+
+<h2 id="fallas"><span class="sec-num">64.13</span>Qué falla</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+      <tr><td>El agente borró media función al editar</td><td>Reescritura del archivo entero con un modelo que se saltó líneas</td><td>Reemplazo exacto o parche (64.4)</td></tr>
+      <tr><td>Bucle de "old_string no encontrado"</td><td>Edita de memoria sin releer, o con espacios distintos</td><td>Exigir lectura previa; el error dice qué releer (64.4)</td></tr>
+      <tr><td>Un comando se quedó colgado para siempre</td><td>Esperaba una respuesta por stdin o es un servidor</td><td>Sin stdin, timeout, procesos largos en segundo plano (64.6)</td></tr>
+      <tr><td>Se llenó la ventana con la salida de un build</td><td>Salida sin recortar</td><td>Cabeza y cola con aviso (64.6)</td></tr>
+      <tr><td>Terminó sin hacer lo que había planeado</td><td>Plan solo en la conversación</td><td>Lista de tareas como estado (64.7)</td></tr>
+      <tr><td>La factura sube aunque la sesión es corta</td><td>Prefijo enorme: herramientas o memoria</td><td>Menos herramientas, memoria corta, carga bajo demanda (64.8)</td></tr>
+      <tr><td>Cada turno se paga entero</td><td>Algo variable al principio del prompt</td><td>Lo estable primero, lo variable al final (64.2)</td></tr>
+      <tr><td>Después de compactar repite un error ya resuelto</td><td>El resumen no conservó lo probado</td><td>Compactar con instrucciones; anotar en la lista de tareas (64.8)</td></tr>
+      <tr><td>El subagente "no encontró" algo que existía</td><td>Resumen narrativo que omitió resultados</td><td>Pedir resultados con forma (64.10)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Construir un harness propio es la mejor forma de entender estas decisiones y, para casi todos los equipos, la peor forma de tener uno: los harnesses maduros acumulan cientos de arreglos a fallas como las de esta tabla. Lo razonable es escribir uno chico para aprender (la guía IA07, propuesta, lo hace paso a paso) y usar uno maduro para trabajar, configurado con memoria, permisos y extensiones (M66 y M67).</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m64"></div>
+<div data-exercise="m64-monorepo"></div>
+<div data-checkpoint="m64"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m64.data.js"></script>
+<script src="../assets/js/data/exercises/m64.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-anatomy.js"></script>
+</body>
+</html>

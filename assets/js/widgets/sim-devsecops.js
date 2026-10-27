@@ -389,9 +389,178 @@
     render();
   }
 
+  /* ======================================================================
+     M57: un pod contra los Pod Security Standards
+     ====================================================================== */
+  var PS_FIELDS = [
+    { id: 'privileged', label: 'privileged', opts: [['false', 'false'], ['true', 'true']] },
+    { id: 'hostns', label: 'hostPID y hostNetwork', opts: [['false', 'false'], ['true', 'true']] },
+    { id: 'hostpath', label: 'volumen hostPath', opts: [['no', 'ninguno'], ['si', '/var/run del nodo']] },
+    { id: 'caps', label: 'capabilities', opts: [['def', 'las del runtime'], ['drop', 'drop: ALL'], ['nbs', 'drop: ALL + NET_BIND_SERVICE'], ['sysadmin', 'add: SYS_ADMIN']] },
+    { id: 'nonroot', label: 'runAsNonRoot', opts: [['unset', 'sin definir'], ['true', 'true']] },
+    { id: 'ape', label: 'allowPrivilegeEscalation', opts: [['unset', 'sin definir'], ['false', 'false']] },
+    { id: 'seccomp', label: 'seccompProfile', opts: [['unset', 'sin definir'], ['rd', 'RuntimeDefault'], ['unc', 'Unconfined']] },
+    { id: 'rofs', label: 'readOnlyRootFilesystem', opts: [['false', 'false'], ['true', 'true']] },
+    { id: 'sa', label: 'automountServiceAccountToken', opts: [['true', 'true (por defecto)'], ['false', 'false']] }
+  ];
+  var PS_PRESETS = [
+    { id: 'vacio', label: 'Sin securityContext', cfg: { privileged: 'false', hostns: 'false', hostpath: 'no', caps: 'def', nonroot: 'unset', ape: 'unset', seccomp: 'unset', rofs: 'false', sa: 'true' } },
+    { id: 'debug', label: 'Pod de depuración', cfg: { privileged: 'true', hostns: 'true', hostpath: 'si', caps: 'def', nonroot: 'unset', ape: 'unset', seccomp: 'unset', rofs: 'false', sa: 'true' } },
+    { id: 'restr', label: 'La API de Tienda Norte', cfg: { privileged: 'false', hostns: 'false', hostpath: 'no', caps: 'drop', nonroot: 'true', ape: 'false', seccomp: 'rd', rofs: 'true', sa: 'false' } }
+  ];
+  var REACH = ['el contenedor', 'el clúster, según el RBAC', 'el nodo'];
+
+  // Devuelve las violaciones por nivel, el nivel más estricto que cumple y lo que ganaría
+  // alguien que ya ejecuta código dentro. reach: 0 contenedor, 1 clúster (token), 2 nodo.
+  core.podEval = function (c) {
+    var base = [], restr = [], gains = [], reach = 0, invalid = null;
+    function gain(r, t) { gains.push({ reach: r, text: t }); reach = Math.max(reach, r); }
+    if (c.privileged === 'true') {
+      base.push('privileged: true');
+      gain(2, 'Ve los dispositivos del nodo y conserva casi todas las capabilities: un contenedor privileged es, en la práctica, root en el nodo.');
+      if (c.ape === 'false') { invalid = 'Kubernetes rechaza esta combinación al validar el objeto: un contenedor privileged siempre puede escalar, así que allowPrivilegeEscalation: false no tiene sentido con él.'; }
+    }
+    if (c.hostns === 'true') {
+      base.push('hostPID o hostNetwork: true');
+      gain(2, 'Ve los procesos del nodo y usa su red, por fuera de cualquier NetworkPolicy, con acceso a lo que escucha solo en el nodo.');
+    }
+    if (c.hostpath === 'si') {
+      base.push('volumen hostPath');
+      restr.push('tipo de volumen no permitido (hostPath)');
+      gain(2, 'Lee y escribe archivos del nodo: logs de otros pods, credenciales del kubelet o el socket del runtime de contenedores.');
+    }
+    if (c.caps === 'sysadmin') {
+      base.push('capabilities.add: SYS_ADMIN (fuera de la lista de baseline)');
+      gain(2, 'SYS_ADMIN es la capability que más vías de escape conocidas abre: queda cerca de privileged.');
+    }
+    if (c.seccomp === 'unc') { base.push('seccompProfile: Unconfined'); }
+    if (c.nonroot !== 'true') {
+      restr.push('runAsNonRoot no es true');
+      gain(0, 'Si la imagen no declara un USER, corre como root dentro del contenedor. El escape de runc de 2019 necesitaba justamente root dentro.');
+    }
+    if (c.ape !== 'false') {
+      restr.push('allowPrivilegeEscalation no es false');
+      if (c.privileged !== 'true') { gain(0, 'Un binario setuid de la imagen puede darle más privilegios que los que tenía al arrancar.'); }
+    }
+    if (c.caps === 'def' || c.caps === 'sysadmin') {
+      restr.push('capabilities sin drop: ALL');
+      if (c.caps === 'def' && c.privileged !== 'true') { gain(0, 'Conserva las capabilities que el runtime da por defecto (CHOWN, SETUID, NET_RAW y otras): menos que root completo, más de lo que la app usa.'); }
+    }
+    if (c.seccomp === 'unset') {
+      restr.push('seccompProfile sin definir (tiene que ser RuntimeDefault o Localhost)');
+      gain(0, 'Sin perfil, Kubernetes corre el contenedor Unconfined salvo que el kubelet tenga seccompDefault: todas las syscalls al alcance, también las que tengan un bug del kernel.');
+    } else if (c.seccomp === 'unc') {
+      restr.push('seccompProfile: Unconfined');
+      gain(0, 'Unconfined deja todas las syscalls al alcance, también las que tengan un bug del kernel compartido.');
+    }
+    if (c.rofs !== 'true') { gain(0, 'Puede escribir en el sistema de archivos del contenedor: bajar herramientas y dejarlas mientras el pod viva. No lo exige ningún nivel, pero cuesta poco.'); }
+    if (c.sa === 'true') { gain(1, 'Encuentra un token en /var/run/secrets/kubernetes.io/serviceaccount y habla con el API server con los permisos de esa service account.'); }
+    if (!gains.length) { gains.push({ reach: 0, text: 'Ejecuta código con los permisos de la app y nada más: lee lo que la app lee y llega a donde la NetworkPolicy deje.' }); }
+    var level = base.length ? 'privileged' : restr.length ? 'baseline' : 'restricted';
+    return { baseline: base, restricted: restr, level: level, gains: gains, reach: reach, invalid: invalid };
+  };
+
+  core.podYaml = function (c) {
+    var L = ['spec:'];
+    if (c.sa === 'false') { L.push('  automountServiceAccountToken: false'); }
+    if (c.hostns === 'true') { L.push('  hostPID: true', '  hostNetwork: true'); }
+    var pod = [];
+    if (c.nonroot === 'true') { pod.push('    runAsNonRoot: true'); }
+    if (c.seccomp !== 'unset') { pod.push('    seccompProfile:', '      type: ' + (c.seccomp === 'rd' ? 'RuntimeDefault' : 'Unconfined')); }
+    if (pod.length) { L.push('  securityContext:'); L = L.concat(pod); }
+    L.push('  containers:', '  - name: api', '    image: ghcr.io/tienda-norte/api@sha256:4f2a…');
+    var ctr = [];
+    if (c.privileged === 'true') { ctr.push('      privileged: true'); }
+    if (c.ape === 'false') { ctr.push('      allowPrivilegeEscalation: false'); }
+    if (c.rofs === 'true') { ctr.push('      readOnlyRootFilesystem: true'); }
+    if (c.caps === 'drop') { ctr.push('      capabilities:', '        drop: ["ALL"]'); }
+    if (c.caps === 'nbs') { ctr.push('      capabilities:', '        drop: ["ALL"]', '        add: ["NET_BIND_SERVICE"]'); }
+    if (c.caps === 'sysadmin') { ctr.push('      capabilities:', '        add: ["SYS_ADMIN"]'); }
+    if (ctr.length) { L.push('    securityContext:'); L = L.concat(ctr); }
+    if (c.hostpath === 'si') {
+      L.push('    volumeMounts:', '    - name: nodo', '      mountPath: /host/run', '  volumes:', '  - name: nodo', '    hostPath:', '      path: /var/run');
+    }
+    return L.join('\n');
+  };
+
+  function buildPodsec(root) {
+    var cfg = {};
+    Object.keys(PS_PRESETS[0].cfg).forEach(function (k) { cfg[k] = PS_PRESETS[0].cfg[k]; });
+    var rows = PS_FIELDS.map(function (f) {
+      var row = chips(f.opts.map(function (o) { return { id: o[0], label: o[1] }; }),
+        function (id) { return cfg[f.id] === id; }, function (id) { cfg[f.id] = id; render(); });
+      return { f: f, row: row, el: h('div', { 'class': 'ps-field' }, [h('p', { 'class': 'ps-flabel', text: f.label }), row]) };
+    });
+    var presets = h('div', { 'class': 'ds-chips' }, PS_PRESETS.map(function (p) {
+      return h('button', { 'class': 'btn', type: 'button', onclick: function () {
+        Object.keys(p.cfg).forEach(function (k) { cfg[k] = p.cfg[k]; }); render();
+      } }, [p.label]);
+    }));
+    var levels = h('div', { 'class': 'ps-levels' });
+    var why = h('div', { 'class': 'ps-why' });
+    var gainsEl = h('ul', { 'class': 'ps-gains' });
+    var stats = h('div', { 'class': 'sim-stats' });
+    var verdict = h('p', { 'class': 'ds-verdict' });
+    var yaml = h('pre', { 'class': 'ps-yaml' });
+
+    function render() {
+      rows.forEach(function (r) { syncChips(r.row, function (id) { return cfg[r.f.id] === id; }); });
+      var ev = core.podEval(cfg);
+      levels.textContent = '';
+      [['privileged', [], 'Privileged'], ['baseline', ev.baseline, 'Baseline'], ['restricted', ev.baseline.concat(ev.restricted), 'Restricted']].forEach(function (l) {
+        var ok = !l[1].length;
+        levels.appendChild(h('div', { 'class': 'ps-level ' + (ok ? 'is-ok' : 'is-bad') }, [
+          h('b', { text: (ok ? '✓ ' : '✗ ') + l[2] }), h('span', { text: ok ? 'lo admite' : 'lo rechaza' })
+        ]));
+      });
+      why.textContent = '';
+      if (ev.baseline.length || ev.restricted.length) {
+        why.appendChild(h('p', { 'class': 'ps-sub', text: 'Lo que lo deja fuera de cada nivel' }));
+        var ul = h('ul', { 'class': 'ps-list' });
+        ev.baseline.forEach(function (t) { ul.appendChild(h('li', {}, [h('b', { text: 'Baseline y restricted: ' }), t])); });
+        ev.restricted.forEach(function (t) { ul.appendChild(h('li', {}, [h('b', { text: 'Restricted: ' }), t])); });
+        why.appendChild(ul);
+      }
+      gainsEl.textContent = '';
+      ev.gains.forEach(function (g) {
+        gainsEl.appendChild(h('li', { 'class': g.reach === 2 ? 'is-bad' : g.reach === 1 ? 'is-warn' : '' }, [g.text]));
+      });
+      stats.textContent = '';
+      [['Nivel más estricto que cumple', ev.level], ['Hasta dónde llega quien entre', REACH[ev.reach]]].forEach(function (p) {
+        stats.appendChild(h('div', { 'class': 'sim-stat' }, [h('span', { text: p[0] }), h('b', { text: p[1] })]));
+      });
+      if (ev.invalid) {
+        verdict.className = 'ds-verdict is-warn';
+        verdict.textContent = '⚠ ' + ev.invalid;
+      } else {
+        verdict.className = 'ds-verdict ' + (ev.reach === 2 ? 'is-bad' : ev.level === 'restricted' ? 'is-ok' : 'is-warn');
+        verdict.textContent = ev.reach === 2
+          ? '✗ Con este pod, una falla en la app se convierte en el nodo entero y en todos los pods que corren en él.'
+          : ev.level === 'restricted'
+            ? '✓ Cumple restricted. Lo que queda depende de la app, de la red y del runtime al día.'
+            : '◐ Cumple ' + ev.level + ', pero quien entre tiene más de lo que la app necesita. Restricted cuesta pocas líneas.';
+      }
+      yaml.textContent = core.podYaml(cfg);
+    }
+
+    root.appendChild(h('div', { 'class': 'sim' }, [
+      h('div', { 'class': 'sim-head' }, [h('span', { 'class': 'sim-title', text: 'Un pod contra los Pod Security Standards' })]),
+      h('div', { 'class': 'sim-body' }, [
+        h('div', { 'class': 'sim-controls ps-controls' }, rows.map(function (r) { return r.el; })),
+        h('div', { 'class': 'field' }, [h('p', { 'class': 'ds-flabel', text: 'Puntos de partida' }), presets]),
+        h('div', { 'class': 'ps-out', 'aria-live': 'polite' }, [
+          levels, why, h('p', { 'class': 'ps-sub', text: 'Qué ganaría alguien que ya ejecuta código dentro' }), gainsEl, stats, verdict
+        ]),
+        h('details', { 'class': 'ps-details' }, [h('summary', { text: 'Ver el manifiesto que resulta' }), yaml])
+      ])
+    ]));
+    render();
+  }
+
   SD.ready(function () {
     document.querySelectorAll('[data-sim="stride"]').forEach(buildStride);
     document.querySelectorAll('[data-sim="appsecpipe"]').forEach(buildAppsec);
     document.querySelectorAll('[data-sim="supplychain"]').forEach(buildSupply);
+    document.querySelectorAll('[data-sim="podsec"]').forEach(buildPodsec);
   });
 })();

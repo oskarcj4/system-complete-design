@@ -12,7 +12,7 @@ SD.data = SD.data || {};
 SD.data.projects = {
   blocks: [
     { id: 'b1', name: 'Bloque 1', items: ['a00', 'a01', 'a02', 'a03', 'a04'], note: 'El laboratorio, Nginx, la API, la caché y las réplicas.' },
-    { id: 'b2', name: 'Bloque 2', items: ['a05', 'a06', 'a07'], note: 'Dos primarios, sharding y Kubernetes con k3s.' },
+    { id: 'b2', name: 'Bloque 2', items: ['a05', 'a06', 'a07', 'a29'], note: 'Dos primarios, sharding, Kubernetes con k3s y un servidor seguro de una VM a una VPC.' },
     { id: 'b3', name: 'Bloque 3', items: ['a08', 'a09', 'a10', 'a11', 'a12'], note: 'Líder, colas, resiliencia, archivos y sesiones.' },
     { id: 'b4', name: 'Bloque 4', items: ['a13', 'a14', 'a15', 'a27', 'a28', 'a16', 'a17'], note: 'OAuth, observabilidad, pagos idempotentes, cien asientos (dos veces), búsqueda y geografía.' },
     { id: 'b5', name: 'Bloque 5', items: ['a18', 'a19', 'a20', 'a21', 'a22'], note: 'Kafka, entrega continua y el ChatGPT en una CPU.' },
@@ -158,6 +158,16 @@ SD.data.projects = {
           excuse: 'Servir las imágenes de una galería desde cerca.',
           learn: 'proxy_cache de Nginx con claves, stale-while-revalidate y purga, Cache-Control y ETag bien puestos, y un Worker con la Cache API delante de tu origen.',
           stack: ['Nginx', 'Cloudflare Workers', 'Cloudflare R2'] }
+      ]
+    },
+    {
+      id: 'seg', label: 'Parte IV', title: 'Seguridad, construida', line: '--line-p4',
+      intro: 'Las defensas de la Parte IV puestas en un servidor de verdad, y separadas en capas cuando hace falta escalar.',
+      items: [
+        { id: 'a29', num: 'A29', title: 'Un servidor seguro: de una VM a una VPC', tier: 'core', status: 'ready', href: 'proyectos/a29-servidor-seguro.html', repo: '', repoName: 'a29-servidor-seguro', mods: ['m32', 'm33', 'm35', 'm37', 'm57'], front: true,
+          excuse: 'Una API de notas privadas con cada defensa puesta, primero en una VM y después repartida.',
+          learn: 'SSH solo con llave, nftables con entrada y salida filtradas por usuario, fail2ban, auditd y un sandbox de systemd; Nginx con TLS, ModSecurity y el OWASP CRS, límites y lista blanca de rutas; dos roles de PostgreSQL y migraciones aparte; el bloqueo de cuenta atómico frente a 50 hilos; cinco VMs en tres redes con keepalived y una IP virtual; y k3s con Pod Security restricted, NetworkPolicy por flecha y un HPA por capa.',
+          stack: ['Vagrant', 'nftables', 'ModSecurity + CRS', 'keepalived', 'k3s', 'Gatling'] }
       ]
     }
   ],

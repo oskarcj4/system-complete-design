@@ -240,6 +240,27 @@ Plan detallado en `PLAN_AI_ENGINEERING.md` (fuentes verificadas, regla de seguri
 | M72 | **Evals de agentes** | Trayectorias, SWE-bench Verified, Terminal-Bench, pass^k, separar harness de modelo |
 | **CP-H** | **Checkpoint H** | La plataforma de agentes de un equipo |
 
+### Parte IX: Seguridad web, del navegador al servidor
+
+Plan detallado en `PLAN_SEGURIDAD_WEB.md` (auditoría inicial del proyecto del usuario, regla de seguridad de la parte y la serie de guías WEB00–WEB10 en PHP sobre `SistemaControlPracticas`). Cuenta para el progreso. Se construye en lotes de tres, primero la teoría.
+
+| Módulo | Título | Contenido |
+|---|---|---|
+| M73 | **El navegador por dentro** | Del HTML al DOM, render y event loop; qué corre en el servidor, en el navegador y en Wasm; DevTools |
+| M74 | **Origen, sitio y cookies** | Origen contra sitio, Same-Origin Policy, cookies a fondo, `setcookie` en PHP |
+| M75 | **CORS a fondo** | Simple contra preflight, credenciales, `Vary: Origin`, errores típicos, la política en PHP |
+| M76 | **CSRF** | SameSite, token sincronizador, double submit firmado, `Origin` y Fetch Metadata |
+| M77 | **XSS y el DOM** | Reflejado, almacenado y DOM; escape por contexto; DOMPurify y Trusted Types |
+| M78 | **CSP y cabeceras** | CSP con nonce, HSTS, nosniff, COOP, COEP y CORP |
+| M79 | **Inyecciones en el servidor** | SQLi con PDO, command injection, inclusión de archivos, deserialización, SSTI, CRLF, XXE |
+| M80 | **Control de acceso roto** | IDOR, BFLA, mass assignment, path traversal |
+| M81 | **Autenticación y sesiones** | Argon2id, fixation, revocación, límite de intentos, reset, passkeys |
+| M82 | **Archivos, SSRF y redirecciones** | Subidas seguras, SSRF, open redirect |
+| M83 | **Otros ataques** | Clickjacking, postMessage, prototype pollution, cache poisoning, smuggling, races, ReDoS, SRI |
+| M84 | **Renderizado: PHP, SPA y Next.js** | Server y Client Components, Server Actions, secretos en el bundle |
+| M85 | **WebAssembly** | Memoria lineal, WASI, PHP en Wasm, qué protege el sandbox |
+| **CP-I** | **Checkpoint I** | Auditar y endurecer una aplicación web |
+
 ---
 
 ## 3. Checkpoints de construcción
@@ -265,7 +286,8 @@ En cada checkpoint **me detengo** para que abras el sitio en el navegador y lo r
 | **CP13** | Parte IV: Ciberseguridad (M32–M38 + Checkpoint E). Publicados M32–M38 y el Checkpoint E; la Parte IV está completa | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 | **CP14** | Parte V: Manejo de pagos (M39 en adelante). Publicado M39; M40 y M41 propuestos | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 | **CP15** | Parte VII: Blue Team y DevSecOps (M54–M61 + Checkpoint G) y la serie SEC00–SEC08 | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
-| **CP16** | Parte VIII: AI Engineering (M62–M72 + Checkpoint H) y las guías IA07 e IA08. Publicado M62 | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
+| **CP16** | Parte VIII: AI Engineering (M62–M72 + Checkpoint H) y las guías IA07 e IA08. Publicados M62, M63, M64, M65 y M69 | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
+| **CP17** | Parte IX: Seguridad web (M73–M85 + Checkpoint I) y las guías WEB00–WEB10 | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 
 ---
 

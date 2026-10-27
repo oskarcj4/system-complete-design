@@ -1,0 +1,873 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M63. Tool calling por dentro</title>
+<meta name="description" content="Qué pasa de verdad cuando un modelo llama una herramienta: chat templates y tokens especiales, el parser del servidor, JSON Schema, decodificación restringida, tool_choice, llamadas en paralelo, stop reasons, streaming de argumentos, por qué unos modelos son mejores agentes y cómo traducir entre dialectos sin perder nada.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m63">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Tool calling por dentro</h1>
+        <p class="lead">Para la API, una llamada a herramienta es un bloque JSON prolijo. Para el modelo es texto con unos tokens raros en el medio. Entre las dos cosas hay un template, un parser y a veces una gramática, y casi todas las fallas de un agente con un modelo local viven ahí.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M63</dd></div>
+          <div><dt>Parte</dt><dd>VIII. AI Engineering: modelos, harnesses y agentes</dd></div>
+          <div><dt>Duración</dt><dd>100 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M17, M62</dd></div>
+          <div><dt>Estado</dt><dd data-status="m63">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Explicar qué texto ve el modelo cuando la API recibe una lista de herramientas, y qué hace el chat template.</li>
+    <li>Reconocer el formato de llamada de Qwen, Llama y Kimi, y diagnosticar un servidor que devuelve la llamada como texto.</li>
+    <li>Escribir definiciones de herramientas que el modelo usa bien y que una gramática puede imponer.</li>
+    <li>Decidir cuándo usar decodificación restringida, <code>tool_choice</code> y llamadas en paralelo, y qué cuesta cada una.</li>
+    <li>Leer el <code>stop_reason</code> y el stream de argumentos sin perder llamadas ni parsear JSON a medias.</li>
+    <li>Traducir una conversación con herramientas entre los dialectos de Anthropic y OpenAI sabiendo qué se pierde.</li>
+  </ul>
+</section>
+
+<h2 id="lamina"><span class="sec-num">63.1</span>La vida de una llamada</h2>
+
+<p>En <a href="m17-api-streaming.html#herramientas">M17.6</a> viste el tool calling desde la API: declaras funciones con JSON Schema, el modelo responde con una llamada, tu código la ejecuta y devuelve el resultado con el mismo id. En <a href="m62-pila-agente.html#bucle">M62.5</a> ese intercambio se volvió el bucle de un agente. Este módulo abre lo que pasa entre la API y los pesos: allí está la diferencia entre un agente que funciona con Claude y se rompe con un modelo local, o entre una llamada que siempre parsea y una que falla una de cada cincuenta veces.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un traductor en una reunión. Tú hablas en JSON, el modelo solo entiende un idioma de texto con sus propias convenciones. El chat template traduce de ida; el parser traduce de vuelta. Si el traductor no conoce el dialecto del modelo, la reunión sigue, pero nadie entiende lo que se pidió.</p>
+</aside>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f63Lt f63Ld">
+<title id="f63Lt">Lámina 63.A: la vida de una llamada a herramienta</title>
+<desc id="f63Ld">Arriba, de izquierda a derecha: el harness manda JSON con las herramientas descritas en JSON Schema; el servidor lo convierte en texto con el chat template, con tokens especiales; el modelo genera tokens y la decodificación restringida enmascara los inválidos; el parser del servidor convierte el texto en una llamada estructurada. Abajo, de derecha a izquierda: la API devuelve tool_use con stop_reason tool_use; el harness ejecuta y manda tool_result; tool_choice decide si el modelo puede, debe o no puede llamar.</desc>
+<defs><marker id="f63La" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="385" y="22" text-anchor="middle">Ida: del JSON del harness a los tokens del modelo</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="40" width="160" height="64" rx="8"/>
+<text class="dg-label" x="100.0" y="68.5" text-anchor="middle">Harness</text>
+<text class="dg-tiny" x="100.0" y="83.5" text-anchor="middle">tools + messages</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="210" y="40" width="160" height="64" rx="8"/>
+<text class="dg-label" x="290.0" y="68.5" text-anchor="middle">Chat template</text>
+<text class="dg-tiny" x="290.0" y="83.5" text-anchor="middle">JSON a texto</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="400" y="40" width="160" height="64" rx="8"/>
+<text class="dg-label" x="480.0" y="68.5" text-anchor="middle">Modelo</text>
+<text class="dg-tiny" x="480.0" y="83.5" text-anchor="middle">genera tokens</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="590" y="40" width="160" height="64" rx="8"/>
+<text class="dg-label" x="670.0" y="68.5" text-anchor="middle">Parser</text>
+<text class="dg-tiny" x="670.0" y="83.5" text-anchor="middle">texto a JSON</text>
+<path class="dg-edge" d="M180 72 L208 72" marker-end="url(#f63La)"/>
+<path class="dg-edge" d="M370 72 L398 72" marker-end="url(#f63La)"/>
+<path class="dg-edge" d="M560 72 L588 72" marker-end="url(#f63La)"/>
+<text class="dg-group" x="385" y="150" text-anchor="middle">Vuelta: de la llamada estructurada al resultado</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="590" y="168" width="160" height="64" rx="8"/>
+<text class="dg-label" x="670.0" y="196.5" text-anchor="middle">API</text>
+<text class="dg-tiny" x="670.0" y="211.5" text-anchor="middle">tool_use + stop_reason</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="400" y="168" width="160" height="64" rx="8"/>
+<text class="dg-label" x="480.0" y="196.5" text-anchor="middle">Harness ejecuta</text>
+<text class="dg-tiny" x="480.0" y="211.5" text-anchor="middle">permiso, timeout, recorte</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="210" y="168" width="160" height="64" rx="8"/>
+<text class="dg-label" x="290.0" y="196.5" text-anchor="middle">tool_result</text>
+<text class="dg-tiny" x="290.0" y="211.5" text-anchor="middle">mismo id, de vuelta</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="168" width="160" height="64" rx="8"/>
+<text class="dg-label" x="100.0" y="196.5" text-anchor="middle">Siguiente turno</text>
+<text class="dg-tiny" x="100.0" y="211.5" text-anchor="middle">todo otra vez</text>
+<path class="dg-edge" d="M670 104 L670 166" marker-end="url(#f63La)"/>
+<path class="dg-edge" d="M590 200 L562 200" marker-end="url(#f63La)"/>
+<path class="dg-edge" d="M400 200 L372 200" marker-end="url(#f63La)"/>
+<path class="dg-edge" d="M210 200 L182 200" marker-end="url(#f63La)"/>
+<rect class="dg-frame" x="20" y="256" width="730" height="58" rx="8"/>
+<text class="dg-small dg-mono" x="36" y="280" text-anchor="start">tool_choice: auto, any (required), una herramienta o none</text>
+<text class="dg-tiny" x="36" y="300" text-anchor="start">Lo decide el harness en cada request; el servidor lo aplica con el prefill o con la máscara.</text>
+<g class="pl-pin"><circle cx="30" cy="48" r="11"/><text x="30" y="52" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="220" cy="48" r="11"/><text x="220" y="52" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="348" cy="48" r="11"/><text x="348" y="52" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="410" cy="48" r="11"/><text x="410" y="52" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="600" cy="48" r="11"/><text x="600" y="52" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="600" cy="176" r="11"/><text x="600" y="180" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="738" cy="176" r="11"/><text x="738" y="180" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="220" cy="176" r="11"/><text x="220" y="180" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="738" cy="264" r="11"/><text x="738" y="268" text-anchor="middle">9</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 63.A.</b> Una llamada a herramienta de ida y vuelta. Arriba, lo que hace el servidor con tu JSON antes de que el modelo lo vea; abajo, lo que hace el harness con lo que el modelo devolvió.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Definición de la herramienta</b><span>Nombre, descripción y JSON Schema de los argumentos. Es prompt y es contrato. <a href="#esquema">63.5</a></span></li>
+  <li><b>Chat template</b><span>El programa que convierte mensajes y herramientas en el texto que lee el modelo. <a href="#plantilla">63.2</a></span></li>
+  <li><b>Tokens especiales</b><span>Marcas que el tokenizer reserva para los bordes: turnos, llamadas, resultados. <a href="#plantilla">63.2</a></span></li>
+  <li><b>Decodificación restringida</b><span>Una máscara que en cada paso deja pasar solo los tokens que cumplen el esquema. <a href="#restringida">63.6</a></span></li>
+  <li><b>Parser de llamadas</b><span>Lee el texto que generó el modelo y arma la llamada estructurada. <a href="#parser">63.4</a></span></li>
+  <li><b>tool_use o tool_calls</b><span>La llamada como la entrega la API, con id, nombre y argumentos. <a href="#formatos">63.3</a></span></li>
+  <li><b>stop_reason</b><span>Por qué terminó el turno: llamada, fin, corte por tokens, pausa o rechazo. <a href="#stop">63.9</a></span></li>
+  <li><b>tool_result</b><span>El resultado que vuelve al modelo atado al id de su llamada. <a href="#paralelo">63.8</a></span></li>
+  <li><b>tool_choice</b><span>Si el modelo puede, debe o no puede llamar, y a cuál. <a href="#tool-choice">63.7</a></span></li>
+</ol>
+
+<h2 id="plantilla"><span class="sec-num">63.2</span>Chat templates y tokens especiales</h2>
+
+<p>Un modelo de lenguaje no recibe JSON: recibe una secuencia de tokens y predice el siguiente (<a href="m12-llm-por-dentro.html#tokens">M12.2</a>). Lo que llamas "mensajes" y "herramientas" es una comodidad de la API. Antes de la primera pasada, el servidor arma un solo texto con un <dfn data-term="chat-template">chat template</dfn>: un programa en Jinja que viene con el modelo, en su <code>tokenizer_config.json</code>, y que decide cómo se escribe cada turno, dónde van las herramientas y cómo empieza la respuesta <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f632t f632d">
+<title id="f632t">Del JSON de la API al texto que lee el modelo</title>
+<desc id="f632d">A la izquierda, la request en JSON: un system, la lista de herramientas y un mensaje del usuario. Al centro, el chat template en Jinja que trae el modelo. A la derecha, el texto resultante: las herramientas quedan dentro del system como texto, cada turno entre tokens especiales, y el texto termina abriendo el turno del asistente para que el modelo siga escribiendo.</desc>
+<defs><marker id="f632a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="30" width="220" height="240" rx="8"/>
+<text class="dg-label" x="130" y="54" text-anchor="middle">Request (JSON)</text>
+<text class="dg-tiny dg-mono" x="36" y="86" text-anchor="start">"system": "Eres…"</text>
+<text class="dg-tiny dg-mono" x="36" y="108" text-anchor="start">"tools": [leer_archivo]</text>
+<text class="dg-tiny dg-mono" x="36" y="130" text-anchor="start">"messages": [</text>
+<text class="dg-tiny dg-mono" x="36" y="152" text-anchor="start">  {"role": "user",</text>
+<text class="dg-tiny dg-mono" x="36" y="174" text-anchor="start">   "content": "Lee app.py"}</text>
+<text class="dg-tiny dg-mono" x="36" y="196" text-anchor="start">]</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="282" y="110" width="190" height="80" rx="8"/>
+<text class="dg-label" x="377.0" y="146.5" text-anchor="middle">Chat template</text>
+<text class="dg-tiny" x="377.0" y="161.5" text-anchor="middle">Jinja, en tokenizer_config</text>
+<path class="dg-edge" d="M240 150 L280 150" marker-end="url(#f632a)"/>
+<path class="dg-edge" d="M472 150 L512 150" marker-end="url(#f632a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="514" y="30" width="236" height="240" rx="8"/>
+<text class="dg-label" x="632" y="54" text-anchor="middle">Texto (lo que ve el modelo)</text>
+<text class="dg-tiny dg-mono" x="530" y="86" text-anchor="start">&lt;|im_start|&gt;system</text>
+<text class="dg-tiny dg-mono" x="530" y="110" text-anchor="start">Eres… # Tools &lt;tools&gt;</text>
+<text class="dg-tiny dg-mono" x="530" y="134" text-anchor="start">{"name": "leer_archivo"…}</text>
+<text class="dg-tiny dg-mono" x="530" y="158" text-anchor="start">&lt;/tools&gt;&lt;|im_end|&gt;</text>
+<text class="dg-tiny dg-mono" x="530" y="182" text-anchor="start">&lt;|im_start|&gt;user</text>
+<text class="dg-tiny dg-mono" x="530" y="206" text-anchor="start">Lee app.py&lt;|im_end|&gt;</text>
+<text class="dg-tiny dg-mono" x="530" y="230" text-anchor="start">&lt;|im_start|&gt;assistant</text>
+<text class="dg-tiny" x="632" y="260" text-anchor="middle">el modelo sigue desde aquí</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 63.1.</b> Lo que hace el chat template de Qwen con una request: las herramientas pasan a ser texto dentro del system, y el texto termina abriendo el turno del asistente.</figcaption>
+</figure>
+
+
+<p>Los bordes se marcan con <dfn data-term="token-especial">tokens especiales</dfn>: piezas del vocabulario reservadas que el texto normal no produce, como <code>&lt;|im_start|&gt;</code> y <code>&lt;|im_end|&gt;</code> en Qwen, o <code>&lt;|start_header_id|&gt;</code> y <code>&lt;|eot_id|&gt;</code> en Llama 3. Son un solo token cada uno, y el modelo aprendió en el entrenamiento qué significa cada uno. Este es el texto que arma Qwen3 para una request con una herramienta, abreviado <span class="badge badge--doc">Documentado</span>:</p>
+
+<pre data-lang="text"><code>&lt;|im_start|&gt;system
+Eres un agente de programación.
+
+# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within &lt;tools&gt;&lt;/tools&gt; XML tags:
+&lt;tools&gt;
+{"type": "function", "function": {"name": "leer_archivo", "description": "Lee un archivo…", "parameters": {…}}}
+&lt;/tools&gt;
+
+For each function call, return a json object with function name and arguments within &lt;tool_call&gt;&lt;/tool_call&gt; XML tags:
+&lt;tool_call&gt;
+{"name": &lt;function-name&gt;, "arguments": &lt;args-json-object&gt;}
+&lt;/tool_call&gt;&lt;|im_end|&gt;
+&lt;|im_start|&gt;user
+Lee src/app.py&lt;|im_end|&gt;
+&lt;|im_start|&gt;assistant</code></pre>
+
+<p>Tres consecuencias que importan al construir:</p>
+<ul>
+  <li><b>Las herramientas son prompt.</b> No hay un canal aparte: la lista entera viaja como texto de entrada, en cada request. Diez herramientas con buenas descripciones pueden ser 2&#8239;000 tokens antes de que el usuario escriba nada. Anthropic hace lo mismo del lado del proveedor: con <code>tools</code>, la API arma un system prompt especial con las definiciones, que también se factura <span class="badge badge--doc">Documentado</span>.</li>
+  <li><b>El template es parte del modelo.</b> Un modelo afinado con un formato de llamada lo usa bien solo si recibe ese formato. Servirlo con otro template, o con uno incompleto (un GGUF convertido sin la parte de herramientas, por ejemplo), produce un modelo que "no sabe usar herramientas" aunque sí sepa.</li>
+  <li><b>Lo puedes ver.</b> El tokenizer aplica el template sin GPU, y es la forma más barata de depurar un agente con un modelo abierto:</li>
+</ul>
+
+<pre data-lang="python"><code>from transformers import AutoTokenizer
+
+tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B")
+tools = [{"type": "function", "function": {"name": "leer_archivo", "description": "Lee un archivo del proyecto.",
+          "parameters": {"type": "object", "properties": {"ruta": {"type": "string"}}, "required": ["ruta"]}}}]
+mensajes = [{"role": "user", "content": "Lee src/app.py"}]
+
+# El mismo template que usa el servidor, sin GPU ni modelo: solo el tokenizer.
+texto = tok.apply_chat_template(mensajes, tools=tools, tokenize=False, add_generation_prompt=True)
+print(texto)
+print(len(tok(texto)["input_ids"]), "tokens de entrada")</code></pre>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Ollama responde <code>does not support tools</code> cuando el template del modelo que bajaste no tiene la sección de herramientas, aunque el modelo base las soporte. El arreglo no está en tu harness: es usar una variante del modelo con el template correcto, o escribir un Modelfile con el template oficial.</p>
+</aside>
+
+<h2 id="formatos"><span class="sec-num">63.3</span>Cada familia, su formato</h2>
+
+<p>No hay un estándar de cómo se escribe una llamada dentro del texto. Cada familia de modelos eligió el suyo al entrenar, y el servidor tiene que conocerlo para encontrarla. Tres ejemplos documentados en sus model cards <span class="badge badge--doc">Documentado</span>:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Familia</th><th>Cómo escribe la llamada</th><th>Cómo vuelve el resultado</th><th>Id de la llamada</th></tr></thead>
+    <tbody>
+      <tr><td>Qwen 2.5 y 3 (estilo Hermes)</td><td>JSON con <code>name</code> y <code>arguments</code> entre <code>&lt;tool_call&gt;</code> y <code>&lt;/tool_call&gt;</code></td><td>En un turno <code>user</code>, entre <code>&lt;tool_response&gt;</code></td><td>No hay: se empareja por orden</td></tr>
+      <tr><td>Llama 3.1</td><td>JSON suelto con <code>name</code> y <code>parameters</code>, una llamada por turno</td><td>Rol propio, <code>ipython</code></td><td>No hay</td></tr>
+      <tr><td>Kimi K2</td><td>Tokens especiales: <code>&lt;|tool_calls_section_begin|&gt;</code>, <code>&lt;|tool_call_begin|&gt;</code>, id, <code>&lt;|tool_call_argument_begin|&gt;</code>, JSON</td><td>Mensaje con rol <code>tool</code> y <code>tool_call_id</code></td><td><code>functions.nombre:índice</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Elige un formato y un caso: la misma llamada a <code>leer_archivo</code> en los dos dialectos de API (<a href="m62-pila-agente.html#inferencia-dialectos">M62.3</a>) y en el texto de tres templates.</p>
+
+<div data-sim="toolfmt"></div>
+
+<p>Lo que el widget muestra con "Dos en paralelo" es la razón de muchas sorpresas: un harness que espera varias llamadas por turno (Claude Code pide varias lecturas a la vez) funciona con un modelo que las emite así y tarda el doble con uno que emite de a una. No es un error: es el formato con el que se entrenó cada modelo.</p>
+
+<h2 id="parser"><span class="sec-num">63.4</span>Del texto al JSON: el parser</h2>
+
+<p>Cuando el modelo termina de generar, la API tiene que devolver <code>tool_calls</code>, no texto con etiquetas. Ese trabajo lo hace un <dfn data-term="parser-herramientas">parser de llamadas</dfn> del servidor, específico para cada formato. En vLLM se activa con dos flags y se elige por nombre <span class="badge badge--doc">Documentado</span>:</p>
+
+<pre data-lang="shell"><code># Qwen3 con el parser de llamadas estilo Hermes (documentación de Qwen y vLLM)
+vllm serve Qwen/Qwen3-8B --enable-auto-tool-choice --tool-call-parser hermes
+
+# Sin los dos flags, el servidor devuelve el &lt;tool_call&gt; como texto en content</code></pre>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f634t f634d">
+<title id="f634t">El parser de tool calls del servidor</title>
+<desc id="f634d">Una máquina de estados. En el estado texto, los tokens se mandan al cliente como contenido. Al ver la etiqueta de apertura de una llamada pasa al estado llamada y acumula. Al ver el cierre intenta leer el JSON: si sale bien, emite una tool call con nombre y argumentos; si falla, el texto vuelve como contenido normal y el harness ve una respuesta sin llamada.</desc>
+<defs><marker id="f634a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="30" y="90" width="150" height="60" rx="8"/>
+<text class="dg-label" x="105.0" y="116.5" text-anchor="middle">Texto</text>
+<text class="dg-tiny" x="105.0" y="131.5" text-anchor="middle">se emite como content</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="300" y="90" width="160" height="60" rx="8"/>
+<text class="dg-label" x="380.0" y="116.5" text-anchor="middle">Dentro de llamada</text>
+<text class="dg-tiny" x="380.0" y="131.5" text-anchor="middle">acumula, no emite</text>
+<rect class="dg-ok" x="580" y="30" width="170" height="56" rx="8"/>
+<text class="dg-label" x="665.0" y="54.5" text-anchor="middle">tool_calls</text>
+<text class="dg-tiny" x="665.0" y="69.5" text-anchor="middle">nombre + argumentos</text>
+<rect class="dg-bad" x="580" y="160" width="170" height="56" rx="8"/>
+<text class="dg-label" x="665.0" y="184.5" text-anchor="middle">Falla de parseo</text>
+<text class="dg-tiny" x="665.0" y="199.5" text-anchor="middle">queda como texto</text>
+<path class="dg-edge" d="M180 112 L298 112" marker-end="url(#f634a)"/>
+<text class="dg-tiny dg-mono" x="239" y="102" text-anchor="middle">ve &lt;tool_call&gt;</text>
+<path class="dg-edge" d="M460 108 L578 62" marker-end="url(#f634a)"/>
+<text class="dg-tiny" x="572" y="44" text-anchor="end">cierre + JSON válido</text>
+<path class="dg-edge" d="M460 132 L578 186" marker-end="url(#f634a)"/>
+<text class="dg-tiny" x="572" y="214" text-anchor="end">JSON roto o sin cierre</text>
+<path class="dg-feedback" d="M665 216 L665 236 L105 236 L105 152" marker-end="url(#f634a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="385" y="258" text-anchor="middle">el harness recibe texto y cree que el modelo terminó</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 63.2.</b> El parser como máquina de estados. La rama de abajo es la peligrosa: un JSON roto no produce un error, produce texto.</figcaption>
+</figure>
+
+
+<p>La rama de abajo de la figura explica una falla típica con modelos chicos: el modelo escribió <code>&lt;tool_call&gt;</code>, se equivocó en una coma, y el harness recibió una respuesta de texto sin llamadas. Para el bucle de <a href="m62-pila-agente.html#propio">M62.6</a>, "sin llamadas" significa "terminó", así que el agente se detiene en mitad de la tarea y dice algo como "voy a leer el archivo" sin leerlo. Tres defensas, de la más barata a la más cara:</p>
+<ul>
+  <li><b>En el harness:</b> si la respuesta final contiene restos de una llamada (<code>&lt;tool_call&gt;</code>, <code>{"name":</code>), no terminar: devolverle al modelo un mensaje que diga que la llamada no se pudo leer.</li>
+  <li><b>En el servidor:</b> el parser correcto para el modelo, y la versión del servidor que lo trae. Un parser de Hermes sobre un modelo con formato propio no encuentra nada.</li>
+  <li><b>En la generación:</b> decodificación restringida dentro de la llamada (63.6), que hace imposible el JSON roto.</li>
+</ul>
+
+<h2 id="esquema"><span class="sec-num">63.5</span>Describir una herramienta</h2>
+
+<p>La definición de una herramienta hace tres trabajos a la vez, y conviene escribirla pensando en los tres.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f635t f635d">
+<title id="f635t">Anatomía de la definición de una herramienta</title>
+<desc id="f635d">A la izquierda, la definición de leer_archivo con su nombre, su descripción y su input_schema con dos propiedades, una con enum. A la derecha, tres anotaciones: el nombre y las descripciones son prompt que el modelo lee para decidir; el tipo, los obligatorios y el enum son lo que una gramática puede imponer; todo viaja como tokens de entrada en cada request.</desc>
+<defs><marker id="f635a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="20" width="400" height="250" rx="8"/>
+<text class="dg-tiny dg-mono" x="36" y="44" text-anchor="start">{</text>
+<text class="dg-tiny dg-mono" x="36" y="63" text-anchor="start">  "name": "leer_archivo",</text>
+<text class="dg-tiny dg-mono" x="36" y="82" text-anchor="start">  "description": "Lee un archivo del</text>
+<text class="dg-tiny dg-mono" x="36" y="101" text-anchor="start">     proyecto con números de línea…",</text>
+<text class="dg-tiny dg-mono" x="36" y="120" text-anchor="start">  "input_schema": {</text>
+<text class="dg-tiny dg-mono" x="36" y="139" text-anchor="start">    "type": "object",</text>
+<text class="dg-tiny dg-mono" x="36" y="158" text-anchor="start">    "properties": {</text>
+<text class="dg-tiny dg-mono" x="36" y="177" text-anchor="start">      "ruta": {"type": "string"},</text>
+<text class="dg-tiny dg-mono" x="36" y="196" text-anchor="start">      "modo": {"enum": ["leer", "contar"]}</text>
+<text class="dg-tiny dg-mono" x="36" y="215" text-anchor="start">    },</text>
+<text class="dg-tiny dg-mono" x="36" y="234" text-anchor="start">    "required": ["ruta", "modo"]</text>
+<text class="dg-tiny dg-mono" x="36" y="253" text-anchor="start">  }}</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="480" y="30" width="270" height="62" rx="8"/>
+<text class="dg-small" x="615.0" y="57.5" text-anchor="middle">Prompt para el modelo</text>
+<text class="dg-tiny" x="615.0" y="72.5" text-anchor="middle">nombre y descripciones: decide con esto</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="480" y="118" width="270" height="62" rx="8"/>
+<text class="dg-small" x="615.0" y="145.5" text-anchor="middle">Lo que impone una gramática</text>
+<text class="dg-tiny" x="615.0" y="160.5" text-anchor="middle">tipos, required, enum, sin extras</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="480" y="206" width="270" height="62" rx="8"/>
+<text class="dg-small" x="615.0" y="233.5" text-anchor="middle">Costo en cada request</text>
+<text class="dg-tiny" x="615.0" y="248.5" text-anchor="middle">tokens de entrada, en el prefijo</text>
+<path class="dg-feedback" d="M300 72 L478 60" marker-end="url(#f635a)" style="stroke-dasharray:5 4"/>
+<path class="dg-feedback" d="M380 196 L478 150" marker-end="url(#f635a)" style="stroke-dasharray:5 4"/>
+<path class="dg-feedback" d="M420 250 L478 238" marker-end="url(#f635a)" style="stroke-dasharray:5 4"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 63.3.</b> La misma definición leída por tres lectores: el modelo, la gramática y la factura.</figcaption>
+</figure>
+
+
+<p><b>Es prompt.</b> El modelo decide si llamar, a cuál y con qué argumentos leyendo el nombre y las descripciones. Anthropic dice que la descripción detallada es "por lejos" el factor más importante del rendimiento con herramientas, y pide tres o cuatro oraciones por herramienta: qué hace, cuándo usarla y cuándo no, qué significa cada parámetro y qué no devuelve <span class="badge badge--doc">Documentado</span>. También recomienda agrupar operaciones relacionadas en menos herramientas y usar prefijos por servicio (<code>github_list_prs</code>) cuando son muchas <span class="badge badge--doc">Documentado</span>.</p>
+
+<p><b>Es contrato.</b> Lo que el esquema dice (tipos, obligatorios, <code>enum</code>, sin campos extra) es lo que tu código puede suponer, y lo que una gramática puede imponer. El modo estricto de OpenAI exige <code>additionalProperties: false</code> y que todos los campos estén en <code>required</code>; un campo opcional se escribe como un tipo que admite <code>null</code> <span class="badge badge--doc">Documentado</span>:</p>
+
+<pre data-lang="json"><code>{
+  "type": "function",
+  "function": {
+    "name": "leer_archivo",
+    "description": "Lee un archivo del proyecto y devuelve su contenido con números de línea. Úsala antes de editar. No sirve para directorios: para eso está listar.",
+    "strict": true,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ruta":  {"type": "string", "description": "Ruta relativa a la raíz del proyecto, como src/app.py"},
+        "desde": {"type": ["integer", "null"], "description": "Primera línea a leer; null para empezar en la 1"}
+      },
+      "required": ["ruta", "desde"],
+      "additionalProperties": false
+    }
+  }
+}</code></pre>
+
+<p><b>Es costo.</b> Viaja en cada request, en el prefijo. Si el orden de las herramientas cambia entre requests, se rompe el <a href="m16-context-windows.html#prompt-caching">prompt caching</a> de todo lo que viene después (<a href="m16-context-windows.html#prompt-caching">M16</a>). Una herramienta de más que nadie usa es una factura fija.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Más herramientas dan más capacidad y más confusión: con cincuenta, el modelo elige mal más seguido y el prefijo crece. Los harnesses resuelven esto cargando herramientas bajo demanda (las de un servidor MCP solo cuando hacen falta), un tema de M67.</p>
+</aside>
+
+<h2 id="restringida"><span class="sec-num">63.6</span>Decodificación restringida a fondo</h2>
+
+<p>En <a href="m17-api-streaming.html#estructuradas">M17.7</a> viste la idea: la <dfn data-term="constrained-decoding">decodificación restringida</dfn> compila el esquema y, en cada paso, enmascara los tokens que dejarían la salida fuera de él. Aquí va el mecanismo, porque explica tanto lo que garantiza como lo que no.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f636t f636d">
+<title id="f636t">Cómo una gramática enmascara tokens</title>
+<desc id="f636d">Arriba, el pipeline de un paso de decodificación: logits del modelo, máscara que pone en menos infinito los tokens que la gramática no admite, softmax y muestreo; el token elegido avanza el autómata. Abajo, el autómata del esquema leer_archivo: inicio, clave, valor string, coma o cierre, con el cierre bloqueado hasta que estén las dos claves obligatorias.</desc>
+<defs><marker id="f636a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="20" y="28" width="130" height="56" rx="8"/>
+<text class="dg-label" x="85.0" y="52.5" text-anchor="middle">Logits</text>
+<text class="dg-tiny" x="85.0" y="67.5" text-anchor="middle">un número por token</text>
+<path class="dg-edge" d="M150 56 L168 56" marker-end="url(#f636a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="170" y="28" width="130" height="56" rx="8"/>
+<text class="dg-label" x="235.0" y="52.5" text-anchor="middle">Máscara</text>
+<text class="dg-tiny" x="235.0" y="67.5" text-anchor="middle">inválidos: −∞</text>
+<path class="dg-edge" d="M300 56 L318 56" marker-end="url(#f636a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="320" y="28" width="130" height="56" rx="8"/>
+<text class="dg-label" x="385.0" y="52.5" text-anchor="middle">Softmax</text>
+<text class="dg-tiny" x="385.0" y="67.5" text-anchor="middle">solo los válidos</text>
+<path class="dg-edge" d="M450 56 L468 56" marker-end="url(#f636a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="470" y="28" width="130" height="56" rx="8"/>
+<text class="dg-label" x="535.0" y="52.5" text-anchor="middle">Muestreo</text>
+<text class="dg-tiny" x="535.0" y="67.5" text-anchor="middle">un token</text>
+<path class="dg-edge" d="M600 56 L618 56" marker-end="url(#f636a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="620" y="28" width="130" height="56" rx="8"/>
+<text class="dg-label" x="685.0" y="52.5" text-anchor="middle">Autómata</text>
+<text class="dg-tiny" x="685.0" y="67.5" text-anchor="middle">avanza de estado</text>
+<path class="dg-feedback" d="M685 84 L685 104 L220 104 L220 84" marker-end="url(#f636a)"/>
+<text class="dg-tiny" x="452" y="120" text-anchor="middle">el estado nuevo define la máscara del paso siguiente</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="170" width="90" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="65.0" y="196.0" text-anchor="middle">{</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="130" y="170" width="90" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="175.0" y="196.0" text-anchor="middle">clave</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="240" y="170" width="90" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="285.0" y="196.0" text-anchor="middle">":</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="350" y="170" width="90" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="395.0" y="196.0" text-anchor="middle">valor</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="460" y="170" width="90" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="505.0" y="196.0" text-anchor="middle">coma</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="630" y="170" width="90" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="675.0" y="196.0" text-anchor="middle">}</text>
+<path class="dg-edge" d="M110 192 L128 192" marker-end="url(#f636a)"/>
+<path class="dg-edge" d="M220 192 L238 192" marker-end="url(#f636a)"/>
+<path class="dg-edge" d="M330 192 L348 192" marker-end="url(#f636a)"/>
+<path class="dg-edge" d="M440 192 L458 192" marker-end="url(#f636a)"/>
+<path class="dg-edge" d="M505 170 L505 150 L175 150 L175 170" marker-end="url(#f636a)"/>
+<text class="dg-tiny" x="340" y="144" text-anchor="middle">otra clave (ruta o modo, sin repetir)</text>
+<path class="dg-edge" d="M550 206 L628 206" marker-end="url(#f636a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="589" y="232" text-anchor="middle">cerrar: solo con las dos claves</text>
+<text class="dg-tiny dg-mono" x="395" y="260" text-anchor="middle">enum: modo solo admite "leer" o "contar"</text>
+<text class="dg-tiny" x="395" y="280" text-anchor="middle">string: admite casi cualquier byte hasta la comilla</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 63.4.</b> Un paso de decodificación con máscara. El autómata del esquema decide qué tokens valen; el modelo decide cuál de ellos.</figcaption>
+</figure>
+
+
+<ol class="steps">
+  <li><span class="step-title">Compilar</span>El esquema se convierte en una gramática y la gramática en un autómata. Se hace una vez por esquema y se guarda en caché: compilar un esquema grande puede tardar más que generar la respuesta.</li>
+  <li><span class="step-title">Enmascarar</span>En cada paso, el motor recorre el vocabulario (100&#8239;000 tokens o más) y marca cuáles pueden seguir sin salir de la gramática. Los demás reciben −∞ en sus logits, y la softmax les da probabilidad cero.</li>
+  <li><span class="step-title">Avanzar</span>El token muestreado mueve el autómata, y el estado nuevo define la máscara siguiente.</li>
+</ol>
+
+<p>La dificultad está en que los tokens no coinciden con la gramática: un token puede ser <code>":"</code>, <code>ta":</code> o <code>/app.py"}</code>, y cruzar varios símbolos de una vez. Por eso los motores trabajan sobre bytes y precalculan qué tokens son válidos en cada estado. Las implementaciones conocidas son XGrammar (el backend por defecto de vLLM para salidas estructuradas), Outlines y las gramáticas GBNF de llama.cpp <span class="badge badge--doc">Documentado</span>:</p>
+
+<pre data-lang="text"><code># Una gramática GBNF de llama.cpp para el mismo esquema (simplificada)
+root   ::= "{" ws "\"ruta\":" ws string "," ws "\"modo\":" ws modo ws "}"
+modo   ::= "\"leer\"" | "\"contar\""
+string ::= "\"" ( [^"\\] | "\\" ["\\/bfnrt] )* "\""
+ws     ::= [ \t\n]*</code></pre>
+
+<p>Avanza la generación token por token y compara con la restricción apagada:</p>
+
+<div data-sim="constrained"></div>
+
+<p>Lo que muestra el paso 11 es la frontera exacta de la garantía. La gramática sabe que <code>modo</code> es <code>"leer"</code> o <code>"contar"</code>, pero no sabe si <code>src/app.py</code> existe ni si leer era la decisión correcta. Garantiza la <b>forma</b>, no el <b>contenido</b>. Y tiene un costo menos obvio: si el modelo "quería" decir otra cosa (editar), la máscara lo obliga a una opción que no eligió, y la calidad puede bajar. Por eso conviene que el esquema no pelee con lo que el modelo haría naturalmente: nombres de campo obvios y enums que cubran los casos reales.</p>
+
+<p>Del lado de los proveedores, OpenAI aplica la restricción con <code>"strict": true</code> en la herramienta, y Anthropic ofrece <code>strict: true</code> en la definición ("strict tool use") para garantizar argumentos que cumplen el esquema <span class="badge badge--doc">Documentado</span>. Con un modelo propio en vLLM o llama.cpp, la activas tú en el servidor.</p>
+
+<h2 id="tool-choice"><span class="sec-num">63.7</span>tool_choice: puede, debe o no puede</h2>
+
+<p><dfn data-term="tool-choice"><code>tool_choice</code></dfn> le dice al servidor qué está permitido en este turno. Los dos dialectos tienen las mismas cuatro opciones con nombres distintos <span class="badge badge--doc">Documentado</span>:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f637t f637d">
+<title id="f637t">Las cuatro opciones de tool_choice</title>
+<desc id="f637d">Cuatro columnas. auto: el modelo elige entre responder texto o llamar una herramienta. any, que OpenAI llama required: tiene que llamar alguna. tool con un nombre: tiene que llamar esa. none: no puede llamar ninguna. Debajo de cada una, el nombre en el dialecto de OpenAI.</desc>
+<defs><marker id="f637a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="24" width="170" height="70" rx="8"/>
+<text class="dg-label dg-mono" x="105.0" y="55.5" text-anchor="middle">auto</text>
+<text class="dg-tiny" x="105.0" y="70.5" text-anchor="middle">texto o una llamada</text>
+<text class="dg-tiny" x="105" y="124" text-anchor="middle">en OpenAI:</text>
+<text class="dg-tiny dg-mono" x="105" y="144" text-anchor="middle">auto</text>
+<text class="dg-small" x="105" y="176" text-anchor="middle">el modelo decide</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="206" y="24" width="170" height="70" rx="8"/>
+<text class="dg-label dg-mono" x="291.0" y="55.5" text-anchor="middle">any</text>
+<text class="dg-tiny" x="291.0" y="70.5" text-anchor="middle">alguna herramienta</text>
+<text class="dg-tiny" x="291" y="124" text-anchor="middle">en OpenAI:</text>
+<text class="dg-tiny dg-mono" x="291" y="144" text-anchor="middle">required</text>
+<text class="dg-small" x="291" y="176" text-anchor="middle">nunca solo texto</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="392" y="24" width="170" height="70" rx="8"/>
+<text class="dg-label dg-mono" x="477.0" y="55.5" text-anchor="middle">tool</text>
+<text class="dg-tiny" x="477.0" y="70.5" text-anchor="middle">esa herramienta</text>
+<text class="dg-tiny" x="477" y="124" text-anchor="middle">en OpenAI:</text>
+<text class="dg-tiny dg-mono" x="477" y="144" text-anchor="middle">{"type": "function", …}</text>
+<text class="dg-small" x="477" y="176" text-anchor="middle">forzada por nombre</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="578" y="24" width="170" height="70" rx="8"/>
+<text class="dg-label dg-mono" x="663.0" y="55.5" text-anchor="middle">none</text>
+<text class="dg-tiny" x="663.0" y="70.5" text-anchor="middle">solo texto</text>
+<text class="dg-tiny" x="663" y="124" text-anchor="middle">en OpenAI:</text>
+<text class="dg-tiny dg-mono" x="663" y="144" text-anchor="middle">none</text>
+<text class="dg-small" x="663" y="176" text-anchor="middle">aunque haya tools</text>
+<rect class="dg-warnbox" x="206" y="200" width="356" height="36" rx="6"/>
+<text class="dg-tiny" x="384" y="223" text-anchor="middle">any y tool: sin texto ni thinking antes de la llamada</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 63.5.</b> Las cuatro opciones y sus nombres en cada dialecto.</figcaption>
+</figure>
+
+
+<p>Cómo se implementa "debe llamar" es instructivo. Anthropic documenta que con <code>any</code> o <code>tool</code> la API pre-llena el turno del asistente para forzar la llamada: el modelo no puede escribir texto antes, y tampoco piensa, porque la respuesta empieza directamente con el bloque <code>tool_use</code> <span class="badge badge--doc">Documentado</span>. Con un servidor propio, "debe llamar" se implementa con la gramática de 63.6: la máscara no deja escribir nada que no sea una llamada.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Quieres</th><th>Usa</th><th>Ojo con</th></tr></thead>
+    <tbody>
+      <tr><td>Un agente normal</td><td><code>auto</code></td><td>Es el valor por defecto con herramientas; casi siempre es la opción correcta</td></tr>
+      <tr><td>Extraer datos con una forma fija</td><td>Una herramienta forzada, o mejor, salidas estructuradas</td><td>Se pierde el razonamiento previo a la llamada</td></tr>
+      <tr><td>El último turno, sin más acciones</td><td><code>none</code></td><td>Las definiciones siguen en el prompt (y en la factura)</td></tr>
+      <tr><td>Que siempre actúe en un paso de un flujo fijo</td><td><code>any</code> o <code>required</code></td><td>No todos los modelos lo aceptan (abajo)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>No todos los modelos aceptan forzar una herramienta. La documentación de Anthropic dice que con thinking manual activado <code>any</code> y <code>tool</code> dan error, y que en los modelos más nuevos (Claude Opus 5.5, Sonnet 5.5 y Fable 5.1) devuelven un 400: la alternativa recomendada es <code>auto</code> con strict tool use, o salidas estructuradas si lo que necesitas es JSON con forma fija <span class="badge badge--doc">Documentado</span>. Un harness que funciona con un modelo puede romperse al cambiar de versión por un parámetro como este. Además, cambiar <code>tool_choice</code> entre requests invalida la caché de los mensajes <span class="badge badge--doc">Documentado</span>.</p>
+</aside>
+
+<h2 id="paralelo"><span class="sec-num">63.8</span>Llamadas en paralelo</h2>
+
+<p>Un modelo puede pedir varias herramientas en el mismo turno: varios bloques <code>tool_use</code>, o varias entradas en <code>tool_calls</code>. Si las tres lecturas que necesita salen en un turno, el agente se ahorra dos idas y vueltas al modelo, que son lo más lento del bucle.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f638t f638d">
+<title id="f638t">Tres lecturas: en serie contra en paralelo</title>
+<desc id="f638d">Arriba, en serie: tres turnos del modelo, cada uno pide una lectura, el harness la ejecuta y vuelve; el tiempo total suma tres llamadas al modelo. Abajo, en paralelo: un turno pide las tres lecturas, el harness las ejecuta a la vez y manda los tres resultados juntos; queda una sola ida y vuelta al modelo antes de la respuesta.</desc>
+<defs><marker id="f638a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="20" y="24" text-anchor="start">En serie: 3 turnos con llamada + 1 de respuesta</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="20" y="36" width="120" height="30" rx="4"/>
+<text class="dg-tiny" x="80" y="56" text-anchor="middle">modelo</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="144" y="36" width="40" height="30" rx="4"/>
+<text class="dg-tiny" x="164" y="56" text-anchor="middle">read</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="188" y="36" width="120" height="30" rx="4"/>
+<text class="dg-tiny" x="248" y="56" text-anchor="middle">modelo</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="312" y="36" width="40" height="30" rx="4"/>
+<text class="dg-tiny" x="332" y="56" text-anchor="middle">read</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="356" y="36" width="120" height="30" rx="4"/>
+<text class="dg-tiny" x="416" y="56" text-anchor="middle">modelo</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="480" y="36" width="40" height="30" rx="4"/>
+<text class="dg-tiny" x="500" y="56" text-anchor="middle">read</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="524" y="36" width="120" height="30" rx="4"/>
+<text class="dg-tiny" x="584" y="56" text-anchor="middle">respuesta</text>
+<text class="dg-small" x="20" y="120" text-anchor="start">En paralelo: 1 turno pide las 3 + 1 de respuesta</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="20" y="134" width="140" height="30" rx="4"/>
+<text class="dg-tiny" x="90" y="154" text-anchor="middle">modelo: 3 tool_use</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="164" y="134" width="40" height="28" rx="4"/>
+<text class="dg-tiny" x="184" y="153" text-anchor="middle">read</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="164" y="166" width="40" height="28" rx="4"/>
+<text class="dg-tiny" x="184" y="185" text-anchor="middle">read</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="164" y="198" width="40" height="28" rx="4"/>
+<text class="dg-tiny" x="184" y="217" text-anchor="middle">read</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="208" y="134" width="140" height="30" rx="4"/>
+<text class="dg-tiny" x="278" y="154" text-anchor="middle">respuesta</text>
+<path class="dg-feedback" d="M348 178 L692 178"/>
+<text class="dg-tiny" x="520" y="196" text-anchor="middle">tiempo ahorrado: dos turnos del modelo</text>
+<text class="dg-tiny" x="20" y="240" text-anchor="start">Solo herramientas sin efectos se ejecutan a la vez; las que escriben, una por una y en orden.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 63.6.</b> El paralelismo ahorra turnos del modelo, no tiempo de herramientas: las lecturas tardan lo mismo.</figcaption>
+</figure>
+
+
+<p>Tres reglas que el harness tiene que cumplir:</p>
+<ul>
+  <li><b>Un resultado por llamada.</b> Cada <code>tool_use</code> necesita su <code>tool_result</code> con el mismo id. En el dialecto de Anthropic van todos juntos en un solo mensaje <code>user</code>, y los <code>tool_result</code> tienen que ir primero en su contenido; en el de OpenAI, un mensaje <code>tool</code> por llamada <span class="badge badge--doc">Documentado</span>. Si falta uno, la API responde 400.</li>
+  <li><b>Paralelo en el modelo no significa paralelo en tu máquina.</b> Dos lecturas pueden correr a la vez; dos ediciones del mismo archivo no. El harness decide.</li>
+  <li><b>Se puede apagar.</b> <code>disable_parallel_tool_use: true</code> dentro de <code>tool_choice</code> en Anthropic, <code>parallel_tool_calls: false</code> en OpenAI <span class="badge badge--doc">Documentado</span>. Sirve cuando cada acción depende de la anterior o cuando una herramienta no es segura en concurrencia.</li>
+</ul>
+
+<pre data-lang="python"><code>import asyncio
+
+SOLO_LECTURA = {"leer_archivo", "buscar", "listar"}
+
+async def ejecutar_todas(llamadas):
+    lecturas = [c for c in llamadas if c.name in SOLO_LECTURA]
+    efectos = [c for c in llamadas if c.name not in SOLO_LECTURA]
+    res = dict(zip([c.id for c in lecturas],
+                   await asyncio.gather(*(ejecutar(c) for c in lecturas))))   # (1) a la vez
+    for c in efectos:                                                        # (2) en orden, de a una
+        res[c.id] = await ejecutar(c)
+    # (3) un resultado por cada llamada, en el orden en que llegaron
+    return [{"type": "tool_result", "tool_use_id": c.id, **res[c.id]} for c in llamadas]</code></pre>
+
+<ol class="code-key">
+  <li>Las herramientas sin efectos se ejecutan a la vez.</li>
+  <li>Las que escriben, en el orden en que el modelo las pidió: si pidió "crear el archivo" y después "editarlo", el orden importa.</li>
+  <li>El resultado conserva el orden de las llamadas, y cada uno lleva su id.</li>
+</ol>
+
+<h2 id="stop"><span class="sec-num">63.9</span>Por qué terminó el turno</h2>
+
+<p>El bucle de un harness no decide "seguir o terminar" mirando si hay texto. Lo decide con el motivo de fin que devuelve la API: <code>stop_reason</code> en Anthropic, <code>finish_reason</code> en OpenAI. Cada valor pide una reacción distinta <span class="badge badge--doc">Documentado</span>:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Anthropic</th><th>OpenAI</th><th>Qué pasó</th><th>Qué hace el harness</th></tr></thead>
+    <tbody>
+      <tr><td><code>tool_use</code></td><td><code>tool_calls</code></td><td>Pidió herramientas</td><td>Ejecutarlas y seguir</td></tr>
+      <tr><td><code>end_turn</code></td><td><code>stop</code></td><td>Terminó</td><td>Mostrar la respuesta y esperar al usuario</td></tr>
+      <tr><td><code>max_tokens</code></td><td><code>length</code></td><td>Se quedó sin tokens de salida</td><td>No ejecutar nada: la llamada puede estar cortada a la mitad</td></tr>
+      <tr><td><code>stop_sequence</code></td><td><code>stop</code></td><td>Apareció una secuencia de parada tuya</td><td>Lo que hayas definido</td></tr>
+      <tr><td><code>pause_turn</code></td><td>(sin equivalente)</td><td>Una herramienta del servidor necesita más tiempo</td><td>Reenviar la conversación tal cual para que siga</td></tr>
+      <tr><td><code>refusal</code></td><td><code>content_filter</code> (parecido)</td><td>Se negó o lo frenó un filtro</td><td>Terminar y no reintentar a ciegas</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<pre data-lang="python"><code>def turno(client, mensajes, tools):
+    r = client.messages.create(model=MODELO, max_tokens=8192, system=SYSTEM,
+                               tools=tools, messages=mensajes)
+    mensajes.append({"role": "assistant", "content": r.content})   # (1) todo, también thinking
+    match r.stop_reason:
+        case "tool_use":                                              # (2) hay trabajo
+            resultados = ejecutar_todas([b for b in r.content if b.type == "tool_use"])
+            mensajes.append({"role": "user", "content": resultados})
+            return "seguir"
+        case "end_turn" | "stop_sequence":                            # (3) terminó
+            return "fin"
+        case "max_tokens":                                            # (4) cortado a la mitad
+            return "subir_max_tokens_o_compactar"
+        case "pause_turn":                                            # (5) herramienta del servidor en curso
+            return "reenviar_igual"
+        case "refusal":                                               # (6) el modelo se negó
+            return "fin_con_rechazo"</code></pre>
+
+<ol class="code-key">
+  <li>El turno del asistente se guarda entero, con los bloques de thinking si los hay: Anthropic exige devolverlos sin cambios cuando el turno siguió con herramientas.</li>
+  <li>Hay llamadas: se ejecutan y se sigue.</li>
+  <li>Respuesta final.</li>
+  <li>El caso traicionero. Con <code>max_tokens</code>, el último bloque puede ser una llamada con el JSON a medias. Ejecutarla es ejecutar algo que el modelo no terminó de pedir.</li>
+  <li>Propio de las herramientas que corre el proveedor, como la búsqueda web.</li>
+  <li>Un rechazo no es un error transitorio: reintentarlo igual da lo mismo y cuesta.</li>
+</ol>
+
+<h2 id="streaming"><span class="sec-num">63.10</span>Argumentos en streaming</h2>
+
+<p>Con streaming (<a href="m17-api-streaming.html#sse-formatos">M17.5</a>), los argumentos de una llamada no llegan enteros: llegan en fragmentos de JSON parcial. En Anthropic, un <code>content_block_start</code> con el nombre y el id, varios <code>content_block_delta</code> de tipo <code>input_json_delta</code> con <code>partial_json</code>, y un <code>content_block_stop</code>. En OpenAI, entradas en <code>delta.tool_calls</code> con un <code>index</code> y pedazos de <code>arguments</code> <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f6310t f6310d">
+<title id="f6310t">Argumentos que llegan en pedazos</title>
+<desc id="f6310d">Izquierda: eventos del stream, uno debajo del otro: el inicio del bloque de una llamada con su nombre e id, varios fragmentos de JSON parcial con índices 0 y 1 intercalados, y el cierre. Derecha: dos buffers, uno por índice, que concatenan los fragmentos. Solo al cierre de cada bloque se parsea el JSON completo.</desc>
+<defs><marker id="f6310a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="20" y="24" text-anchor="start">Eventos SSE, en orden de llegada</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="34" width="330" height="24" rx="4"/>
+<text class="dg-tiny dg-mono" x="30" y="50" text-anchor="start">start  idx 0  leer_archivo  toolu_01A</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="62" width="330" height="24" rx="4"/>
+<text class="dg-tiny dg-mono" x="30" y="78" text-anchor="start">delta  idx 0  {"ru</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="90" width="330" height="24" rx="4"/>
+<text class="dg-tiny dg-mono" x="30" y="106" text-anchor="start">start  idx 1  buscar  toolu_01B</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="118" width="330" height="24" rx="4"/>
+<text class="dg-tiny dg-mono" x="30" y="134" text-anchor="start">delta  idx 0  ta": "src/app.py"}</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="146" width="330" height="24" rx="4"/>
+<text class="dg-tiny dg-mono" x="30" y="162" text-anchor="start">delta  idx 1  {"patron": "def</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="174" width="330" height="24" rx="4"/>
+<text class="dg-tiny dg-mono" x="30" y="190" text-anchor="start">delta  idx 1   main"}</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="202" width="330" height="24" rx="4"/>
+<text class="dg-tiny dg-mono" x="30" y="218" text-anchor="start">stop   idx 0</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="230" width="330" height="24" rx="4"/>
+<text class="dg-tiny dg-mono" x="30" y="246" text-anchor="start">stop   idx 1</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="430" y="40" width="320" height="80" rx="8"/>
+<text class="dg-small dg-mono" x="446" y="62" text-anchor="start">buffer[0]  leer_archivo</text>
+<text class="dg-tiny dg-mono" x="446" y="86" text-anchor="start">{"ru  +  ta": "src/app.py"}</text>
+<text class="dg-tiny" x="446" y="106" text-anchor="start">al stop: json.loads, válido</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="430" y="150" width="320" height="80" rx="8"/>
+<text class="dg-small dg-mono" x="446" y="172" text-anchor="start">buffer[1]  buscar</text>
+<text class="dg-tiny dg-mono" x="446" y="196" text-anchor="start">{"patron": "def  +   main"}</text>
+<text class="dg-tiny" x="446" y="216" text-anchor="start">al stop: json.loads, válido</text>
+<path class="dg-feedback" d="M350 74 L428 80" marker-end="url(#f6310a)" style="stroke-dasharray:5 4"/>
+<path class="dg-feedback" d="M350 158 L428 186" marker-end="url(#f6310a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="590" y="256" text-anchor="middle">parsear antes del stop: JSON incompleto</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 63.7.</b> Con dos llamadas en paralelo, los fragmentos se pueden intercalar. Se acumulan por índice y se parsean al cierre.</figcaption>
+</figure>
+
+
+<pre data-lang="python"><code>buffers = {}                                      # índice del bloque -&gt; {"id", "name", "json"}
+
+for ev in stream:
+    if ev.type == "content_block_start" and ev.content_block.type == "tool_use":
+        b = ev.content_block
+        buffers[ev.index] = {"id": b.id, "name": b.name, "json": ""}
+    elif ev.type == "content_block_delta" and ev.delta.type == "input_json_delta":
+        buffers[ev.index]["json"] += ev.delta.partial_json    # (1) concatenar, no parsear
+    elif ev.type == "content_block_stop" and ev.index in buffers:
+        b = buffers.pop(ev.index)
+        b["input"] = json.loads(b["json"] or "{}")             # (2) recién ahora es JSON completo
+        listas.append(b)</code></pre>
+
+<ol class="code-key">
+  <li>Un fragmento como <code>{"ru</code> no es JSON. Se concatena en el buffer de su índice.</li>
+  <li>Recién al cierre del bloque el JSON está completo. Parsear antes es la causa de errores que aparecen "solo con streaming".</li>
+</ol>
+
+<p>¿Para qué sirve el stream si no se puede ejecutar nada hasta el final? Para la interfaz. Un harness puede mostrar "editando <code>src/app.py</code>…" en cuanto llega el nombre del archivo, y una edición larga de 300 líneas se ve escribirse en lugar de aparecer de golpe tras 20 segundos. Algunos parsers incrementales leen JSON parcial para eso; la ejecución, igual, espera al cierre.</p>
+
+<h2 id="entrenamiento"><span class="sec-num">63.11</span>Por qué unos modelos son mejores agentes</h2>
+
+<p>Dos modelos con resultados parecidos en preguntas y respuestas pueden ser muy distintos como agentes. La diferencia no está en saber más, sino en haber practicado el bucle: decidir cuándo llamar, leer un resultado largo, recuperarse de un error, no abandonar a la mitad. Eso se entrena con <b>trayectorias</b>: secuencias completas de llamadas y resultados en entornos con herramientas.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f6311t f6311d">
+<title id="f6311t">Una trayectoria de entrenamiento</title>
+<desc id="f6311d">Una tarea entra a un entorno con herramientas. El modelo hace una llamada, recibe un resultado, hace otra, recibe otro, y termina. Un verificador, por ejemplo los tests del repositorio, decide si la tarea quedó resuelta. Con el resultado se arman ejemplos de ajuste supervisado si salió bien, y una recompensa para aprendizaje por refuerzo.</desc>
+<defs><marker id="f6311a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="40" width="110" height="56" rx="8"/>
+<text class="dg-small" x="75.0" y="64.5" text-anchor="middle">Tarea</text>
+<text class="dg-tiny" x="75.0" y="79.5" text-anchor="middle">arregla el test</text>
+<path class="dg-edge" d="M130 68 L142 68" marker-end="url(#f6311a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="144" y="40" width="110" height="56" rx="8"/>
+<text class="dg-small dg-mono" x="199.0" y="64.5" text-anchor="middle">tool_use</text>
+<text class="dg-tiny" x="199.0" y="79.5" text-anchor="middle">grep</text>
+<path class="dg-edge" d="M254 68 L266 68" marker-end="url(#f6311a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="268" y="40" width="110" height="56" rx="8"/>
+<text class="dg-small" x="323.0" y="64.5" text-anchor="middle">resultado</text>
+<text class="dg-tiny" x="323.0" y="79.5" text-anchor="middle">3 archivos</text>
+<path class="dg-edge" d="M378 68 L390 68" marker-end="url(#f6311a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="392" y="40" width="110" height="56" rx="8"/>
+<text class="dg-small dg-mono" x="447.0" y="64.5" text-anchor="middle">tool_use</text>
+<text class="dg-tiny" x="447.0" y="79.5" text-anchor="middle">edit</text>
+<path class="dg-edge" d="M502 68 L514 68" marker-end="url(#f6311a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="516" y="40" width="110" height="56" rx="8"/>
+<text class="dg-small" x="571.0" y="64.5" text-anchor="middle">resultado</text>
+<text class="dg-tiny" x="571.0" y="79.5" text-anchor="middle">ok</text>
+<path class="dg-edge" d="M626 68 L638 68" marker-end="url(#f6311a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="640" y="40" width="110" height="56" rx="8"/>
+<text class="dg-small" x="695.0" y="64.5" text-anchor="middle">Fin</text>
+<text class="dg-tiny" x="695.0" y="79.5" text-anchor="middle">texto</text>
+<text class="dg-tiny" x="385" y="24" text-anchor="middle">Una trayectoria: decisiones del modelo intercaladas con respuestas del entorno</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="300" y="140" width="170" height="56" rx="8"/>
+<text class="dg-label" x="385.0" y="164.5" text-anchor="middle">Verificador</text>
+<text class="dg-tiny" x="385.0" y="179.5" text-anchor="middle">corre los tests</text>
+<path class="dg-feedback" d="M695 96 L470 160" marker-end="url(#f6311a)" style="stroke-dasharray:5 4"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="60" y="200" width="220" height="56" rx="8"/>
+<text class="dg-label" x="170.0" y="224.5" text-anchor="middle">SFT</text>
+<text class="dg-tiny" x="170.0" y="239.5" text-anchor="middle">copiar las trayectorias buenas</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="490" y="200" width="220" height="56" rx="8"/>
+<text class="dg-label" x="600.0" y="224.5" text-anchor="middle">RL</text>
+<text class="dg-tiny" x="600.0" y="239.5" text-anchor="middle">recompensa: pasa o no pasa</text>
+<path class="dg-edge" d="M300 180 L282 214" marker-end="url(#f6311a)"/>
+<path class="dg-edge" d="M470 180 L488 214" marker-end="url(#f6311a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 63.8.</b> Una trayectoria con un verificador. Las que salen bien sirven de ejemplo (SFT); el resultado del verificador es la recompensa (RL).</figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Ajuste supervisado con trayectorias:</b> miles de ejemplos de uso correcto de herramientas, en el formato exacto del template (<a href="m26-entrenamiento.html">M26</a>). De ahí sale que el modelo escriba bien <code>&lt;tool_call&gt;</code>: lo vio miles de veces.</li>
+  <li><b>Refuerzo con entornos verificables:</b> el modelo intenta tareas reales (arreglar un test, completar un flujo) y recibe recompensa si un verificador las da por buenas. El informe técnico de Kimi K2 describe un pipeline de síntesis de datos de uso de herramientas a gran escala, con miles de herramientas y entornos simulados, seguido de aprendizaje por refuerzo <span class="badge badge--doc">Documentado</span>.</li>
+  <li><b>Se mide aparte.</b> El <span class="no-autolink">Berkeley Function Calling Leaderboard</span> (BFCL) mide si las llamadas son correctas; τ-bench mide conversaciones completas con herramientas y reglas de negocio, y reporta pass^k para la consistencia <span class="badge badge--doc">Documentado</span>. Un modelo puede ir bien en el primero y mal en el segundo.</li>
+</ul>
+
+<p>Consecuencia práctica: el mismo modelo rinde mejor con el formato y el estilo de herramientas con que se entrenó. Por eso Anthropic define herramientas con tipo propio (un editor de texto y bash "versionados") que Claude conoce de su entrenamiento, y por eso el mismo harness con dos modelos de calidad parecida da resultados distintos. Medirlo con tus tareas es tema de <a href="m65-elegir-harness.html#medir">M65</a> y M72.</p>
+
+<h2 id="traducir"><span class="sec-num">63.12</span>Traducir entre dialectos sin perder nada</h2>
+
+<p>Un gateway como LiteLLM (<a href="m62-pila-agente.html#inferencia-traductor">M62.3</a>) deja que un harness que habla Anthropic use un modelo que habla OpenAI, y al revés. La mayoría de los campos tienen equivalente directo. Algunos no, y ahí se pierde información en silencio.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f6312t f6312d">
+<title id="f6312t">Traducir entre los dos dialectos, campo por campo</title>
+<desc id="f6312d">Dos columnas: Anthropic a la izquierda y OpenAI a la derecha, con flechas entre los campos equivalentes. system de primer nivel contra un mensaje system; input_schema contra parameters; input objeto contra arguments string; tool_result en un mensaje user contra un mensaje tool por llamada; stop_reason tool_use contra finish_reason tool_calls. Marcados como pérdida: is_error, que no existe en OpenAI; los bloques de thinking con su firma; y las imágenes dentro de un resultado.</desc>
+<defs><marker id="f6312a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="165" y="22" text-anchor="middle">Anthropic (Messages)</text>
+<text class="dg-label" x="605" y="22" text-anchor="middle">OpenAI (Chat Completions)</text>
+<rect class="dg-box" x="20" y="34" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="165.0" y="52.0" text-anchor="middle">system (primer nivel)</text>
+<rect class="dg-box" x="460" y="34" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="605.0" y="52.0" text-anchor="middle">messages[0] rol system</text>
+<path class="dg-edge" d="M310 48 L458 48" marker-end="url(#f6312a)"/>
+<rect class="dg-box" x="20" y="70" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="165.0" y="88.0" text-anchor="middle">input_schema</text>
+<rect class="dg-box" x="460" y="70" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="605.0" y="88.0" text-anchor="middle">function.parameters</text>
+<path class="dg-edge" d="M310 84 L458 84" marker-end="url(#f6312a)"/>
+<rect class="dg-box" x="20" y="106" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="165.0" y="124.0" text-anchor="middle">input: objeto</text>
+<rect class="dg-box" x="460" y="106" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="605.0" y="124.0" text-anchor="middle">arguments: string JSON</text>
+<path class="dg-edge" d="M310 120 L458 120" marker-end="url(#f6312a)"/>
+<rect class="dg-box" x="20" y="142" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="165.0" y="160.0" text-anchor="middle">tool_result en mensaje user</text>
+<rect class="dg-box" x="460" y="142" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="605.0" y="160.0" text-anchor="middle">un mensaje tool por llamada</text>
+<path class="dg-edge" d="M310 156 L458 156" marker-end="url(#f6312a)"/>
+<rect class="dg-box" x="20" y="178" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="165.0" y="196.0" text-anchor="middle">stop_reason: tool_use</text>
+<rect class="dg-box" x="460" y="178" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="605.0" y="196.0" text-anchor="middle">finish_reason: tool_calls</text>
+<path class="dg-edge" d="M310 192 L458 192" marker-end="url(#f6312a)"/>
+<rect class="dg-warnbox" x="20" y="214" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="165.0" y="232.0" text-anchor="middle">is_error: true</text>
+<rect class="dg-warnbox" x="460" y="214" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="605.0" y="232.0" text-anchor="middle">solo texto en content</text>
+<path class="dg-edge" d="M310 228 L458 228" marker-end="url(#f6312a)" style="stroke-dasharray:5 4"/>
+<rect class="dg-warnbox" x="20" y="250" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="165.0" y="268.0" text-anchor="middle">thinking + firma</text>
+<rect class="dg-warnbox" x="460" y="250" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="605.0" y="268.0" text-anchor="middle">no hay dónde ponerlo</text>
+<path class="dg-edge" d="M310 264 L458 264" marker-end="url(#f6312a)" style="stroke-dasharray:5 4"/>
+<rect class="dg-warnbox" x="20" y="286" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="165.0" y="304.0" text-anchor="middle">imagen en tool_result</text>
+<rect class="dg-warnbox" x="460" y="286" width="290" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="605.0" y="304.0" text-anchor="middle">según el servidor</text>
+<path class="dg-edge" d="M310 300 L458 300" marker-end="url(#f6312a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="385" y="324" text-anchor="middle">Caja con borde de aviso: se pierde o se degrada al traducir</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 63.9.</b> El mapa de campos entre los dos dialectos. Lo marcado como aviso es lo que un traductor tiene que resolver con una convención propia.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Diferencia</th><th>Qué se rompe si se traduce mal</th><th>Cómo resolverlo</th></tr></thead>
+    <tbody>
+      <tr><td>Argumentos: objeto contra string</td><td>Un string con JSON inválido llega como objeto vacío, o explota en el traductor</td><td>Parsear con manejo de error y devolver el error al modelo como resultado</td></tr>
+      <tr><td>Un mensaje <code>user</code> con N resultados contra N mensajes <code>tool</code></td><td>Resultados fuera de orden o perdidos, y un 400 por id sin respuesta</td><td>Agrupar o separar respetando ids y orden</td></tr>
+      <tr><td><code>is_error</code></td><td>El modelo cree que la herramienta funcionó</td><td>Escribir el error de forma explícita en el texto ("Error: …")</td></tr>
+      <tr><td>Thinking con firma</td><td>Anthropic rechaza un turno con herramientas si falta el thinking original</td><td>Guardar los bloques tal cual en el lado del gateway y reinyectarlos</td></tr>
+      <tr><td>Ids distintos (<code>toolu_</code>, <code>call_</code>, <code>functions.x:0</code>)</td><td>Un servidor rechaza el formato de otro</td><td>Mapear ids en ambas direcciones, nunca inventarlos</td></tr>
+      <tr><td>Herramientas con tipo del proveedor (editor, bash)</td><td>No existen en el otro dialecto</td><td>Convertirlas en herramientas normales con su esquema, sabiendo que el modelo de destino no las conoce</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Antes de confiar en un traductor, corre una conversación de prueba con las tres cosas difíciles: dos llamadas en paralelo, una herramienta que falla y un turno con thinking. Si las tres vuelven bien al harness, el resto suele andar <span class="badge badge--ref">Diseño de referencia</span>.</p>
+</aside>
+
+<h2 id="fallas"><span class="sec-num">63.13</span>Qué falla</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+      <tr><td>El agente local "termina" diciendo que va a hacer algo</td><td>La llamada salió como texto: parser ausente o JSON roto</td><td>Parser correcto en el servidor (63.4) y detección de restos de llamada en el harness</td></tr>
+      <tr><td><code>does not support tools</code> en Ollama</td><td>El template del modelo no trae herramientas</td><td>Otra variante del modelo o el template oficial (63.2)</td></tr>
+      <tr><td>Llamadas con campos inventados</td><td>Sin <code>additionalProperties: false</code> ni restricción</td><td>Modo estricto y esquema cerrado (63.5 y 63.6)</td></tr>
+      <tr><td>400 al cambiar de modelo</td><td><code>tool_choice</code> forzado que el modelo nuevo no acepta</td><td><code>auto</code> con strict tool use (63.7)</td></tr>
+      <tr><td>400: falta un resultado</td><td>Una llamada en paralelo sin su <code>tool_result</code></td><td>Un resultado por id, todos en el mismo mensaje (63.8)</td></tr>
+      <tr><td>Se ejecutó un comando a medias</td><td>Se ignoró <code>max_tokens</code> y se ejecutó la última llamada cortada</td><td>Con <code>max_tokens</code> no se ejecuta nada (63.9)</td></tr>
+      <tr><td>Errores de JSON solo con streaming</td><td>Se parsearon fragmentos</td><td>Acumular por índice y parsear al cierre (63.10)</td></tr>
+      <tr><td>El modelo repite una herramienta que falló</td><td>El error llegó como resultado normal tras traducir</td><td>Error explícito en el texto (63.12)</td></tr>
+      <tr><td>Factura de entrada alta con poco historial</td><td>Muchas herramientas largas en cada request, sin caché</td><td>Menos herramientas, orden estable, carga bajo demanda (63.5)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Cuando un agente se porta raro con un modelo abierto, el orden de diagnóstico es: ver el texto que arma el template (63.2), ver la respuesta cruda del servidor antes del parser, y recién después tocar el prompt. La mayoría de las veces el problema está en las dos primeras. Cómo está hecho el resto del harness alrededor de estas llamadas es <a href="m64-anatomia-harness.html#piezas">M64</a>.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m63"></div>
+<div data-exercise="m63-local"></div>
+<div data-checkpoint="m63"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m63.data.js"></script>
+<script src="../assets/js/data/exercises/m63.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-toolcall.js"></script>
+</body>
+</html>
