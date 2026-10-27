@@ -12,10 +12,12 @@ SD.defineMap('chatgpt', {
   title: 'Mapa gigante de ChatGPT',
   intro: 'Una flota de referencia que sirve un modelo de 70B en FP8 sobre H100, con un pico de unas 400 requests por segundo. Arrastra el lienzo, haz zoom y abre cada nodo para ver su responsabilidad, sus endpoints, su esquema, sus fallos y sus números. Después reproduce los escenarios: un turno normal, un acierto de prefijo, un 429 por cuota, un pico con autoscaling, una réplica que muere a mitad del stream, una llamada a herramienta, una imagen, una conversación de voz y el viaje de un evento de uso hasta la factura.',
   start: 'chatapi',
-  stepPanel: true,
+  stepPanel: true, pieces: true,
   nodes: [
     /* ---------- Cliente, borde y externos (izquierda) ---------- */
-    { id: 'app', layer: 'client', label: 'App ChatGPT', sub: 'web y móvil', x: 120, y: 440,
+    { id: 'app', brief: "La app de ChatGPT en web y móvil.",
+      why: "Es donde el usuario escribe y lee. Mantiene la conexión del stream y muestra las ramas de la conversación (M20).",
+      layer: 'client', label: 'App ChatGPT', sub: 'web y móvil', x: 120, y: 440,
       info: {
         resp: '<p>El cliente: navegador o app. Abre un stream por cada turno y pinta los tokens a medida que llegan. Guarda el token de acceso en memoria y lo manda en cada request. No decide nada de modelo ni de cuota: solo muestra y reintenta.</p>',
         api: '<pre data-lang="http"><code>POST /v1/chat            (abre un stream SSE)\nGET  /v1/conversations/{id}\nPOST /v1/audio/session   (voz: negocia WebRTC)\nPOST /v1/images         (imágenes: job asíncrono)</code></pre>',
@@ -23,7 +25,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Stream cortado</b> a mitad: reabre con el último id recibido en vez de repetir el turno entero (M17).</li><li><b>429:</b> respeta el <code>Retry-After</code>, no reintenta en bucle (M18).</li></ul>',
         nums: '<ul><li>Un turno típico: cientos de tokens de entrada, cientos de salida.</li><li>Primer token en pantalla (TTFT): objetivo por debajo de 1 s. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
-    { id: 'cdn', layer: 'edge', label: 'CDN y borde', sub: 'TLS, estáticos, anti-abuso', x: 270, y: 580,
+    { id: 'cdn', brief: "El borde: termina TLS, sirve archivos estáticos y frena abuso.",
+      why: "Atiende cerca del usuario lo que no necesita el backend, y corta bots y ataques antes de que cuesten algo.",
+      layer: 'edge', label: 'CDN y borde', sub: 'TLS, estáticos, anti-abuso', x: 270, y: 580,
       info: {
         resp: '<p>Termina TLS cerca del usuario, sirve el HTML y el JavaScript estáticos desde el borde y deja pasar las requests de API hacia el gateway. Aquí viven el bloqueo de bots y el WAF (M28).</p>',
         api: '<p>Cachea solo lo estático. El <code>POST /v1/chat</code> no se cachea nunca: cada turno es único y va de largo al origen.</p>',
@@ -31,7 +35,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Un POST cacheado por error</b> devolvería la respuesta de otro usuario: las rutas de API llevan <code>Cache-Control: no-store</code>.</li><li>Caída de una región del borde: el DNS reparte a otra (M28).</li></ul>',
         nums: '<p>Latencia de borde al usuario: decenas de milisegundos según distancia. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'gateway', layer: 'edge', label: 'API gateway', sub: 'auth, rate limit, cuotas', x: 400, y: 440,
+    { id: 'gateway', brief: "Autentica, aplica rate limits y cuotas por tokens.",
+      why: "Protege la flota de GPUs: decide si una request entra antes de gastar cómputo (M18).",
+      layer: 'edge', label: 'API gateway', sub: 'auth, rate limit, cuotas', x: 400, y: 440,
       info: {
         resp: '<p>El único punto de entrada a la API. Verifica el token (M10), aplica el rate limit por IP y por cuenta, consulta la cuota de tokens del plan (M18) y, si todo pasa, enruta al servicio de chat. Borra los headers de identidad que mande el cliente y agrega la identidad verificada.</p>',
         api: '<pre data-lang="http"><code>Authorization: Bearer ...\n-> 401 sin token válido\n-> 429 Retry-After: 30   si pasa RPM o TPM\n-> 200 (stream) si pasa</code></pre>',
@@ -39,7 +45,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Confiar en headers del cliente:</b> si no los borra, cualquiera se hace pasar por otro (M10).</li><li><b>Redis de cuotas caído:</b> degrada a un límite conservador local en vez de dejar pasar todo (M18).</li></ul>',
         nums: '<ul><li>Pico de la flota: unas 400 requests por segundo.</li><li>Coste del gateway por request: por debajo de 1 ms de CPU. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
-    { id: 'oauth', layer: 'external', label: 'Identidad', sub: 'login, OAuth', x: 120, y: 160,
+    { id: 'oauth', brief: "El login y los tokens de identidad.",
+      why: "Todo lo demás necesita saber quién es el usuario y qué plan tiene (M10).",
+      layer: 'external', label: 'Identidad', sub: 'login, OAuth', x: 120, y: 160,
       info: {
         resp: '<p>Emite y revoca los tokens de sesión. El gateway solo verifica; aquí se inicia sesión, se rota el refresh token y se cierra sesión. Puede ser propio o un producto externo (M10).</p>',
         api: '<pre data-lang="http"><code>POST /auth/login\nPOST /auth/refresh\nGET  /.well-known/jwks.json</code></pre>',
@@ -47,7 +55,9 @@ SD.defineMap('chatgpt', {
         fail: '<p>Si cae, nadie inicia sesión nuevo, pero los tokens vigentes siguen sirviendo hasta vencer. Es una dependencia del login, no de cada turno.</p>',
         nums: '<p>Un login cuesta decenas de milisegundos por el hash de la contraseña; los refresh son uno cada pocos minutos por sesión. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'voice', layer: 'service', label: 'Gateway de voz', sub: 'WebRTC, STT y TTS', x: 120, y: 800,
+    { id: 'voice', brief: "Recibe el audio por WebRTC y lo pasa por STT y TTS.",
+      why: "La voz necesita su propia puerta: audio en tiempo real, no requests HTTP (M24).",
+      layer: 'service', label: 'Gateway de voz', sub: 'WebRTC, STT y TTS', x: 120, y: 800,
       info: {
         resp: '<p>El plano aparte de la voz. Recibe el audio por WebRTC, lo transcribe (STT), manda el texto al servicio de chat y devuelve la voz sintetizada (TTS) en streaming, con barge-in para cortar cuando el usuario interrumpe (M24).</p>',
         api: '<pre data-lang="http"><code>POST /v1/audio/session   (SDP, ICE)\n<- audio Opus por WebRTC, bidireccional</code></pre>',
@@ -56,7 +66,9 @@ SD.defineMap('chatgpt', {
         nums: '<ul><li>Presupuesto voz a voz: unos 800 ms de boca a oído.</li><li>Flota de voz dimensionada aparte del chat. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
     /* ---------- Servicios de producto (centro y arriba; Stripe abajo, junto al metering) ---------- */
-    { id: 'chatapi', layer: 'service', label: 'Servicio de chat', sub: 'orquesta el turno', x: 680, y: 440,
+    { id: 'chatapi', brief: "Orquesta cada turno: arma el contexto, llama al modelo, guarda la respuesta.",
+      why: "Es el corazón del producto. El modelo solo genera tokens; este servicio decide qué contexto mandar y qué hacer con lo que vuelve (M20).",
+      layer: 'service', label: 'Servicio de chat', sub: 'orquesta el turno', x: 680, y: 440,
       info: {
         resp: '<p>El cerebro de un turno. Arma el contexto (system prompt, historia recortada, resultados de RAG y de herramientas), lo manda a moderación, pide la generación al router, reenvía los tokens al cliente, modera la salida, guarda el mensaje y emite el evento de uso. No tiene GPU: coordina (M20).</p>',
         api: '<pre data-lang="http"><code>POST /v1/chat   (recibe del gateway)\n-> SSE: data: {"delta":"..."}\n-> SSE: data: [DONE]</code></pre>',
@@ -64,7 +76,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Contexto demasiado largo:</b> recorta o resume antes de enviar, o rebota (M16).</li><li><b>Un subservicio lento</b> (RAG, herramienta): timeout y degradación, el turno no se cuelga (M08).</li></ul>',
         nums: '<p>Un turno toca de 4 a 8 servicios; el grueso del tiempo y del coste está en las GPUs, no aquí. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'mod', layer: 'service', label: 'Moderación', sub: 'entrada y salida', x: 680, y: 160,
+    { id: 'mod', brief: "Revisa la entrada y la salida con clasificadores.",
+      why: "Bloquea contenido dañino antes de gastar GPU y antes de mostrarlo (M22).",
+      layer: 'service', label: 'Moderación', sub: 'entrada y salida', x: 680, y: 160,
       info: {
         resp: '<p>Revisa el texto del usuario antes de generar y la respuesta del modelo antes de enviarla. Bloquea, avisa o deja pasar. Es rápida para no inflar el TTFT (M20, M22).</p>',
         api: '<pre data-lang="http"><code>POST /moderate {"text":"...","stage":"input|output"}\n-> {"action":"allow|flag|block","categories":[...]}</code></pre>',
@@ -72,7 +86,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Moderación caída:</b> decisión de diseño; se puede fallar cerrado (bloquear) o abierto según el riesgo (M22).</li><li>Si se modera la salida al final, se hace por trozos para no romper el streaming.</li></ul>',
         nums: '<p>Objetivo: pocas decenas de milisegundos para no retrasar el primer token. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'rag', layer: 'service', label: 'Recuperación (RAG)', sub: 'busca en tus datos', x: 960, y: 160,
+    { id: 'rag', brief: "Busca fragmentos relevantes en los datos del usuario.",
+      why: "El modelo no conoce tus archivos. RAG busca los trozos útiles y los agrega al contexto (M16).",
+      layer: 'service', label: 'Recuperación (RAG)', sub: 'busca en tus datos', x: 960, y: 160,
       info: {
         resp: '<p>Cuando el turno lo necesita, convierte la consulta en un embedding, busca los vecinos más cercanos en la base vectorial y devuelve los fragmentos para meterlos en el contexto, con su cita (M20).</p>',
         api: '<pre data-lang="http"><code>POST /retrieve {"query":"...","k":8}\n-> [{"text":"...","source":"...","score":0.83}, ...]</code></pre>',
@@ -80,7 +96,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Vecinos irrelevantes:</b> el modelo alucina citas. Umbral de score y re-ranking (M20).</li><li><b>Base vectorial lenta:</b> timeout y seguir sin contexto extra antes que colgar el turno.</li></ul>',
         nums: '<p>Top-k típico: 5 a 10 fragmentos. Búsqueda vectorial: milisegundos a decenas según tamaño del índice. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'vecdb', layer: 'db', label: 'Base vectorial', sub: 'embeddings para RAG', x: 1240, y: 160,
+    { id: 'vecdb', brief: "Guarda los embeddings para buscar por significado.",
+      why: "Buscar por palabras exactas no alcanza; los vectores permiten encontrar textos parecidos en sentido.",
+      layer: 'db', label: 'Base vectorial', sub: 'embeddings para RAG', x: 1240, y: 160,
       info: {
         resp: '<p>Guarda los embeddings de los documentos y responde la búsqueda de vecinos más cercanos para el RAG. Índice aproximado (ANN) para que la búsqueda sea rápida con millones de vectores (M20).</p>',
         api: '<pre data-lang="http"><code>search(vector, k=8) -> top-k por similitud coseno\nupsert(id, vector, metadata)</code></pre>',
@@ -88,7 +106,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Índice desactualizado:</b> no encuentra lo nuevo hasta reindexar.</li><li><b>Fuga entre tenants:</b> filtrar por permisos en la búsqueda, no solo en el texto (M10, M20).</li></ul>',
         nums: '<p>Búsqueda ANN: milisegundos a decenas según tamaño y recall objetivo. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'tools', layer: 'service', label: 'Herramientas', sub: 'ejecutor en sandbox', x: 560, y: 300,
+    { id: 'tools', brief: "Ejecuta herramientas, como código, en un sandbox.",
+      why: "Permite que el modelo calcule, busque o ejecute código sin poner en riesgo los servidores (M25).",
+      layer: 'service', label: 'Herramientas', sub: 'ejecutor en sandbox', x: 560, y: 300,
       info: {
         resp: '<p>Ejecuta las herramientas que el modelo pide (buscar en la web, correr código, llamar una API) dentro de un sandbox aislado, con timeout, límites de recursos y una clave de idempotencia para lo que tiene efecto (M25).</p>',
         api: '<pre data-lang="http"><code>POST /tools/run {"name":"python","args":{...},"idemp_key":"..."}\n-> {"result":"...","truncated":true}</code></pre>',
@@ -96,7 +116,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Herramienta colgada:</b> timeout; el modelo sigue sin ese resultado (M25).</li><li><b>Resultado gigante:</b> se trunca antes de volver al contexto, o no entra (M25).</li><li><b>Prompt injection</b> desde el resultado de una herramienta: se trata como dato, no como instrucción (M22, M25).</li></ul>',
         nums: '<p>Presupuesto por herramienta y por turno, para que un bucle de llamadas no dispare el coste (M25). <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'stripe', layer: 'external', label: 'Stripe', sub: 'cobros y suscripciones', x: 1280, y: 900,
+    { id: 'stripe', brief: "Cobra las suscripciones y los pagos.",
+      why: "El plan del usuario decide sus cuotas y modelos; Stripe es la fuente de verdad de quién pagó (M27).",
+      layer: 'external', label: 'Stripe', sub: 'cobros y suscripciones', x: 1280, y: 900,
       info: {
         resp: '<p>El cobro externo. El metering calcula cuánto consumió cada cuenta y empuja el importe a Stripe para la factura o el descuento de créditos (M21, M27).</p>',
         api: '<pre data-lang="http"><code>POST /v1/invoiceitems   (uso del periodo)\nwebhook invoice.paid    (confirma el cobro)</code></pre>',
@@ -105,7 +127,9 @@ SD.defineMap('chatgpt', {
         nums: '<p>Facturación por lotes al cierre del periodo, no en el camino de cada turno. <span class="badge badge--doc">Documentado</span></p>'
       } },
     /* ---------- Plano de inferencia (GPU, derecha) ---------- */
-    { id: 'router', layer: 'gpu', label: 'Router de la flota', sub: 'plano de datos', x: 980, y: 440,
+    { id: 'router', brief: "Elige a qué réplica de la flota va cada request.",
+      why: "Mandar cada conversación a la réplica que ya tiene su historial ahorra prefill y GPUs (M19).",
+      layer: 'gpu', label: 'Router de la flota', sub: 'plano de datos', x: 980, y: 440,
       info: {
         resp: '<p>Elige a qué réplica mandar cada request. Prefiere la réplica que ya tiene caliente el prefijo del prompt (prefix caching) y equilibra la carga para no saturar una sola. Mantiene la sesión pegajosa mientras convenga (M19).</p>',
         api: '<pre data-lang="http"><code>route(prompt_hash, session) -> replica_id\ndescarta réplicas con cola larga o en drenaje</code></pre>',
@@ -113,7 +137,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Routing ciego:</b> si ignora el prefijo caliente, cada réplica recomputa el prefill y el coste se dispara (M15, M19).</li><li><b>Réplica en drenaje:</b> deja de recibir nuevas pero termina las en curso.</li></ul>',
         nums: '<p>Un buen routing por prefijo ahorra el prefill del system prompt compartido en cada turno. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'prefill', layer: 'gpu', label: 'Réplicas de prefill', sub: 'leen el prompt', x: 1260, y: 300,
+    { id: 'prefill', brief: "Réplicas que leen el prompt entero.",
+      why: "Leer el prompt es trabajo de cómputo; separarlo del decode deja que cada parte use la GPU a su manera (M15).",
+      layer: 'gpu', label: 'Réplicas de prefill', sub: 'leen el prompt', x: 1260, y: 300,
       info: {
         resp: '<p>Procesan el prompt entero de una vez y llenan el KV cache con su estado. Es la fase que produce el primer token. Está limitada por cómputo: cuanto más largo el prompt, más tarda (M12, M15).</p>',
         api: '<p>Recibe el prompt y los prefijos ya cacheados; escribe el KV cache y entrega el primer token al decode.</p>',
@@ -121,7 +147,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Prompt enorme:</b> el prefill domina el TTFT; por eso importa el context window y el recorte (M16).</li><li><b>Sin prefijo cacheado:</b> recomputa todo el system prompt (M15).</li></ul>',
         nums: '<ul><li>Prefill: limitado por cómputo (FLOPs). Un prompt largo puede tardar cientos de milisegundos (M13).</li><li>Pesos del modelo: ~70 GB en FP8, entran en una H100 de 80 GB. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
-    { id: 'decode', layer: 'gpu', label: 'Réplicas de decode', sub: 'generan tokens', x: 1260, y: 580,
+    { id: 'decode', brief: "Réplicas que generan la respuesta token a token.",
+      why: "Generar es trabajo de memoria. Aquí sale el stream que ve el usuario.",
+      layer: 'gpu', label: 'Réplicas de decode', sub: 'generan tokens', x: 1260, y: 580,
       info: {
         resp: '<p>Generan la respuesta token a token, cada uno a partir del anterior y del KV cache. Con continuous batching, muchas requests comparten el mismo paso de GPU. Está limitada por memoria: el cuello es mover los pesos y el KV, no el cómputo (M15).</p>',
         api: '<p>Lee el KV cache del prompt, genera un token, lo agrega al KV y emite; repite hasta el fin o el límite. Cada token sale al stream.</p>',
@@ -129,7 +157,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>KV cache lleno:</b> no entran más secuencias; unas esperan o se expulsan (M15).</li><li><b>Réplica muere a mitad:</b> el stream se corta; el cliente reabre, se recomputa el prefill en otra (escenario).</li></ul>',
         nums: '<ul><li>Decode: limitado por ancho de banda de memoria (M13).</li><li>Del orden de decenas de tokens por segundo por stream. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
-    { id: 'kv', layer: 'cache', label: 'KV cache y prefijos', sub: 'por réplica', x: 1540, y: 440,
+    { id: 'kv', brief: "La memoria de cada conversación en curso y de los prefijos comunes.",
+      why: "Sin ella, cada token nuevo obligaría a releer todo el prompt (M12).",
+      layer: 'cache', label: 'KV cache y prefijos', sub: 'por réplica', x: 1540, y: 440,
       info: {
         resp: '<p>La memoria de atención de cada secuencia: por cada token, el estado (clave y valor) de cada capa. PagedAttention la maneja en bloques como páginas de memoria, y el prefijo compartido (system prompt) se reusa entre requests (M15).</p>',
         api: '<p>No es un servicio con red: vive en la memoria de la GPU de cada réplica. El router sabe qué prefijos están calientes en cuál (M19).</p>',
@@ -137,7 +167,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Fragmentación</b> sin paginación: se desperdicia memoria y entran menos secuencias (M15).</li><li>Si la réplica se reinicia, su KV se pierde: hay que recomputar el prefill.</li></ul>',
         nums: '<p>El KV por token por capa es del orden de kilobytes; un contexto largo por muchas secuencias llena la GPU rápido (M16). <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'autoscaler', layer: 'gpu', label: 'Autoscaler', sub: 'plano de control', x: 980, y: 620,
+    { id: 'autoscaler', brief: "Decide cuántas réplicas hacen falta.",
+      why: "El tráfico cambia durante el día; sin autoscaler sobran GPUs de noche y faltan en el pico (M19).",
+      layer: 'gpu', label: 'Autoscaler', sub: 'plano de control', x: 980, y: 620,
       info: {
         resp: '<p>Vigila la carga de la flota y suma o quita réplicas. Mantiene un colchón de réplicas tibias para absorber picos, porque arrancar una réplica nueva tarda (cargar 70 GB de pesos). Usa capacidad spot cuando puede, con el riesgo de que se la quiten (M19).</p>',
         api: '<p>Lee métricas de cola y utilización; ordena crear o drenar réplicas. No está en el camino de una request.</p>',
@@ -146,7 +178,9 @@ SD.defineMap('chatgpt', {
         nums: '<p>Arrancar una réplica: del orden de minutos por cargar los pesos. Por eso se escala con anticipación. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
     /* ---------- Datos, caché y colas (Redis arriba, junto al gateway; el resto abajo) ---------- */
-    { id: 'redis', layer: 'cache', label: 'Redis', sub: 'sesiones, cuotas, dedup', x: 400, y: 160,
+    { id: 'redis', brief: "Datos rápidos: sesiones, contadores de cuota, deduplicación.",
+      why: "Las cuotas se descuentan en cada request; tienen que ser lecturas y escrituras de microsegundos (M18).",
+      layer: 'cache', label: 'Redis', sub: 'sesiones, cuotas, dedup', x: 400, y: 160,
       info: {
         resp: '<p>La memoria rápida compartida: contadores de rate limit y de cuota de tokens, estado de sesión para el gateway y claves de idempotencia de corta vida. Una lectura por clave, en memoria (M10, M18).</p>',
         api: '<pre data-lang="http"><code>INCR rl:{cuenta}:{min}         EX 60   (rate limit)\nGET  quota:{cuenta}:{dia}              (tokens usados)\nSET  idem:{key} 1 NX EX 600            (dedup corto)</code></pre>',
@@ -154,7 +188,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Caído:</b> el gateway degrada a límites conservadores en vez de abrir la puerta (M18).</li><li><b>Clave caliente</b> de una cuenta enorme: sharding del contador (M18).</li></ul>',
         nums: '<p>Latencia por debajo de 1 ms en la misma zona. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'convdb', layer: 'db', label: 'Base de conversaciones', sub: 'árbol de mensajes', x: 480, y: 720,
+    { id: 'convdb', brief: "Guarda las conversaciones como árbol de mensajes.",
+      why: "Permite retomar, regenerar y editar sin perder versiones (M20).",
+      layer: 'db', label: 'Base de conversaciones', sub: 'árbol de mensajes', x: 480, y: 720,
       info: {
         resp: '<p>Guarda cada conversación como un árbol de mensajes (editar o regenerar crea una rama). El servicio de chat la lee para armar el contexto y escribe el turno nuevo al final (M16, M20).</p>',
         api: '<pre data-lang="sql"><code>SELECT ... FROM messages WHERE conversation_id = $1 ORDER BY path;\nINSERT INTO messages (conversation_id, parent_id, role, content) VALUES (...);</code></pre>',
@@ -162,7 +198,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Leer el árbol entero</b> siempre: solo hace falta el camino activo, recortado (M16).</li><li>Mensajes enormes: se guardan, pero el contexto enviado se recorta (M16).</li></ul>',
         nums: '<p>Una lectura por clave de partición trae el hilo; el recorte decide cuánto entra al prompt. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'kafka', layer: 'queue', label: 'Kafka', sub: 'log de eventos de uso', x: 860, y: 760, bus: true, w: 440,
+    { id: 'kafka', brief: "Log de eventos de uso.",
+      why: "Amortigua picos, deja que varios sistemas lean el mismo evento y permite releer si algo falla (M07, M21).",
+      layer: 'queue', label: 'Kafka', sub: 'log de eventos de uso', x: 860, y: 760, bus: true, w: 440,
       info: {
         resp: '<p>El log duradero por donde viajan los eventos de uso de cada turno. El servicio de chat los escribe; el metering los consume a su ritmo. Desacopla el camino del turno de la contabilidad (M07, M21).</p>',
         api: '<pre data-lang="http"><code>produce usage.events  {"id":"...","account":"...","in":812,"out":1150,"ts":...}\nconsume usage.events  (por el metering, con su offset)</code></pre>',
@@ -170,7 +208,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Consumidor atrasado (lag):</b> la factura se retrasa, no se pierde; se pone al día desde el offset (M07).</li><li><b>Repartición:</b> no se saltan eventos porque el consumo es por offset confirmado.</li></ul>',
         nums: '<p>Millones de eventos al día; el productor no espera al consumidor. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'meter', layer: 'service', label: 'Metering', sub: 'uso y facturación', x: 1280, y: 760,
+    { id: 'meter', brief: "Cuenta el uso y lo convierte en factura.",
+      why: "Sin metering no hay cobro por tokens ni topes de gasto (M21).",
+      layer: 'service', label: 'Metering', sub: 'uso y facturación', x: 1280, y: 760,
       info: {
         resp: '<p>Consume los eventos de uso de Kafka, los deduplica por id, los agrega en ventanas por hora y por cuenta, los asienta en el ledger y empuja el importe a Stripe. Es la contabilidad del consumo de tokens (M21).</p>',
         api: '<pre data-lang="http"><code>consume topic usage.events\n-> UPSERT usage_hourly (account, hour, tokens)\n-> INSERT ledger ...</code></pre>',
@@ -178,7 +218,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Evento duplicado:</b> lo descarta por id (M21).</li><li><b>Evento tardío:</b> entra en la ventana de la hora a la que pertenece, no la actual (M21).</li><li><b>Evento perdido:</b> Kafka con retención; se reprocesa desde el offset.</li></ul>',
         nums: '<p>Millones de eventos al día; se agregan antes de facturar, no se cobra evento por evento. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'usagedb', layer: 'db', label: 'Base de uso', sub: 'ventanas por hora y ledger', x: 1560, y: 760,
+    { id: 'usagedb', brief: "Ventanas de uso por hora y el ledger.",
+      why: "Guarda el uso agregado y los movimientos de dinero de forma auditable (M21).",
+      layer: 'db', label: 'Base de uso', sub: 'ventanas por hora y ledger', x: 1560, y: 760,
       info: {
         resp: '<p>La contabilidad duradera del consumo: cuántos tokens usó cada cuenta por hora, y el ledger de asientos que respalda la factura. La llena el metering desde Kafka (M21).</p>',
         api: '<pre data-lang="sql"><code>INSERT INTO usage_hourly (...) ON CONFLICT (...) DO UPDATE SET tokens = tokens + $;\nINSERT INTO ledger (account, amount, ref) VALUES (...);</code></pre>',
@@ -187,7 +229,9 @@ SD.defineMap('chatgpt', {
         nums: '<p>Se agrega antes de facturar; la factura lee ventanas, no eventos sueltos. <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
     /* ---------- Subsistema de imágenes (extremo derecho) ---------- */
-    { id: 'imgsvc', layer: 'service', label: 'Servicio de imágenes', sub: 'jobs asíncronos', x: 1860, y: 300,
+    { id: 'imgsvc', brief: "Recibe pedidos de imágenes y los convierte en jobs.",
+      why: "Generar una imagen tarda segundos; no puede ser una request abierta (M23).",
+      layer: 'service', label: 'Servicio de imágenes', sub: 'jobs asíncronos', x: 1860, y: 300,
       info: {
         resp: '<p>Recibe el pedido de imagen, lo encola con su prioridad y responde al toque con un id de job. Un worker con GPU de difusión lo toma, genera la imagen y la sube a objetos; el cliente la recibe por el stream o al consultar el job (M23).</p>',
         api: '<pre data-lang="http"><code>POST /v1/images {"prompt":"..."}\n-> 202 {"job_id":"img_...","status":"queued"}\nGET  /v1/images/{job_id} -> url cuando está lista</code></pre>',
@@ -195,7 +239,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Cola llena:</b> rechaza o alarga la espera estimada antes que caerse (M23).</li><li><b>Worker caído a mitad:</b> el job vuelve a la cola, idempotente por id.</li></ul>',
         nums: '<ul><li>Generar una imagen por difusión: varios segundos (orden de 7 s para un modelo grande).</li><li>Volumen de referencia: del orden de millones de imágenes al día. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
-    { id: 'imgq', layer: 'queue', label: 'Cola de imágenes', sub: 'por prioridad', x: 1860, y: 600,
+    { id: 'imgq', brief: "Cola de jobs de imagen por prioridad.",
+      why: "Reparte el trabajo entre GPUs y deja que lo urgente pase antes que los lotes.",
+      layer: 'queue', label: 'Cola de imágenes', sub: 'por prioridad', x: 1860, y: 600,
       info: {
         resp: '<p>La cola de jobs de imagen entre el servicio de imágenes y las GPUs de difusión. Ordena por prioridad (de pago antes que gratis) y absorbe los picos para que las GPUs trabajen a tasa pareja (M23).</p>',
         api: '<pre data-lang="http"><code>enqueue(job, priority)\ndequeue() -> job   (el worker de difusión lo toma)</code></pre>',
@@ -203,7 +249,9 @@ SD.defineMap('chatgpt', {
         fail: '<ul><li><b>Cola creciendo sin fin:</b> señal de que faltan GPUs; se rechaza o se alarga la espera (M23).</li><li><b>Job envenenado</b> que siempre falla: a una cola de descarte tras varios intentos.</li></ul>',
         nums: '<p>La profundidad de la cola y la tasa de servicio fijan la espera (Erlang C, M23). <span class="badge badge--ref">Diseño de referencia</span></p>'
       } },
-    { id: 'imggpu', layer: 'gpu', label: 'GPUs de difusión', sub: 'generan imágenes', x: 1580, y: 620,
+    { id: 'imggpu', brief: "GPUs que generan imágenes con difusión.",
+      why: "Son otra flota, con otro modelo y otro perfil de carga que el chat.",
+      layer: 'gpu', label: 'GPUs de difusión', sub: 'generan imágenes', x: 1580, y: 620,
       info: {
         resp: '<p>Los workers que corren el modelo de difusión. Toman un job de la cola de imágenes, hacen los pasos de denoising y suben el resultado a objetos. Flota aparte de la del texto (M23).</p>',
         api: '<p>Toma un job, genera la imagen en varios pasos, sube el archivo y marca el job como listo.</p>',
@@ -244,7 +292,8 @@ SD.defineMap('chatgpt', {
   scenarios: [
     /* 1 */
     {
-      id: 'turno-normal', title: 'Un turno de chat normal',
+      id: 'turno-normal', goal: "El camino de un mensaje: de la app al modelo y de vuelta como stream, pasando por cuotas, moderación y la base.",
+      title: 'Un turno de chat normal',
       desc: 'Ana escribe un mensaje. El gateway la deja pasar, el servicio de chat arma el contexto, la flota genera la respuesta token a token y Ana la ve aparecer. El reloj suma el camino crítico; la vuelta usa las mismas aristas en sentido inverso.',
       steps: [
         { from: 'app', to: 'cdn', kind: 'req', tag: 'POST /v1/chat', ms: 40,
@@ -307,7 +356,8 @@ SD.defineMap('chatgpt', {
     },
     /* 2 */
     {
-      id: 'prefijo-cache', title: 'Prefijo compartido: acierto de KV',
+      id: 'prefijo-cache', goal: "Por qué el segundo turno de una conversación es más barato cuando llega a la réplica correcta.",
+      title: 'Prefijo compartido: acierto de KV',
       desc: 'El system prompt y las instrucciones son iguales para millones de turnos. Si el router manda la request a una réplica que ya tiene ese prefijo caliente, el prefill se salta casi todo y el primer token llega mucho antes.',
       steps: [
         { from: 'chatapi', to: 'router', kind: 'req', tag: 'genera (mismo prefijo)', ms: 2,
@@ -343,7 +393,8 @@ SD.defineMap('chatgpt', {
     },
     /* 3 */
     {
-      id: 'cuota-429', title: 'Pasas la cuota: 429 con Retry-After',
+      id: 'cuota-429', goal: "Qué pasa cuando te pasas de la cuota y cómo te avisa el sistema cuándo reintentar.",
+      title: 'Pasas la cuota: 429 con Retry-After',
       desc: 'Una cuenta que dispara requests supera su límite por minuto. El gateway la frena antes de tocar ninguna GPU y le dice cuándo reintentar. Es la defensa que protege a la flota de un solo cliente (M18).',
       steps: [
         { from: 'app', to: 'cdn', kind: 'req', tag: 'POST /v1/chat', ms: 40,
@@ -372,7 +423,8 @@ SD.defineMap('chatgpt', {
     },
     /* 4 */
     {
-      id: 'pico-autoscaling', title: 'Pico de tráfico y autoscaling',
+      id: 'pico-autoscaling', goal: "Cómo la flota crece ante un pico y qué pasa mientras arrancan las réplicas.",
+      title: 'Pico de tráfico y autoscaling',
       desc: 'Llega un pico (una noticia, un lanzamiento). La cola de las réplicas crece. El autoscaler suma réplicas, pero arrancar una tarda, así que el colchón de réplicas tibias es lo que salva el rato (M19).',
       steps: [
         { from: 'app', to: 'cdn', kind: 'req', tag: 'muchas requests', ms: 40,
@@ -407,7 +459,8 @@ SD.defineMap('chatgpt', {
     },
     /* 5 */
     {
-      id: 'replica-muere', title: 'Una réplica de decode muere a mitad del stream',
+      id: 'replica-muere', goal: "Cómo un stream sobrevive a que la réplica que lo genera muera.",
+      title: 'Una réplica de decode muere a mitad del stream',
       desc: 'Ana está recibiendo su respuesta y la réplica que la genera se cae (hardware, spot recuperada). El KV de esa secuencia se pierde. El sistema recupera el turno en otra réplica, pagando un prefill de nuevo.',
       steps: [
         { from: 'cdn', to: 'app', kind: 'res', tag: 'deltas', ms: 40,
@@ -451,7 +504,8 @@ SD.defineMap('chatgpt', {
     },
     /* 6 */
     {
-      id: 'herramienta', title: 'El modelo llama una herramienta',
+      id: 'herramienta', goal: "Cómo el modelo pide una herramienta, el sandbox la ejecuta y el resultado vuelve al contexto.",
+      title: 'El modelo llama una herramienta',
       desc: 'A mitad de la generación, el modelo pide ejecutar una herramienta (buscar, correr código). El servicio de chat la corre en un sandbox, mete el resultado en el contexto y el modelo sigue generando con ese dato (M25).',
       steps: [
         { from: 'decode', to: 'router', kind: 'res', tag: 'tool_call', ms: 5,
@@ -488,7 +542,8 @@ SD.defineMap('chatgpt', {
     },
     /* 7 */
     {
-      id: 'imagen', title: 'Pides una imagen (job asíncrono)',
+      id: 'imagen', goal: "Por qué pedir una imagen es un job asíncrono con cola, y cómo te enteras de que terminó.",
+      title: 'Pides una imagen (job asíncrono)',
       desc: 'Generar una imagen tarda segundos, demasiado para bloquear una request. El servicio de imágenes encola el job y responde al toque; un worker de difusión lo toma, genera y sube el resultado (M23).',
       steps: [
         { from: 'app', to: 'cdn', kind: 'req', tag: 'POST /v1/images', ms: 40,
@@ -529,7 +584,8 @@ SD.defineMap('chatgpt', {
     },
     /* 8 */
     {
-      id: 'voz', title: 'Conversación de voz con barge-in',
+      id: 'voz', goal: "Una charla por voz en la que interrumpes al asistente.",
+      title: 'Conversación de voz con barge-in',
       desc: 'Ana habla por voz. El audio entra por WebRTC, se transcribe, el modelo responde en streaming y la voz se sintetiza mientras suena. Cuando Ana interrumpe, el sistema corta y descarta lo que no sonó (M24).',
       steps: [
         { from: 'app', to: 'voice', kind: 'req', tag: 'audio (WebRTC)', ms: 20,
@@ -564,7 +620,8 @@ SD.defineMap('chatgpt', {
     },
     /* 9 */
     {
-      id: 'metering', title: 'Un evento de uso llega a la factura',
+      id: 'metering', goal: "Cómo un evento de uso viaja hasta la factura.",
+      title: 'Un evento de uso llega a la factura',
       desc: 'El evento que el turno emitió a Kafka viaja por su cuenta hasta la factura. Se deduplica, se agrega por hora y se asienta en el ledger; al cierre del periodo, el importe va a Stripe (M21, M27).',
       steps: [
         { from: 'chatapi', to: 'kafka', kind: 'async', tag: 'produce evento', ms: 1,

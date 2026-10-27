@@ -1,10 +1,11 @@
 /* Simulador de flujos sobre un mapa: escenarios paso a paso con paquetes animados.
-   Escenario: { id, title, desc, down: [nodos caídos al inicio], steps: [
+   Escenario: { id, title, desc, goal?, down: [nodos caídos al inicio], steps: [
      { from, to,            // arista a recorrer (en cualquier sentido)  o  at: 'nodo' (proceso local)
        kind: 'req'|'res'|'fail'|'async'|'info',
        tag: 'SYN',           // etiqueta corta junto al paquete
        ms: 20,               // lo que tarda este paso (red o proceso)
        title, text,          // explicación (HTML permitido en text)
+       why,                  // opcional: por qué se hace así o qué pasaría si no (HTML; con stepPanel)
        code, lang,           // payload opcional (json | http | sse | sql)
        down: [], up: [] }    // cambios de estado que empiezan en este paso
    ]} */
@@ -200,7 +201,9 @@
     var self = this, sc = this.scen, i = this.idx, n = sc.steps.length;
     if (this.selected) { this.nodes[this.selected].el.classList.remove('is-selected'); this.selected = null; }
     var inner = h('div', { class: 'sdm-panel-inner sdm-steppanel' });
-    inner.appendChild(h('p', { class: 'sdm-plabel', style: '--c: var(--accent)', text: 'Escenario: ' + sc.title }));
+    var scIdx = this.def.scenarios.indexOf(sc);
+    inner.appendChild(h('p', { class: 'sdm-sp-map no-autolink', text: 'Mapa: ' + (this.def.title || '') }));
+    inner.appendChild(h('p', { class: 'sdm-plabel', style: '--c: var(--accent)', text: 'Escenario ' + (scIdx + 1) + ' de ' + this.def.scenarios.length + ': ' + sc.title }));
 
     function nodeBtn(id) {
       var nd = self.nodes[id];
@@ -213,7 +216,9 @@
     if (i < 0) {
       inner.appendChild(h('h3', { text: sc.title }));
       if (sc.desc) inner.appendChild(h('p', { html: sc.desc }));
-      inner.appendChild(h('p', { class: 'muted', text: 'Pulsa Reproducir o elige un paso. Cada paso explica qué viaja, quién decide y qué queda guardado.' }));
+      if (sc.goal) inner.appendChild(h('div', { class: 'sdm-why' }, [h('p', { class: 'sdm-why-label', text: 'Qué vas a ver' }), h('p', { html: sc.goal })]));
+      if (this.def.intro && scIdx === 0) inner.appendChild(h('details', { class: 'sdm-sp-help' }, [h('summary', { text: 'De qué trata el mapa' }), h('p', { html: this.def.intro })]));
+      inner.appendChild(h('p', { class: 'muted', text: 'Pulsa Reproducir o Siguiente. Cada paso dice qué viaja, quién decide y por qué. Un clic en una pieza abre su detalle; los otros escenarios están en los botones de abajo del mapa.' }));
     } else {
       var st = sc.steps[i];
       inner.appendChild(h('p', { class: 'sdm-step-n', text: 'Paso ' + (i + 1) + ' de ' + n + (st.ms ? ', ' + fmtMs(st.ms) : '') }));
@@ -228,6 +233,7 @@
       }
       inner.appendChild(route);
       if (st.text) inner.appendChild(h('p', { html: st.text }));
+      if (st.why) inner.appendChild(h('div', { class: 'sdm-why' }, [h('p', { class: 'sdm-why-label', text: 'Por qué así' }), h('p', { html: st.why })]));
       if (st.code) inner.appendChild(h('pre', { 'data-lang': st.lang || 'json' }, [h('code', { text: st.code })]));
     }
 

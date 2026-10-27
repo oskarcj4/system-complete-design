@@ -5,6 +5,8 @@ SD.defineMap('m21-metering', {
   title: 'Metering y facturación',
   intro: 'El camino de cada token hasta la factura. Arriba, el cliente y el gateway que mide; en el medio, el log de Kafka; abajo, el procesador que deduplica y agrega, el rating, el saldo prepagado, los topes, la factura y la conciliación que corrige lo que falló. Los escenarios recorren una request normal, un duplicado, un evento tardío, un gateway que muere, un saldo que se acaba, un tope, el cierre del mes, un cobro fallido y la conciliación.',
   start: 'gateway',
+  stepPanel: true,
+  pieces: true,
   groups: [
     { id: 'g-cli', label: 'Clientes', x: 20, y: 54, w: 2140, h: 110 },
     { id: 'g-medir', label: 'Medir y admitir: milisegundos', x: 20, y: 264, w: 2140, h: 110 },
@@ -16,6 +18,8 @@ SD.defineMap('m21-metering', {
   nodes: [
     /* ---------- Clientes ---------- */
     { id: 'cliente', layer: 'client', label: 'org_7', sub: 'una empresa que usa la API', x: 640, y: 120,
+      brief: 'La empresa cliente: manda requests y paga por los tokens que usa.',
+      why: 'Es el origen de todo. Le importan dos cosas: que no le cobren de más y que no la corten sin aviso. Cada pieza del mapa existe para cumplir una de las dos.',
       info: {
         resp: '<p>Una organización con dos proyectos y créditos prepagados. Manda requests de streaming con sus claves de API, recibe alertas cuando su gasto cruza los umbrales y, si llega al tope que fijó, recibe errores en lugar de respuestas.</p>',
         api: '<pre data-lang="http"><code>POST /v1/messages\nx-api-key: sk-…\n{"model": "modelo-m", "stream": true, "max_tokens": 8000, …}\n\nGET /v1/organizations/usage_report?starting_at=2026-10-01&amp;bucket_width=1h</code></pre><p>La API de uso devuelve los mismos agregados por hora que ve la consola y que usa la factura.</p>',
@@ -24,6 +28,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>3 000 organizaciones como esta; las 20 más grandes generan más de la mitad del uso. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
     { id: 'consola', layer: 'client', label: 'Consola de uso', sub: 'tablero y API de uso', x: 1520, y: 120,
+      brief: 'El tablero donde el cliente ve cuánto lleva gastado, hora por hora.',
+      why: 'Sin ella, el cliente se entera de su gasto con la factura, un mes tarde. Lee los mismos agregados que la factura: si leyera un contador aparte, tablero y factura podrían no coincidir y el cliente desconfiaría de los dos.',
       info: {
         resp: '<p>El tablero donde el cliente ve su uso por hora, por proyecto, por modelo y por clave, y la API que devuelve lo mismo. Lee las tablas de agregados, nunca un contador aparte: lo que muestra tiene que coincidir con la factura.</p>',
         api: '<pre data-lang="http"><code>GET /v1/organizations/usage_report?group_by=project_id&amp;bucket_width=1h\n\n200 {"data": [{"starting_at": "2026-10-04T14:00:00Z",\n  "results": [{"project_id": "proj_31", "output_tokens": 912400, …}]}],\n "complete_until": "2026-10-04T15:58:00Z"}</code></pre>',
@@ -32,6 +38,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>Datos con 1 a 5 minutos de retraso en condiciones normales.</li></ul>'
       } },
     { id: 'finanzas', layer: 'client', label: 'Finanzas', sub: 'cierre contable y revisión', x: 1960, y: 120,
+      brief: 'Las personas que cierran el mes y revisan las diferencias.',
+      why: 'El dinero necesita a alguien que firme. La conciliación encuentra diferencias; finanzas decide qué se corrige y aprueba los cambios de precio.',
       info: {
         resp: '<p>El equipo que cierra el mes: revisa las diferencias que encontró la conciliación, aprueba los cambios del catálogo de precios y los reprocesos, y reconoce el ingreso a medida que los créditos se consumen.</p>',
         api: '<p>Informes, no APIs: diferencias por hora y organización, ingresos diferidos al cierre, créditos vencidos, facturas con ajustes.</p>',
@@ -41,6 +49,8 @@ SD.defineMap('m21-metering', {
       } },
     /* ---------- Medir y admitir ---------- */
     { id: 'limitador', layer: 'cache', label: 'Limitador', sub: 'Redis: cuotas, saldo y tope en caliente', x: 200, y: 330,
+      brief: 'Redis que responde en 1 ms si una request puede empezar: si hay saldo y si no llegó al tope.',
+      why: 'El camino exacto (Kafka, procesador, ledger) tarda segundos, y una request no puede esperar segundos para saber si tiene saldo. Por eso hay una copia rápida y aproximada en memoria, que la conciliación corrige cada hora. Presta el saldo por tramos, como el escrow del <a href="m18-cuotas-tokens.html">M18</a>.',
       info: {
         resp: '<p>El limitador del M18, que aquí guarda además el saldo disponible y el gasto aproximado del mes de cada organización. Responde en un milisegundo si una request puede empezar y presta tramos de saldo mientras el stream sigue. Es aproximado a propósito: la conciliación lo corrige.</p>',
         api: '<pre><code>EVALSHA reserve  spend:org_7:2026-10  saldo:org_7  0.04   → ok | sin_saldo | tope\nINCRBY spend:org_7:2026-10  -18200                        (corrección de la conciliación)</code></pre>',
@@ -49,6 +59,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>Lectura y reserva: ~1 ms.</li><li>Desvío típico contra el valor exacto: menos del 1&#8239;% del gasto de una hora. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
     { id: 'gateway', layer: 'edge', label: 'Gateway', sub: 'mide al cerrar cada stream', x: 640, y: 330,
+      brief: 'La puerta de entrada: deja pasar la request y, al terminar el stream, anota cuántos tokens usó.',
+      why: 'Es la única pieza que ve la request entera, de principio a fin, incluso si el cliente cancela. Por eso es quien emite el evento de uso. Antes de enviarlo lo escribe en un archivo de su disco, el <i>spool</i>, para no perderlo si Kafka no responde.',
       info: {
         resp: '<p>Termina TLS, autentica, reserva en el limitador y mantiene el stream con el cliente. Cuando el stream termina, completado, cancelado o con error, emite el evento de uso con los números que le mandó el motor. Es quien sabe a quién cobrar.</p>',
         api: '<pre data-lang="json"><code>{"event_id": "req_9f2c41:final", "request_id": "req_9f2c41",\n "org_id": "org_7", "model_version": "modelo-m-2026-09-15",\n "event_time": "2026-10-04T14:05:09.412Z",\n "units": {"input_tokens": 1200, "cache_read_tokens": 8000, "output_tokens": 400}}</code></pre>',
@@ -57,6 +69,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>400 requests nuevas por segundo en el pico.</li><li>Evento confirmado en Kafka ~5 ms después del final del stream.</li></ul>'
       } },
     { id: 'motor', layer: 'gpu', label: 'Motor', sub: 'cuenta tokens y deja su registro', x: 1080, y: 330,
+      brief: 'La GPU que genera los tokens; además publica su propia cuenta cada 10 segundos.',
+      why: 'Es una segunda cuenta, independiente del gateway. Si el gateway muere a mitad de un stream, su evento no existe, pero la cuenta del motor sí. Sin ella, ese uso se perdería y nadie se enteraría (escenario 4).',
       info: {
         resp: '<p>El motor de inferencia (M15). Cuenta los tokens de cada request, los manda al gateway en el último evento del stream y, por su cuenta, publica en lotes un registro de qué requests procesó. Ese registro no se usa para cobrar: es la tercera fuente de la conciliación.</p>',
         api: '<pre data-lang="json"><code>{"request_id": "req_9f2c41", "replica": "r-041", "prompt_tokens": 9200,\n "cached_tokens": 8000, "completion_tokens": 400, "finish": "stop"}</code></pre>',
@@ -65,6 +79,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>125 réplicas; un lote cada 10 s de cada una: 12.5 mensajes por segundo.</li></ul>'
       } },
     { id: 'topes', layer: 'service', label: 'Topes y alertas', sub: 'umbrales del 50, 80 y 100 %', x: 1520, y: 330,
+      brief: 'Vigila el gasto del mes: avisa al 50, 80 y 100 % y, al 100 %, bloquea.',
+      why: 'El cliente fija un tope para no llevarse sorpresas. Este servicio convierte "llevas 2 000 USD" en acciones: un correo, y después una marca en el limitador para que todos los gateways rechacen.',
       info: {
         resp: '<p>Lleva el gasto exacto del mes de cada organización y proyecto, manda las alertas al cruzar cada umbral y, al llegar al tope, publica la marca en el limitador. También le pasa al limitador el saldo disponible de las organizaciones prepagas.</p>',
         api: '<pre data-lang="http"><code>POST https://cliente.example/webhooks/billing\n{"type": "spend.threshold_crossed", "org_id": "org_7",\n "threshold": 0.8, "month": "2026-10", "spend_usd": "1601.22"}</code></pre>',
@@ -74,6 +90,8 @@ SD.defineMap('m21-metering', {
       } },
     /* ---------- El log ---------- */
     { id: 'kafka', layer: 'queue', label: 'Kafka', sub: 'tópicos usage y engine-usage, clave: organización, retención 7 días', x: 1080, y: 540, w: 1960, h: 56, bus: true,
+      brief: 'Un registro (log) compartido donde se anotan, en orden, todos los eventos de uso; los guarda 7 días.',
+      why: '<b>¿Por qué no escribir directo en una base?</b> Por tres razones. <b>Amortigua:</b> el gateway publica en 5 ms y sigue; si el procesador está lento o caído, los eventos esperan en Kafka en lugar de perderse o de frenar las respuestas. <b>Varios lectores:</b> el mismo evento lo leen el procesador y el archivador, cada uno a su ritmo, sin que el gateway sepa que existen. <b>Se puede releer:</b> si un error contó mal una hora, se vuelve a leer y se recalcula. La clave es la organización, así todos los eventos de org_7 caen en la misma partición y se leen en orden (<a href="m07-mensajeria.html">M07</a>).',
       info: {
         resp: '<p>El log durable entre medir y procesar. La clave de cada mensaje es la organización: todos sus eventos van a la misma partición, en orden, y las copias de un evento caen juntas. El productor idempotente descarta los reintentos; lo demás lo deduplica el procesador.</p>',
         api: '<pre><code>producer: acks=all, enable.idempotence=true   (por defecto desde Kafka 3.0)\nconsumer: isolation.level=read_committed\ntopic usage: 64 particiones, replication.factor=3, min.insync.replicas=2</code></pre><p>Valores por defecto y semántica del productor idempotente: <span class="badge badge--doc">Documentado</span> (KIP-98 y KIP-679).</p>',
@@ -83,6 +101,8 @@ SD.defineMap('m21-metering', {
       } },
     /* ---------- Procesar ---------- */
     { id: 's3', layer: 'db', label: 'Log crudo', sub: 'S3, inmutable, por día', x: 300, y: 750,
+      brief: 'La copia permanente de todos los eventos, tal como llegaron; nunca se modifica.',
+      why: 'Kafka borra a los 7 días, y una factura se puede discutir meses después. El log crudo es la prueba: si un cliente reclama, se baja hasta cada request. Y si hay que recalcular un mes, se relee desde aquí.',
       info: {
         resp: '<p>La copia permanente de todo lo que llegó al tópico, sin filtrar: con duplicados, con tardíos, con los registros del motor. Es lo que permite reprocesar cualquier hora y responder cualquier disputa.</p>',
         api: '<pre><code>s3://usage-raw/topic=usage/date=2026-10-04/hour=14/part-00031.parquet\ns3://usage-raw/topic=engine-usage/date=2026-10-04/hour=14/…</code></pre>',
@@ -91,6 +111,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>13.5 GB por día sin comprimir, 4.9 TB por año.</li></ul>'
       } },
     { id: 'streaming', layer: 'service', label: 'Procesador de streaming', sub: 'dedupe por event_id y ventanas por hora', x: 640, y: 750,
+      brief: 'Lee los eventos de Kafka, descarta los repetidos y suma el uso de cada organización por hora.',
+      why: 'Los eventos llegan repetidos (por reintentos) y desordenados (regiones que vuelven tarde). Alguien tiene que garantizar que cada uno cuente una sola vez y en la hora en que ocurrió, no en la que llegó. Ese es su trabajo; aquí es Flink (21.5 y 21.6).',
       info: {
         resp: '<p>Una aplicación de Flink que lee el tópico, descarta los <code>event_id</code> ya vistos en las últimas 48 horas, suma el uso en ventanas por hora según la hora del evento y manda cada evento nuevo al rating para descontar el saldo.</p>',
         api: '<pre><code>WatermarkStrategy.forBoundedOutOfOrderness(Duration.ofMinutes(5))\nwindow(TumblingEventTimeWindows.of(Duration.ofHours(1)))\n  .allowedLateness(Duration.ofHours(1))\n  .sideOutputLateData(lateTag)</code></pre><p>La tolerancia vale 0 por defecto: sin configurarla, los tardíos se descartan. <span class="badge badge--doc">Documentado</span></p>',
@@ -99,6 +121,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>45 millones de ids en la ventana de 48 horas.</li><li>Del evento al saldo: 1 a 2 s.</li></ul>'
       } },
     { id: 'agregados', layer: 'db', label: 'Agregados', sub: 'ClickHouse, uso por hora', x: 1080, y: 750,
+      brief: 'Una tabla con el uso por organización y por hora: la leen el tablero y la factura.',
+      why: 'Sumar 22.5 millones de eventos cada vez que alguien abre el tablero sería lentísimo. Se suman una vez, por hora, y todos leen el resultado. ClickHouse es una base columnar, muy rápida para sumar muchas filas.',
       info: {
         resp: '<p>La tabla <code>usage_hourly</code> y sus derivadas por día y por mes. Es la única fuente del tablero, de la API de uso y de la factura.</p>',
         api: '<pre data-lang="sql"><code>SELECT model, unit, sum(quantity)\nFROM usage_hourly FINAL\nWHERE org_id = \'org_7\' AND hour &gt;= \'2026-10-01\' AND hour &lt; \'2026-11-01\'\nGROUP BY model, unit</code></pre>',
@@ -107,6 +131,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>576 000 filas por día: 3 000 organizaciones × 8 líneas × 24 horas.</li></ul>'
       } },
     { id: 'conciliacion', layer: 'service', label: 'Conciliación', sub: 'cada hora, tres fuentes', x: 1520, y: 750,
+      brief: 'Cada hora compara tres cuentas (log crudo, agregados y motor) y corrige lo que no coincide.',
+      why: 'Todo pipeline pierde o duplica algo alguna vez. Sin comparar contra cuentas independientes, el error no se ve hasta que un cliente reclama. Es el auditor del sistema; también corrige al limitador, nunca al revés.',
       info: {
         resp: '<p>Cada hora, sobre la hora que terminó hace dos, compara el registro del motor con los eventos del gateway, los eventos con los agregados y los agregados con el limitador. Publica los eventos que faltan, pide reprocesos y corrige los contadores del limitador.</p>',
         api: '<pre><code>reconcile(hour="2026-10-04T14")\n  motor: 41 220 requests    log: 41 219 eventos final    → reconstruir req_c07\n  log vs agregados: 0 diferencias\n  limitador org_7: −18 200 nanodólares                       → INCRBY</code></pre>',
@@ -116,6 +142,8 @@ SD.defineMap('m21-metering', {
       } },
     /* ---------- Dinero ---------- */
     { id: 'catalogo', layer: 'db', label: 'Catálogo de precios', sub: 'versionado, con vigencias', x: 260, y: 960,
+      brief: 'La lista de precios por modelo y tipo de token, con la fecha desde la que vale cada precio.',
+      why: 'Los precios cambian. Si solo guardaras el precio actual, un evento tardío de ayer se cobraría con el precio de hoy. Con fechas de vigencia, cada evento usa el precio de su hora.',
       info: {
         resp: '<p>Los precios de cada modelo y unidad, con su vigencia, en tres niveles: lista pública, plan y contrato de cada organización. Una fila nunca se edita: se cierra su vigencia y se crea otra.</p>',
         api: '<pre data-lang="sql"><code>SELECT nanousd_per_unit FROM prices\nWHERE model = \'modelo-m\' AND unit = \'output_tokens\'\n  AND scope IN (\'org:org_7\', \'plan:scale\', \'list\')\n  AND valid_from &lt;= $event_time AND (valid_to IS NULL OR $event_time &lt; valid_to)\nORDER BY scope_priority LIMIT 1</code></pre>',
@@ -124,6 +152,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>Unos pocos miles de filas; el rating las tiene en memoria.</li></ul>'
       } },
     { id: 'rating', layer: 'service', label: 'Rating', sub: 'cantidad × precio de la hora del evento', x: 640, y: 960,
+      brief: 'Multiplica tokens por precio: convierte el uso en dinero.',
+      why: 'Separa contar de cobrar. El procesador solo cuenta tokens; el rating sabe de precios. Así un cambio de precio no toca el conteo, y el dinero se puede recalcular sin volver a contar.',
       info: {
         resp: '<p>Convierte uso en dinero. Para el saldo, tarifa cada evento en nanodólares sin redondear; para la factura, tarifa el total de cada línea del ciclo y redondea una sola vez.</p>',
         api: '<pre><code>rate(event) → 8 000 000 nanodólares     (1 200 × 2 000 + 8 000 × 200 + 400 × 10 000)\nrate_line(1 200 000 000 tokens, 10 000) → 1 200 000 centavos</code></pre>',
@@ -132,6 +162,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>La request del ejemplo: 0.0080 USD; sin caché, 0.0224; en batch, 0.0040.</li></ul>'
       } },
     { id: 'saldo', layer: 'service', label: 'Saldo', sub: 'créditos prepagados', x: 1080, y: 960,
+      brief: 'Lleva los créditos que el cliente pagó por adelantado y los va descontando.',
+      why: 'Un cliente prepago no puede gastar lo que no tiene. Este servicio descuenta cada costo uno o dos segundos después del stream, escribe cada movimiento en el ledger y le pasa el gasto a topes.',
       info: {
         resp: '<p>Descuenta el costo de cada evento de los lotes de crédito de la organización, empezando por el que vence antes, escribe los asientos en el ledger y mantiene el saldo materializado con su versión.</p>',
         api: '<pre data-lang="http"><code>POST /internal/balances/org_7/debit\nIdempotency-Key: req_9f2c41:final\n{"nanousd": 8000000, "event_time": "2026-10-04T14:05:09Z"}</code></pre><p>La idempotency key es el <code>event_id</code>: un reintento no descuenta dos veces.</p>',
@@ -140,6 +172,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>Con 20 USD, 20 streams y 0.50 USD de máximo: −1.51 USD cobrando al terminar, 0 o más con reservas (simulador de 21.8).</li></ul>'
       } },
     { id: 'ledger', layer: 'db', label: 'Ledger', sub: 'doble entrada, Aurora PostgreSQL', x: 1520, y: 960,
+      brief: 'El libro contable: cada movimiento de dinero es un asiento que nunca se borra.',
+      why: 'Un saldo guardado como un solo número no explica nada: si está mal, no sabes por qué. Con doble entrada, cada movimiento sale de una cuenta y entra en otra, y el saldo es la suma de los asientos: siempre se puede auditar (<a href="m27-pagos-stripe.html">M27</a>).',
       info: {
         resp: '<p>El ledger de doble entrada del M27, con cuentas de créditos de clientes (ingreso diferido), créditos promocionales, ingresos por uso y gasto promocional. Cada compra, consumo, vencimiento, ajuste y crédito por SLA es un asiento que suma cero.</p>',
         api: '<pre data-lang="sql"><code>INSERT INTO entries (txn_id, account, amount_nanousd) VALUES\n  (\'use:req_9f2c41:final\', \'org_7:credits\', -8000000),\n  (\'use:req_9f2c41:final\', \'revenue:usage\',  8000000);</code></pre>',
@@ -149,6 +183,8 @@ SD.defineMap('m21-metering', {
       } },
     /* ---------- Facturar y cobrar ---------- */
     { id: 'facturas', layer: 'service', label: 'Job de facturas', sub: 'cierre del ciclo', x: 640, y: 1170,
+      brief: 'Al terminar el mes junta el uso del ciclo y arma la factura.',
+      why: 'La factura es un documento legal: se arma una vez, con los agregados ya conciliados, y después no cambia. Por eso espera a que la última hora del mes esté cerrada.',
       info: {
         resp: '<p>Al cerrar el ciclo de cada organización, lee los agregados del mes, pide al rating el total de cada línea, descuenta lo pagado con créditos, agrega los ajustes pendientes y manda el resultado a Stripe.</p>',
         api: '<pre data-lang="http"><code>POST /v1/billing/meter_events\nevent_name=output_tokens_modelo_m\n&amp;payload[stripe_customer_id]=cus_Q7x…\n&amp;payload[value]=9109600\n&amp;identifier=org_7:output_tokens_modelo_m:2026-10-04T14</code></pre><p>Uso horario a los meters de Stripe; el <code>identifier</code> hace seguro el reenvío. <span class="badge badge--doc">Documentado</span></p>',
@@ -157,6 +193,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>576 000 meter events por día, unos 7 por segundo: muy lejos de las 1 000 llamadas por segundo de la cuenta.</li></ul>'
       } },
     { id: 'stripe', layer: 'external', label: 'Stripe Billing', sub: 'facturas, impuestos y cobro', x: 1080, y: 1170,
+      brief: 'Servicio externo que suma impuestos, emite la factura y cobra la tarjeta.',
+      why: 'Cobrar tarjetas, calcular impuestos por país y reintentar cobros fallidos es un producto entero. Se compra en lugar de construirlo; el metering solo le manda cantidades.',
       info: {
         resp: '<p>Suma los meter events del período, arma la factura, calcula impuestos, la finaliza, cobra la tarjeta o el débito guardado, reintenta si falla y avisa todo con webhooks. Es el procesador de pagos del M27, del otro lado.</p>',
         api: '<pre><code>invoice.finalized\ninvoice.paid\ninvoice.payment_failed\nv1.billing.meter.error_report_triggered</code></pre>',
@@ -165,6 +203,8 @@ SD.defineMap('m21-metering', {
         nums: '<ul><li>Billing en pago por uso: 0.7&#8239;% del volumen facturado, con hasta 100 millones de meter events por mes incluidos. <span class="badge badge--doc">Documentado</span></li></ul>'
       } },
     { id: 'webhooks', layer: 'service', label: 'Webhooks de cobro', sub: 'SQS y un consumidor', x: 1520, y: 1170,
+      brief: 'Recibe los avisos de Stripe (pagada, falló el cobro) y los anota en el ledger.',
+      why: 'Stripe avisa cuando algo pasa, no cuando tú preguntas. Los avisos pueden llegar repetidos o desordenados, así que entran a una cola (SQS) y un consumidor los aplica una sola vez.',
       info: {
         resp: '<p>Recibe los webhooks de Stripe, verifica la firma, los encola y los aplica: una compra de créditos pagada abre un lote nuevo; una factura pagada cierra la deuda; un cobro fallido empieza el dunning.</p>',
         api: '<pre data-lang="http"><code>POST /webhooks/stripe\nStripe-Signature: t=…,v1=…\n{"type": "invoice.payment_failed", "data": {"object": {"id": "in_1Q…", "attempt_count": 1}}}</code></pre>',
@@ -205,130 +245,258 @@ SD.defineMap('m21-metering', {
   scenarios: [
     {
       id: 'normal', title: 'Una request, del stream al saldo',
-      desc: 'La request de 21.2: 1 200 tokens de entrada, 8 000 leídos del caché y 400 de salida. Se sigue el uso desde que el gateway reserva hasta que el saldo se descuenta y el evento queda archivado.',
+      desc: 'La request de 21.2: org_7 pide una respuesta con streaming. Usa 1 200 tokens de entrada, 8 000 leídos del caché y 400 de salida. Vas a seguir su uso desde que entra hasta que se descuenta del saldo.',
+      goal: 'Dos caminos que salen del mismo evento. Uno rápido y aproximado (el limitador, en 1 ms) decide si la request puede empezar. Otro lento y exacto (Kafka, procesador, rating, ledger) cuenta el dinero de verdad, uno o dos segundos después.',
       steps: [
-        { from: 'cliente', to: 'gateway', kind: 'req', tag: 'POST /v1/messages', ms: 30, title: 'Llega la request', text: 'Con streaming y <code>max_tokens: 8000</code>.' },
-        { from: 'gateway', to: 'limitador', kind: 'req', tag: 'reservar tramo 0.04 USD', ms: 1, title: 'Reserva de saldo', text: 'org_7 es prepaga: el gateway reserva un tramo del saldo disponible, como los préstamos del escrow del M18.' },
-        { from: 'limitador', to: 'gateway', kind: 'res', tag: 'ok', ms: 1, title: 'Hay saldo', text: 'Quedan 182.40 USD disponibles.' },
-        { from: 'gateway', to: 'motor', kind: 'req', tag: 'generate', ms: 2, title: 'Al motor', text: 'Por el router del M19.' },
-        { from: 'motor', to: 'gateway', kind: 'res', tag: 'tokens… + usage', ms: 12000, title: 'Genera y cuenta', text: 'El último evento del stream trae el <code>usage</code>: 1 200 de entrada, 8 000 de caché y 400 de salida.' },
-        { from: 'gateway', to: 'cliente', kind: 'res', tag: 'SSE · message_stop', ms: 30, title: 'El cliente recibe todo', text: 'El stream terminó bien.' },
-        { from: 'gateway', to: 'kafka', kind: 'async', tag: 'req_9f2c41:final', ms: 5, title: 'Nace el evento de uso', text: 'Desde el spool, con <code>acks=all</code> y productor idempotente. La clave es <code>org_7</code>.', code: '{"event_id": "req_9f2c41:final", "org_id": "org_7",\n "event_time": "2026-10-04T14:05:09.412Z",\n "units": {"input_tokens": 1200, "cache_read_tokens": 8000, "output_tokens": 400}}', lang: 'json' },
-        { from: 'kafka', to: 's3', kind: 'async', tag: 'archivar', ms: 60000, title: 'Copia permanente', text: 'El archivador escribe lotes de un minuto en Parquet.' },
-        { from: 'kafka', to: 'streaming', kind: 'req', tag: 'consumir', ms: 50, title: 'El procesador lo lee', text: 'Partición 3, offset 88 120.' },
-        { at: 'streaming', kind: 'info', tag: 'nuevo', ms: 1, title: 'Dedupe', text: '<code>req_9f2c41:final</code> no está en el estado de las últimas 48 horas: se anota y sigue.' },
-        { from: 'streaming', to: 'agregados', kind: 'req', tag: 'hora 14:00', ms: 60000, title: 'Ventana de la hora del evento', text: 'Suma 9 600 tokens a la fila de org_7 de las 14:00. La fila se reemite con versión mayor cada minuto mientras la ventana sigue abierta.' },
-        { from: 'streaming', to: 'rating', kind: 'req', tag: 'evento nuevo', ms: 5, title: 'A tarifar', text: 'El saldo no espera a la ventana: cada evento nuevo se tarifa enseguida.' },
-        { from: 'catalogo', to: 'rating', kind: 'res', tag: 'precio vigente a las 14:05', ms: 0.01, title: 'Precio por hora del evento', text: 'Desde la copia en memoria del catálogo.' },
-        { from: 'rating', to: 'saldo', kind: 'req', tag: '8 000 000 nanodólares', ms: 5, title: 'El costo', text: '1 200 × 2 000 + 8 000 × 200 + 400 × 10 000 nanodólares = 0.008 USD, sin redondear.' },
-        { from: 'saldo', to: 'ledger', kind: 'req', tag: 'asiento', ms: 5, title: 'Al ledger', text: 'Débito a los créditos de org_7, crédito a ingresos por uso. El ingreso diferido se vuelve ingreso.' },
-        { from: 'saldo', to: 'topes', kind: 'async', tag: 'gasto del mes', ms: 10, title: 'Gasto acumulado', text: 'El servicio de topes suma el costo al mes de octubre de org_7: lejos de cualquier umbral.' }
+        { from: 'cliente', to: 'gateway', kind: 'req', tag: 'POST /v1/messages', ms: 30, title: 'Llega la request',
+          text: 'org_7 pide una respuesta en streaming (los tokens llegan de a poco, como en M17) y pone un máximo de 8 000 tokens de salida.',
+          why: 'El gateway todavía no sabe cuánto va a costar: depende de cuántos tokens genere el modelo. Por eso no puede cobrar ahora; primero tiene que asegurarse de que hay saldo.' },
+        { from: 'gateway', to: 'limitador', kind: 'req', tag: 'reservar tramo 0.04 USD', ms: 1, title: 'Aparta un poco de saldo',
+          text: 'org_7 pagó créditos por adelantado. El gateway le pide al limitador que aparte un tramo chico, 0.04 USD, antes de empezar.',
+          why: 'Apartar todo el máximo posible bloquearía saldo que casi nunca se usa. Apartar por tramos es el escrow del <a href="m18-cuotas-tokens.html">M18</a>: se reserva un poco y se pide más si el stream sigue.' },
+        { from: 'limitador', to: 'gateway', kind: 'res', tag: 'ok', ms: 1, title: 'Hay saldo: puede empezar',
+          text: 'El limitador ve 182.40 USD disponibles, aparta el tramo y responde ok en un milisegundo.',
+          why: 'Esta respuesta sale de Redis, en memoria. Es aproximada: si se perdió algún descuento, la conciliación lo arregla después. Para decidir si una request entra, rápido importa más que exacto al centavo.' },
+        { from: 'gateway', to: 'motor', kind: 'req', tag: 'generate', ms: 2, title: 'La request va a la GPU',
+          text: 'El router del <a href="m19-router-flota.html">M19</a> elige una réplica del modelo y le manda la request.' },
+        { from: 'motor', to: 'gateway', kind: 'res', tag: 'tokens… + usage', ms: 12000, title: 'Genera y cuenta tokens',
+          text: 'Durante 12 segundos el motor manda tokens. El último mensaje trae el resumen <code>usage</code>: 1 200 de entrada, 8 000 de caché y 400 de salida.',
+          why: 'Quien genera es quien sabe cuántos tokens hubo. El gateway no los cuenta por su lado: copia el <code>usage</code> que le da el motor.' },
+        { from: 'gateway', to: 'cliente', kind: 'res', tag: 'SSE · message_stop', ms: 30, title: 'El cliente recibe la respuesta completa',
+          text: 'El stream termina bien. Para el cliente la request se acabó; para el metering, recién empieza.' },
+        { from: 'gateway', to: 'kafka', kind: 'async', tag: 'req_9f2c41:final', ms: 5, title: 'El gateway anota el uso en Kafka',
+          text: 'El gateway arma un <b>evento de uso</b>: quién, cuándo y cuántos tokens. Primero lo guarda en un archivo de su disco (el <i>spool</i>) y después lo publica en Kafka, que confirma cuando todas sus copias lo guardaron (<code>acks=all</code>).',
+          why: 'Si el gateway escribiera directo en una base y esa base estuviera lenta, cada respuesta se frenaría. Kafka acepta el evento en 5 ms y lo guarda para quien lo lea después. El spool cubre el caso en que Kafka no responde: el evento espera en disco y se reenvía.',
+          code: '{"event_id": "req_9f2c41:final", "org_id": "org_7",\n "event_time": "2026-10-04T14:05:09.412Z",\n "units": {"input_tokens": 1200, "cache_read_tokens": 8000, "output_tokens": 400}}', lang: 'json' },
+        { from: 'kafka', to: 's3', kind: 'async', tag: 'archivar', ms: 60000, title: 'Se guarda una copia para siempre',
+          text: 'Un archivador lee el mismo evento y, cada minuto, escribe un lote en S3 (en formato Parquet).',
+          why: 'Kafka borra a los 7 días. Una factura se puede discutir meses después, y entonces hace falta la prueba: el evento original, sin tocar.' },
+        { from: 'kafka', to: 'streaming', kind: 'req', tag: 'consumir', ms: 50, title: 'El procesador lee el evento',
+          text: 'El procesador de streaming lee de Kafka. Los eventos de org_7 están siempre en la misma partición (la 3), en orden; este está en la posición (offset) 88 120.',
+          why: 'Kafka guarda dónde se quedó leyendo cada consumidor. Si el procesador se reinicia, sigue desde ahí sin saltarse eventos.' },
+        { at: 'streaming', kind: 'info', tag: 'nuevo', ms: 1, title: '¿Ya lo vi? No: cuenta',
+          text: 'El procesador recuerda los <code>event_id</code> de las últimas 48 horas. <code>req_9f2c41:final</code> no está en esa lista: lo anota y sigue.',
+          why: 'Los reintentos hacen que el mismo evento pueda llegar dos veces. Si no se revisara, el cliente pagaría dos veces la misma request (escenario 2).' },
+        { from: 'streaming', to: 'agregados', kind: 'req', tag: 'hora 14:00', ms: 60000, title: 'Se suma a la hora del evento',
+          text: 'Suma 9 600 tokens a la fila de org_7 de las 14:00 en la tabla de agregados. Mientras esa hora sigue abierta, la fila se actualiza cada minuto.',
+          why: 'Sumar por hora una vez es mucho más barato que sumar millones de eventos cada vez que alguien abre el tablero. Y va a la hora en que <i>ocurrió</i> (14:05), no a la hora en que llegó.' },
+        { from: 'streaming', to: 'rating', kind: 'req', tag: 'evento nuevo', ms: 5, title: 'A ponerle precio, ya',
+          text: 'Al mismo tiempo, el evento va al rating para calcular su costo enseguida.',
+          why: 'El saldo prepago no puede esperar a que cierre la hora: si el cliente se queda sin créditos, hay que saberlo en segundos, no en una hora.' },
+        { from: 'catalogo', to: 'rating', kind: 'res', tag: 'precio vigente a las 14:05', ms: 0.01, title: 'Busca el precio de esa hora',
+          text: 'El rating busca en el catálogo el precio que valía a las 14:05, la hora del evento. Lo tiene copiado en memoria, por eso tarda microsegundos.',
+          why: 'Si el precio cambiara a las 15:00, este evento igual se cobra con el precio de las 14:05. Así un evento que llega tarde no se cobra con un precio que no existía cuando se usó.' },
+        { from: 'rating', to: 'saldo', kind: 'req', tag: '8 000 000 nanodólares', ms: 5, title: 'Calcula el costo',
+          text: '1 200 × 2 000 + 8 000 × 200 + 400 × 10 000 = 8 000 000 nanodólares, o sea 0.008 USD.',
+          why: 'Se cuenta en enteros de nanodólares (milmillonésimas de dólar) para no perder centavos por redondear decimales en cada request. Se redondea una sola vez, en la factura (21.7).' },
+        { from: 'saldo', to: 'ledger', kind: 'req', tag: 'asiento', ms: 5, title: 'Se anota en el libro contable',
+          text: 'El servicio de saldo escribe un asiento en el ledger: salen 0.008 USD de los créditos de org_7 y entran a "ingresos por uso".',
+          why: 'Cada movimiento queda escrito y nunca se borra. Si algún día el saldo parece raro, se puede reconstruir sumando los asientos, uno por uno (doble entrada, como en M27).' },
+        { from: 'saldo', to: 'topes', kind: 'async', tag: 'gasto del mes', ms: 10, title: 'Se suma al gasto del mes',
+          text: 'El servicio de topes suma el costo a lo que org_7 lleva gastado en octubre. Está lejos de cualquier umbral: no pasa nada más.',
+          why: 'Es asíncrono (no espera respuesta): avisar del 80 % un segundo más tarde no le hace daño a nadie, y así el saldo no se frena.' }
       ]
     },
     {
       id: 'duplicado', title: 'El mismo evento dos veces',
-      desc: 'El gateway se reinicia y su spool republica un evento que ya había llegado a Kafka. Kafka no puede detectarlo; el procesador sí.',
+      desc: 'El gateway publica un evento en Kafka y se reinicia antes de anotar que ya lo mandó. Al volver, lo manda otra vez.',
+      goal: 'Kafka guarda las dos copias porque para él son dos mensajes distintos. El que evita el doble cobro es el procesador, que recuerda qué <code>event_id</code> ya contó.',
       steps: [
-        { from: 'gateway', to: 'kafka', kind: 'async', tag: 'req_a41:final', ms: 5, title: 'Primera copia', text: 'Publicado y confirmado. El gateway muere antes de marcarlo como enviado en su spool.' },
-        { at: 'gateway', kind: 'info', tag: 'reinicio', ms: 8000, title: 'El gateway vuelve', text: 'Lee su spool y encuentra el evento sin marcar: lo publica de nuevo. Es un productor nuevo, con otro id, así que el productor idempotente no lo reconoce.' },
-        { from: 'gateway', to: 'kafka', kind: 'async', tag: 'req_a41:final otra vez', ms: 5, title: 'Segunda copia', text: 'Kafka la guarda en otro offset.' },
-        { from: 'kafka', to: 'streaming', kind: 'req', tag: 'copia 1', ms: 50, title: 'La primera pasa', text: 'Es nueva.' },
-        { from: 'streaming', to: 'rating', kind: 'req', tag: 'se tarifa', ms: 5, title: 'Se descuenta una vez', text: '' },
-        { from: 'kafka', to: 'streaming', kind: 'req', tag: 'copia 2', ms: 50, title: 'La segunda llega', text: 'Mismo <code>event_id</code>.' },
-        { at: 'streaming', kind: 'info', tag: 'duplicado: se descarta', ms: 1, title: 'Dedupe', text: 'El id ya está en el estado. Se descarta y se cuenta en <code>usage_duplicates_total</code>. El saldo y los agregados cambiaron una sola vez.' },
-        { from: 'kafka', to: 's3', kind: 'async', tag: 'las dos copias', ms: 60000, title: 'El log crudo guarda ambas', text: 'Si alguna vez se reprocesa esta hora, el reproceso las deduplica de nuevo.' }
+        { from: 'gateway', to: 'kafka', kind: 'async', tag: 'req_a41:final', ms: 5, title: 'Primera copia',
+          text: 'El evento de <code>req_a41</code> llega a Kafka y Kafka confirma. Justo después, el gateway muere sin marcar en su spool que ya lo envió.' },
+        { at: 'gateway', kind: 'info', tag: 'reinicio', ms: 8000, title: 'El gateway vuelve',
+          text: 'Al arrancar, lee su spool, ve el evento sin marcar y lo publica de nuevo.',
+          why: 'Desde el gateway es imposible saber si el primer envío llegó. Ante la duda, reenvía: es mejor un duplicado que se puede descartar que un evento perdido que nadie cobra.' },
+        { from: 'gateway', to: 'kafka', kind: 'async', tag: 'req_a41:final otra vez', ms: 5, title: 'Segunda copia',
+          text: 'Kafka la acepta y la guarda en otra posición del log.',
+          why: 'Kafka tiene un "productor idempotente" que descarta reenvíos, pero solo dentro de la misma conexión. El gateway reiniciado es un productor nuevo, así que Kafka no puede reconocerla.' },
+        { from: 'kafka', to: 'streaming', kind: 'req', tag: 'copia 1', ms: 50, title: 'La primera copia pasa',
+          text: 'El procesador nunca vio <code>req_a41:final</code>: la cuenta.' },
+        { from: 'streaming', to: 'rating', kind: 'req', tag: 'se tarifa', ms: 5, title: 'Se cobra una vez',
+          text: 'El costo se descuenta del saldo, como en el escenario 1.' },
+        { from: 'kafka', to: 'streaming', kind: 'req', tag: 'copia 2', ms: 50, title: 'Llega la segunda copia',
+          text: 'Mismo <code>event_id</code>, otra posición en Kafka.' },
+        { at: 'streaming', kind: 'info', tag: 'duplicado: se descarta', ms: 1, title: 'Ya la vi: se descarta',
+          text: 'El id ya está en la memoria del procesador. La copia se descarta y se suma 1 a la métrica <code>usage_duplicates_total</code>. El saldo y los agregados cambiaron una sola vez.',
+          why: 'Por eso el <code>event_id</code> se arma con el id de la request (<code>req_a41:final</code>) y no con un número al azar: las dos copias tienen que llevar el mismo id para que se puedan reconocer (21.4).' },
+        { from: 'kafka', to: 's3', kind: 'async', tag: 'las dos copias', ms: 60000, title: 'El log crudo guarda las dos',
+          text: 'El archivo de S3 tiene las dos copias, tal como llegaron.',
+          why: 'El log crudo no corrige nada: es la prueba de lo que pasó. Si algún día se recalcula esta hora desde S3, el recálculo vuelve a descartar el duplicado.' }
       ]
     },
     {
       id: 'tardio', title: 'Un evento que llega dos horas tarde',
-      desc: 'Una región estuvo aislada y sus gateways guardaron los eventos en disco. Al volver, llega un evento de las 14:05 cuando la ventana de las 14:00 ya cerró.',
+      desc: 'Una región se quedó dos horas sin red hacia Kafka. Sus gateways siguieron atendiendo y guardaron los eventos en disco. A las 16:10 llega un evento que ocurrió a las 14:05.',
+      goal: 'El procesador ya había cerrado la hora 14:00. En lugar de tirar el evento, lo suma como una corrección de esa hora y lo cobra con el precio de las 14:05.',
       steps: [
-        { at: 'gateway', kind: 'info', tag: '2 h sin red hacia Kafka', ms: 7200000, title: 'Región aislada', text: 'Los gateways siguen sirviendo y acumulan eventos en el spool. Los topes de esa región se aplican con el contador aproximado del limitador.' },
-        { from: 'gateway', to: 'kafka', kind: 'async', tag: 'evento de las 14:05', ms: 5, title: 'Llega a las 16:10', text: 'Kafka lo acepta: el log no juzga la hora del evento.' },
-        { from: 'kafka', to: 'streaming', kind: 'req', tag: 'consumir', ms: 50, title: 'El procesador lo ve', text: 'Marca de agua en 16:05, tolerancia de 1 hora: la ventana de las 14:00 cerró cuando la marca de agua pasó las 16:00.' },
-        { at: 'streaming', kind: 'info', tag: 'salida de tardíos', ms: 1, title: 'No se descarta', text: 'Va a <code>sideOutputLateData</code>. Descartarlo, lo que hace Flink por defecto, sería regalar ese uso.' },
-        { from: 'streaming', to: 'agregados', kind: 'req', tag: 'fila de corrección · 14:00', ms: 60000, title: 'Corrección', text: 'Una fila nueva con <code>is_correction = 1</code> en la hora 14:00. La fila original no se toca.' },
-        { from: 'streaming', to: 'rating', kind: 'req', tag: 'se tarifa igual', ms: 5, title: 'Con el precio de las 14:05', text: 'Aunque sean las 16:10: el precio es el de la hora del evento.' },
-        { from: 'rating', to: 'saldo', kind: 'req', tag: 'descuento tardío', ms: 5, title: 'El saldo baja', text: 'Si la factura del ciclo ya se hubiera emitido, este uso iría como ajuste en la siguiente.' }
+        { at: 'gateway', kind: 'info', tag: '2 h sin red hacia Kafka', ms: 7200000, title: 'Una región queda aislada',
+          text: 'Los gateways de esa región no llegan a Kafka, pero siguen atendiendo y guardan cada evento en su spool, en disco.',
+          why: 'Cortar el servicio porque el metering está caído sería peor que cobrar tarde. Mientras tanto, el limitador sigue frenando a quien pase su tope, con su cuenta aproximada.' },
+        { from: 'gateway', to: 'kafka', kind: 'async', tag: 'evento de las 14:05', ms: 5, title: 'Vuelve la red: llega a las 16:10',
+          text: 'El gateway vacía su spool. Kafka acepta el evento: el log guarda lo que le llega, no revisa la hora.' },
+        { from: 'kafka', to: 'streaming', kind: 'req', tag: 'consumir', ms: 50, title: 'El procesador ve que es viejo',
+          text: 'El procesador lleva una <b>marca de agua</b>: "ya vi todo lo anterior a las 16:05". Con una hora de tolerancia, la hora 14:00 se cerró cuando la marca pasó las 16:00. Este evento llega a una hora ya cerrada.',
+          why: 'Una hora no puede quedar abierta para siempre esperando rezagados: el tablero y la factura necesitan números finales. La marca de agua es la regla para decidir cuándo cerrar (21.6).' },
+        { at: 'streaming', kind: 'info', tag: 'salida de tardíos', ms: 1, title: 'No se tira',
+          text: 'Flink, el procesador, por defecto descarta los eventos que llegan a una ventana cerrada. Aquí se configuró una salida aparte para los tardíos (<code>sideOutputLateData</code>).',
+          why: 'Descartarlo sería regalar ese uso. Con 22.5 millones de eventos al día, los tardíos de un corte de red pueden ser miles de dólares.' },
+        { from: 'streaming', to: 'agregados', kind: 'req', tag: 'fila de corrección · 14:00', ms: 60000, title: 'Se suma como corrección',
+          text: 'Escribe una fila nueva para la hora 14:00 marcada con <code>is_correction = 1</code>. La fila original de las 14:00 no se modifica.',
+          why: 'Agregar en lugar de modificar deja rastro: se ve qué se sumó tarde y por qué. Quien lee la hora suma las dos filas.' },
+        { from: 'streaming', to: 'rating', kind: 'req', tag: 'se tarifa igual', ms: 5, title: 'Precio de las 14:05, no de las 16:10',
+          text: 'El rating usa el precio vigente a las 14:05, la hora en que se usó.' },
+        { from: 'rating', to: 'saldo', kind: 'req', tag: 'descuento tardío', ms: 5, title: 'El saldo baja, tarde pero bien',
+          text: 'Se descuenta del saldo como cualquier otro evento.',
+          why: 'Si la factura del mes ya se hubiera emitido, no se toca: este uso va como ajuste en la factura siguiente. Una factura emitida es un documento cerrado.' }
       ]
     },
     {
       id: 'huerfano', title: 'El gateway muere a mitad del stream',
-      desc: 'Un gateway se cae con 300 streams abiertos. Sus eventos nunca se emiten. El registro del motor y la conciliación los recuperan.',
+      desc: 'Un gateway se cae con 300 streams abiertos. Esos streams nunca terminan bien, así que sus eventos de uso nunca se escriben.',
+      goal: 'Para esto existe una segunda fuente: el motor también anota lo que generó. La conciliación compara las dos cuentas, encuentra lo que falta y lo reconstruye.',
       steps: [
-        { from: 'gateway', to: 'motor', kind: 'req', tag: 'generate req_c07', ms: 2, title: 'Un stream más', text: '3 100 tokens de salida en camino.' },
-        { at: 'gateway', kind: 'fail', tag: 'proceso muerto', ms: 1, title: 'El gateway muere', text: 'El cliente ve la conexión cortada. El evento de <code>req_c07</code> nunca se escribe en el spool.', down: ['gateway'] },
-        { from: 'motor', to: 'kafka', kind: 'async', tag: 'lote: req_c07 · 3 100', ms: 10000, title: 'El motor sí lo anotó', text: 'Su lote de 10 segundos incluye la request, con los tokens que generó hasta que se cerró la conexión.' },
-        { from: 'kafka', to: 's3', kind: 'async', tag: 'engine-usage', ms: 60000, title: 'Al log crudo', text: '' },
-        { from: 's3', to: 'conciliacion', kind: 'req', tag: 'hora 14:00', ms: 120000, title: 'La conciliación de las 16:00', text: 'Cruza por <code>request_id</code>: 41 220 requests según el motor, 41 219 eventos <code>final</code>. Falta <code>req_c07</code>.', up: ['gateway'] },
-        { from: 'conciliacion', to: 'kafka', kind: 'async', tag: 'req_c07:final reconstruido', ms: 5, title: 'Evento de reemplazo', text: 'Con el mismo <code>event_id</code> que habría usado el gateway y una marca de reconstruido. Si el original apareciera después, el dedupe lo descartaría.' },
-        { from: 'kafka', to: 'streaming', kind: 'req', tag: 'tardío', ms: 50, title: 'Entra como tardío', text: 'Por el camino de corrección del escenario anterior.' },
-        { from: 'streaming', to: 'rating', kind: 'req', tag: 'se tarifa', ms: 5, title: 'Se cobra', text: '' },
-        { from: 'conciliacion', to: 'finanzas', kind: 'async', tag: '1 evento reconstruido', ms: 10, title: 'Queda registrado', text: 'Los eventos reconstruidos por hora son una métrica: si crecen, algo en los gateways está fallando.' }
+        { from: 'gateway', to: 'motor', kind: 'req', tag: 'generate req_c07', ms: 2, title: 'Un stream en curso',
+          text: 'La request <code>req_c07</code> está generando: van 3 100 tokens de salida.' },
+        { at: 'gateway', kind: 'fail', tag: 'proceso muerto', ms: 1, title: 'El gateway muere',
+          text: 'Al cliente se le corta la conexión. El evento de <code>req_c07</code> nunca llega a escribirse: el gateway muere antes del final del stream.', down: ['gateway'],
+          why: 'El evento se arma al final del stream. Si el proceso muere antes, no queda nada en el spool. Ningún reintento puede mandar un evento que no existe.' },
+        { from: 'motor', to: 'kafka', kind: 'async', tag: 'lote: req_c07 · 3 100', ms: 10000, title: 'El motor sí lo anotó',
+          text: 'Cada 10 segundos el motor publica en otro tópico (<code>engine-usage</code>) qué requests atendió y cuántos tokens generó. <code>req_c07</code> está ahí, con sus 3 100 tokens.',
+          why: 'Dos cuentas hechas por piezas distintas casi nunca fallan a la vez. Si una se pierde, la otra la delata.' },
+        { from: 'kafka', to: 's3', kind: 'async', tag: 'engine-usage', ms: 60000, title: 'Al log crudo',
+          text: 'La cuenta del motor también se archiva en S3, junto a los eventos del gateway.' },
+        { from: 's3', to: 'conciliacion', kind: 'req', tag: 'hora 14:00', ms: 120000, title: 'La conciliación compara',
+          text: 'A las 16:00 la conciliación revisa la hora 14:00 cruzando por <code>request_id</code>: el motor atendió 41 220 requests y hay 41 219 eventos de uso. Falta uno: <code>req_c07</code>.', up: ['gateway'],
+          why: 'Espera dos horas para dar tiempo a que lleguen los tardíos (escenario 3). Si comparara enseguida, vería faltantes que en realidad solo vienen atrasados.' },
+        { from: 'conciliacion', to: 'kafka', kind: 'async', tag: 'req_c07:final reconstruido', ms: 5, title: 'Reconstruye el evento',
+          text: 'Publica el evento que faltaba, con los datos del motor, el mismo <code>event_id</code> que habría usado el gateway y una marca de "reconstruido".',
+          why: 'Mismo id a propósito: si el evento original apareciera después (por ejemplo, desde un disco recuperado), el procesador lo descartaría como duplicado. Nunca se cobra dos veces.' },
+        { from: 'kafka', to: 'streaming', kind: 'req', tag: 'tardío', ms: 50, title: 'Entra como un evento tardío',
+          text: 'Sigue el mismo camino de corrección del escenario 3.' },
+        { from: 'streaming', to: 'rating', kind: 'req', tag: 'se tarifa', ms: 5, title: 'Se cobra',
+          text: 'El uso de <code>req_c07</code> llega al saldo como cualquier otro.' },
+        { from: 'conciliacion', to: 'finanzas', kind: 'async', tag: '1 evento reconstruido', ms: 10, title: 'Queda en el informe',
+          text: 'La cantidad de eventos reconstruidos por hora es una métrica que alguien mira.',
+          why: 'Uno por hora es normal: gateways que se reinician. Si suben a cientos, algo anda mal en los gateways y hay que investigar antes de que se pierda algo que la conciliación no vea.' }
       ]
     },
     {
       id: 'sin-saldo', title: 'El saldo se acaba a mitad del stream',
-      desc: 'org_7 tiene 0.03 USD disponibles y un stream largo en curso. Con reservas por tramos, el stream se corta cuando no hay saldo para el siguiente.',
+      desc: 'org_7 tiene 0.03 USD disponibles y una respuesta larga en curso. El gateway pide saldo por tramos de 0.04 USD.',
+      goal: 'Cómo se corta un stream cuando el saldo no alcanza, y por qué igual se cobra lo que ya se generó.',
       steps: [
-        { from: 'gateway', to: 'motor', kind: 'req', tag: 'generate', ms: 2, title: 'Un stream largo', text: 'Ya gastó su primer tramo de 0.04 USD.' },
-        { from: 'gateway', to: 'limitador', kind: 'req', tag: 'tramo 2: 0.04 USD', ms: 1, title: 'Pide otro tramo', text: 'El tramo anterior se gastó y el stream sigue.' },
-        { from: 'limitador', to: 'gateway', kind: 'fail', tag: 'sin saldo: 0.03 disponible', ms: 1, title: 'No alcanza', text: 'El saldo disponible es menor que un tramo.' },
-        { from: 'gateway', to: 'motor', kind: 'fail', tag: 'abort', ms: 2, title: 'Se corta la generación', text: 'El motor saca la request del batch y libera su KV cache (M17).' },
-        { from: 'gateway', to: 'cliente', kind: 'fail', tag: 'event: error · saldo agotado', ms: 30, title: 'El cliente se entera', text: 'Un evento de error dentro del stream: el status HTTP ya se mandó al principio (M17).' },
-        { from: 'gateway', to: 'kafka', kind: 'async', tag: 'final · cancelled · uso parcial', ms: 5, title: 'Se cobra lo usado', text: 'El evento lleva <code>status: "cancelled"</code> y el uso que el motor informó al abortar.' },
-        { at: 'saldo', kind: 'info', tag: 'saldo bajo el umbral', ms: 10, title: 'Recarga automática', text: 'Si org_7 la activó, el servicio de saldo pide a Stripe un cobro con una idempotency key derivada del cruce de umbral; cuando el webhook confirma el pago, se abre un lote de crédito nuevo.' }
+        { from: 'gateway', to: 'motor', kind: 'req', tag: 'generate', ms: 2, title: 'Un stream largo',
+          text: 'La respuesta ya gastó el primer tramo de 0.04 USD y sigue generando.' },
+        { from: 'gateway', to: 'limitador', kind: 'req', tag: 'tramo 2: 0.04 USD', ms: 1, title: 'Pide otro tramo',
+          text: 'Para seguir, el gateway pide apartar otros 0.04 USD.' },
+        { from: 'limitador', to: 'gateway', kind: 'fail', tag: 'sin saldo: 0.03 disponible', ms: 1, title: 'No alcanza',
+          text: 'Quedan 0.03 USD, menos que un tramo. El limitador dice que no.',
+          why: 'Sin tramos, el gateway tendría que elegir entre apartar el máximo (bloquea saldo de más) o no apartar nada (el cliente podría gastar lo que no tiene). El tramo acota cuánto se puede pasar: como mucho, uno.' },
+        { from: 'gateway', to: 'motor', kind: 'fail', tag: 'abort', ms: 2, title: 'Se corta la generación',
+          text: 'El gateway le pide al motor que pare. El motor saca la request de su lote y libera la memoria que ocupaba (el KV cache, <a href="m17-api-streaming.html">M17</a>).',
+          why: 'Si el motor siguiera, gastaría GPU en tokens que nadie va a pagar ni a leer.' },
+        { from: 'gateway', to: 'cliente', kind: 'fail', tag: 'event: error · saldo agotado', ms: 30, title: 'El cliente se entera',
+          text: 'Le llega un evento de error dentro del mismo stream.',
+          why: 'El código HTTP 200 ya se mandó al principio del stream y no se puede cambiar. La única forma de avisar es un evento de error en el stream (<a href="m17-api-streaming.html">M17</a>).' },
+        { from: 'gateway', to: 'kafka', kind: 'async', tag: 'final · cancelled · uso parcial', ms: 5, title: 'Se cobra lo que se usó',
+          text: 'El evento de uso sale igual, con <code>status: "cancelled"</code> y los tokens que el motor alcanzó a generar.',
+          why: 'Esos tokens se generaron en una GPU y el cliente los recibió. Cortar no es regalar.' },
+        { at: 'saldo', kind: 'info', tag: 'saldo bajo el umbral', ms: 10, title: 'Recarga automática, si la activó',
+          text: 'Si org_7 activó la recarga automática, el servicio de saldo le pide a Stripe que cobre su tarjeta. Cuando Stripe confirma el pago (por webhook), se suma un lote de créditos nuevo.',
+          why: 'El cobro lleva una idempotency key armada con "org_7 cruzó el umbral tal": si el servicio se reinicia y lo pide de nuevo, Stripe reconoce la clave y no cobra dos veces (M39).' }
       ]
     },
     {
       id: 'tope', title: 'Se alcanza el tope de gasto',
-      desc: 'org_7 fijó un tope de 2 000 USD para octubre. Se cruzan el 80 y el 100 %.',
+      desc: 'org_7 fijó un tope de 2 000 USD para octubre. Primero cruza el 80 % y, tres días después, el 100 %.',
+      goal: 'Un aviso que sale una sola vez aunque el servicio se reinicie, y cómo un número en Redis hace que todos los gateways rechacen.',
       steps: [
-        { from: 'saldo', to: 'topes', kind: 'async', tag: 'gasto: 1 601.22 USD', ms: 10, title: 'Cruza el 80 %', text: '' },
-        { from: 'topes', to: 'cliente', kind: 'async', tag: 'alerta 80 %', ms: 200, title: 'Alerta, una vez', text: 'Clave idempotente <code>org_7:2026-10:80</code>: si el servicio se reinicia, no la manda de nuevo.' },
-        { from: 'saldo', to: 'topes', kind: 'async', tag: 'gasto: 2 000.40 USD', ms: 10, title: 'Cruza el 100 %', text: 'Tres días después.' },
-        { from: 'topes', to: 'limitador', kind: 'req', tag: 'cap:org_7 = 1', ms: 2, title: 'Marca en el limitador', text: 'Desde aquí, cada gateway rechaza las requests nuevas de org_7.' },
-        { from: 'cliente', to: 'gateway', kind: 'req', tag: 'POST /v1/messages', ms: 30, title: 'Una request más', text: '' },
-        { from: 'gateway', to: 'limitador', kind: 'req', tag: 'reservar', ms: 1, title: '', text: '' },
-        { from: 'limitador', to: 'gateway', kind: 'fail', tag: 'tope', ms: 1, title: 'Rechazada', text: '' },
-        { from: 'gateway', to: 'cliente', kind: 'fail', tag: '400 · tope del cliente', ms: 30, title: 'El error del M18', text: 'Un tope fijado por el cliente responde 400, sin <code>retry-after</code>: reintentar no sirve hasta que cambie el mes o el tope. Los streams que ya estaban en vuelo terminan y se cobran: ese es el exceso de 21.9.' }
+        { from: 'saldo', to: 'topes', kind: 'async', tag: 'gasto: 1 601.22 USD', ms: 10, title: 'Cruza el 80 %',
+          text: 'El gasto de octubre pasa de 1 600 USD, el 80 % del tope.' },
+        { from: 'topes', to: 'cliente', kind: 'async', tag: 'alerta 80 %', ms: 200, title: 'Le avisa, una sola vez',
+          text: 'Manda un correo: "llevas el 80 % de tu tope". El envío se registra con la clave <code>org_7:2026-10:80</code>.',
+          why: 'Si el servicio se reiniciara y volviera a ver el cruce, la clave ya está registrada y no manda otro correo. Sin la clave, el cliente recibiría el mismo aviso en cada reinicio.' },
+        { from: 'saldo', to: 'topes', kind: 'async', tag: 'gasto: 2 000.40 USD', ms: 10, title: 'Tres días después: cruza el 100 %',
+          text: 'El gasto llega a 2 000.40 USD.' },
+        { from: 'topes', to: 'limitador', kind: 'req', tag: 'cap:org_7 = 1', ms: 2, title: 'Pone la marca en el limitador',
+          text: 'Escribe <code>cap:org_7 = 1</code> en Redis.',
+          why: 'Los gateways no le preguntan al servicio de topes: ya consultan el limitador en cada request. Basta una marca ahí para que todos los gateways rechacen a la vez.' },
+        { from: 'cliente', to: 'gateway', kind: 'req', tag: 'POST /v1/messages', ms: 30, title: 'org_7 manda otra request',
+          text: 'Una request normal, como cualquier otra.' },
+        { from: 'gateway', to: 'limitador', kind: 'req', tag: 'reservar', ms: 1, title: 'El gateway pide saldo',
+          text: 'Como siempre, antes de empezar pide apartar un tramo.' },
+        { from: 'limitador', to: 'gateway', kind: 'fail', tag: 'tope', ms: 1, title: 'Rechazada por el tope',
+          text: 'El limitador ve la marca y responde "tope", sin apartar nada.' },
+        { from: 'gateway', to: 'cliente', kind: 'fail', tag: '400 · tope del cliente', ms: 30, title: 'Error 400, sin reintento',
+          text: 'Responde 400 sin <code>retry-after</code>.',
+          why: 'Un 429 invita a reintentar en unos segundos; aquí reintentar no sirve hasta que cambie el mes o el cliente suba el tope (<a href="m18-cuotas-tokens.html">M18</a>). Los streams que ya estaban en curso terminan y se cobran: por eso el tope se puede pasar un poco (21.9).' }
       ]
     },
     {
       id: 'cierre', title: 'El cierre del mes y la factura',
-      desc: 'Una organización pospaga cierra su ciclo el 1 de noviembre. El job arma la factura desde los agregados y Stripe la cobra.',
+      desc: 'org_12 paga a fin de mes (pospago). El 1 de noviembre se arma su factura de octubre y Stripe la cobra.',
+      goal: 'La factura sale de los mismos agregados que ve el cliente en la consola, se redondea una vez por línea y, una vez emitida, no se toca.',
       steps: [
-        { at: 'facturas', kind: 'info', tag: '1 de noviembre, 02:00 UTC', ms: 1, title: 'Empieza el cierre', text: 'Se espera a que la última hora de octubre esté conciliada.' },
-        { from: 'agregados', to: 'facturas', kind: 'res', tag: 'uso de octubre por línea', ms: 3000, title: 'El uso del ciclo', text: 'Una consulta con <code>FINAL</code>: una fila por modelo, unidad y nivel de servicio.' },
-        { from: 'rating', to: 'facturas', kind: 'res', tag: 'totales redondeados una vez', ms: 10, title: 'Tarifar las líneas', text: 'Cantidad del mes × precio, redondeada una vez por línea.' },
-        { from: 'facturas', to: 'stripe', kind: 'req', tag: 'meter events del último día', ms: 200, title: 'A Stripe', text: 'Las horas ya enviadas no se reenvían; si alguna falló, se reintenta con el mismo <code>identifier</code>.' },
-        { from: 'stripe', to: 'webhooks', kind: 'async', tag: 'invoice.finalized', ms: 3600000, title: 'Factura finalizada', text: 'Con impuestos. A partir de aquí no cambia: cualquier corrección va en la siguiente.' },
-        { from: 'stripe', to: 'webhooks', kind: 'async', tag: 'invoice.paid', ms: 60000, title: 'Cobrada', text: '' },
-        { from: 'webhooks', to: 'ledger', kind: 'req', tag: 'deuda cerrada', ms: 10, title: 'Al ledger', text: 'El cobro cierra la cuenta por cobrar del cliente.' }
+        { at: 'facturas', kind: 'info', tag: '1 de noviembre, 02:00 UTC', ms: 1, title: 'Empieza el cierre',
+          text: 'El job de facturas arranca, pero espera a que la última hora de octubre esté conciliada.',
+          why: 'Una factura emitida es un documento legal: no se corrige, se ajusta en la siguiente. Conviene que salga con los números ya revisados.' },
+        { from: 'agregados', to: 'facturas', kind: 'res', tag: 'uso de octubre por línea', ms: 3000, title: 'Lee el uso del mes',
+          text: 'Una consulta a los agregados devuelve una fila por modelo, tipo de token y nivel de servicio. El <code>FINAL</code> de ClickHouse junta las versiones de cada fila en una sola.',
+          why: 'Son los mismos números que el cliente vio en su consola durante el mes. Si la factura saliera de otro lado, podrían no coincidir.' },
+        { from: 'rating', to: 'facturas', kind: 'res', tag: 'totales redondeados una vez', ms: 10, title: 'Le pone precio a cada línea',
+          text: 'Cantidad del mes × precio, y recién ahí se redondea a centavos, una vez por línea.',
+          why: 'Redondear cada request a centavos sumaría errores: millones de requests de 0.008 USD redondeadas a 0.01 USD inflarían la factura un 25 %. Ver 21.7.' },
+        { from: 'facturas', to: 'stripe', kind: 'req', tag: 'meter events del último día', ms: 200, title: 'Le manda el uso a Stripe',
+          text: 'Manda a Stripe el uso que todavía no le había mandado. Si un envío falló, se reintenta con el mismo <code>identifier</code>.',
+          why: 'Stripe descarta un <code>identifier</code> repetido. Así reintentar es seguro: no se factura dos veces la misma hora.' },
+        { from: 'stripe', to: 'webhooks', kind: 'async', tag: 'invoice.finalized', ms: 3600000, title: 'Stripe emite la factura',
+          text: 'Stripe suma los impuestos y finaliza la factura. Avisa con un webhook.',
+          why: 'Desde aquí la factura no cambia. Cualquier corrección (un evento tardío, un error) va como ajuste en la de noviembre.' },
+        { from: 'stripe', to: 'webhooks', kind: 'async', tag: 'invoice.paid', ms: 60000, title: 'Stripe cobra la tarjeta',
+          text: 'El cobro pasa y Stripe avisa con otro webhook, <code>invoice.paid</code>.' },
+        { from: 'webhooks', to: 'ledger', kind: 'req', tag: 'deuda cerrada', ms: 10, title: 'Se cierra la deuda en el libro',
+          text: 'El consumidor de webhooks escribe en el ledger que org_12 pagó: su cuenta por cobrar queda en cero.' }
       ]
     },
     {
       id: 'dunning', title: 'Un cobro que falla',
-      desc: 'La tarjeta de org_9 venció. La factura de octubre no se puede cobrar y empieza el dunning.',
+      desc: 'La tarjeta de org_9 venció y la factura de octubre no se puede cobrar. Empieza el <i>dunning</i>: reintentar el cobro y avisar mientras se limita el riesgo.',
+      goal: 'Un webhook de falla cambia el estado de la cuenta, y ese cambio llega a los gateways por el mismo camino que un tope.',
       steps: [
-        { from: 'stripe', to: 'webhooks', kind: 'fail', tag: 'invoice.payment_failed', ms: 1000, title: 'Falla el cobro', text: 'Stripe reintentará en los días siguientes.' },
-        { from: 'webhooks', to: 'ledger', kind: 'req', tag: 'cuenta en mora', ms: 10, title: 'Estado de la cuenta', text: 'La deuda queda abierta y la cuenta pasa a "en mora".' },
-        { from: 'saldo', to: 'topes', kind: 'async', tag: 'restringir', ms: 10, title: 'Restringir', text: 'La política pasa a org_9 a prepago, o le baja el tope, mientras la deuda siga abierta.' },
-        { from: 'topes', to: 'limitador', kind: 'req', tag: 'prepago obligatorio', ms: 2, title: 'Llega a los gateways', text: 'Como cualquier cambio de configuración.' },
-        { from: 'topes', to: 'cliente', kind: 'async', tag: 'actualiza tu tarjeta', ms: 200, title: 'Aviso', text: 'Con un enlace para cambiar el medio de pago.' },
-        { from: 'stripe', to: 'webhooks', kind: 'async', tag: 'invoice.paid', ms: 259200000, title: 'Tres días después', text: 'El cliente actualizó la tarjeta y el reintento pasó.' },
-        { from: 'webhooks', to: 'ledger', kind: 'req', tag: 'deuda cerrada', ms: 10, title: 'Vuelve a la normalidad', text: 'Se levanta la restricción por el mismo camino.' }
+        { from: 'stripe', to: 'webhooks', kind: 'fail', tag: 'invoice.payment_failed', ms: 1000, title: 'Falla el cobro',
+          text: 'Stripe intenta cobrar y la tarjeta rechaza. Avisa con <code>invoice.payment_failed</code> y programa reintentos para los días siguientes.' },
+        { from: 'webhooks', to: 'ledger', kind: 'req', tag: 'cuenta en mora', ms: 10, title: 'La cuenta queda en mora',
+          text: 'En el ledger, la deuda de octubre queda abierta y la cuenta pasa a "en mora".' },
+        { from: 'saldo', to: 'topes', kind: 'async', tag: 'restringir', ms: 10, title: 'Se limita el riesgo',
+          text: 'Mientras la deuda siga abierta, org_9 pasa a prepago o se le baja el tope.',
+          why: 'Cortar del todo a un cliente por una tarjeta vencida es agresivo; dejarlo gastar sin límite es arriesgado. Pasarlo a prepago es el punto medio: sigue usando lo que paga antes.' },
+        { from: 'topes', to: 'limitador', kind: 'req', tag: 'prepago obligatorio', ms: 2, title: 'Los gateways se enteran',
+          text: 'El cambio llega al limitador como cualquier configuración, y los gateways lo aplican en la próxima request.' },
+        { from: 'topes', to: 'cliente', kind: 'async', tag: 'actualiza tu tarjeta', ms: 200, title: 'Le avisa al cliente',
+          text: 'Un correo con un enlace para cambiar el medio de pago.' },
+        { from: 'stripe', to: 'webhooks', kind: 'async', tag: 'invoice.paid', ms: 259200000, title: 'Tres días después, paga',
+          text: 'El cliente cargó una tarjeta nueva y el reintento de Stripe pasó.' },
+        { from: 'webhooks', to: 'ledger', kind: 'req', tag: 'deuda cerrada', ms: 10, title: 'Vuelve a la normalidad',
+          text: 'La deuda se cierra en el ledger y la restricción se levanta por el mismo camino por el que se puso.' }
       ]
     },
     {
       id: 'conciliar', title: 'La conciliación corrige al limitador',
-      desc: 'Un failover de Redis perdió descuentos de org_7. La conciliación de la hora 14:00 lo encuentra y corrige el contador.',
+      desc: 'El Redis del limitador se cayó y su réplica tomó el lugar (un <i>failover</i>). En el cambio se perdieron algunos descuentos de org_7: el limitador cree que gastó menos.',
+      goal: 'Tres cuentas independientes. Si el log crudo y los agregados coinciden, la cuenta que está mal es la del limitador, y se corrige con una suma atómica.',
       steps: [
-        { from: 's3', to: 'conciliacion', kind: 'req', tag: 'eventos de las 14:00', ms: 60000, title: 'Fuente 1', text: 'Eventos <code>final</code> deduplicados del log crudo.' },
-        { from: 'agregados', to: 'conciliacion', kind: 'req', tag: 'agregados de las 14:00', ms: 2000, title: 'Fuente 2', text: 'Coinciden con el log: el pipeline está bien.' },
-        { from: 'conciliacion', to: 'limitador', kind: 'req', tag: 'HGET spend:org_7:…:h 14', ms: 1, title: 'Fuente 3', text: 'El limitador cree que org_7 gastó 18 200 nanodólares menos de lo exacto: los descuentos que se perdieron en el failover.' },
-        { from: 'conciliacion', to: 'limitador', kind: 'req', tag: 'INCRBY +18 200', ms: 1, title: 'Corregir, nunca al revés', text: 'Un incremento atómico que no pisa lo que los gateways suman en paralelo. Si el limitador corrigiera al metering, un failover podría borrar uso de una factura.' },
-        { from: 'conciliacion', to: 'finanzas', kind: 'async', tag: 'informe de la hora', ms: 10, title: 'Registro', text: 'Cada corrección queda en <code>reconciliation_diffs</code> con su hora, su organización y su monto.' }
+        { from: 's3', to: 'conciliacion', kind: 'req', tag: 'eventos de las 14:00', ms: 60000, title: 'Cuenta 1: el log crudo',
+          text: 'La conciliación lee los eventos de la hora 14:00 desde S3 y descarta duplicados.' },
+        { from: 'agregados', to: 'conciliacion', kind: 'req', tag: 'agregados de las 14:00', ms: 2000, title: 'Cuenta 2: los agregados',
+          text: 'Lee la fila de org_7 de las 14:00. Coincide con el log crudo: el procesador contó bien.' },
+        { from: 'conciliacion', to: 'limitador', kind: 'req', tag: 'HGET spend:org_7:…:h 14', ms: 1, title: 'Cuenta 3: el limitador',
+          text: 'Le pregunta al limitador cuánto cree que gastó org_7 a las 14:00. Le faltan 18 200 nanodólares: los descuentos que se perdieron en el failover.',
+          why: 'La réplica de Redis copia en segundo plano: cuando el primario cae, lo último que no alcanzó a copiar se pierde (<a href="m06-teoria-distribuida.html">M06</a>).' },
+        { from: 'conciliacion', to: 'limitador', kind: 'req', tag: 'INCRBY +18 200', ms: 1, title: 'Corrige sumando la diferencia',
+          text: 'Suma los 18 200 que faltan con <code>INCRBY</code>.',
+          why: 'Suma, no escribe el total: mientras tanto los gateways siguen sumando, y escribir un número fijo pisaría lo que sumaron. Y siempre el exacto corrige al aproximado, nunca al revés: si el limitador corrigiera al metering, un failover podría borrar uso de una factura.' },
+        { from: 'conciliacion', to: 'finanzas', kind: 'async', tag: 'informe de la hora', ms: 10, title: 'Queda registrada',
+          text: 'Cada corrección se guarda en <code>reconciliation_diffs</code> con su hora, su organización y su monto, para que finanzas la revise.' }
       ]
     }
   ]

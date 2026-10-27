@@ -62,6 +62,16 @@
 
       <h2 id="por-que"><span class="sec-num">26.1</span>Por qué un ingeniero de sistemas mira el entrenamiento</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Toda la Parte II trató de servir un modelo ya hecho. Este módulo cuenta de dónde sale: un <b>entrenamiento</b> ajusta miles de millones de números leyendo billones de palabras. Es otra carga: servir son millones de requests cortas e independientes; entrenar es un solo trabajo gigante, de semanas, sobre miles de GPUs que avanzan al mismo paso. Si una se cae, se frenan todas.</p>
+        <p class="jr-like"><b>Es como</b> servir es atender un restaurante con muchas mesas; entrenar es una orquesta: si un músico se detiene, se detiene la obra.</p>
+        <dl class="jr-words">
+          <dt>Entrenamiento</dt><dd>ajustar los pesos del modelo con datos.</dd>
+          <dt>Paso de entrenamiento</dt><dd>una vuelta: leer un lote, calcular el error y ajustar los pesos.</dd>
+        </dl>
+      </aside>
+
       <p>Hasta aquí, toda la Parte II trató de <b>servir</b> un modelo ya hecho: cargarlo en GPUs, cortarlo en prefill y decode, cobrar los tokens. Pero ese modelo no apareció de la nada. Salió de un <b>entrenamiento</b>: un programa que ajusta miles de millones de números leyendo billones de palabras. No hace falta que sepas optimización ni cálculo para diseñar los sistemas que lo rodean, que es de lo que trata este módulo.</p>
 
       <p>Las dos cargas se parecen poco. Servir es un enjambre de requests cortas e independientes que llegan todo el día; si una GPU se cae, se pierde una respuesta. Entrenar es <b>un solo job gigante</b> que corre semanas sobre miles de GPUs que tienen que avanzar al mismo paso, sincronizadas en cada paso; si una GPU se cae, se cae el job entero.</p>
@@ -165,6 +175,17 @@
 
       <h2 id="memoria"><span class="sec-num">26.2</span>La memoria de un entrenamiento</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Servir un modelo de 70B ocupa 2 bytes por parámetro. Entrenarlo ocupa 16: además de los pesos hay que guardar los <b>gradientes</b> (cuánto mover cada peso) y el estado del optimizador Adam (dos promedios por parámetro, en alta precisión). Para 70B son 1.13 TB, que no entran en ninguna GPU. Encima se suman las activaciones, que crecen con el lote y el largo de las secuencias.</p>
+        <p class="jr-like"><b>Es como</b> cocinar un plato ocupa mucho más espacio que servirlo: necesitas ingredientes, utensilios y anotaciones, no solo el plato.</p>
+        <dl class="jr-words">
+          <dt>Gradiente</dt><dd>dirección y tamaño en que conviene mover cada peso.</dd>
+          <dt>Adam</dt><dd>el optimizador más usado; guarda dos valores extra por parámetro.</dd>
+          <dt>Activaciones</dt><dd>resultados intermedios que se guardan para calcular los gradientes.</dd>
+        </dl>
+      </aside>
+
       <p>Servir un modelo de 70B en BF16 ocupa 2 bytes por parámetro: unos 141 GB, casi dos H100 (M13). Entrenarlo ocupa <b>ocho veces más</b>. La diferencia no está en los pesos, sino en todo lo que el optimizador necesita para ajustarlos. Con <b>Adam en precisión mixta</b>, la receta más común, cada parámetro arrastra 16 bytes: <span class="badge badge--doc">Documentado</span></p>
 
       <ul>
@@ -211,6 +232,16 @@
       <div data-calc="trainmem"></div>
 
       <h2 id="datos-zero"><span class="sec-num">26.3</span>Paralelismo de datos, ZeRO y FSDP</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El <b>paralelismo de datos</b> pone una copia del modelo en cada GPU y le da a cada una un trozo distinto del lote; al final promedian sus gradientes. Acelera, pero no ahorra memoria: cada GPU sigue cargando todo. <b>ZeRO</b> y <b>FSDP</b> reparten los pesos, gradientes y estado del optimizador entre las GPUs, y cada una pide prestado lo que le falta justo cuando lo necesita.</p>
+        <p class="jr-like"><b>Es como</b> un grupo de estudio: en lugar de que cada uno compre todos los libros, cada uno compra uno y se los prestan cuando hace falta.</p>
+        <dl class="jr-words">
+          <dt>Paralelismo de datos</dt><dd>cada GPU procesa ejemplos distintos con el mismo modelo.</dd>
+          <dt>ZeRO / FSDP</dt><dd>repartir el estado del entrenamiento entre GPUs para ahorrar memoria.</dd>
+        </dl>
+      </aside>
 
       <p>La forma más simple de usar muchas GPUs es el <dfn data-term="data-parallelism">paralelismo de datos</dfn>: poner una copia entera del modelo en cada GPU y darle a cada una un trozo distinto del batch. Cada GPU calcula sus gradientes con sus ejemplos, y después todas los <b>promedian</b> para que los pesos sigan siendo idénticos en todas. Ese promedio es una operación colectiva, el all-reduce de la sección siguiente.</p>
 
@@ -321,6 +352,17 @@
       <p>El precio de repartir es <b>comunicación</b>: cuanto más reparte ZeRO, más piezas hay que mover entre GPUs en cada paso. Por eso la etapa 3 solo conviene cuando el modelo de verdad no entra de otra forma, y por eso la red importa tanto.</p>
 
       <h2 id="tres-d"><span class="sec-num">26.4</span>Tensor, pipeline y contexto</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Cuando ni una capa entra cómoda, hay que partir el modelo mismo: <b>tensor</b> (cada capa partida entre GPUs del mismo servidor), <b>pipeline</b> (grupos de capas en servidores distintos, como una línea de montaje) y <b>contexto</b> (secuencias muy largas partidas en trozos). Un entrenamiento grande combina todos a la vez.</p>
+        <p class="jr-like"><b>Es como</b> construir una casa con muchos obreros: algunos levantan la misma pared juntos (tensor), otros hacen pisos distintos en orden (pipeline).</p>
+        <dl class="jr-words">
+          <dt>Paralelismo de tensor</dt><dd>una capa repartida entre GPUs.</dd>
+          <dt>Paralelismo de pipeline</dt><dd>capas consecutivas en GPUs distintas.</dd>
+          <dt>Paralelismo 3D</dt><dd>combinar datos, tensor y pipeline.</dd>
+        </dl>
+      </aside>
 
       <p>El paralelismo de datos reparte <b>ejemplos</b>. Cuando el modelo es tan grande que ni una sola capa entra cómoda, hay que repartir el <b>modelo</b> mismo. Ya aparecieron en el M15, al servir; en el entrenamiento son los mismos:</p>
 
@@ -570,6 +612,17 @@
 
       <h2 id="colectivas"><span class="sec-num">26.5</span>Colectivas y red: por qué la red es el cuello</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>En cada paso, todas las GPUs tienen que juntar sus gradientes. La operación es el <b>all-reduce</b>, hecho en anillo: cada GPU pasa un trozo a la siguiente, así nadie se vuelve un cuello de botella. Aun así se mueven enormes cantidades de datos en cada paso, por eso la red entre servidores suele ser lo que limita.</p>
+        <p class="jr-like"><b>Es como</b> pasar un balde de mano en mano en una fila: nadie carga todo, pero la fila es tan rápida como el más lento.</p>
+        <dl class="jr-words">
+          <dt>Colectiva</dt><dd>operación en la que participan todas las GPUs.</dd>
+          <dt>All-reduce</dt><dd>cada GPU termina con la suma de los datos de todas.</dd>
+          <dt>All-gather</dt><dd>cada GPU junta las piezas de todas.</dd>
+        </dl>
+      </aside>
+
       <p>En cada paso del entrenamiento, todas las GPUs tienen que ponerse de acuerdo. La operación estrella es el <dfn data-term="all-reduce">all-reduce</dfn>: cada GPU tiene su versión de los gradientes y, al final, todas tienen que quedar con la <b>suma</b> de todas. No es una GPU que recoge y reparte (sería un cuello); se hace en anillo.</p>
 
       <figure class="figure">
@@ -667,6 +720,16 @@
 
       <h2 id="checkpoints"><span class="sec-num">26.6</span>Fallas y checkpoints</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Con miles de GPUs, algo se rompe seguido: en el entrenamiento de Llama 3 hubo una interrupción cada tres horas. Como todas avanzan juntas, una falla frena todo. La defensa es el <b>checkpoint</b>: guardar cada tanto todo el estado para reanudar desde ahí. Guardar seguido cuesta tiempo; guardar poco hace perder más trabajo. Hay una fórmula para el punto justo.</p>
+        <p class="jr-like"><b>Es como</b> guardar un documento largo cada tanto: si guardas cada segundo no avanzas, y si nunca guardas, un corte de luz te borra horas.</p>
+        <dl class="jr-words">
+          <dt>Checkpoint</dt><dd>copia del estado completo del entrenamiento.</dd>
+          <dt>Intervalo óptimo</dt><dd>cada cuánto guardar para perder lo menos posible (Young/Daly).</dd>
+        </dl>
+      </aside>
+
       <p>A esta escala, algo se rompe siempre. En el entrenamiento de Llama 3 sobre 16&#8239;384 H100 hubo <b>419 interrupciones inesperadas en 54 días</b>, una cada tres horas, y cerca del 78&#8239;% fueron de hardware, con las GPUs y su memoria HBM a la cabeza (M13). <span class="badge badge--doc">Documentado</span> Como todas las GPUs avanzan al mismo paso, una sola que caiga <b>detiene el job entero</b>.</p>
 
       <p>La defensa es el <dfn data-term="checkpoint-entrenamiento">checkpoint</dfn>: cada tanto, guardar todo el estado del entrenamiento —los 16 bytes por parámetro: pesos, gradientes y optimizador— en almacenamiento, para poder reanudar desde ahí. Cuando una GPU muere, se reemplaza el servidor y el job vuelve al último checkpoint; se pierde solo el trabajo hecho desde entonces.</p>
@@ -711,6 +774,17 @@
       <p>Dos trucos bajan el costo. El <b>checkpoint asíncrono</b> copia el estado a memoria rápido y lo escribe al disco en segundo plano, para que las GPUs casi no esperen. Y hay que <b>verificar</b> lo que se guarda: un checkpoint corrupto que nadie nota es la peor falla, porque se reanuda desde basura y se pierden días. Es la misma <dfn data-term="corrupcion-silenciosa">corrupción silenciosa</dfn> del <a href="m22-operar-modelos.html#incidentes-sdc">M22</a>: a esta escala, el hardware se equivoca sin avisar.</p>
 
       <h2 id="datos"><span class="sec-num">26.7</span>El pipeline de datos</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un modelo aprende de lo que lee, y lee muchísimo: del orden de billones de tokens. Preparar esos datos es un sistema en sí: recolectar, quitar duplicados, filtrar por calidad y seguridad, tokenizar y mezclar las fuentes. La regla de oro: nunca dejar que los datos de evaluación se mezclen con los de entrenamiento.</p>
+        <p class="jr-like"><b>Es como</b> estudiar para un examen: lo que importa es qué material lees y que no hayas visto antes las preguntas exactas.</p>
+        <dl class="jr-words">
+          <dt>Deduplicar</dt><dd>quitar texto repetido.</dd>
+          <dt>Contaminación</dt><dd>que los ejemplos del examen estén en los datos de entrenamiento.</dd>
+          <dt>Chinchilla</dt><dd>regla de unos 20 tokens de datos por parámetro.</dd>
+        </dl>
+      </aside>
 
       <p>Un modelo aprende de los datos que ve, y hay muchos. La regla de <b>Chinchilla</b> dice que, para un presupuesto de cómputo dado, conviene entrenar con unos <b>20 tokens por parámetro</b>: un modelo de 70B pide del orden de 1.4 billones de tokens. <span class="badge badge--doc">Documentado</span> En la práctica los modelos actuales se entrenan con muchos más, pero el orden de magnitud manda: son billones de palabras que hay que preparar.</p>
 
@@ -760,6 +834,17 @@
       </figure>
 
       <h2 id="lora"><span class="sec-num">26.8</span>Fine-tuning: LoRA y QLoRA</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Casi nadie entrena desde cero: se toma un modelo abierto y se lo <b>afina</b> (fine-tuning) para una tarea. Afinar todo cuesta tanta memoria como entrenar. <b>LoRA</b> congela el modelo y agrega en cada capa dos matrices chicas que sí se entrenan: menos del 1 % de los parámetros. <b>QLoRA</b> además guarda el modelo congelado cuantizado a 4 bits, y entra en una sola GPU.</p>
+        <p class="jr-like"><b>Es como</b> en lugar de reescribir un libro entero, le pegas notas adhesivas con las correcciones.</p>
+        <dl class="jr-words">
+          <dt>Fine-tuning</dt><dd>seguir entrenando un modelo ya entrenado para una tarea.</dd>
+          <dt>LoRA</dt><dd>afinar entrenando solo matrices chicas agregadas.</dd>
+          <dt>Adaptador</dt><dd>el archivo con esas matrices, que se carga sobre el modelo base.</dd>
+        </dl>
+      </aside>
 
       <p>Entrenar desde cero cuesta millones. Casi nadie lo hace: se parte de un modelo abierto y se lo <b>afina</b> (fine-tuning) para una tarea o un dominio. El problema es que un fine-tuning completo cuesta lo mismo en memoria que entrenar: los mismos 16 bytes por parámetro. Para un 70B, otra vez 1.13 TB. Hay una forma mucho más barata.</p>
 
@@ -846,6 +931,17 @@
 
       <h2 id="alinear"><span class="sec-num">26.9</span>Alinear: RLHF y DPO</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un modelo recién entrenado sabe completar texto, no conversar. Se lo convierte en asistente en dos pasos: <b>SFT</b> (ejemplos de buenas conversaciones) y <b>alineación</b> con preferencias humanas (de dos respuestas, cuál es mejor). Hay dos formas: <b>RLHF</b> entrena un modelo que puntúa y optimiza contra él; <b>DPO</b> aprende directo de los pares, más simple.</p>
+        <p class="jr-like"><b>Es como</b> un aprendiz que primero copia ejemplos del maestro y después mejora con correcciones del tipo "esta versión es mejor que aquella".</p>
+        <dl class="jr-words">
+          <dt>SFT</dt><dd>ajuste supervisado con ejemplos de conversaciones.</dd>
+          <dt>RLHF</dt><dd>aprendizaje por refuerzo con un modelo de recompensa entrenado con preferencias humanas.</dd>
+          <dt>DPO</dt><dd>optimización directa sobre pares de preferencias.</dd>
+        </dl>
+      </aside>
+
       <p>Un modelo recién salido del preentrenamiento sabe completar texto, pero no sabe <b>conversar</b> ni seguir instrucciones: si le escribes una pregunta, puede contestar con otra pregunta, porque en internet las preguntas vienen en listas. Convertirlo en un asistente lleva dos pasos más después del preentrenamiento:</p>
 
       <ul>
@@ -893,6 +989,11 @@
       </aside>
 
       <h2 id="a-produccion"><span class="sec-num">26.10</span>Del checkpoint a producción</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El entrenamiento termina en un archivo de pesos. De ahí al usuario está todo lo de la Parte II: evaluar, cuantizar, registrar la versión, desplegarla con canary y empezar a cobrar sus tokens.</p>
+      </aside>
 
       <p>El entrenamiento termina con un checkpoint: un archivo con los pesos. Falta el camino hasta que atiende requests, que cierra el círculo con todo lo de la Parte II:</p>
 

@@ -22,8 +22,9 @@ Quien lo usa habla español y tiene nivel backend intermedio (REST, SQL, Docker)
 
 1. Lee `PROGRESO.md`: estado, pendientes y el pedido vigente.
 2. Abre el módulo publicado más parecido al que vas a hacer y copia su estructura: `modules/m15-motores-inferencia.html` para la Parte II, `modules/m29-whatsapp.html` para un caso de estudio con mapa. Lee también el módulo anterior y el siguiente en la ruta, para encadenar los ejemplos.
-3. Actualiza `PROGRESO.md` al terminar cada módulo. Si el uso del plan se acerca al 95 %, deja `PROGRESO.md` al día y detente.
-4. No hagas commits ni push salvo que el usuario lo pida.
+3. Si vas a tocar un módulo de la Parte II, revisa `REFACTOR_JR.md`: las secciones que figuran como hechas a nivel Jr no se vuelven a tocar, y cada sección nueva que se simplifique se anota ahí.
+4. Actualiza `PROGRESO.md` al terminar cada módulo. Si el uso del plan se acerca al 95 %, deja `PROGRESO.md` al día y detente.
+5. No hagas commits ni push salvo que el usuario lo pida.
 
 ## Cómo trabaja Claude en este proyecto
 
@@ -190,6 +191,19 @@ Todos están en `assets/css/components.css`; los interactivos, en `assets/js/`. 
 ```
 
 La tarjeta de definición completa (`callout--def`) suma `p.def-term` (con `span.def-en` para el nombre en inglés), `p.def-one` (la definición en una frase) y un `dl.def-rows` con Intuición, Ejemplo y "Por qué importa en producción". Hay un ejemplo en `m00-metodo.html` (percentiles).
+
+### En simple (Parte II, nivel Jr)
+
+```html
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>De qué trata la sección, en dos a cuatro frases sin jerga.</p>
+  <p class="jr-like"><b>Es como</b> una analogía cotidiana.</p>
+  <dl class="jr-words"><dt>Término</dt><dd>definición en una línea.</dd></dl>
+</aside>
+```
+
+Va justo después del `h2` y anticipa la sección sin reemplazarla. Lo llevan todas las secciones de la Parte II salvo M12, M14, M17 y 20.4 a 20.8 (registro en `REFACTOR_JR.md`).
 
 ### Analogía y cambio de nivel
 
@@ -420,8 +434,9 @@ Categorías (`SD.catNames` en `glossary.js`): `metodo`, `redes`, `datos`, `distr
   - cada nodo tiene cinco pestañas: `info.resp`, `info.api`, `info.data`, `info.fail` e `info.nums`, y puede llevar `brief`, una frase de qué hace, que aparece en su detalle y como tooltip en el lienzo (sin `brief`, el tooltip muestra `sub`);
   - `scenarios` con `steps` de la forma `{from, to | at, kind, tag, ms, title, text, code, lang, down, up}`;
   - enlaces directos: `#node=<id>&scenario=<id>&step=<n>`.
-  - `stepPanel: true` en la definición hace que el panel lateral explique el escenario y el paso actual (ruta entre nodos, texto, payload y la lista de pasos) en lugar de la ayuda del mapa; abajo queda solo el título del paso. Lo usan M09 (`m09-objetos`), M10 (`m10-identidad`), M27 (`m27-pagos`), M39 (`m39-flujo`) y el mapa de ChatGPT (`chatgpt`). Con `stepPanel`, el detalle de un nodo trae "← Volver al escenario", y en pantalla completa con el panel al costado se oculta también el título del paso de abajo, para que el lienzo gane alto.
-  - `pieces: true` suma al panel la lista plegable "Qué hace cada pieza": los nodos agrupados según el grupo que contiene su centro, cada uno con su `brief`. Marca las piezas del paso actual, resalta el nodo en el lienzo al pasar el mouse o con el foco, abre su detalle con un clic y recuerda si el lector la abrió o la cerró. Lo usan M27 y M39.
+  - `stepPanel: true` en la definición hace que el panel lateral explique el escenario y el paso actual (ruta entre nodos, texto, payload y la lista de pasos) en lugar de la ayuda del mapa; abajo queda solo el título del paso. Lo usan M09 (`m09-objetos`), M10 (`m10-identidad`), M19 (`m19-flota`), M21 (`m21-metering`), M24 (`m24-voz`), M27 (`m27-pagos`), M39 (`m39-flujo`) y el mapa de ChatGPT (`chatgpt`). Con `stepPanel`, el detalle de un nodo trae "← Volver al escenario", y en pantalla completa con el panel al costado se oculta también el título del paso de abajo, para que el lienzo gane alto.
+  - Con `stepPanel`, el panel muestra arriba el título del mapa y "Escenario N de M". Campos opcionales para nivel Jr: `why` en cada nodo (HTML, "Por qué existe": qué pasaría sin la pieza; va arriba de las pestañas), `goal` en cada escenario ("Qué vas a ver") y `why` en cada paso ("Por qué así"). Lo usa M21 (`m21-metering`).
+  - `pieces: true` suma al panel la lista plegable "Qué hace cada pieza": los nodos agrupados según el grupo que contiene su centro, cada uno con su `brief`. Marca las piezas del paso actual, resalta el nodo en el lienzo al pasar el mouse o con el foco, abre su detalle con un clic y recuerda si el lector la abrió o la cerró. Lo usan M19, M21, M24, M27, M39 y el mapa de ChatGPT.
 - Deja pasillos de unos 150 px entre columnas de nodos para que las etiquetas de las aristas no se pisen.
 - El encuadre (`fit` y `home`) reserva 104 px abajo cuando el lienzo mide más de 640 px de ancho, para que el minimapa y la ayuda no tapen nodos. En pantalla completa con menos de 1000 px de ancho, el panel va debajo: el lienzo mide `max(320px, 64vh)` y el resto se desplaza.
 - **Mapa gigante de ChatGPT:** `maps/chatgpt.html` es la primera página de mapa suelta (no embebida en un módulo), en la carpeta `maps/`. Se arma como un módulo pero sin quiz ni checkpoint (`data-module="map-chatgpt"`, `data-root="../"`, scripts `map/map-engine.js` y `map/flow-sim.js`); sus datos están en `assets/js/data/maps/chatgpt.data.js` (24 nodos, 27 aristas y 9 escenarios: cliente y borde a la izquierda, chatapi al centro, inferencia a la derecha, datos y colas abajo, con Kafka sola en su fila, e imágenes en el extremo derecho). Es `kind: 'map'` en `course.data.js`, así que no cuenta para el progreso. Regla de sus escenarios: cada salto usa una arista real y la vuelta reusa la misma arista (`both: true`); no hay saltos sin arista.

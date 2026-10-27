@@ -141,7 +141,7 @@
   SD.fmt = { num: num, sig: sig, words: words, bytes: bytes, bitrate: bitrate, pct: pct, nines: nines, duration: duration };
 
   /* ---------------------------------------------------------------------------
-     Resaltado mínimo para <pre data-lang="json|http|sse|sql|python|shell|js">. Las guías de proyectos resaltan "javascript" con su propio resaltador (project-guide.js).
+     Resaltado mínimo para <pre data-lang="json|http|sse|sql|python|shell|js|java">. Las guías de proyectos resaltan "javascript" con su propio resaltador (project-guide.js).
      --------------------------------------------------------------------------- */
   function span(cls, text) { return '<span class="' + cls + '">' + SD.escape(text) + '</span>'; }
 
@@ -266,7 +266,28 @@
     return out + SD.escape(src.slice(last));
   }
 
-  var HL = { json: hlJSON, http: hlHTTP, sse: hlSSE, sql: hlSQL, python: hlPython, shell: hlShell, js: hlJS };
+  /* Java de los módulos (las guías de proyectos usan su propio resaltador): mismo esquema que hlJS, con anotaciones */
+  var JAVA_KW = /^(public|private|protected|static|final|class|record|interface|enum|extends|implements|new|return|if|else|for|while|try|catch|finally|throw|throws|void|var|null|true|false|this|import|package|byte|int|long|boolean|char|double)$/;
+  function hlJava(src) {
+    var re = /("(?:\\.|[^"\\\n])*")|(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(\b\d+(?:\.\d+)?\b)|(@[A-Za-z_]\w*)|([A-Za-z_$][\w$]*)(\s*\()?/g;
+    var out = '', last = 0, m;
+    while ((m = re.exec(src))) {
+      out += SD.escape(src.slice(last, m.index));
+      if (m[5]) {
+        if (JAVA_KW.test(m[5])) out += span('c-m', m[5]);
+        else if (m[6]) out += span('c-k', m[5]);
+        else out += SD.escape(m[5]);
+        if (m[6]) out += SD.escape(m[6]);
+      } else if (m[1]) out += span('c-s', m[1]);
+      else if (m[2]) out += span('c-c', m[2]);
+      else if (m[3]) out += span('c-n', m[3]);
+      else out += span('c-h', m[4]);
+      last = re.lastIndex;
+    }
+    return out + SD.escape(src.slice(last));
+  }
+
+  var HL = { json: hlJSON, http: hlHTTP, sse: hlSSE, sql: hlSQL, python: hlPython, shell: hlShell, js: hlJS, java: hlJava };
 
   SD.highlight = function (root) {
     (root || document).querySelectorAll('pre[data-lang]').forEach(function (pre) {

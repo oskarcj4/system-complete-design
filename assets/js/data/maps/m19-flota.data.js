@@ -1,6 +1,7 @@
 /* Mapa del M19: una flota de inferencia con su plano de control y su plano de datos. Todo es un diseño de referencia
    para un 70B servido con vLLM en réplicas de 4 H100; lo documentado por terceros va marcado en el texto del módulo. */
 SD.defineMap('m19-flota', {
+  stepPanel: true, pieces: true,
   title: 'Router y flota GPU',
   intro: 'Una región que sirve un modelo de 70B en 60 réplicas de 4 H100, más un pool de un modelo de 8B como respaldo. Arriba, el plano de control decide qué versiones corren, cuántas réplicas hay y en qué nodos. Abajo, el plano de datos atiende cada request: el router elige la réplica mirando su carga y lo que ya tiene en su KV cache.',
   start: 'router',
@@ -9,7 +10,9 @@ SD.defineMap('m19-flota', {
     { id: 'g-data', label: 'Plano de datos: cada request, en milisegundos', x: 20, y: 240, w: 1590, h: 620 }
   ],
   nodes: [
-    { id: 'apps', layer: 'client', label: 'Apps y API', sub: 'chat, clientes de la API', x: 130, y: 470,
+    { id: 'apps', brief: "Los clientes: la app de chat y quienes usan la API.",
+      why: "Es el origen de todo el tráfico. No sabe nada de réplicas ni regiones: ve un endpoint, un stream y, a veces, un 429 o un 503.",
+      layer: 'client', label: 'Apps y API', sub: 'chat, clientes de la API', x: 130, y: 470,
       info: {
         resp: '<p>Quien manda las requests: la app de chat y los clientes de la API. No sabe nada de réplicas ni de regiones; ve un endpoint, un stream de tokens y, a veces, un 429 o un 503 con <code>Retry-After</code>.</p>',
         api: '<pre data-lang="http"><code>POST /v1/chat/completions\nAuthorization: Bearer sk-…\n\n{"model": "llama-3.1-70b", "stream": true,\n "messages": [ … 12 turnos … ]}</code></pre>',
@@ -17,7 +20,9 @@ SD.defineMap('m19-flota', {
         fail: '<ul><li><b>Corte a mitad del stream:</b> la API pública no garantiza que se pueda retomar; el cliente reintenta la request completa. Dentro de la flota, el router sí puede continuar en otra réplica (escenario "Muere una réplica a mitad del decode").</li><li><b>503 o 529:</b> la flota está llena; reintentar con backoff y jitter (M08).</li></ul>',
         nums: '<ul><li>Pico de la región: 2 400 streams abiertos a la vez y unas 80 requests nuevas por segundo.</li><li>Prompt promedio de un turno de chat: 6 000 tokens, de los cuales 5 700 ya se vieron en el turno anterior.</li></ul>'
       } },
-    { id: 'gateway', layer: 'edge', label: 'Gateway', sub: 'auth, cuotas, admission', x: 470, y: 470,
+    { id: 'gateway', brief: "La puerta de entrada: autentica, aplica cuotas y decide si admite la request.",
+      why: "Sin él, cada réplica tendría que validar claves y cuotas, y un pico llegaría directo a las GPUs. Rechazar aquí es barato; rechazar en una GPU, no (M18).",
+      layer: 'edge', label: 'Gateway', sub: 'auth, cuotas, admission', x: 470, y: 470,
       info: {
         resp: '<p>La puerta de la región (M17 y M18): termina TLS, autentica, aplica las cuotas por tokens y el admission control, y mantiene el stream SSE con el cliente. Le pasa al router la request ya validada, con el plan del cliente como prioridad.</p>',
         api: '<pre data-lang="http"><code>POST /internal/v1/generate        (hacia el router)\nX-Org: org_51\nX-Tier: pago\nX-Conversation: conv_8f2\nX-Request-Id: req_77a1</code></pre>',
@@ -25,7 +30,9 @@ SD.defineMap('m19-flota', {
         fail: '<ul><li><b>La flota no da abasto:</b> rechaza primero el tráfico de menor prioridad (gratuito, batch) con 503 y <code>Retry-After</code>, o lo manda al modelo de respaldo si el producto lo permite.</li><li><b>Se cae un gateway:</b> los streams abiertos en él se cortan; los clientes reconectan a otro.</li></ul>',
         nums: '<ul><li>Decenas de gateways por región, sin GPU: cada uno sostiene miles de streams (M17).</li></ul>'
       } },
-    { id: 'router', layer: 'service', label: 'Router', sub: 'elige pool y réplica', x: 810, y: 470,
+    { id: 'router', brief: "Elige a qué réplica va cada request, en milisegundos.",
+      why: "Las réplicas no son iguales: unas tienen el historial de la conversación en caché y otras están más cargadas. Elegir bien ahorra cientos de milisegundos y GPUs.",
+      layer: 'service', label: 'Router', sub: 'elige pool y réplica', x: 810, y: 470,
       info: {
         resp: '<p>Decide en cada request a qué réplica va. Primero el pool, por modelo y versión, según la tabla de rutas que publica el plano de control. Después la réplica, con dos señales: cuánto del prompt tiene cada una en su KV cache y cuánta carga tiene. Además sostiene el stream con la réplica y puede continuarlo en otra si la primera muere.</p>',
         api: '<pre><code>pick(request):\n  pool  = routes[model][version_por_hash(usuario)]\n  hits  = prefix_index.match(pool, bloques(prompt))   # tokens ya cacheados por réplica\n  carga = {r: r.en_curso + r.en_cola for r in pool}\n  techo = 1.25 * promedio(carga) + 1\n  candidatas = [r for r in pool if r.lista and carga[r] &lt; techo]\n  return max(candidatas, key=(hits[r], -carga[r])) or min(pool, key=carga)</code></pre>',
@@ -33,7 +40,9 @@ SD.defineMap('m19-flota', {
         fail: '<ul><li><b>Información vieja:</b> la carga que ve el router tiene cientos de ms; si muchos routers eligen a la vez la misma réplica "vacía", la saturan. Por eso se suma la carga que el propio router ya mandó y se elige entre dos al azar cuando los puntajes empatan (power of two choices, M03).</li><li><b>El router cae:</b> es sin estado durable; hay varios detrás del gateway y los streams que sostenía se reintentan.</li></ul>',
         nums: '<ul><li>Decidir: menos de 1 ms.</li><li>Ahorro de un acierto de prefijo de 8 200 tokens: unos 0.57 s de prefill en 4 H100.</li><li>Techo de carga: 1.25 veces el promedio del pool.</li></ul>'
       } },
-    { id: 'prefixidx', layer: 'cache', label: 'Índice de prefijos', sub: 'qué bloques tiene cada réplica', x: 810, y: 720,
+    { id: 'prefixidx', brief: "Lo que el router sabe de qué prefijos tiene cada réplica.",
+      why: "Sin este índice, el router no sabría qué réplica ya tiene la conversación y repetiría el prefill completo en cada turno (610 ms contra 21 ms).",
+      layer: 'cache', label: 'Índice de prefijos', sub: 'qué bloques tiene cada réplica', x: 810, y: 720,
       info: {
         resp: '<p>Sabe, aproximadamente, qué bloques de KV cache tiene cada réplica. Las réplicas publican un evento cuando guardan o expulsan un bloque, y el índice responde, para un prompt, cuántos tokens iniciales tiene cada réplica.</p>',
         api: '<pre><code>match(pool, [h1, h2, …, h531])  →  {r1: 187, r2: 512, r7: 187}   # bloques iniciales en caché\nevent(réplica, guardado | expulsado, [h…])</code></pre>',
@@ -41,7 +50,9 @@ SD.defineMap('m19-flota', {
         fail: '<ul><li><b>Desactualizado:</b> si el índice cree que una réplica tiene un prefijo que ya expulsó, la request paga el prefill entero, pero la respuesta es correcta. El índice es una pista, nunca una fuente de verdad.</li><li><b>Cae:</b> el router sigue eligiendo por carga sola; se pierde eficiencia, no disponibilidad.</li></ul>',
         nums: '<ul><li>418 000 tokens de KV cache por réplica: unos 26 000 bloques.</li><li>60 réplicas: 1.6 millones de entradas, unos 50 MB en memoria.</li></ul>'
       } },
-    { id: 'r1', layer: 'gpu', label: 'Réplica 1', sub: '4 H100, vLLM', x: 1150, y: 290,
+    { id: 'r1', brief: "Una copia del modelo en 4 GPUs H100, con su motor (vLLM).",
+      why: "Es donde se hace el trabajo real. Hay 125 como esta en el pico; el resto del mapa existe para repartirles bien el trabajo.",
+      layer: 'gpu', label: 'Réplica 1', sub: '4 H100, vLLM', x: 1150, y: 290,
       info: {
         resp: '<p>Una copia completa del modelo repartida en 4 GPUs con tensor parallelism (M13), corriendo un motor como vLLM (M15) con continuous batching y prefix caching.</p>',
         api: '<pre><code>POST /generate        prompt, parámetros, stream\nGET  /metrics         num_requests_running, num_requests_waiting,\n                      kv_cache_usage, ttft, tpot  (Prometheus)\nGET  /health</code></pre>',
@@ -49,7 +60,9 @@ SD.defineMap('m19-flota', {
         fail: '<ul><li><b>Se llena el KV cache:</b> el motor pausa requests (preemption, M15) y el TTFT de las que esperan sube.</li><li><b>Falla una GPU:</b> con tensor parallelism, la réplica entera deja de funcionar.</li></ul>',
         nums: '<ul><li>Hasta 64 streams a la vez con un TPOT de unos 30 ms.</li><li>Prefill de 8 000 tokens: unos 0.57 s.</li></ul>'
       } },
-    { id: 'r2', layer: 'gpu', label: 'Réplica 2', sub: '4 H100, vLLM', x: 1150, y: 410,
+    { id: 'r2', brief: "Otra réplica igual, con su propio KV cache.",
+      why: "Dos réplicas con el mismo modelo pero distinto contenido en caché: por eso no da igual a cuál va una request.",
+      layer: 'gpu', label: 'Réplica 2', sub: '4 H100, vLLM', x: 1150, y: 410,
       info: {
         resp: '<p>Otra réplica del mismo pool. En los escenarios, es la que atendió los turnos anteriores de la conversación y todavía tiene su historial en el KV cache.</p>',
         api: '<p>La misma que la réplica 1. Además publica eventos de KV cache: qué bloques guardó y cuáles expulsó.</p>',
@@ -57,7 +70,9 @@ SD.defineMap('m19-flota', {
         fail: '<p>Si muere, se pierde su KV cache: las conversaciones que tenía vuelven a pagar el prefill en otra réplica.</p>',
         nums: '<ul><li>El historial de una conversación de 12 turnos: unos 8 000 tokens, 2.6 GB de KV cache.</li></ul>'
       } },
-    { id: 'rspot', layer: 'gpu', label: 'Réplica spot', sub: 'puede irse con aviso', x: 1150, y: 530,
+    { id: 'rspot', brief: "Una réplica en GPUs spot, más baratas, que la nube puede quitar con aviso.",
+      why: "Ahorra dinero a cambio de poder perderla. Por eso necesita un plan de drenaje y de continuación de streams.",
+      layer: 'gpu', label: 'Réplica spot', sub: 'puede irse con aviso', x: 1150, y: 530,
       info: {
         resp: '<p>Una réplica en capacidad spot: GPUs que la nube vende con descuento a cambio de poder recuperarlas con poco aviso. Sirven para la parte de la flota que puede perderse sin dañar el servicio.</p>',
         api: '<p>La misma que las demás. Un agente del nodo consulta el servicio de metadatos de la nube y, ante un aviso, marca la réplica como no lista y empieza a drenarla.</p>',
@@ -65,7 +80,9 @@ SD.defineMap('m19-flota', {
         fail: '<ul><li>AWS avisa 2 minutos antes; Google Cloud y Azure, 30 segundos.</li><li>Una respuesta larga puede durar más que el aviso: hay que continuarla en otra réplica.</li></ul>',
         nums: '<ul><li>Descuento típico: 60 a 90&#8239;% sobre el precio por demanda, variable.</li><li>Este diseño limita el spot al 30&#8239;% del pool y nunca lo usa para el tráfico de mayor prioridad.</li></ul>'
       } },
-    { id: 'rnew', layer: 'gpu', label: 'Réplica nueva', sub: 'arrancando', x: 1150, y: 650,
+    { id: 'rnew', brief: "Una réplica que está arrancando: bajando pesos e iniciando el motor.",
+      why: "Muestra el cold start: entre que el autoscaler la pide y que atiende pasan minutos, y eso obliga a escalar con anticipación.",
+      layer: 'gpu', label: 'Réplica nueva', sub: 'arrancando', x: 1150, y: 650,
       info: {
         resp: '<p>Una réplica que el autoscaler pidió o que trae una versión nueva del modelo. No recibe tráfico hasta que su readiness probe responde bien: pesos cargados, KV cache reservado y una generación de prueba.</p>',
         api: '<pre><code>GET /health   → 503 mientras carga, 200 cuando está lista\n                (readiness: el router solo usa réplicas listas)</code></pre>',
@@ -73,7 +90,9 @@ SD.defineMap('m19-flota', {
         fail: '<ul><li><b>Falla la carga de pesos:</b> el checksum no coincide con el del registry y la réplica no se declara lista.</li><li><b>Arranque lento:</b> si tarda más que el pico, el pico se atiende con lo que ya había.</li></ul>',
         nums: '<ul><li>Arranque en un nodo nuevo: unos 520 s. En un pool precalentado: unos 27 s.</li></ul>'
       } },
-    { id: 'small', layer: 'gpu', label: 'Pool de 8B', sub: 'modelo de respaldo', x: 1150, y: 790,
+    { id: 'small', brief: "Un pool con un modelo más chico (8B) para emergencias.",
+      why: "Es una salida cuando no alcanza la capacidad: responder con algo más barato antes que rechazar. Solo sirve donde el cliente lo acepta.",
+      layer: 'gpu', label: 'Pool de 8B', sub: 'modelo de respaldo', x: 1150, y: 790,
       info: {
         resp: '<p>Un modelo más chico y más barato. Recibe tráfico cuando el pool principal está saturado o caído, si el producto acepta degradar la calidad: el plan gratuito, tareas simples, o un fallback declarado.</p>',
         api: '<p>La misma API. La respuesta indica qué modelo contestó, para que el cliente y la facturación lo sepan.</p><pre data-lang="json"><code>{"model": "llama-3.1-8b", "system_fingerprint": "fp_fallback", …}</code></pre>',
@@ -81,7 +100,9 @@ SD.defineMap('m19-flota', {
         fail: '<p>El fallback nunca es silencioso para quien paga por un modelo: o se informa en la respuesta, o se devuelve un error y decide el cliente.</p>',
         nums: '<ul><li>Del orden de 10 veces más barato por token que el 70B.</li></ul>'
       } },
-    { id: 'regionb', layer: 'service', label: 'Región B', sub: 'otra flota completa', x: 470, y: 720,
+    { id: 'regionb', brief: "Otra flota completa en otra región.",
+      why: "Si una región se cae, el tráfico se muda aquí. Para que eso funcione, cada región tiene que tener lugar de sobra.",
+      layer: 'service', label: 'Región B', sub: 'otra flota completa', x: 470, y: 720,
       info: {
         resp: '<p>Otra región con su propia flota, su propio router y su propio plano de control. Comparte el model registry replicado y nada más: si una región cae, la otra sigue sola.</p>',
         api: '<p>El router puede desbordar requests a otra región cuando la propia no tiene capacidad y la latencia extra es aceptable. El DNS global manda allí el tráfico de una región caída.</p>',
@@ -89,7 +110,9 @@ SD.defineMap('m19-flota', {
         fail: '<ul><li><b>Cae la región A:</b> B recibe su tráfico. Si las dos estaban al 70&#8239;%, B queda al 140&#8239;%: no alcanza sin recortar.</li><li><b>Residencia de datos:</b> el tráfico de clientes con datos en la UE no puede desbordarse a una región fuera de la UE.</li></ul>',
         nums: '<ul><li>Uso máximo para sobrevivir a la caída de una región entre R: (R − 1) / R. Con 2 regiones, 50&#8239;%; con 3, 67&#8239;%.</li></ul>'
       } },
-    { id: 'registry', layer: 'db', label: 'Model registry', sub: 'modelos, versiones, pesos', x: 470, y: 130,
+    { id: 'registry', brief: "El catálogo de modelos: versiones, pesos y su estado.",
+      why: "Sin un catálogo oficial no se sabe qué versión corre dónde, y no hay forma segura de cambiar ni de volver atrás.",
+      layer: 'db', label: 'Model registry', sub: 'modelos, versiones, pesos', x: 470, y: 130,
       info: {
         resp: '<p>La fuente de verdad de qué modelos existen: cada versión con sus pesos, su checksum, su configuración de serving y su estado. Un nombre público como <code>gpt-x</code> es un alias que apunta a un snapshot fijo.</p>',
         api: '<pre data-lang="http"><code>GET  /internal/v1/models/llama-3.1-70b/versions\nPOST /internal/v1/models/llama-3.1-70b/versions      registrar\nPUT  /internal/v1/aliases/llama-3.1-70b              {"version": "2025-10-07"}</code></pre>',
@@ -97,7 +120,9 @@ SD.defineMap('m19-flota', {
         fail: '<p>Si cae, no se puede desplegar ni escalar con versiones nuevas, pero la flota sigue sirviendo: el plano de datos no lo consulta por request.</p>',
         nums: '<ul><li>Decenas de modelos, cientos de versiones: una base chica, replicada entre regiones.</li></ul>'
       } },
-    { id: 'deploy', layer: 'service', label: 'Despliegues', sub: 'canary y tabla de rutas', x: 810, y: 130,
+    { id: 'deploy', brief: "Decide qué porcentaje del tráfico va a cada versión (canary) y publica la tabla de rutas.",
+      why: "Permite cambiar de versión de a poco y volver atrás en segundos, sin tocar las réplicas.",
+      layer: 'service', label: 'Despliegues', sub: 'canary y tabla de rutas', x: 810, y: 130,
       info: {
         resp: '<p>Decide qué versión recibe cuánto tráfico y publica la tabla de rutas a los routers. Maneja el canary: una versión nueva empieza con un porcentaje chico y sube si sus métricas no empeoran.</p>',
         api: '<pre data-lang="json"><code>{"model": "llama-3.1-70b",\n "routes": [{"version": "2025-07-23", "weight": 95},\n            {"version": "2025-10-07", "weight": 5}],\n "pools": {"2025-07-23": ["r1", "r2", "rspot"], "2025-10-07": ["rnew"]}}</code></pre>',
@@ -105,7 +130,9 @@ SD.defineMap('m19-flota', {
         fail: '<ul><li><b>La versión nueva empeora:</b> rollback al 0&#8239;%, sin redeploy, porque la versión anterior nunca se apagó.</li><li><b>Tabla mala publicada:</b> los routers validan la tabla (pesos que suman 100, pools con réplicas listas) antes de aplicarla.</li></ul>',
         nums: '<ul><li>Escalones típicos de un canary: 1, 5, 25, 50 y 100&#8239;%, con horas entre cada uno.</li></ul>'
       } },
-    { id: 'autoscaler', layer: 'service', label: 'Autoscaler', sub: 'cuántas réplicas', x: 1150, y: 130,
+    { id: 'autoscaler', brief: "Decide cuántas réplicas hacen falta, mirando el uso del KV cache.",
+      why: "El tráfico sube y baja durante el día. Sin autoscaler pagas GPUs vacías de noche o te quedas corto en el pico.",
+      layer: 'service', label: 'Autoscaler', sub: 'cuántas réplicas', x: 1150, y: 130,
       info: {
         resp: '<p>Cada 15 a 30 segundos lee las métricas de las réplicas y calcula cuántas tiene que haber. No usa la utilización de la GPU, que está alta aunque sobre capacidad: usa la cola, el uso de KV cache o el TTFT.</p>',
         api: '<pre><code>deseadas = ceil(actuales × métrica / objetivo)\n         = ceil(60 × 0.92 / 0.75) = 74</code></pre>',
@@ -113,7 +140,9 @@ SD.defineMap('m19-flota', {
         fail: '<ul><li><b>Métrica equivocada:</b> escalar por CPU o por utilización de GPU no reacciona o reacciona tarde.</li><li><b>Sin GPUs disponibles:</b> pide nodos y la nube no los tiene. Por eso se reserva capacidad y se mantiene un colchón.</li></ul>',
         nums: '<ul><li>Objetivo de este diseño: 75&#8239;% del KV cache en uso.</li><li>Estabilización para bajar: 300 s.</li></ul>'
       } },
-    { id: 'k8s', layer: 'service', label: 'Placement', sub: 'Kubernetes con nodos GPU', x: 1490, y: 130,
+    { id: 'k8s', brief: "Kubernetes: ubica las réplicas en máquinas con GPU.",
+      why: "Alguien tiene que decidir en qué máquina arranca cada réplica y reemplazar las que mueren.",
+      layer: 'service', label: 'Placement', sub: 'Kubernetes con nodos GPU', x: 1490, y: 130,
       info: {
         resp: '<p>Convierte "quiero 74 réplicas" en pods corriendo sobre nodos con 4 GPUs libres. Si no hay nodos, le pide más a la nube con un autoscaler de nodos.</p>',
         api: '<pre><code>spec:\n  replicas: 74\n  template:\n    spec:\n      terminationGracePeriodSeconds: 600   # el valor por defecto, 30 s, corta streams largos\n      containers:\n      - resources: {limits: {nvidia.com/gpu: 4}}</code></pre>',
@@ -121,7 +150,9 @@ SD.defineMap('m19-flota', {
         fail: '<ul><li><b>Fragmentación:</b> hay 6 GPUs libres en total, pero repartidas de a 2 en tres nodos: no entra ninguna réplica de 4.</li><li><b>Apagado brusco:</b> con el periodo de gracia por defecto, un pod que se apaga tiene 30 s para terminar sus streams.</li></ul>',
         nums: '<ul><li>Conseguir y arrancar un nodo GPU nuevo: unos 5 minutos en este diseño.</li></ul>'
       } },
-    { id: 'cloud', layer: 'external', label: 'Proveedor de nube', sub: 'nodos GPU, spot', x: 1830, y: 130,
+    { id: 'cloud', brief: "El proveedor de nube que alquila las máquinas con GPU.",
+      why: "Las GPUs no son infinitas ni inmediatas: pedir una puede tardar o fallar, y las spot se pueden ir.",
+      layer: 'external', label: 'Proveedor de nube', sub: 'nodos GPU, spot', x: 1830, y: 130,
       info: {
         resp: '<p>Alquila los nodos con GPU: por demanda, reservados por un plazo o spot. Avisa antes de recuperar un nodo spot.</p>',
         api: '<pre><code>GET http://169.254.169.254/…   servicio de metadatos del nodo:\n                                 aviso de interrupción spot</code></pre>',
@@ -129,7 +160,9 @@ SD.defineMap('m19-flota', {
         fail: '<p>Las GPUs grandes escasean: pedir 20 nodos de 8 H100 en un pico puede devolver 0. La capacidad base se reserva.</p>',
         nums: '<ul><li>Aviso spot: 2 minutos en AWS; 30 segundos en Google Cloud y Azure.</li></ul>'
       } },
-    { id: 'weights', layer: 'db', label: 'Pesos', sub: 'S3 y caché NVMe', x: 1490, y: 650,
+    { id: 'weights', brief: "Los archivos de pesos: en S3 y copiados en discos NVMe locales.",
+      why: "Cargar 140 GB desde S3 tarda; tenerlos cerca acorta el cold start de minutos a segundos.",
+      layer: 'db', label: 'Pesos', sub: 'S3 y caché NVMe', x: 1490, y: 650,
       info: {
         resp: '<p>Donde viven los pesos de cada versión: almacenamiento de objetos como fuente de verdad, con copias en los discos NVMe locales de los nodos para arrancar rápido.</p>',
         api: '<pre><code>s3://pesos/llama70b/2025-10-07/model-00001-of-00030.safetensors\n                              …\n                              SHA256SUMS</code></pre>',
@@ -160,7 +193,8 @@ SD.defineMap('m19-flota', {
   ],
   scenarios: [
     {
-      id: 'prefijo', title: 'Turno nuevo: acierto de prefijo',
+      id: 'prefijo', goal: "Por qué el router manda una conversación a la réplica que ya tiene su historial, y cuánto ahorra.",
+      title: 'Turno nuevo: acierto de prefijo',
       desc: 'El turno 6 de una conversación. La réplica 2 atendió los cinco anteriores y todavía tiene su historial. ¿La elige el router?',
       steps: [
         { from: 'apps', to: 'gateway', kind: 'req', tag: 'POST, 8 500 tokens', ms: 30, title: 'Llega el turno 6', text: '3 000 tokens de prompt de sistema, 5 200 de historial y 300 del mensaje nuevo.' },
@@ -177,7 +211,8 @@ SD.defineMap('m19-flota', {
       ]
     },
     {
-      id: 'nueva', title: 'Conversación nueva',
+      id: 'nueva', goal: "Qué hace el router cuando no hay historial: elegir una réplica por carga.",
+      title: 'Conversación nueva',
       desc: 'El primer turno de una conversación: no hay historial, pero el prompt de sistema de la app es el mismo para todos.',
       steps: [
         { from: 'apps', to: 'gateway', kind: 'req', tag: 'POST, 3 300 tokens', ms: 30, title: 'Primer mensaje', text: '3 000 tokens de prompt de sistema y 300 del usuario.' },
@@ -193,7 +228,8 @@ SD.defineMap('m19-flota', {
       ]
     },
     {
-      id: 'caliente', title: 'Un prefijo caliente desborda',
+      id: 'caliente', goal: "Qué pasa cuando muchas conversaciones quieren la misma réplica, y cómo la afinidad se rompe para no saturarla.",
+      title: 'Un prefijo caliente desborda',
       desc: 'Un cliente de la API manda 40 requests por segundo con el mismo documento de 20 000 tokens. Si todas fueran a la réplica que lo tiene, la saturarían.',
       steps: [
         { from: 'apps', to: 'gateway', kind: 'req', tag: '40 por segundo', ms: 30, title: 'Ráfaga con el mismo prefijo', text: 'Un pipeline que hace preguntas distintas sobre el mismo contrato de 20 000 tokens.' },
@@ -207,7 +243,8 @@ SD.defineMap('m19-flota', {
       ]
     },
     {
-      id: 'pico', title: 'Pico de tráfico y autoscaling',
+      id: 'pico', goal: "Cómo el autoscaler ve venir un pico y suma réplicas, y qué pasa mientras arrancan.",
+      title: 'Pico de tráfico y autoscaling',
       desc: 'El tráfico sube un 3 % por minuto. El autoscaler lo ve en las métricas, pero las réplicas nuevas tardan minutos en estar listas.',
       steps: [
         { from: 'r1', to: 'autoscaler', kind: 'async', tag: 'kv_cache_usage: 0.92', ms: 15000, title: 'Las métricas suben', text: 'El uso de KV cache promedio llega al 92&#8239;%, con 6 requests en cola por réplica. La utilización de la GPU estaba alta desde antes: no avisaba nada.' },
@@ -224,7 +261,8 @@ SD.defineMap('m19-flota', {
       ]
     },
     {
-      id: 'cae-replica', title: 'Muere una réplica a mitad del decode',
+      id: 'cae-replica', goal: "Qué ve el usuario cuando la réplica que le genera la respuesta muere, y cómo se continúa en otra.",
+      title: 'Muere una réplica a mitad del decode',
       desc: 'La réplica 2 lleva 212 tokens de una respuesta y una GPU falla. El usuario no debería ver un error.',
       steps: [
         { at: 'r2', kind: 'fail', ms: 0, down: ['r2'], title: 'Falla una GPU de la réplica 2', text: 'Con tensor parallelism, la réplica entera se detiene. Tenía 44 streams abiertos.' },
@@ -239,7 +277,8 @@ SD.defineMap('m19-flota', {
       ]
     },
     {
-      id: 'spot', title: 'Aviso de interrupción spot',
+      id: 'spot', goal: "Cómo se drena una réplica spot en el minuto de aviso sin cortar a nadie.",
+      title: 'Aviso de interrupción spot',
       desc: 'La nube va a recuperar el nodo de la réplica spot en dos minutos. Hay que drenarla sin cortar respuestas.',
       steps: [
         { from: 'cloud', to: 'rspot', kind: 'async', tag: 'aviso: 2 min', ms: 1000, title: 'Llega el aviso', text: 'El agente del nodo consulta el servicio de metadatos cada pocos segundos y lo ve.' },
@@ -254,7 +293,8 @@ SD.defineMap('m19-flota', {
       ]
     },
     {
-      id: 'region', title: 'Cae la región B',
+      id: 'region', goal: "Cómo el tráfico se muda a otra región y por qué cada región necesita lugar de sobra.",
+      title: 'Cae la región B',
       desc: 'Todo su tráfico llega a esta región, que estaba al 70 %. No alcanza para todos: se protege al tráfico pago.',
       steps: [
         { at: 'regionb', kind: 'fail', ms: 0, down: ['regionb'], title: 'La región B no responde', text: 'El DNS global la saca y su tráfico llega a la región A.' },
@@ -268,7 +308,8 @@ SD.defineMap('m19-flota', {
       ]
     },
     {
-      id: 'canary', title: 'Canary de una versión nueva',
+      id: 'canary', goal: "Cómo una versión nueva recibe primero un poco de tráfico y cómo se vuelve atrás si algo sale mal.",
+      title: 'Canary de una versión nueva',
       desc: 'Una versión nueva de los pesos entra al registry. Empieza con el 5 % del tráfico y solo sube si sus métricas no empeoran.',
       steps: [
         { from: 'registry', to: 'deploy', kind: 'req', tag: 'v2025-10-07: staged', ms: 100, title: 'Se registra la versión nueva', text: 'Con su URI de pesos, su sha256, su configuración de serving y los resultados de las evaluaciones offline.' },

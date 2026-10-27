@@ -1,0 +1,753 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M54. Threat modeling práctico</title>
+<meta name="description" content="Cómo se piensa como atacante antes de escribir código: las cuatro preguntas, el diagrama de flujo de datos y sus fronteras de confianza, STRIDE por elemento, árboles de ataque, priorizar el riesgo, LINDDUN y el modelo dentro del ciclo de vida.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m54">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Threat modeling práctico</h1>
+        <p class="lead">Casi todas las fallas de seguridad caras se decidieron en una pizarra, no en el código. El threat modeling es la costumbre de dibujar el sistema, preguntar qué puede salir mal en cada frontera y decidir qué hacer antes de que alguien lo descubra por ti.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M54</dd></div>
+          <div><dt>Parte</dt><dd>VII. Blue Team y DevSecOps</dd></div>
+          <div><dt>Duración</dt><dd>100 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M10, M33, M37</dd></div>
+          <div><dt>Estado</dt><dd data-status="m54">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Guiar una sesión de threat modeling con las <b>cuatro preguntas</b> y saber qué produce cada una.</li>
+    <li>Dibujar un <b>diagrama de flujo de datos</b> con sus fronteras de confianza, que es donde viven las amenazas.</li>
+    <li>Recorrerlo con <b>STRIDE por elemento</b> sin olvidar nada y sin inventar amenazas que no aplican.</li>
+    <li>Descomponer una meta del atacante en un <b>árbol de ataque</b> y encontrar la hoja más barata de cortar.</li>
+    <li>Priorizar con probabilidad e impacto, y decidir entre mitigar, aceptar, transferir o evitar.</li>
+    <li>Meter el modelo en el ciclo de vida: cuándo se escribe, cuándo se rehace y cómo se vuelve pruebas y detecciones.</li>
+  </ul>
+</section>
+
+<p>Esta es la primera parada de la Parte VII. La <a href="m32-firewalls.html">Parte IV</a> te enseñó a cerrar puertas: firewalls, servidores endurecidos, bases acotadas, criptografía, la nube y Active Directory. Esta parte completa el ciclo. Antes de cerrar puertas hay que saber <b>cuáles</b> existen, y eso se decide en el diseño. En <a href="m10-seguridad.html#basicos">M10</a> viste que todo empieza por un modelo de amenazas, y en <a href="m33-hardening-linux.html#modelo">M33</a> lo aplicaste a un servidor. Aquí lo vuelves una práctica de equipo, con un método repetible, sobre un sistema completo.</p>
+
+<p>El hilo de toda la parte es <b>Tienda Norte</b> <span class="badge badge--ref">Diseño de referencia</span>: una tienda en línea con una API en Java, una base PostgreSQL, un worker que procesa los webhooks del proveedor de pagos (el de <a href="m39-manejo-pagos.html">M39</a>), un panel interno para soporte y un pipeline que publica imágenes y despliega en Kubernetes. Este módulo la modela. Los siguientes revisan su código, su cadena de suministro y su clúster, y después cómo se detecta y se responde cuando algo pasa.</p>
+
+<h2 id="lamina">La lámina: el vocabulario en una imagen</h2>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 420" role="img" aria-labelledby="f54Lt f54Ld">
+<title id="f54Lt">Lámina 54.A: el modelo de amenazas de Tienda Norte</title>
+<desc id="f54Ld">El diagrama de flujo de datos de una tienda en línea: el cliente, el personal de soporte, el proveedor de pagos y el servicio de correo como entidades externas; la API, el panel de soporte y el worker de pagos como procesos; la base de pedidos y los logs de auditoría como almacenes; flechas para los flujos de datos y tres líneas punteadas para las fronteras de confianza. Ocho marcas numeradas señalan el vocabulario del módulo.</desc>
+<defs><marker id="f54La" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-frame" d="M196 30 V410" style="stroke:var(--warn);stroke-width:2"/>
+<text class="dg-tiny" x="204" y="46" text-anchor="start">frontera 1: internet</text>
+<path class="dg-frame" d="M196 300 H600" style="stroke:var(--warn);stroke-width:2"/>
+<text class="dg-tiny" x="400" y="318" text-anchor="middle">frontera 2: la base</text>
+<path class="dg-frame" d="M600 30 V410" style="stroke:var(--warn);stroke-width:2"/>
+<text class="dg-tiny" x="608" y="46" text-anchor="start">frontera 3: terceros</text>
+<rect class="dg-box dg-box--em" x="20" y="70" width="140" height="50" rx="2"/>
+<text class="dg-small" x="90.0" y="91.5" text-anchor="middle">Cliente</text>
+<text class="dg-tiny" x="90.0" y="106.5" text-anchor="middle">navegador o app</text>
+<rect class="dg-box dg-box--em" x="20" y="210" width="140" height="50" rx="2"/>
+<text class="dg-small" x="90.0" y="231.5" text-anchor="middle">Soporte</text>
+<text class="dg-tiny" x="90.0" y="246.5" text-anchor="middle">persona interna</text>
+<rect class="dg-box dg-box--em" x="630" y="70" width="125" height="50" rx="2"/>
+<text class="dg-small" x="692.5" y="91.5" text-anchor="middle">PSP</text>
+<text class="dg-tiny" x="692.5" y="106.5" text-anchor="middle">proveedor de pagos</text>
+<rect class="dg-box dg-box--em" x="630" y="210" width="125" height="50" rx="2"/>
+<text class="dg-small" x="692.5" y="231.5" text-anchor="middle">Correo</text>
+<text class="dg-tiny" x="692.5" y="246.5" text-anchor="middle">servicio de envío</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="250" y="66" width="140" height="58" rx="26"/>
+<text class="dg-small" x="320.0" y="91.5" text-anchor="middle">API de la tienda</text>
+<text class="dg-tiny" x="320.0" y="106.5" text-anchor="middle">Java, pública</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="290" y="206" width="140" height="58" rx="26"/>
+<text class="dg-small" x="360.0" y="231.5" text-anchor="middle">Panel de soporte</text>
+<text class="dg-tiny" x="360.0" y="246.5" text-anchor="middle">interno, con VPN</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="456" y="130" width="130" height="58" rx="26"/>
+<text class="dg-small" x="521.0" y="155.5" text-anchor="middle">Worker de pagos</text>
+<text class="dg-tiny" x="521.0" y="170.5" text-anchor="middle">webhooks (M39)</text>
+<path class="dg-edge" d="M236 340 H396 M236 384 H396" style="stroke:var(--l-db);stroke-width:2"/>
+<text class="dg-small" x="316" y="359" text-anchor="middle">Base de pedidos</text>
+<text class="dg-tiny" x="316" y="375" text-anchor="middle">PostgreSQL</text>
+<path class="dg-edge" d="M420 340 H580 M420 384 H580" style="stroke:var(--l-db);stroke-width:2"/>
+<text class="dg-small" x="500" y="359" text-anchor="middle">Logs de auditoría</text>
+<text class="dg-tiny" x="500" y="375" text-anchor="middle">solo-adición</text>
+<path class="dg-edge" d="M160 90 L248 90" marker-end="url(#f54La)"/>
+<text class="dg-tiny" x="204" y="82" text-anchor="middle">HTTPS</text>
+<path class="dg-edge" d="M248 102 L160 102" marker-end="url(#f54La)"/>
+<path class="dg-edge" d="M160 235 L288 235" marker-end="url(#f54La)"/>
+<text class="dg-tiny" x="238" y="227" text-anchor="middle">HTTPS + MFA</text>
+<path class="dg-edge" d="M390 82 L628 82" marker-end="url(#f54La)"/>
+<text class="dg-tiny" x="510" y="74" text-anchor="middle">crear cobro</text>
+<path class="dg-edge" d="M640 120 L590 146" marker-end="url(#f54La)"/>
+<text class="dg-tiny" x="650" y="140" text-anchor="start">webhook firmado</text>
+<path class="dg-edge" d="M586 176 L640 208" marker-end="url(#f54La)"/>
+<text class="dg-tiny" x="650" y="196" text-anchor="start">recibo</text>
+<path class="dg-edge" d="M268 124 L268 338" marker-end="url(#f54La)"/>
+<text class="dg-tiny" x="260" y="290" text-anchor="end">SQL</text>
+<path class="dg-edge" d="M330 264 L330 338" marker-end="url(#f54La)"/>
+<path class="dg-edge" d="M530 188 L530 338" marker-end="url(#f54La)"/>
+<text class="dg-tiny" x="538" y="290" text-anchor="start">eventos</text>
+<path class="dg-edge" d="M420 264 L466 338" marker-end="url(#f54La)"/>
+<text class="dg-tiny" x="452" y="290" text-anchor="start">cada acción</text>
+<g class="pl-pin"><circle cx="26" cy="76" r="11"/><text x="26" y="80" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="256" cy="72" r="11"/><text x="256" y="76" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="242" cy="346" r="11"/><text x="242" y="350" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="204" cy="118" r="11"/><text x="204" y="122" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="188" cy="166" r="11"/><text x="188" y="170" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="400" cy="112" r="11"/><text x="400" y="116" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="600" cy="118" r="11"/><text x="600" y="122" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="586" cy="346" r="11"/><text x="586" y="350" text-anchor="middle">8</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 54.A.</b> El modelo de amenazas de Tienda Norte. Todo el módulo trabaja sobre este dibujo: las marcas señalan las piezas del vocabulario.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Entidad externa</b><span>Algo que no controlas y que manda o recibe datos: el cliente, el personal de soporte, el PSP. <a href="#dfd">54.2</a></span></li>
+  <li><b>Proceso</b><span>Código que corre y transforma datos: la API, el panel, el worker. Es donde aplican las seis amenazas. <a href="#dfd">54.2</a></span></li>
+  <li><b>Almacén</b><span>Donde los datos descansan: la base, una cola, un bucket, los logs. <a href="#dfd">54.2</a></span></li>
+  <li><b>Flujo de datos</b><span>Una flecha que mueve datos entre dos elementos: una request, un mensaje, una consulta. <a href="#dfd">54.2</a></span></li>
+  <li><b>Frontera de confianza</b><span>Una línea donde cambia el nivel de confianza: de internet a tu red, de tu código a la base, de ti a un tercero. Ahí se concentran las amenazas. <a href="#dfd-fronteras">54.2</a></span></li>
+  <li><b>Amenaza</b><span>Lo que puede salir mal en un elemento, nombrado con una letra de STRIDE: spoofing en la API, por ejemplo. <a href="#stride">54.3</a></span></li>
+  <li><b>Mitigación</b><span>Lo que haces al respecto: firmar el webhook corta la suplantación del PSP. <a href="#priorizar">54.5</a></span></li>
+  <li><b>No repudio</b><span>Que nadie pueda negar lo que hizo: los logs de auditoría solo-adición registran cada acción del panel. <a href="#stride">54.3</a></span></li>
+</ol>
+
+<h2 id="por-que"><span class="sec-num">54.1</span>Qué es y por qué se hace antes</h2>
+
+<p>El <dfn data-term="threat-modeling">threat modeling</dfn> (modelado de amenazas) es analizar un sistema desde el punto de vista de quien quiere romperlo, mientras todavía es barato cambiarlo. No es una auditoría ni un pentest: no busca fallas en un sistema terminado, sino decisiones de diseño que van a producir fallas. El resultado no es un informe, sino una lista de cambios concretos: un chequeo de autorización que falta, un flujo que hay que firmar, un dato que no debería salir de la base.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es lo que hace un arquitecto con los planos de un banco antes de construirlo: por dónde entra la gente, dónde está la bóveda, quién tiene llave de qué puerta, qué pasa si alguien se esconde en el baño a la hora del cierre. Mover una pared en el plano cuesta una goma de borrar; moverla con el edificio construido cuesta una obra.</p>
+</aside>
+
+<p>El método más usado no es un formulario, sino cuatro preguntas que Adam Shostack popularizó en el SDL de Microsoft y que el <i>Threat Modeling Manifesto</i> (2020) adoptó como base <span class="badge badge--doc">Documentado</span>. Cada pregunta produce algo que se puede revisar:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f541t f541d">
+<title id="f541t">Las cuatro preguntas del threat modeling</title>
+<desc id="f541d">Cuatro preguntas en ciclo: en qué estamos trabajando, qué puede salir mal, qué vamos a hacer al respecto y si hicimos un buen trabajo. Cada una produce algo concreto: un diagrama, una lista de amenazas, una lista de mitigaciones y tickets, y una revisión que vuelve a empezar cuando el sistema cambia.</desc>
+<defs><marker id="f541a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="60" y="40" width="290" height="74" rx="8"/>
+<text class="dg-label" x="205.0" y="73.5" text-anchor="middle">1. ¿En qué estamos trabajando?</text>
+<text class="dg-tiny" x="205.0" y="88.5" text-anchor="middle">produce: el diagrama (DFD)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="420" y="40" width="290" height="74" rx="8"/>
+<text class="dg-label" x="565.0" y="73.5" text-anchor="middle">2. ¿Qué puede salir mal?</text>
+<text class="dg-tiny" x="565.0" y="88.5" text-anchor="middle">produce: amenazas (STRIDE, árboles)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="420" y="180" width="290" height="74" rx="8"/>
+<text class="dg-label" x="565.0" y="213.5" text-anchor="middle">3. ¿Qué vamos a hacer al respecto?</text>
+<text class="dg-tiny" x="565.0" y="228.5" text-anchor="middle">produce: mitigaciones y tickets</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="60" y="180" width="290" height="74" rx="8"/>
+<text class="dg-label" x="205.0" y="213.5" text-anchor="middle">4. ¿Hicimos un buen trabajo?</text>
+<text class="dg-tiny" x="205.0" y="228.5" text-anchor="middle">produce: revisión y pruebas</text>
+<path class="dg-edge" d="M350 77 L418 77" marker-end="url(#f541a)"/>
+<path class="dg-edge" d="M565 114 L565 178" marker-end="url(#f541a)"/>
+<path class="dg-edge" d="M420 217 L352 217" marker-end="url(#f541a)"/>
+<path class="dg-edge" d="M205 178 L205 116" marker-end="url(#f541a)"/>
+<text class="dg-tiny" x="385" y="150" text-anchor="middle">vuelve a empezar cuando cambia</text>
+<text class="dg-tiny" x="385" y="166" text-anchor="middle">una frontera o un flujo</text>
+<text class="dg-tiny" x="385" y="284" text-anchor="middle">Adam Shostack, "The Four Question Framework"</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 54.1.</b> Las cuatro preguntas. La primera produce el diagrama, la segunda la lista de amenazas, la tercera las mitigaciones (que terminan como tickets) y la cuarta una revisión. El ciclo vuelve a empezar cada vez que cambia una frontera o un flujo.</figcaption>
+</figure>
+
+
+<ol class="steps">
+  <li><span class="step-title">¿En qué estamos trabajando?</span>Un dibujo del sistema que todo el equipo reconozca. Sin dibujo, cada persona imagina un sistema distinto y las amenazas se discuten en el aire.</li>
+  <li><span class="step-title">¿Qué puede salir mal?</span>Las amenazas, encontradas con un método (STRIDE, árboles de ataque) para no depender de la imaginación de quien está en la sala.</li>
+  <li><span class="step-title">¿Qué vamos a hacer al respecto?</span>Por cada amenaza, una decisión: mitigar, aceptar, transferir o evitar. Las mitigaciones se vuelven tickets con dueño.</li>
+  <li><span class="step-title">¿Hicimos un buen trabajo?</span>Revisar que las mitigaciones existan (pruebas, configuración, detecciones) y que el modelo siga describiendo el sistema real.</li>
+</ol>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Una sesión de threat modeling de una funcionalidad mediana dura entre una y dos horas, con quien la diseña, quien la va a programar y alguien de seguridad. No hace falta una herramienta: una pizarra y una foto alcanzan. Lo que sí hace falta es que las mitigaciones terminen como tickets en el mismo tablero que el resto del trabajo; si quedan en un documento aparte, nadie las hace.</p>
+</aside>
+
+<p class="more-link">El modelo de amenazas de un servidor solo está en <a href="m33-hardening-linux.html#modelo">M33.1</a>, y la superficie de ataque como suma de permisos, en <a href="m37-nube.html#modelo">M37.1</a>.</p>
+
+<h2 id="dfd"><span class="sec-num">54.2</span>El diagrama de flujo de datos</h2>
+
+<p>La primera pregunta se responde con un <dfn data-term="dfd">diagrama de flujo de datos</dfn> (DFD): un dibujo con solo cinco símbolos, pensado para seguir los datos y no la arquitectura de despliegue. No importa si la API corre en tres pods o en una función; importa qué datos entran, qué los transforma, dónde quedan y quién los ve.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 200" role="img" aria-labelledby="f542t f542d">
+<title id="f542t">Los cinco símbolos de un diagrama de flujo de datos</title>
+<desc id="f542d">Entidad externa como rectángulo de esquinas rectas, proceso como rectángulo muy redondeado, almacén de datos como dos líneas paralelas, flujo de datos como flecha y frontera de confianza como línea punteada.</desc>
+<defs><marker id="f542a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box dg-box--em" x="20" y="50" width="120" height="50" rx="2"/>
+<text class="dg-small" x="80.0" y="71.5" text-anchor="middle">Entidad externa</text>
+<text class="dg-tiny" x="80.0" y="86.5" text-anchor="middle">no lo controlas</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="170" y="50" width="120" height="50" rx="24"/>
+<text class="dg-small" x="230.0" y="71.5" text-anchor="middle">Proceso</text>
+<text class="dg-tiny" x="230.0" y="86.5" text-anchor="middle">código que corre</text>
+<path class="dg-edge" d="M320 52 H460 M320 98 H460" style="stroke:var(--l-db);stroke-width:2"/>
+<text class="dg-small" x="390" y="74" text-anchor="middle">Almacén</text>
+<text class="dg-tiny" x="390" y="90" text-anchor="middle">datos en reposo</text>
+<path class="dg-edge" d="M490 75 L600 75" marker-end="url(#f542a)"/>
+<text class="dg-tiny" x="545" y="66" text-anchor="middle">Flujo de datos</text>
+<path class="dg-frame" d="M690 30 V130" style="stroke:var(--warn);stroke-width:2"/>
+<text class="dg-small" x="690" y="150" text-anchor="middle">Frontera de</text>
+<text class="dg-small" x="690" y="166" text-anchor="middle">confianza</text>
+<text class="dg-tiny" x="80" y="140" text-anchor="middle">personas, otros sistemas</text>
+<text class="dg-tiny" x="230" y="140" text-anchor="middle">API, worker, función</text>
+<text class="dg-tiny" x="390" y="140" text-anchor="middle">base, cola, archivo</text>
+<text class="dg-tiny" x="545" y="140" text-anchor="middle">request, mensaje</text>
+<text class="dg-tiny" x="80" y="156" text-anchor="middle">origen o destino</text>
+<text class="dg-tiny" x="230" y="156" text-anchor="middle">transforma datos</text>
+<text class="dg-tiny" x="390" y="156" text-anchor="middle">guarda datos</text>
+<text class="dg-tiny" x="545" y="156" text-anchor="middle">mueve datos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 54.2.</b> Los cinco símbolos. Con estos alcanza para modelar casi cualquier sistema. Si un elemento no encaja en ninguno, suele ser porque son dos elementos juntos.</figcaption>
+</figure>
+
+
+<p>Tres reglas lo mantienen útil:</p>
+
+<ul>
+  <li><b>Cada flecha lleva datos con nombre.</b> "HTTPS" no alcanza; "pedido con dirección y últimos cuatro dígitos" sí, porque dice qué se filtra si ese flujo se intercepta.</li>
+  <li><b>Un proceso por responsabilidad.</b> Si el panel de soporte y la API comparten código pero tienen usuarios distintos, son dos procesos: sus amenazas son distintas.</li>
+  <li><b>El nivel de detalle lo fija la pregunta.</b> Para una funcionalidad nueva, un DFD de cinco a quince elementos. Si tiene cuarenta, se parte en varios.</li>
+</ul>
+
+<h3 id="dfd-fronteras">Las fronteras de confianza</h3>
+
+<p>La pieza más importante del dibujo es la <dfn data-term="frontera-confianza">frontera de confianza</dfn>: una línea que separa partes con distinto nivel de confianza o distinto dueño. Cada vez que un flujo cruza una frontera, el dato que llega no se puede creer sin verificarlo: puede venir de alguien que no es quien dice, puede estar alterado o puede ser más grande de lo esperado. Por eso las amenazas se concentran en las fronteras, y un DFD sin fronteras es solo un diagrama de arquitectura.</p>
+
+<p>En Tienda Norte hay tres. La primera separa internet de la tienda: todo lo que manda el cliente o el personal de soporte llega de afuera. La segunda separa el código de la base: la base confía en quien se conecta con una credencial válida, así que el código tiene que ser el que decide qué filas pide. La tercera separa la tienda de los terceros: el PSP manda webhooks, y un webhook es una request que cualquiera puede imitar si no está firmada (lo viste en <a href="m39-manejo-pagos.html">M39</a>).</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>¿El panel de soporte, que está detrás de una VPN, está del mismo lado de la frontera que la API? No, aunque los dos sean "internos". El personal de soporte es una entidad externa con un nivel de confianza distinto al del cliente, y una cuenta de soporte robada es una de las entradas más comunes en incidentes reales. Dibujar la frontera ahí obliga a preguntar qué puede hacer una cuenta de soporte, y la respuesta (borrar pedidos, ver direcciones) lleva a pedir MFA y un log de cada acción.</p>
+</aside>
+
+<h2 id="stride"><span class="sec-num">54.3</span>STRIDE: qué puede salir mal</h2>
+
+<p>La segunda pregunta es la difícil: sin un método, el equipo encuentra las amenazas que ya conoce y se le escapan las demás. <dfn data-term="stride">STRIDE</dfn> es una lista de seis categorías que Loren Kohnfelder y Praerit Garg propusieron en Microsoft en 1999 <span class="badge badge--doc">Documentado</span>. Cada letra es lo contrario de una propiedad de seguridad, así que recorrerlas obliga a preguntar por las seis propiedades, no solo por la confidencialidad.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f543t f543d">
+<title id="f543t">STRIDE: seis amenazas, seis propiedades</title>
+<desc id="f543d">Una fila por letra de STRIDE con su nombre en inglés, qué significa, la propiedad de seguridad que viola y un ejemplo en la tienda: spoofing contra autenticación, tampering contra integridad, repudiation contra no repudio, information disclosure contra confidencialidad, denial of service contra disponibilidad y elevation of privilege contra autorización.</desc>
+<defs><marker id="f543a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="40" y="24" text-anchor="middle">Letra</text>
+<text class="dg-group" x="210" y="24" text-anchor="middle">Amenaza</text>
+<text class="dg-group" x="420" y="24" text-anchor="middle">Viola</text>
+<text class="dg-group" x="610" y="24" text-anchor="middle">Ejemplo en Tienda Norte</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="16" y="36" width="48" height="40" rx="8"/>
+<text class="dg-big" x="40.0" y="60.0" text-anchor="middle">S</text>
+<rect class="dg-box" x="76" y="36" width="270" height="40" rx="8"/>
+<text class="dg-small" x="211.0" y="52.5" text-anchor="middle">Spoofing</text>
+<text class="dg-tiny" x="211.0" y="67.5" text-anchor="middle">Suplantar identidad</text>
+<path class="dg-edge" d="M348 56 L358 56" marker-end="url(#f543a)"/>
+<rect class="dg-warnbox" x="360" y="36" width="120" height="40" rx="8"/>
+<text class="dg-small" x="420.0" y="60.0" text-anchor="middle">Autenticación</text>
+<text class="dg-small" x="500" y="61" text-anchor="start">usar la sesión de otro cliente</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="16" y="84" width="48" height="40" rx="8"/>
+<text class="dg-big" x="40.0" y="108.0" text-anchor="middle">T</text>
+<rect class="dg-box" x="76" y="84" width="270" height="40" rx="8"/>
+<text class="dg-small" x="211.0" y="100.5" text-anchor="middle">Tampering</text>
+<text class="dg-tiny" x="211.0" y="115.5" text-anchor="middle">Alterar datos o código</text>
+<path class="dg-edge" d="M348 104 L358 104" marker-end="url(#f543a)"/>
+<rect class="dg-warnbox" x="360" y="84" width="120" height="40" rx="8"/>
+<text class="dg-small" x="420.0" y="108.0" text-anchor="middle">Integridad</text>
+<text class="dg-small" x="500" y="109" text-anchor="start">cambiar el precio en el carrito</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="16" y="132" width="48" height="40" rx="8"/>
+<text class="dg-big" x="40.0" y="156.0" text-anchor="middle">R</text>
+<rect class="dg-box" x="76" y="132" width="270" height="40" rx="8"/>
+<text class="dg-small" x="211.0" y="148.5" text-anchor="middle">Repudiation</text>
+<text class="dg-tiny" x="211.0" y="163.5" text-anchor="middle">Negar haber hecho algo</text>
+<path class="dg-edge" d="M348 152 L358 152" marker-end="url(#f543a)"/>
+<rect class="dg-warnbox" x="360" y="132" width="120" height="40" rx="8"/>
+<text class="dg-small" x="420.0" y="156.0" text-anchor="middle">No repudio</text>
+<text class="dg-small" x="500" y="157" text-anchor="start">soporte borra un pedido sin rastro</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="16" y="180" width="48" height="40" rx="8"/>
+<text class="dg-big" x="40.0" y="204.0" text-anchor="middle">I</text>
+<rect class="dg-box" x="76" y="180" width="270" height="40" rx="8"/>
+<text class="dg-small" x="211.0" y="196.5" text-anchor="middle">Information disclosure</text>
+<text class="dg-tiny" x="211.0" y="211.5" text-anchor="middle">Filtrar información</text>
+<path class="dg-edge" d="M348 200 L358 200" marker-end="url(#f543a)"/>
+<rect class="dg-warnbox" x="360" y="180" width="120" height="40" rx="8"/>
+<text class="dg-small" x="420.0" y="204.0" text-anchor="middle">Confidencialidad</text>
+<text class="dg-small" x="500" y="205" text-anchor="start">leer pedidos de otro (BOLA)</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="16" y="228" width="48" height="40" rx="8"/>
+<text class="dg-big" x="40.0" y="252.0" text-anchor="middle">D</text>
+<rect class="dg-box" x="76" y="228" width="270" height="40" rx="8"/>
+<text class="dg-small" x="211.0" y="244.5" text-anchor="middle">Denial of service</text>
+<text class="dg-tiny" x="211.0" y="259.5" text-anchor="middle">Dejar sin servicio</text>
+<path class="dg-edge" d="M348 248 L358 248" marker-end="url(#f543a)"/>
+<rect class="dg-warnbox" x="360" y="228" width="120" height="40" rx="8"/>
+<text class="dg-small" x="420.0" y="252.0" text-anchor="middle">Disponibilidad</text>
+<text class="dg-small" x="500" y="253" text-anchor="start">búsqueda que satura la base</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="16" y="276" width="48" height="40" rx="8"/>
+<text class="dg-big" x="40.0" y="300.0" text-anchor="middle">E</text>
+<rect class="dg-box" x="76" y="276" width="270" height="40" rx="8"/>
+<text class="dg-small" x="211.0" y="292.5" text-anchor="middle">Elevation of privilege</text>
+<text class="dg-tiny" x="211.0" y="307.5" text-anchor="middle">Ganar permisos</text>
+<path class="dg-edge" d="M348 296 L358 296" marker-end="url(#f543a)"/>
+<rect class="dg-warnbox" x="360" y="276" width="120" height="40" rx="8"/>
+<text class="dg-small" x="420.0" y="300.0" text-anchor="middle">Autorización</text>
+<text class="dg-small" x="500" y="301" text-anchor="start">cliente que llega al panel</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 54.3.</b> Las seis letras. Cada amenaza viola una propiedad: la suplantación viola la autenticación, la alteración viola la integridad, y así. El ejemplo de la derecha es la forma que toma en la tienda.</figcaption>
+</figure>
+
+
+<p>Algunas letras merecen una aclaración, porque son las que más se confunden:</p>
+
+<ul>
+  <li><b>Repudiation</b> no es un ataque técnico: es poder hacer algo y después negarlo, porque no quedó rastro confiable. Se mitiga con el <a href="m10-seguridad.html#audit-log">log de auditoría de M10</a>, guardado donde quien actúa no lo pueda borrar.</li>
+  <li><b>Information disclosure</b> incluye mucho más que leer la base: un mensaje de error con la consulta SQL, un id secuencial que revela cuántos pedidos hay por día, un log con el token de sesión.</li>
+  <li><b>Elevation of privilege</b> es pasar de un nivel de permiso a otro mayor: un cliente que llega a funciones del panel, o una request que hace al worker ejecutar algo que no debía. <a href="m10-seguridad.html#bfla-detalle">BFLA y la asignación masiva de M10</a> son casos de esta letra.</li>
+</ul>
+
+<h3 id="stride-elemento">STRIDE por elemento</h3>
+
+<p>Recorrer las seis letras sobre cada elemento del DFD funciona, pero produce ruido: amenazas que no tienen sentido para ese tipo de elemento. La variante que usa Microsoft, <b>STRIDE por elemento</b>, dice qué letras aplican a cada tipo <span class="badge badge--doc">Documentado</span>:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f544t f544d">
+<title id="f544t">STRIDE por elemento</title>
+<desc id="f544d">Una rejilla con los cuatro tipos de elemento del diagrama en las filas y las seis letras de STRIDE en las columnas. Entidad externa: S y R. Proceso: las seis. Almacén: T, R, I y D (la R solo si guarda logs). Flujo de datos: T, I y D.</desc>
+<defs><marker id="f544a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="260" y="34" text-anchor="middle">S</text>
+<text class="dg-label" x="336" y="34" text-anchor="middle">T</text>
+<text class="dg-label" x="412" y="34" text-anchor="middle">R</text>
+<text class="dg-label" x="488" y="34" text-anchor="middle">I</text>
+<text class="dg-label" x="564" y="34" text-anchor="middle">D</text>
+<text class="dg-label" x="640" y="34" text-anchor="middle">E</text>
+<text class="dg-small" x="26" y="76" text-anchor="start">Entidad externa</text>
+<rect class="dg-ok" x="230" y="50" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="260" y="73" text-anchor="middle">aplica</text>
+<rect class="dg-box" x="306" y="50" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="336" y="73" text-anchor="middle">—</text>
+<rect class="dg-ok" x="382" y="50" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="412" y="73" text-anchor="middle">aplica</text>
+<rect class="dg-box" x="458" y="50" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="488" y="73" text-anchor="middle">—</text>
+<rect class="dg-box" x="534" y="50" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="564" y="73" text-anchor="middle">—</text>
+<rect class="dg-box" x="610" y="50" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="640" y="73" text-anchor="middle">—</text>
+<text class="dg-small" x="26" y="122" text-anchor="start">Proceso</text>
+<rect class="dg-ok" x="230" y="96" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="260" y="119" text-anchor="middle">aplica</text>
+<rect class="dg-ok" x="306" y="96" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="336" y="119" text-anchor="middle">aplica</text>
+<rect class="dg-ok" x="382" y="96" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="412" y="119" text-anchor="middle">aplica</text>
+<rect class="dg-ok" x="458" y="96" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="488" y="119" text-anchor="middle">aplica</text>
+<rect class="dg-ok" x="534" y="96" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="564" y="119" text-anchor="middle">aplica</text>
+<rect class="dg-ok" x="610" y="96" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="640" y="119" text-anchor="middle">aplica</text>
+<text class="dg-small" x="26" y="168" text-anchor="start">Almacén</text>
+<rect class="dg-box" x="230" y="142" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="260" y="165" text-anchor="middle">—</text>
+<rect class="dg-ok" x="306" y="142" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="336" y="165" text-anchor="middle">aplica</text>
+<rect class="dg-ok" x="382" y="142" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="412" y="165" text-anchor="middle">si hay logs</text>
+<rect class="dg-ok" x="458" y="142" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="488" y="165" text-anchor="middle">aplica</text>
+<rect class="dg-ok" x="534" y="142" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="564" y="165" text-anchor="middle">aplica</text>
+<rect class="dg-box" x="610" y="142" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="640" y="165" text-anchor="middle">—</text>
+<text class="dg-small" x="26" y="214" text-anchor="start">Flujo de datos</text>
+<rect class="dg-box" x="230" y="188" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="260" y="211" text-anchor="middle">—</text>
+<rect class="dg-ok" x="306" y="188" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="336" y="211" text-anchor="middle">aplica</text>
+<rect class="dg-box" x="382" y="188" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="412" y="211" text-anchor="middle">—</text>
+<rect class="dg-ok" x="458" y="188" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="488" y="211" text-anchor="middle">aplica</text>
+<rect class="dg-ok" x="534" y="188" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="564" y="211" text-anchor="middle">aplica</text>
+<rect class="dg-box" x="610" y="188" width="60" height="36" rx="6"/>
+<text class="dg-tiny" x="640" y="211" text-anchor="middle">—</text>
+<text class="dg-tiny" x="385" y="252" text-anchor="middle">Una entidad externa no se puede "alterar" desde tu diseño: no la controlas. Un flujo no "niega" nada: lo hacen sus extremos.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 54.4.</b> Qué letras aplican a cada tipo de elemento. Los procesos reciben las seis; los flujos, solo alteración, filtración y denegación. La R de los almacenes aplica cuando el almacén guarda los registros que sirven de prueba.</figcaption>
+</figure>
+
+
+<p>La lógica detrás de la tabla es simple. A una entidad externa no la puedes alterar desde tu diseño (no la controlas), pero sí la pueden suplantar y puede negar lo que hizo. Un flujo de datos no tiene identidad propia: lo que se suplanta es su origen, que es un proceso o una entidad. Un almacén no "se hace pasar" por nadie, pero sus datos se pueden alterar, filtrar o llenar hasta dejarlo inútil.</p>
+
+<p>Prueba el método sobre el DFD de la tienda. Toca un elemento para ver qué letras aplican y la amenaza concreta en ese punto, con su mitigación.</p>
+
+<div data-sim="stride"></div>
+
+<p class="more-link">Los ataques concretos detrás de varias de estas amenazas (BOLA, inyección SQL, XSS y CSRF, robo de sesión) están en <a href="m10-seguridad.html#ataques">M10.8</a>. Los vas a ver otra vez en M55, desde el lado de cómo se atrapan en el pipeline.</p>
+
+<h2 id="arboles"><span class="sec-num">54.4</span>Árboles de ataque</h2>
+
+<p>STRIDE va de los elementos a las amenazas. A veces conviene ir al revés: partir de lo que quiere el atacante y descomponerlo. Un <dfn data-term="arbol-ataque">árbol de ataque</dfn>, propuesto por Bruce Schneier en 1999 <span class="badge badge--doc">Documentado</span>, pone la meta en la raíz y debajo las formas de lograrla. Cada nodo es un <b>O</b> (alcanza con una de sus ramas) o un <b>Y</b> (hacen falta todas).</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f545t f545d">
+<title id="f545t">Árbol de ataque: leer los pedidos de otro cliente</title>
+<desc id="f545d">La meta arriba: leer los pedidos de otro cliente. Se abre en cuatro ramas O: abusar de la API por BOLA (que exige, con un Y, ids predecibles y que falte el chequeo de dueño), robar la sesión (por XSS o por phishing), llegar a la base (que exige, con un Y, una credencial filtrada y una base alcanzable) y que alguien de soporte abuse del panel. Cada hoja lleva la mitigación que la corta.</desc>
+<defs><marker id="f545a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-bad" x="225" y="14" width="320" height="46" rx="8"/>
+<text class="dg-label" x="385.0" y="41.0" text-anchor="middle">Meta: leer pedidos de otro cliente</text>
+<text class="dg-tiny" x="560" y="70" text-anchor="start">O: alcanza con una rama</text>
+<rect class="dg-warnbox" x="20" y="98" width="160" height="46" rx="8"/>
+<text class="dg-small" x="100.0" y="117.5" text-anchor="middle">BOLA en la API</text>
+<text class="dg-tiny" x="100.0" y="132.5" text-anchor="middle">Y: las dos</text>
+<path class="dg-edge" d="M385 60 L100 96" marker-end="url(#f545a)"/>
+<rect class="dg-warnbox" x="210" y="98" width="160" height="46" rx="8"/>
+<text class="dg-small" x="290.0" y="117.5" text-anchor="middle">Robar la sesión</text>
+<text class="dg-tiny" x="290.0" y="132.5" text-anchor="middle">O: cualquiera</text>
+<path class="dg-edge" d="M385 60 L290 96" marker-end="url(#f545a)"/>
+<rect class="dg-warnbox" x="400" y="98" width="160" height="46" rx="8"/>
+<text class="dg-small" x="480.0" y="117.5" text-anchor="middle">Entrar a la base</text>
+<text class="dg-tiny" x="480.0" y="132.5" text-anchor="middle">Y: las dos</text>
+<path class="dg-edge" d="M385 60 L480 96" marker-end="url(#f545a)"/>
+<rect class="dg-warnbox" x="590" y="98" width="160" height="46" rx="8"/>
+<text class="dg-small" x="670.0" y="117.5" text-anchor="middle">Soporte abusa</text>
+<text class="dg-tiny" x="670.0" y="132.5" text-anchor="middle">del panel</text>
+<path class="dg-edge" d="M385 60 L670 96" marker-end="url(#f545a)"/>
+<rect class="dg-box" x="20" y="186" width="76" height="52" rx="8"/>
+<text class="dg-tiny" x="58.0" y="208.5" text-anchor="middle">ids</text>
+<text class="dg-tiny" x="58.0" y="223.5" text-anchor="middle">predecibles</text>
+<path class="dg-edge" d="M100 144 L58.0 184" marker-end="url(#f545a)"/>
+<rect class="dg-ok" x="20" y="290" width="76" height="46" rx="8"/>
+<text class="dg-tiny" x="58.0" y="309.5" text-anchor="middle">ids</text>
+<text class="dg-tiny" x="58.0" y="324.5" text-anchor="middle">aleatorios</text>
+<path class="dg-edge" d="M58.0 240 L58.0 288" marker-end="url(#f545a)" style="stroke-dasharray:5 4"/>
+<rect class="dg-box" x="104" y="186" width="76" height="52" rx="8"/>
+<text class="dg-tiny" x="142.0" y="208.5" text-anchor="middle">sin chequeo</text>
+<text class="dg-tiny" x="142.0" y="223.5" text-anchor="middle">de dueño</text>
+<path class="dg-edge" d="M100 144 L142.0 184" marker-end="url(#f545a)"/>
+<rect class="dg-ok" x="104" y="290" width="76" height="46" rx="8"/>
+<text class="dg-tiny" x="142.0" y="309.5" text-anchor="middle">autorizar</text>
+<text class="dg-tiny" x="142.0" y="324.5" text-anchor="middle">por fila</text>
+<path class="dg-edge" d="M142.0 240 L142.0 288" marker-end="url(#f545a)" style="stroke-dasharray:5 4"/>
+<rect class="dg-box" x="210" y="186" width="76" height="52" rx="8"/>
+<text class="dg-tiny" x="248.0" y="208.5" text-anchor="middle">XSS en</text>
+<text class="dg-tiny" x="248.0" y="223.5" text-anchor="middle">reseñas</text>
+<path class="dg-edge" d="M290 144 L248.0 184" marker-end="url(#f545a)"/>
+<rect class="dg-ok" x="210" y="290" width="76" height="46" rx="8"/>
+<text class="dg-tiny" x="248.0" y="309.5" text-anchor="middle">CSP y</text>
+<text class="dg-tiny" x="248.0" y="324.5" text-anchor="middle">escape</text>
+<path class="dg-edge" d="M248.0 240 L248.0 288" marker-end="url(#f545a)" style="stroke-dasharray:5 4"/>
+<rect class="dg-box" x="294" y="186" width="76" height="52" rx="8"/>
+<text class="dg-tiny" x="332.0" y="216.0" text-anchor="middle">phishing</text>
+<path class="dg-edge" d="M290 144 L332.0 184" marker-end="url(#f545a)"/>
+<rect class="dg-ok" x="294" y="290" width="76" height="46" rx="8"/>
+<text class="dg-tiny" x="332.0" y="309.5" text-anchor="middle">MFA y</text>
+<text class="dg-tiny" x="332.0" y="324.5" text-anchor="middle">cookies</text>
+<path class="dg-edge" d="M332.0 240 L332.0 288" marker-end="url(#f545a)" style="stroke-dasharray:5 4"/>
+<rect class="dg-box" x="400" y="186" width="76" height="52" rx="8"/>
+<text class="dg-tiny" x="438.0" y="208.5" text-anchor="middle">credencial</text>
+<text class="dg-tiny" x="438.0" y="223.5" text-anchor="middle">filtrada</text>
+<path class="dg-edge" d="M480 144 L438.0 184" marker-end="url(#f545a)"/>
+<rect class="dg-ok" x="400" y="290" width="76" height="46" rx="8"/>
+<text class="dg-tiny" x="438.0" y="309.5" text-anchor="middle">gestor de</text>
+<text class="dg-tiny" x="438.0" y="324.5" text-anchor="middle">secretos</text>
+<path class="dg-edge" d="M438.0 240 L438.0 288" marker-end="url(#f545a)" style="stroke-dasharray:5 4"/>
+<rect class="dg-box" x="484" y="186" width="76" height="52" rx="8"/>
+<text class="dg-tiny" x="522.0" y="208.5" text-anchor="middle">base</text>
+<text class="dg-tiny" x="522.0" y="223.5" text-anchor="middle">alcanzable</text>
+<path class="dg-edge" d="M480 144 L522.0 184" marker-end="url(#f545a)"/>
+<rect class="dg-ok" x="484" y="290" width="76" height="46" rx="8"/>
+<text class="dg-tiny" x="522.0" y="309.5" text-anchor="middle">subred</text>
+<text class="dg-tiny" x="522.0" y="324.5" text-anchor="middle">privada</text>
+<path class="dg-edge" d="M522.0 240 L522.0 288" marker-end="url(#f545a)" style="stroke-dasharray:5 4"/>
+<rect class="dg-box" x="590" y="186" width="160" height="52" rx="8"/>
+<text class="dg-tiny" x="670.0" y="208.5" text-anchor="middle">sin registro</text>
+<text class="dg-tiny" x="670.0" y="223.5" text-anchor="middle">de acceso</text>
+<path class="dg-edge" d="M670 144 L670.0 184" marker-end="url(#f545a)"/>
+<rect class="dg-ok" x="590" y="290" width="160" height="46" rx="8"/>
+<text class="dg-tiny" x="670.0" y="309.5" text-anchor="middle">audit log</text>
+<text class="dg-tiny" x="670.0" y="324.5" text-anchor="middle">y alerta</text>
+<path class="dg-edge" d="M670.0 240 L670.0 288" marker-end="url(#f545a)" style="stroke-dasharray:5 4"/>
+<text class="dg-small" x="385" y="366" text-anchor="middle">En un Y basta cortar una hoja; en un O hay que cortarlas todas.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 54.5.</b> Un árbol para "leer los pedidos de otro cliente". Las cuatro ramas son O: cualquiera sirve. Dos son Y: la BOLA necesita ids predecibles <i>y</i> que falte el chequeo de dueño. Abajo, en verde, la mitigación que corta cada hoja.</figcaption>
+</figure>
+
+
+<p>La utilidad del árbol está en la diferencia entre O e Y:</p>
+
+<ul>
+  <li>En un nodo <b>Y</b>, basta cortar una hoja para cortar la rama. Para "entrar a la base", el gestor de secretos o la subred privada alcanzan cada uno; poner los dos es defensa en profundidad.</li>
+  <li>En un nodo <b>O</b>, hay que cortar todas las ramas, porque el atacante elige la más barata. Arreglar la BOLA y dejar sin MFA las cuentas de soporte deja la meta igual de alcanzable.</li>
+</ul>
+
+<p>Las hojas pueden llevar atributos (costo para el atacante, si necesita estar dentro de la red, si deja rastro) y el árbol se evalúa de abajo hacia arriba: el costo de un O es el de su rama más barata, el de un Y es la suma. Así sale cuál es el camino más barato hacia la meta, que es el que primero hay que cerrar.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>El error clásico es armar el árbol solo con ataques técnicos. En el ejemplo, la rama "soporte abusa del panel" no necesita ninguna vulnerabilidad: es una persona con permisos legítimos. Si el árbol la omite, el equipo arregla la API, declara la meta protegida y el incidente llega por la puerta de al lado. Lo viste con otra forma en <a href="m38-active-directory.html#tiering">el tiering de M38</a>: los permisos legítimos son rutas.</p>
+</aside>
+
+<h2 id="priorizar"><span class="sec-num">54.5</span>Priorizar y decidir</h2>
+
+<p>Una sesión produce fácilmente treinta amenazas. La tercera pregunta exige decidir qué hacer con cada una, y no todo se puede arreglar a la vez. Hay cuatro respuestas posibles:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Respuesta</th><th>Qué significa</th><th>Ejemplo en Tienda Norte</th></tr></thead>
+    <tbody>
+      <tr><td><b>Mitigar</b></td><td>Cambiar el diseño o agregar un control</td><td>Autorizar cada pedido por su dueño en la consulta</td></tr>
+      <tr><td><b>Aceptar</b></td><td>Convivir con el riesgo, por escrito y con fecha de revisión</td><td>Un DoS muy grande lo absorbe el proveedor del borde (M28) y no se hace nada propio</td></tr>
+      <tr><td><b>Transferir</b></td><td>Pasar el riesgo a otro que lo maneja mejor</td><td>No guardar tarjetas: el PSP las tokeniza (M27)</td></tr>
+      <tr><td><b>Evitar</b></td><td>Quitar la funcionalidad o el dato</td><td>No guardar la fecha de nacimiento si nada la usa</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Para ordenar, la forma más usada es estimar <b>probabilidad</b> e <b>impacto</b> en tres niveles y ubicar cada amenaza en una matriz. No es una ciencia exacta y no pretende serlo: su valor está en que el equipo discuta en voz alta por qué cree que algo es probable.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f546t f546d">
+<title id="f546t">Matriz de riesgo: probabilidad por impacto</title>
+<desc id="f546d">Una rejilla de tres por tres: probabilidad baja, media y alta en el eje horizontal e impacto bajo, medio y alto en el vertical. Las celdas de arriba a la derecha son críticas. Cinco amenazas de la tienda ubicadas: BOLA en la API en alta y alto, búsqueda que satura la base en alta y medio, robo de sesión por XSS en media y alto, soporte que borra sin rastro en baja y medio, y suplantar al PSP con webhooks falsos en media y alto antes de firmar y en baja y alto después.</desc>
+<defs><marker id="f546a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-warnbox" x="200" y="30" width="144" height="74" rx="6" style="fill-opacity:.55"/>
+<rect class="dg-bad" x="350" y="30" width="144" height="74" rx="6" style="fill-opacity:.55"/>
+<rect class="dg-bad" x="500" y="30" width="144" height="74" rx="6" style="fill-opacity:.55"/>
+<rect class="dg-ok" x="200" y="110" width="144" height="74" rx="6" style="fill-opacity:.55"/>
+<rect class="dg-warnbox" x="350" y="110" width="144" height="74" rx="6" style="fill-opacity:.55"/>
+<rect class="dg-bad" x="500" y="110" width="144" height="74" rx="6" style="fill-opacity:.55"/>
+<rect class="dg-ok" x="200" y="190" width="144" height="74" rx="6" style="fill-opacity:.55"/>
+<rect class="dg-ok" x="350" y="190" width="144" height="74" rx="6" style="fill-opacity:.55"/>
+<rect class="dg-warnbox" x="500" y="190" width="144" height="74" rx="6" style="fill-opacity:.55"/>
+<text class="dg-small" x="272" y="292" text-anchor="middle">baja</text>
+<text class="dg-small" x="422" y="292" text-anchor="middle">media</text>
+<text class="dg-small" x="572" y="292" text-anchor="middle">alta</text>
+<text class="dg-group" x="422" y="312" text-anchor="middle">probabilidad →</text>
+<text class="dg-small" x="186" y="72" text-anchor="end">alto</text>
+<text class="dg-small" x="186" y="152" text-anchor="end">medio</text>
+<text class="dg-small" x="186" y="232" text-anchor="end">bajo</text>
+<text class="dg-group" x="60" y="150" text-anchor="middle">impacto ↑</text>
+<text class="dg-tiny" x="572" y="64" text-anchor="middle">BOLA en la API</text>
+<text class="dg-tiny" x="572" y="144" text-anchor="middle">búsqueda satura</text>
+<text class="dg-tiny" x="422" y="64" text-anchor="middle">robo de sesión</text>
+<text class="dg-tiny" x="272" y="144" text-anchor="middle">borrar sin rastro</text>
+<text class="dg-tiny" x="272" y="60" text-anchor="middle">webhook falso,</text>
+<text class="dg-tiny" x="272" y="76" text-anchor="middle">ya con firma</text>
+<text class="dg-tiny" x="422" y="84" text-anchor="middle">webhook sin firma</text>
+<path class="dg-edge" d="M360 80 L320 72" marker-end="url(#f546a)" style="stroke-dasharray:5 4"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 54.6.</b> La matriz de riesgo de la tienda. Arriba a la derecha, lo que se arregla primero. La flecha punteada muestra cómo una mitigación mueve una amenaza: firmar los webhooks baja la probabilidad de suplantar al PSP de media a baja, pero el impacto sigue siendo alto.</figcaption>
+</figure>
+
+
+<p>Lo que queda después de mitigar es el <dfn data-term="riesgo-residual">riesgo residual</dfn>. Casi nunca es cero, y conviene escribirlo: "firmamos los webhooks; queda el riesgo de que se filtre el secreto de firma, que mitigamos rotándolo cada 90 días y alertando si llegan firmas inválidas". Esa frase es lo que lee quien revisa el modelo seis meses después.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Definición</p>
+  <p class="def-term">DREAD <span class="def-en">Damage, Reproducibility, Exploitability, Affected users, Discoverability</span></p>
+  <p class="def-one">Un puntaje de 1 a 10 en cinco dimensiones que Microsoft usó para priorizar amenazas y después abandonó.</p>
+  <dl class="def-rows">
+    <div><dt>Intuición</dt><dd>Convertir una opinión en un número para poder ordenar.</dd></div>
+    <div><dt>Ejemplo</dt><dd>Dos personas puntúan la misma amenaza con 4 y con 8 en "descubribilidad", y el promedio no significa nada.</dd></div>
+    <div><dt>Por qué importa en producción</dt><dd>Shostack cuenta en su libro que se dejó de usar porque los puntajes cambiaban mucho según quién los ponía <span class="badge badge--doc">Documentado</span>. Si alguien propone DREAD, la matriz de tres por tres da el mismo orden con menos discusión sobre decimales.</dd></div>
+  </dl>
+</aside>
+
+<p class="more-link">Cómo se priorizan las vulnerabilidades ya encontradas (con CVSS, EPSS y el catálogo KEV), que es otro problema, está en M58.</p>
+
+<h2 id="privacidad"><span class="sec-num">54.6</span>Privacidad: LINDDUN en una página</h2>
+
+<p>STRIDE pregunta qué puede hacer un atacante. Hay otra familia de daños que no necesita atacante: el sistema mismo trata los datos personales de una forma que la persona no espera. <dfn data-term="linddun">LINDDUN</dfn>, de la KU Leuven <span class="badge badge--doc">Documentado</span>, hace lo mismo que STRIDE pero para la privacidad, con siete categorías sobre el mismo DFD:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Letra</th><th>Amenaza</th><th>En Tienda Norte</th></tr></thead>
+    <tbody>
+      <tr><td><b>L</b></td><td>Linking: unir datos de la misma persona</td><td>Unir el historial anónimo con la cuenta al iniciar sesión</td></tr>
+      <tr><td><b>I</b></td><td>Identifying: identificar a alguien</td><td>Un export "anónimo" con código postal, fecha y producto raro</td></tr>
+      <tr><td><b>N</b></td><td>Non-repudiation: no poder negar algo que la persona querría poder negar</td><td>Un registro permanente de compras sensibles</td></tr>
+      <tr><td><b>D</b></td><td>Detecting: deducir que algo existe</td><td>"Este correo ya está registrado" revela quién es cliente</td></tr>
+      <tr><td><b>D</b></td><td>Data disclosure: tratar más datos de los necesarios</td><td>Mandar la dirección completa al servicio de correo</td></tr>
+      <tr><td><b>U</b></td><td>Unawareness and unintervenability: que la persona no sepa ni pueda decidir</td><td>No poder borrar la cuenta ni ver qué se guarda</td></tr>
+      <tr><td><b>N</b></td><td>Non-compliance: no cumplir la regulación</td><td>Guardar logs con datos personales más tiempo del declarado</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Fíjate en la N de no repudio: en STRIDE es algo que quieres (que nadie pueda negar lo que hizo); en LINDDUN puede ser un daño (que la persona no pueda negar algo privado). Es un buen ejemplo de por qué privacidad y seguridad se modelan por separado, aunque sobre el mismo dibujo. La retención y el borrado criptográfico de <a href="m10-seguridad.html#crypto-shredding">M10</a> son mitigaciones típicas de LINDDUN.</p>
+
+<h2 id="proceso"><span class="sec-num">54.7</span>El modelo dentro del ciclo de vida</h2>
+
+<p>Un modelo que se hace una vez y se archiva describe un sistema que ya no existe. La cuarta pregunta ("¿hicimos un buen trabajo?") solo se puede responder si el modelo vive junto al código y se revisa cuando el sistema cambia.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f547t f547d">
+<title id="f547t">Dónde vive el threat model en el ciclo de vida</title>
+<desc id="f547d">Cinco etapas en línea: diseño, código, CI, despliegue y operación. El modelo se escribe en el design doc, se vuelve requisitos y pruebas en el código, se revisa en el CI cuando cambia el diagrama, se comprueba en el despliegue y alimenta las detecciones en operación. Abajo, los disparadores para rehacerlo: un flujo nuevo, una frontera nueva, un dato sensible nuevo, un tercero nuevo o un incidente.</desc>
+<defs><marker id="f547a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="40" width="130" height="54" rx="8"/>
+<text class="dg-small" x="85.0" y="63.5" text-anchor="middle">Diseño</text>
+<text class="dg-tiny" x="85.0" y="78.5" text-anchor="middle">design doc</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="170" y="40" width="130" height="54" rx="8"/>
+<text class="dg-small" x="235.0" y="63.5" text-anchor="middle">Código</text>
+<text class="dg-tiny" x="235.0" y="78.5" text-anchor="middle">requisitos</text>
+<path class="dg-edge" d="M152 67 L168 67" marker-end="url(#f547a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="320" y="40" width="130" height="54" rx="8"/>
+<text class="dg-small" x="385.0" y="63.5" text-anchor="middle">CI</text>
+<text class="dg-tiny" x="385.0" y="78.5" text-anchor="middle">DFD como código</text>
+<path class="dg-edge" d="M302 67 L318 67" marker-end="url(#f547a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="470" y="40" width="130" height="54" rx="8"/>
+<text class="dg-small" x="535.0" y="63.5" text-anchor="middle">Despliegue</text>
+<text class="dg-tiny" x="535.0" y="78.5" text-anchor="middle">controles probados</text>
+<path class="dg-edge" d="M452 67 L468 67" marker-end="url(#f547a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="620" y="40" width="130" height="54" rx="8"/>
+<text class="dg-small" x="685.0" y="63.5" text-anchor="middle">Operación</text>
+<text class="dg-tiny" x="685.0" y="78.5" text-anchor="middle">detecciones</text>
+<path class="dg-edge" d="M602 67 L618 67" marker-end="url(#f547a)"/>
+<text class="dg-group" x="385" y="128" text-anchor="middle">Rehacer el modelo cuando aparece:</text>
+<rect class="dg-warnbox" x="20" y="146" width="130" height="40" rx="8"/>
+<text class="dg-tiny" x="85.0" y="170.0" text-anchor="middle">un flujo nuevo</text>
+<rect class="dg-warnbox" x="170" y="146" width="130" height="40" rx="8"/>
+<text class="dg-tiny" x="235.0" y="170.0" text-anchor="middle">una frontera nueva</text>
+<rect class="dg-warnbox" x="320" y="146" width="130" height="40" rx="8"/>
+<text class="dg-tiny" x="385.0" y="170.0" text-anchor="middle">un dato sensible</text>
+<rect class="dg-warnbox" x="470" y="146" width="130" height="40" rx="8"/>
+<text class="dg-tiny" x="535.0" y="170.0" text-anchor="middle">un tercero nuevo</text>
+<rect class="dg-warnbox" x="620" y="146" width="130" height="40" rx="8"/>
+<text class="dg-tiny" x="685.0" y="170.0" text-anchor="middle">un incidente</text>
+<path class="dg-feedback" d="M700 186 L700 205"/>
+<path class="dg-feedback" d="M700 205 L85 205"/>
+<path class="dg-feedback" d="M85 205 L85 96" marker-end="url(#f547a)"/>
+<text class="dg-tiny" x="400" y="222" text-anchor="middle">el incidente vuelve al diseño</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 54.7.</b> El modelo nace en el design doc y pasa por todas las etapas: se vuelve requisitos y pruebas, se revisa en el CI, se verifica al desplegar y alimenta las detecciones. Abajo, los cambios que obligan a rehacerlo; un incidente también vuelve al diseño.</figcaption>
+</figure>
+
+
+<p>En la práctica:</p>
+
+<ul>
+  <li><b>En el design doc.</b> La sección de seguridad del <a href="m42-ml-system-design.html">design doc</a> lleva el DFD, las amenazas y las decisiones. Si una funcionalidad no cruza ninguna frontera nueva, la sección puede tener tres líneas.</li>
+  <li><b>Como requisitos y pruebas.</b> "Un cliente no puede leer pedidos de otro" se vuelve una prueba de integración que pide el pedido de otra cuenta y espera un 404. Esa prueba es la mitigación verificada (M55 lo desarrolla).</li>
+  <li><b>Como código.</b> Herramientas como OWASP pytm o Threagile describen el DFD en un archivo que vive en el repositorio y genera el diagrama y una lista de amenazas <span class="badge badge--doc">Documentado</span>. El valor no está en la lista automática, que es genérica, sino en que un cambio en el DFD aparece en el pull request y alguien lo revisa.</li>
+  <li><b>Como detecciones.</b> Cada amenaza aceptada o mitigada a medias es una candidata a detección: si aceptas que una cuenta de soporte puede borrar pedidos, al menos alerta cuando borra cincuenta en una hora (M59).</li>
+</ul>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Los disparadores de la figura son la regla práctica que usan muchos equipos para no modelar todo siempre: un flujo nuevo, una frontera nueva, un dato sensible nuevo, un tercero nuevo o un incidente. Un cambio de color en un botón no necesita threat model; integrar un proveedor de envíos que recibe direcciones, sí.</p>
+</aside>
+
+<h2 id="tienda"><span class="sec-num">54.8</span>El modelo completo de Tienda Norte</h2>
+
+<p>Juntando todo, este es el resultado de una sesión sobre la tienda: la lista que sale de recorrer el DFD con STRIDE por elemento, ordenada por la matriz. Es el punto de partida de los módulos siguientes.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>#</th><th>Elemento</th><th>Letra</th><th>Amenaza</th><th>Decisión</th><th>Dónde sigue</th></tr></thead>
+    <tbody>
+      <tr><td class="r">1</td><td>API</td><td>I</td><td>Leer pedidos de otro cliente (BOLA)</td><td>Mitigar: autorizar por fila y prueba de integración</td><td>M55</td></tr>
+      <tr><td class="r">2</td><td>Worker</td><td>S</td><td>Webhooks falsos que marcan pedidos como pagados</td><td>Mitigar: firma y consulta al PSP (<a href="m39-manejo-pagos.html">M39</a>)</td><td>M59</td></tr>
+      <tr><td class="r">3</td><td>Panel</td><td>E</td><td>Una cuenta de cliente que llega al panel</td><td>Mitigar: panel en otro dominio, VPN y rol propio</td><td>M57</td></tr>
+      <tr><td class="r">4</td><td>Panel</td><td>R</td><td>Soporte borra pedidos sin rastro</td><td>Mitigar: log de auditoría fuera del alcance del panel</td><td>M59</td></tr>
+      <tr><td class="r">5</td><td>API</td><td>T</td><td>Una dependencia comprometida en la imagen</td><td>Mitigar: lockfile, SBOM y firma</td><td>M56</td></tr>
+      <tr><td class="r">6</td><td>Flujo API → base</td><td>I</td><td>Credencial de la base en el repositorio</td><td>Mitigar: gestor de secretos (<a href="m37-nube.html#kms">M37</a>) y secret scanning</td><td>M55</td></tr>
+      <tr><td class="r">7</td><td>API</td><td>D</td><td>Búsqueda sin límite que satura la base</td><td>Mitigar: paginación y límite de tasa (<a href="m08-resiliencia.html">M08</a>)</td><td>M55</td></tr>
+      <tr><td class="r">8</td><td>Borde</td><td>D</td><td>DDoS volumétrico</td><td>Transferir: proveedor de borde (<a href="m28-cloudflare.html">M28</a>)</td><td>—</td></tr>
+      <tr><td class="r">9</td><td>Base</td><td>I</td><td>Un backup legible si se roba</td><td>Mitigar: cifrado y claves en KMS</td><td>M60</td></tr>
+      <tr><td class="r">10</td><td>Flujo a correo</td><td>I (LINDDUN)</td><td>Mandar más datos de los necesarios al servicio de correo</td><td>Evitar: solo nombre y número de pedido</td><td>M61</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="errores"><span class="sec-num">54.9</span>Errores típicos</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Error</th><th>Qué pasa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+      <tr><td>Modelar la arquitectura de despliegue en lugar de los datos</td><td>El dibujo muestra pods y balanceadores, pero no qué dato cruza cada frontera</td><td>Dibujar el DFD con datos con nombre en cada flecha</td></tr>
+      <tr><td>Olvidar las fronteras</td><td>Todas las amenazas parecen iguales y la lista no tiene orden</td><td>Primero las fronteras, después los elementos que las tocan</td></tr>
+      <tr><td>Hacerlo solo el equipo de seguridad</td><td>Un modelo correcto de un sistema que nadie del equipo reconoce</td><td>Lo hace quien diseña y programa, con seguridad como guía</td></tr>
+      <tr><td>Dejar las mitigaciones en el documento</td><td>Nadie las implementa</td><td>Tickets con dueño en el tablero del equipo</td></tr>
+      <tr><td>Olvidar a quien tiene permisos legítimos</td><td>El árbol solo tiene ataques técnicos</td><td>Una rama por cada rol interno con acceso</td></tr>
+      <tr><td>Modelar una vez y archivar</td><td>El modelo describe un sistema que ya no existe</td><td>Rehacerlo con los disparadores de 54.7</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m54"></div>
+
+<div data-exercise="m54-stride"></div>
+
+<div data-checkpoint="m54"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m54.data.js"></script>
+<script src="../assets/js/data/exercises/m54.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-devsecops.js"></script>
+</body>
+</html>

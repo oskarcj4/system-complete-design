@@ -60,6 +60,18 @@
 
       <h2 id="tokens"><span class="sec-num">18.1</span>Por qué contar tokens y no requests</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un limitador clásico cuenta requests. En un LLM eso no sirve: una request de 50 tokens y una de 50 000 cuentan igual pero cuestan mil veces distinto. Además la GPU gasta tres cosas distintas: cómputo para leer la entrada, tiempo para generar la salida y memoria mientras la request está viva. Por eso hay un límite para cada una: tokens de entrada por minuto, tokens de salida por minuto y requests a la vez.</p>
+        <p class="jr-like"><b>Es como</b> un buffet que cobra por plato sin mirar el tamaño: alguien se lleva una bandeja entera al precio de una ensalada.</p>
+        <dl class="jr-words">
+          <dt>Rate limit</dt><dd>máximo de uso por unidad de tiempo.</dd>
+          <dt>ITPM / OTPM</dt><dd>tokens de entrada / de salida por minuto.</dd>
+          <dt>Concurrencia</dt><dd>cuántas requests corren a la vez.</dd>
+          <dt>429</dt><dd>código HTTP de "demasiadas requests, espera".</dd>
+        </dl>
+      </aside>
+
       <p>Un rate limiter clásico cuenta requests (M08). En una API de LLM, dos requests pueden diferir mil veces en lo que cuestan:</p>
 
       <div class="table-wrap">
@@ -237,6 +249,16 @@
 
       <h2 id="estimar"><span class="sec-num">18.2</span>Cobrar antes de saber cuánto va a costar</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El limitador decide al principio, pero el costo real se sabe al final, cuando el modelo terminó de generar. La entrada se puede contar antes (tokenizando o estimando por caracteres); la salida no, porque nadie sabe cuánto va a escribir el modelo. Esta sección muestra cómo lo resuelven los dos proveedores grandes: uno descuenta el máximo posible y otro descuenta solo la entrada y ajusta después.</p>
+        <p class="jr-like"><b>Es como</b> un taxi sin taxímetro que tiene que decidir si te lleva antes de saber a dónde vas.</p>
+        <dl class="jr-words">
+          <dt>Tokenizar</dt><dd>convertir el texto en tokens para contarlos exactamente.</dd>
+          <dt>max_tokens</dt><dd>el máximo de salida que pide el cliente; acota lo peor.</dd>
+        </dl>
+      </aside>
+
       <p>El limitador decide en la puerta, pero el costo se conoce al final. La entrada se puede contar antes de ejecutar: tokenizándola en el gateway, que es exacto pero cuesta CPU y depende del tokenizer de cada modelo, o estimándola por la cantidad de caracteres, que es lo que documenta OpenAI. <span class="badge badge--doc">Documentado</span> La salida no: solo se sabe que no va a pasar de <code>max_tokens</code>.</p>
 
       <p>Los dos proveedores grandes resuelven la incógnita en direcciones opuestas: <span class="badge badge--doc">Documentado</span></p>
@@ -252,6 +274,18 @@
       <p>Prueba las ráfagas con "Contar al terminar": el uso real llega al 168&#8239;% del límite, porque en la ráfaga entran decenas de requests y ninguna cuenta hasta terminar. Pasa a "Reservar max_tokens" con 16 384: se rechaza el 88&#8239;% de las requests con el uso real por debajo del 20&#8239;%. Las dos estrategias del medio son las que se usan: reservar y devolver lo que sobra, o reservar una estimación y corregir.</p>
 
       <h2 id="reservar"><span class="sec-num">18.3</span>Reservar, consumir y reconciliar</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>La solución es tratar la cuota como un saldo con retenciones: al empezar se <b>reserva</b> una estimación, durante el stream se <b>consume</b> y al terminar se <b>reconcilia</b> (se devuelve lo que sobró o se cobra lo que faltó). Todo eso se hace con un script atómico en Redis para que dos requests simultáneas no descuenten el mismo saldo.</p>
+        <p class="jr-like"><b>Es como</b> el hotel que retiene 200 dólares en tu tarjeta al hacer el check-in y, al irte, cobra solo lo que consumiste del minibar.</p>
+        <dl class="jr-words">
+          <dt>Reserva</dt><dd>descuento provisorio al empezar.</dd>
+          <dt>Reconciliar</dt><dd>ajustar la reserva al costo real cuando la request termina.</dd>
+          <dt>Atómico</dt><dd>se ejecuta entero o nada, sin que otro se meta en el medio.</dd>
+          <dt>p95</dt><dd>el valor que el 95 % de los casos no supera; aquí, la estimación de salida.</dd>
+        </dl>
+      </aside>
 
       <p>El patrón de <dfn data-term="reserva-cuota">reservar y reconciliar</dfn> trata la cuota como un saldo con retenciones, igual que una tarjeta que retiene el monto de un hotel y cobra lo real al salir:</p>
 
@@ -365,6 +399,17 @@ async def reconciliar_cuota(claves, uso_real, planes, org, proyecto):
 
       <h2 id="algoritmos"><span class="sec-num">18.4</span>Algoritmos para tokens</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El <b>token bucket</b> (balde de fichas) del M08 sirve, con un cambio: cada request saca un número variable de fichas, no una. El balde se rellena a ritmo fijo, y su tamaño decide cuánto se puede gastar de golpe. Como las reservas son estimadas, el balde puede quedar en negativo (en deuda): la deuda frena a las siguientes requests. La <b>ley de Little</b> dice cuántos streams se acumulan: llegadas por segundo × segundos que dura cada uno.</p>
+        <p class="jr-like"><b>Es como</b> una alcancía que se llena sola con una moneda por segundo: puedes sacar varias de golpe, pero si sacas más de las que hay, quedas debiendo y esperas.</p>
+        <dl class="jr-words">
+          <dt>Token bucket</dt><dd>balde que se rellena a ritmo fijo; cada uso saca fichas.</dd>
+          <dt>Saldo negativo</dt><dd>deuda del balde cuando la request costó más de lo reservado.</dd>
+          <dt>Ley de Little</dt><dd>promedio en el sistema = llegadas por segundo × tiempo en el sistema.</dd>
+        </dl>
+      </aside>
+
       <p>El token bucket del M08 sirve tal cual, con una diferencia: cada request descuenta un costo variable, no una unidad. La capacidad del balde decide cuánto se puede gastar de golpe; la recarga, el ritmo sostenido.</p>
 
       <div class="table-wrap">
@@ -454,6 +499,16 @@ async def reconciliar_cuota(claves, uso_real, planes, org, proyecto):
 
       <h2 id="jerarquia"><span class="sec-num">18.5</span>Cuotas por niveles</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Las cuotas se anidan: una organización tiene proyectos y un proyecto tiene claves de API. Cada request se descuenta en todos sus niveles a la vez, y si uno no alcanza, no se descuenta en ninguno (todo o nada). El cliente ve en los headers de cada respuesta cuánto le queda.</p>
+        <p class="jr-like"><b>Es como</b> el presupuesto de una empresa: cada área tiene el suyo dentro del de la empresa, y un gasto tiene que entrar en los dos.</p>
+        <dl class="jr-words">
+          <dt>Organización / proyecto / clave</dt><dd>los niveles donde se fija una cuota.</dd>
+          <dt>Headers de rate limit</dt><dd>campos de la respuesta que dicen límite, restante y cuándo se renueva.</dd>
+        </dl>
+      </aside>
+
       <p>Las cuotas se anidan: una organización tiene proyectos, un proyecto tiene claves y una clave atiende a los usuarios del cliente. Cada request pasa por todos los niveles que le corresponden, y la reserva tiene que ser atómica en todos (el script de 18.3): si se descuenta del proyecto y después falla la organización, el proyecto pierde cuota por una request que nunca corrió.</p>
 
       
@@ -523,6 +578,17 @@ async def reconciliar_cuota(claves, uso_real, planes, org, proyecto):
       <p>Por encima de todo está el <dfn data-term="spend-limit">tope de gasto</dfn> del mes. Al alcanzar el tope de su nivel, Anthropic responde 429 con <code>enforced_spend_limit_reached</code> y sin <code>retry-after</code>; si el tope lo fijó el cliente, responde 400. OpenAI usa 429 con <code>organization_spend_limit_exceeded</code> o <code>project_spend_limit_exceeded</code>. <span class="badge badge--doc">Documentado</span> El tope de gasto se lleva con el metering (<a href="m21-metering.html#topes">M21</a>), no con el rate limiter: se mide en dinero, se acumula durante un mes y tiene que ser exacto.</p>
 
       <h2 id="justicia"><span class="sec-num">18.6</span>Repartir la flota entre clientes</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Las cuotas se venden sumando varias veces la capacidad real (<b>sobresuscripción</b>), porque los clientes no usan todo a la vez. Cuando sí coinciden, aparece el <b>vecino ruidoso</b>: un cliente dentro de su cuota satura a todos. La respuesta es <b>fair queuing</b>: una cola por cliente, y cada lugar libre va al que menos recibió en proporción a lo que paga.</p>
+        <p class="jr-like"><b>Es como</b> una aerolínea que vende más pasajes que asientos, y cuando todos vienen, sube primero a quien tiene prioridad sin dejar a nadie esperando para siempre.</p>
+        <dl class="jr-words">
+          <dt>Sobresuscripción</dt><dd>vender más capacidad de la que hay, contando con que no todos la usan.</dd>
+          <dt>Vecino ruidoso</dt><dd>cliente que, sin romper reglas, empeora el servicio de los demás.</dd>
+          <dt>Fair queuing</dt><dd>reparto por turnos entre colas según su peso.</dd>
+        </dl>
+      </aside>
 
       <p>Si la flota tuviera capacidad para la suma de todas las cuotas, estaría vacía casi siempre. Las cuotas se venden con <dfn data-term="sobresuscripcion">sobresuscripción</dfn>: suman varias veces la capacidad, porque los clientes no usan todo a la vez, igual que un proveedor de internet o una aerolínea. Funciona mientras los picos no coinciden, y coinciden: el lunes a las 9, en un lanzamiento viral o cuando un cliente grande corre su proceso mensual.</p>
 
@@ -597,6 +663,17 @@ async def reconciliar_cuota(claves, uso_real, planes, org, proyecto):
 
       <h2 id="admision"><span class="sec-num">18.7</span>Admission control: cuando la flota no alcanza</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El <b>admission control</b> decide si una request entra mirando el estado de la flota, no la cuota del cliente: cuánto tendría que esperar, cuánta memoria queda. Rechazar enseguida (con un 503 y un "reintenta en N segundos") es mejor que aceptar y fallar tarde, porque cerca del 100 % de ocupación la espera se dispara: al 95 %, una request pasa 20 veces su tiempo de servicio en el sistema.</p>
+        <p class="jr-like"><b>Es como</b> el patovica de un boliche lleno: es mejor decir "en 10 minutos" en la puerta que dejar entrar y que nadie pueda moverse adentro.</p>
+        <dl class="jr-words">
+          <dt>Admission control</dt><dd>decidir si se admite trabajo según la carga del sistema.</dd>
+          <dt>503 / Retry-After</dt><dd>servicio no disponible / cuánto esperar antes de reintentar.</dd>
+          <dt>Degradar</dt><dd>responder con algo más barato en lugar de rechazar.</dd>
+        </dl>
+      </aside>
+
       <p>El <dfn data-term="admission-control">admission control</dfn> decide si una request entra según el estado de la flota, no según la cuota del cliente. Mira señales que el limitador no ve: la espera estimada en la cola (los tokens pendientes divididos por el throughput), la ocupación del KV cache, la tasa de preemptions de los motores (M15) y el TTFT reciente.</p>
 
       <p>Rechazar a tiempo es mejor que aceptar y fallar tarde. Por la teoría de colas del M08, en una cola al 95&#8239;% de ocupación cada request pasa en el sistema 20 veces su tiempo de servicio, y una request que va a vencer su timeout esperando ocupa lugar para nada. Por eso la regla que funciona compara la espera estimada con el plazo de la request, y la rechaza con un 503 y un <code>Retry-After</code> si no va a llegar a tiempo. Antes de rechazar hay opciones de degradación (M08): mandar a otra región (M19), bajar a un modelo más chico o recortar <code>max_tokens</code> en el plan gratis.</p>
@@ -666,6 +743,18 @@ async def reconciliar_cuota(claves, uso_real, planes, org, proyecto):
       </aside>
 
       <h2 id="distribuido"><span class="sec-num">18.8</span>El limitador como problema distribuido</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>En producción no hay un contador: hay decenas de gateways en varias regiones descontando el mismo saldo miles de veces por segundo. Si cada uno decide con lo que ve, entre todos pueden pasarse del límite. Las opciones son coordinar (un contador central, más lento), repartir el saldo por adelantado (escrow) o tolerar un exceso acotado. Aparecen CAP, los relojes y los fallos de Redis del M06.</p>
+        <p class="jr-like"><b>Es como</b> tres cajeros vendiendo las últimas 10 entradas de un recital sin hablarse: cada uno cree que quedan 10.</p>
+        <dl class="jr-words">
+          <dt>Invariante</dt><dd>regla que siempre tiene que cumplirse ("no pasar del límite").</dd>
+          <dt>Escrow</dt><dd>repartir partes del saldo a cada gateway para que decida solo.</dd>
+          <dt>Hash tag</dt><dd>parte de la clave de Redis que obliga a guardar varias claves en el mismo shard.</dd>
+          <dt>Shard</dt><dd>una parte de los datos en un nodo del cluster.</dd>
+        </dl>
+      </aside>
 
       <p>Hasta acá el contador parecía un número en Redis. En producción, decenas de gateways en varias regiones leen y descuentan el mismo saldo, miles de veces por segundo, con redes que se cortan, relojes que difieren y réplicas que se caen. Todo el M06 aparece acá.</p>
 
@@ -950,6 +1039,15 @@ async def reconciliar_cuota(claves, uso_real, planes, org, proyecto):
       <div data-exercise="m18-limitador"></div>
 
       <h2 id="cliente"><span class="sec-num">18.9</span>Del otro lado: un cliente que respeta las cuotas</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El sistema funciona mejor si los clientes colaboran: leen los headers de límite, esperan lo que dice <code>retry-after</code>, reintentan con espera creciente y al azar (backoff con jitter) y limitan cuántas requests mandan a la vez.</p>
+        <p class="jr-like"><b>Es como</b> hacer fila en vez de empujar: todos llegan antes.</p>
+        <dl class="jr-words">
+          <dt>Backoff con jitter</dt><dd>esperar cada vez más, con un componente aleatorio, para no reintentar todos juntos.</dd>
+        </dl>
+      </aside>
 
       <p>Todo este diseño funciona mejor si los clientes colaboran, y los clientes bien hechos lo hacen:</p>
       <ul>

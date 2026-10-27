@@ -3,6 +3,7 @@
    de OpenAI, LiveKit, Silero, AWS) va marcado en cada caja. Se lee de arriba abajo: clientes, borde, agente, modelos y
    plataforma. El ms de cada paso es lo que suma al camino crítico: el total del turno normal es el presupuesto de 24.8. */
 SD.defineMap('m24-voz', {
+  stepPanel: true, pieces: true,
   title: 'Un agente de voz en tiempo real',
   intro: 'El camino de un turno de voz. Arriba, la app y el teléfono; en el borde, la señalización, STUN, TURN, el SFU y el gateway SIP; en el medio, el worker que orquesta el turno con el VAD y el detector de fin de turno; abajo, los modelos (STT, LLM, TTS o un speech-to-speech) y la plataforma. Los escenarios recorren un turno normal, una interrupción, una pausa larga, una red con pérdida, un cambio de red, un firewall que solo deja salir el 443, un worker que muere, una llamada telefónica, una herramienta lenta y el mismo turno con speech-to-speech.',
   start: 'worker',
@@ -15,7 +16,9 @@ SD.defineMap('m24-voz', {
   ],
   nodes: [
     /* ---------- Clientes ---------- */
-    { id: 'app', layer: 'client', label: 'App con voz', sub: 'navegador o app móvil, WebRTC', x: 640, y: 120,
+    { id: 'app', brief: "La app del usuario: captura el micrófono y reproduce la respuesta.",
+      why: "Es donde empieza y termina cada turno. Habla WebRTC para mandar audio con poca demora.",
+      layer: 'client', label: 'App con voz', sub: 'navegador o app móvil, WebRTC', x: 640, y: 120,
       info: {
         resp: '<p>Captura el micrófono, le resta el eco de lo que suena por el parlante (AEC), comprime con el códec Opus en cuadros de 20 ms y los manda por UDP al SFU. En el otro sentido, ordena los paquetes que llegan en su jitter buffer y los reproduce. Nunca tiene la clave de la API: pide un token de corta duración al app server.</p>',
         api: '<pre><code>POST /voice/session            → {"token": "eyJ…", "url": "wss://sfu.example.com"}\nWebSocket de señalización      → oferta SDP y candidatos ICE\nSRTP sobre UDP                 → audio en los dos sentidos</code></pre><p>En el navegador, todo esto es <code>RTCPeerConnection</code> y <code>getUserMedia</code>, con la cancelación de eco activada por defecto. <span class="badge badge--doc">Documentado</span></p>',
@@ -23,7 +26,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>Sin cancelación de eco:</b> el agente se oye a sí mismo y se interrumpe (escenario "Una interrupción a mitad de frase" y el simulador de 24.9).</li><li><b>Cambia de red:</b> reinicia ICE (escenario "De wifi a datos").</li><li><b>Pestaña en segundo plano:</b> algunos navegadores frenan los timers; el audio sigue, la interfaz no.</li></ul>',
         nums: '<ul><li>Opus a 32 kbps: 80 bytes de audio y 50 de cabeceras (IP, UDP, RTP y el tag de SRTP) cada 20 ms; 52 kbps en el cable.</li><li>Captura y codificación: unos 30 ms; jitter buffer y reproducción: unos 40 ms. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
-    { id: 'pstn', layer: 'external', label: 'Teléfono', sub: 'red telefónica, G.711 a 8 kHz', x: 1960, y: 120,
+    { id: 'pstn', brief: "La red telefónica de siempre: alguien que llama a un número.",
+      why: "Muchos clientes llaman por teléfono, no desde una app. Su audio llega con otra calidad (8 kHz) y por otro protocolo (SIP).",
+      layer: 'external', label: 'Teléfono', sub: 'red telefónica, G.711 a 8 kHz', x: 1960, y: 120,
       info: {
         resp: '<p>Un teléfono cualquiera que llama a un número. El audio viaja por la red telefónica hasta un proveedor de troncales SIP, que lo entrega como RTP con el códec G.711.</p>',
         api: '<p>No hay API: hay un número de teléfono. Los dígitos que marca el usuario llegan como eventos DTMF dentro de RTP (RFC 4733). <span class="badge badge--doc">Documentado</span></p>',
@@ -32,7 +37,9 @@ SD.defineMap('m24-voz', {
         nums: '<ul><li>G.711: 8 kHz, 64 kbps; con cabeceras, 80 kbps por sentido. <span class="badge badge--doc">Documentado</span></li></ul>'
       } },
     /* ---------- Borde ---------- */
-    { id: 'appsrv', layer: 'service', label: 'App server', sub: 'token efímero y sala', x: 200, y: 330,
+    { id: 'appsrv', brief: "Tu backend: entrega un token de un solo uso y crea la sala.",
+      why: "La clave del proveedor no puede ir en la app. El servidor la guarda y entrega un token efímero que solo sirve para esta sesión.",
+      layer: 'service', label: 'App server', sub: 'token efímero y sala', x: 200, y: 330,
       info: {
         resp: '<p>Tu backend de siempre. Autentica al usuario, decide qué agente le toca, crea la sala en el SFU y le devuelve un token firmado que vale para esa sala y por unos minutos. Es el único que conoce las claves de los proveedores (M10).</p>',
         api: '<pre data-lang="json"><code>POST /voice/session\n200 {"room": "ses_81", "token": "eyJhbGciOi…", "expires_in": 600,\n     "ice_servers": [{"urls": ["stun:stun.example.com:3478"]},\n                     {"urls": ["turns:turn.example.com:443?transport=tcp"],\n                      "username": "1760000000:u_42", "credential": "…"}]}</code></pre><p>En LiveKit, el token es un JWT con la sala y los permisos. <span class="badge badge--doc">Documentado</span></p>',
@@ -40,7 +47,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>Cae:</b> nadie empieza sesiones nuevas; las que ya están abiertas siguen, porque el audio no pasa por acá.</li><li><b>Token robado:</b> sirve solo para esa sala y por minutos.</li></ul>',
         nums: '<ul><li>Una request por sesión: con 30 000 sesiones simultáneas de 5 minutos, unas 100 por segundo.</li></ul>'
       } },
-    { id: 'stun', layer: 'edge', label: 'STUN', sub: '¿cuál es mi IP pública?', x: 640, y: 330,
+    { id: 'stun', brief: "Le dice al dispositivo cuál es su IP pública.",
+      why: "Detrás del router de casa (NAT), el dispositivo no sabe su dirección pública; sin saberla no puede recibir audio directo.",
+      layer: 'edge', label: 'STUN', sub: '¿cuál es mi IP pública?', x: 640, y: 330,
       info: {
         resp: '<p>Le dice al cliente con qué IP y puerto lo ve internet, del otro lado de su NAT (M01). Con eso, ICE arma los candidatos "server reflexive". No toca el audio. <span class="badge badge--doc">Documentado</span> (RFC 8489)</p>',
         api: '<pre><code>Binding Request  (UDP 3478)\nBinding Response XOR-MAPPED-ADDRESS = 190.12.40.7:51234</code></pre>',
@@ -48,7 +57,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>La red bloquea UDP:</b> no responde; ICE sigue con TURN (escenario "Red corporativa").</li></ul>',
         nums: '<ul><li>Un RTT por consulta.</li></ul>'
       } },
-    { id: 'turn', layer: 'edge', label: 'TURN', sub: 'retransmite cuando UDP no pasa', x: 1080, y: 330,
+    { id: 'turn', brief: "Reenvía el audio cuando UDP no pasa.",
+      why: "Algunas redes (oficinas, hoteles) bloquean UDP y solo dejan salir por el puerto 443. TURN es el último recurso para que la llamada funcione igual.",
+      layer: 'edge', label: 'TURN', sub: 'retransmite cuando UDP no pasa', x: 1080, y: 330,
       info: {
         resp: '<p>Un relay: cuando el cliente no puede mandar UDP directo al SFU (NAT simétrico, firewall corporativo), le manda el audio al TURN y el TURN lo reenvía. Puede escuchar en UDP, en TCP o en TLS sobre el puerto 443, que casi ninguna red bloquea. <span class="badge badge--doc">Documentado</span> (RFC 8656)</p>',
         api: '<pre><code>Allocate Request  (credenciales temporales)\nCreatePermission  peer = SFU\nChannelData       audio, 4 bytes de cabecera extra</code></pre>',
@@ -56,7 +67,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>Saturado:</b> el audio de quienes dependen de él se corta. Se dimensiona por ancho de banda, no por CPU.</li><li><b>TURN sobre TCP o TLS:</b> funciona, pero con head-of-line blocking (M01): una pérdida frena a los paquetes que siguen.</li></ul>',
         nums: '<ul><li>Entre el 10 y el 30&#8239;% de las sesiones lo necesitan, como en el M29; con el 25&#8239;% de 30 000 sesiones: 30 000 × 0.25 × 52 kbps × 2 sentidos = 0.78 Gbps.</li><li>Kinesis Video Streams cobra 0.12 USD por mil minutos de TURN. <span class="badge badge--doc">Documentado</span></li></ul>'
       } },
-    { id: 'sfu', layer: 'edge', label: 'SFU', sub: 'reenvía el audio de la sala', x: 1520, y: 330,
+    { id: 'sfu', brief: "El servidor de medios: una sala por conversación que reenvía el audio.",
+      why: "Evita que cada worker hable WebRTC con millones de clientes. El SFU se ocupa de lo difícil de la red y el worker solo entra a la sala.",
+      layer: 'edge', label: 'SFU', sub: 'reenvía el audio de la sala', x: 1520, y: 330,
       info: {
         resp: '<p>El servidor de medios. Cada sesión es una sala con dos participantes: el usuario y el agente. Recibe los paquetes de cada uno y los reenvía al otro sin decodificarlos (por eso es selectivo y barato). También lleva la señalización por WebSocket y despacha un worker cuando se abre una sala. Va en la región más cercana al usuario.</p>',
         api: '<pre><code>wss://sfu.example.com/rtc?access_token=eyJ…    señalización: SDP, ICE, eventos\nSRTP/UDP                                      audio del usuario y del agente\nRTCP                                          pérdida, jitter, RTT y ancho de banda</code></pre><p>En LiveKit, el agente entra a la sala como un participante más. <span class="badge badge--doc">Documentado</span></p>',
@@ -64,7 +77,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>Cae un SFU:</b> sus salas se cortan; los clientes reconectan a otro y el worker retoma la sesión desde el estado guardado.</li><li><b>Sala en otra región:</b> 100 ms más de ida y vuelta que se comen el presupuesto.</li></ul>',
         nums: '<ul><li>Un SFU cada 1 000 sesiones; 40 en el pico, repartidos en las regiones. <span class="badge badge--ref">Diseño de referencia</span></li><li>Red de ida y de vuelta: 25 ms cada una con un SFU cercano.</li></ul>'
       } },
-    { id: 'sip', layer: 'edge', label: 'Gateway SIP', sub: 'de la red telefónica a la sala', x: 1960, y: 330,
+    { id: 'sip', brief: "Traduce una llamada telefónica (SIP) a una sala del SFU.",
+      why: "Permite que el mismo agente atienda la app y el teléfono sin código distinto.",
+      layer: 'edge', label: 'Gateway SIP', sub: 'de la red telefónica a la sala', x: 1960, y: 330,
       info: {
         resp: '<p>Recibe las llamadas del troncal SIP y las convierte en un participante de una sala, igual que una app. El SIP lleva la señalización (quién llama, colgar, transferir) y el audio va en RTP con G.711.</p>',
         api: '<pre><code>INVITE sip:+5215550001234@voice.example.com  SIP/2.0\nSDP: m=audio 40000 RTP/AVP 0 101     (0 = G.711 µ-law, 101 = DTMF)</code></pre>',
@@ -73,7 +88,9 @@ SD.defineMap('m24-voz', {
         nums: '<ul><li>Chime SDK Voice Connector: 0.002216 USD por minuto entrante en EE. UU. <span class="badge badge--doc">Documentado</span></li></ul>'
       } },
     /* ---------- Agente ---------- */
-    { id: 'vad', layer: 'service', label: 'VAD', sub: '¿hay voz en este cuadro?', x: 200, y: 540,
+    { id: 'vad', brief: "Decide, cuadro por cuadro, si hay voz humana.",
+      why: "Sin él, el ruido de fondo se transcribiría como habla y el agente nunca sabría cuándo empezó o paró alguien.",
+      layer: 'service', label: 'VAD', sub: '¿hay voz en este cuadro?', x: 200, y: 540,
       info: {
         resp: '<p>Decide, cuadro por cuadro, si hay voz humana. Un VAD por energía se confunde con el ruido; uno con un modelo chico, como Silero, distingue voz de música y de ruido. Corre en la CPU del worker. <span class="badge badge--doc">Documentado</span></p>',
         api: '<pre><code>vad.push(frame_pcm16_16khz_30ms) → 0.93      probabilidad de voz\nevento speech_start / speech_end con umbral y tiempos mínimos</code></pre>',
@@ -81,7 +98,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>Umbral bajo:</b> la tos, el teclado o la tele cortan al agente.</li><li><b>Umbral alto:</b> una voz baja no se detecta y el agente habla encima.</li></ul>',
         nums: '<ul><li>Silero: menos de 1 ms por cuadro de 30 ms en un hilo de CPU; unos 2 MB. <span class="badge badge--doc">Documentado</span></li><li>Para confirmar voz se piden unos 200 ms de habla. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
-    { id: 'eot', layer: 'service', label: 'Fin de turno', sub: 'silencio más lo que dijo', x: 640, y: 540,
+    { id: 'eot', brief: "Decide si el usuario terminó de hablar, mirando el silencio y lo que dijo.",
+      why: "Es la espera más larga de cada turno. Si responde muy pronto interrumpe; si tarda, el agente parece lento.",
+      layer: 'service', label: 'Fin de turno', sub: 'silencio más lo que dijo', x: 640, y: 540,
       info: {
         resp: '<p>Decide cuándo el usuario terminó de hablar. Combina el silencio que ve el VAD con lo que dijo, según los parciales del STT: "quiero cambiar mi vuelo al…" no está terminado aunque haya silencio. Con alta probabilidad cierra el turno pronto; con baja, espera más.</p>',
         api: '<pre><code>eot.predict(historial, parcial="quiero cambiar mi vuelo al") → 0.04\nespera = min_delay si p alta; max_delay si p baja</code></pre><p>En LiveKit, <code>min_endpointing_delay</code> es 0.5 s y <code>max_endpointing_delay</code> 6 s por defecto; la Realtime API ofrece <code>server_vad</code> (500 ms de silencio por defecto) y <code>semantic_vad</code>. <span class="badge badge--doc">Documentado</span></p>',
@@ -89,7 +108,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>Corta antes:</b> el agente contesta a media frase y el usuario lo interrumpe.</li><li><b>Espera de más:</b> cada 100 ms de espera se suman a todos los turnos.</li></ul>',
         nums: '<ul><li>250 ms en el presupuesto de 24.8: un tercio de los 780 ms del turno. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
-    { id: 'worker', layer: 'service', label: 'Worker de voz', sub: 'un participante más de la sala', x: 1080, y: 540,
+    { id: 'worker', brief: "El orquestador de la conversación: entra a la sala y coordina STT, LLM y TTS.",
+      why: "Alguien tiene que llevar el estado del turno: qué se oyó, qué se dijo, qué cortar si el usuario interrumpe.",
+      layer: 'service', label: 'Worker de voz', sub: 'un participante más de la sala', x: 1080, y: 540,
       info: {
         resp: '<p>El orquestador de la sesión. Entra a la sala como participante, decodifica el audio del usuario, lo pasa al VAD y al STT, decide con el detector cuándo empieza un turno, arma el contexto, llama al LLM y a las herramientas, corta el texto en frases para el TTS, manda el audio de vuelta y maneja las interrupciones. Una sesión vive en un worker de principio a fin: es afinidad por sesión, como las sticky sessions del M03.</p>',
         api: '<pre><code>on_audio_frame(frame)        → vad, stt\non_end_of_turn()             → llm.stream(ctx)\non_sentence(text)            → tts.stream(text)\non_user_speech_started()     → cancel(); truncate(audio_end_ms)</code></pre>',
@@ -97,7 +118,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>Muere:</b> el SFU despacha otro, que lee el estado y sigue (escenario "Un worker muere").</li><li><b>CPU al límite:</b> el VAD y la decodificación se atrasan y la latencia sube en todas sus sesiones: se dimensiona con margen.</li></ul>',
         nums: '<ul><li>80 sesiones por worker de 8 vCPU; 500 en el pico para 30 000 sesiones. <span class="badge badge--ref">Diseño de referencia</span></li><li>Jitter buffer de entrada: 30 ms.</li><li>Una trace por turno, con una marca en cada salto (M11).</li></ul>'
       } },
-    { id: 'tools', layer: 'external', label: 'Herramientas', sub: 'las APIs de tu negocio', x: 1520, y: 540,
+    { id: 'tools', brief: "Las APIs de tu negocio que el agente puede consultar (reservas, pedidos).",
+      why: "Un agente que solo charla no resuelve nada. Las herramientas le permiten consultar y actuar, y pueden ser lentas.",
+      layer: 'external', label: 'Herramientas', sub: 'las APIs de tu negocio', x: 1520, y: 540,
       info: {
         resp: '<p>Las APIs que el agente llama para hacer algo: buscar un vuelo, cambiar una reserva, consultar un saldo. En voz importan más que en texto, porque el usuario espera en silencio.</p>',
         api: '<pre data-lang="http"><code>GET /flights/AV204/seats?date=2026-10-09\n200 {"available": 12, "fare_difference_usd": "40.00"}</code></pre>',
@@ -106,7 +129,9 @@ SD.defineMap('m24-voz', {
         nums: '<ul><li>Timeout por herramienta de 8 s, con deadline del turno. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
     /* ---------- Modelos ---------- */
-    { id: 'stt', layer: 'gpu', label: 'STT en streaming', sub: 'parciales y finales', x: 640, y: 750,
+    { id: 'stt', brief: "Convierte voz en texto mientras el usuario habla.",
+      why: "El LLM trabaja con texto. Transcribir en streaming permite tener el texto casi listo cuando el usuario termina.",
+      layer: 'gpu', label: 'STT en streaming', sub: 'parciales y finales', x: 640, y: 750,
       info: {
         resp: '<p>Transcribe el audio mientras llega. Emite resultados parciales, que pueden cambiar, y un resultado final por segmento. El detector de fin de turno lee los parciales; el LLM recibe el final.</p>',
         api: '<pre data-lang="json"><code>{"type": "partial", "text": "quiero cambiar mi vuelo del"}\n{"type": "final", "text": "Quiero cambiar mi vuelo del viernes.", "words": [{"w": "Quiero", "start": 0.12, "end": 0.41}, …]}</code></pre>',
@@ -114,7 +139,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>Lento:</b> el final tarda y todo el turno se corre; se puede arrancar el LLM con el parcial estable y descartar si el final cambia.</li><li><b>Se equivoca con un nombre:</b> el LLM contesta sobre otra cosa; el vocabulario propio ayuda.</li></ul>',
         nums: '<ul><li>50 ms del final en el presupuesto de 24.8.</li><li>Una L4 cada 300 sesiones en la flota propia. <span class="badge badge--ref">Diseño de referencia</span></li><li>Por API: gpt-4o-transcribe, 0.006 USD por minuto. <span class="badge badge--doc">Documentado</span></li></ul>'
       } },
-    { id: 'llm', layer: 'gpu', label: 'LLM', sub: 'la flota del M19, en la región', x: 1080, y: 750,
+    { id: 'llm', brief: "El modelo que decide qué responder; la flota del M19.",
+      why: "Es el que entiende y decide. Lo que importa aquí es cuánto tarda en dar el primer token.",
+      layer: 'gpu', label: 'LLM', sub: 'la flota del M19, en la región', x: 1080, y: 750,
       info: {
         resp: '<p>El mismo motor de los módulos anteriores, con otras prioridades: el TTFT pesa más que el TPOT, porque el TTS arranca con la primera frase. Las respuestas son cortas y para decir en voz alta: sin markdown, sin listas, con números escritos como se leen.</p>',
         api: '<pre data-lang="json"><code>{"model": "modelo-m", "stream": true, "max_tokens": 150,\n "messages": [{"role": "system", "content": "Eres un agente telefónico… Responde en una o dos frases."}, …]}</code></pre>',
@@ -122,7 +149,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>TTFT alto en el pico:</b> el router prioriza las sesiones de voz (M18, M19).</li><li><b>Respuesta larga:</b> se habla igual, frase por frase, pero el usuario se cansa y la interrumpe.</li></ul>',
         nums: '<ul><li>1 667 turnos por segundo × 30 tokens × 25 ms = 1 250 generaciones en curso: 27 réplicas a 64 por réplica y al 75&#8239;% de uso.</li><li>TTFT de 150 ms en el presupuesto. <span class="badge badge--ref">Diseño de referencia</span></li></ul>'
       } },
-    { id: 'tts', layer: 'gpu', label: 'TTS en streaming', sub: 'primer audio y marcas de tiempo', x: 1520, y: 750,
+    { id: 'tts', brief: "Convierte el texto de la respuesta en voz, en streaming.",
+      why: "Empieza a hablar con la primera frase sin esperar la respuesta entera, y marca qué palabra suena en cada momento para poder truncar.",
+      layer: 'gpu', label: 'TTS en streaming', sub: 'primer audio y marcas de tiempo', x: 1520, y: 750,
       info: {
         resp: '<p>Convierte texto en voz frase por frase y devuelve el audio en trozos apenas los tiene, con la marca de tiempo de cada palabra. Esas marcas son las que permiten saber qué se dijo hasta el punto exacto de una interrupción.</p>',
         api: '<pre data-lang="json"><code>{"text": "Claro, te ayudo con eso.", "voice": "v_marina", "format": "pcm_24000"}\n→ chunks de audio + {"word": "Claro", "start_ms": 0, "end_ms": 310}</code></pre>',
@@ -130,7 +159,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>Primer audio lento:</b> se nota entero en la latencia; las frases de relleno se sintetizan antes y se guardan.</li><li><b>Sin marcas de tiempo:</b> no se puede truncar bien una interrupción.</li></ul>',
         nums: '<ul><li>80 ms hasta el primer audio en el presupuesto de 24.8; una L4 cada 200 sesiones. <span class="badge badge--ref">Diseño de referencia</span></li><li>Por API: gpt-4o-mini-tts, unos 0.015 USD por minuto. <span class="badge badge--doc">Documentado</span></li></ul>'
       } },
-    { id: 's2s', layer: 'external', label: 'Speech-to-speech', sub: 'Realtime API: audio entra, audio sale', x: 1960, y: 750,
+    { id: 's2s', brief: "Un modelo que recibe audio y devuelve audio, sin pasar por texto.",
+      why: "Es la alternativa a la cascada: menos piezas y menos demora, a cambio de menos control sobre cada etapa.",
+      layer: 'external', label: 'Speech-to-speech', sub: 'Realtime API: audio entra, audio sale', x: 1960, y: 750,
       info: {
         resp: '<p>La alternativa a la cascada: un solo modelo que recibe audio y devuelve audio, con su propio VAD y detección de turno del lado del servidor. Escucha el tono y las pausas, y su latencia es menor; a cambio, controlas menos el texto y pagas más por minuto.</p>',
         api: '<pre data-lang="json"><code>{"type": "session.update", "session": {"turn_detection": {"type": "semantic_vad", "eagerness": "auto"}}}\n{"type": "input_audio_buffer.speech_started", "audio_start_ms": 5230}\n{"type": "conversation.item.truncate", "item_id": "item_…", "content_index": 0, "audio_end_ms": 5540}</code></pre><p>Audio PCM a 24 kHz; sesiones de hasta 60 minutos; por WebRTC el servidor trunca solo al interrumpir, por WebSocket lo hace el cliente. <span class="badge badge--doc">Documentado</span></p>',
@@ -139,7 +170,9 @@ SD.defineMap('m24-voz', {
         nums: '<ul><li>Audio de entrada: 1 token cada 100 ms; de salida, 1 cada 50 ms; gpt-realtime cobra 32 y 64 USD por millón. <span class="badge badge--doc">Documentado</span></li><li>Una llamada de 10 minutos: unos 0.52 USD con caché (24.11).</li></ul>'
       } },
     /* ---------- Plataforma ---------- */
-    { id: 'metering', layer: 'queue', label: 'Eventos de uso', sub: 'el pipeline del M21', x: 640, y: 960,
+    { id: 'metering', brief: "Registra los minutos y tokens de cada sesión para cobrarlos (M21).",
+      why: "La voz se vende por minuto; sin estos eventos no hay factura ni topes.",
+      layer: 'queue', label: 'Eventos de uso', sub: 'el pipeline del M21', x: 640, y: 960,
       info: {
         resp: '<p>Cada sesión emite eventos de uso por tramos, no uno al final: segundos de audio de entrada y de salida, tokens del LLM y minutos de teléfono. Así una sesión de una hora no queda sin medir si el worker muere a los 50 minutos.</p>',
         api: '<pre data-lang="json"><code>{"event_id": "ses_81:t14", "org_id": "org_7",\n "units": {"audio_in_s": 4.2, "audio_out_s": 9.1, "input_tokens": 3120, "cache_read_tokens": 2900, "output_tokens": 34}}</code></pre>',
@@ -147,7 +180,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>Worker muerto sin cerrar su tramo:</b> la conciliación lo reconstruye con el registro del SFU (M21).</li></ul>',
         nums: '<ul><li>Un evento por turno: 1 667 por segundo en el pico.</li></ul>'
       } },
-    { id: 'moderacion', layer: 'service', label: 'Moderación', sub: 'el texto antes de decirlo', x: 1080, y: 960,
+    { id: 'moderacion', brief: "Revisa el texto antes de que el agente lo diga.",
+      why: "Lo dicho en voz no se puede borrar: hay que revisarlo antes de que suene.",
+      layer: 'service', label: 'Moderación', sub: 'el texto antes de decirlo', x: 1080, y: 960,
       info: {
         resp: '<p>Los guardrails del M22 aplicados a la voz: el texto del usuario (la transcripción) y el texto del agente antes de pasar al TTS. En tiempo real no hay espera posible: corre en paralelo con la primera frase y, si marca algo, corta el audio.</p>',
         api: '<pre><code>moderate(texto_frase) → {"flagged": false, "categories": {…}}</code></pre>',
@@ -155,7 +190,9 @@ SD.defineMap('m24-voz', {
         fail: '<ul><li><b>Cae:</b> falla cerrada para lo que el agente dice (frases fijas y pasar a una persona) y abierta para registrar lo que dice el usuario.</li><li><b>La tasa base de M22:</b> con muchos turnos, un 1&#8239;% de falsos positivos son miles de cortes por hora.</li></ul>',
         nums: '<ul><li>Un clasificador chico por frase: unos milisegundos.</li></ul>'
       } },
-    { id: 'sesion', layer: 'cache', label: 'Estado de sesión', sub: 'Redis: contexto y transcripción', x: 1520, y: 960,
+    { id: 'sesion', brief: "Redis con el contexto y la transcripción de la sesión.",
+      why: "Si el worker muere, otro puede retomar la conversación desde aquí en lugar de empezar de cero.",
+      layer: 'cache', label: 'Estado de sesión', sub: 'Redis: contexto y transcripción', x: 1520, y: 960,
       info: {
         resp: '<p>Lo que hace falta para que otro worker siga la conversación: el contexto resumido, los turnos recientes, qué parte de la última respuesta sonó y qué herramientas quedaron a medias. Al cerrar la sesión, la transcripción (y la grabación, si hubo consentimiento) se copia a S3.</p>',
         api: '<pre data-lang="json"><code>HSET ses:81 turns 14 summary "Cambio de vuelo AV204 del 9 de octubre…"\n             last_item item_7f last_audio_end_ms 3120 tools_pending "[]"</code></pre>',
@@ -188,7 +225,8 @@ SD.defineMap('m24-voz', {
   ],
   scenarios: [
     {
-      id: 'turno', title: 'Un turno en cascada: 780 ms',
+      id: 'turno', goal: "El camino feliz: cómo se reparten los 780 ms entre detectar el fin de turno, transcribir, pensar y hablar.",
+      title: 'Un turno en cascada: 780 ms',
       desc: 'El usuario dice "Quiero cambiar mi vuelo del viernes" y calla. Se sigue el camino crítico hasta que oye "Claro". Los pasos en paralelo suman 0 ms; el total es el presupuesto de 24.8.',
       steps: [
         { at: 'app', kind: 'info', tag: 'el usuario calla', ms: 30, title: 'Último cuadro', text: 'El último cuadro de 20 ms se captura, pasa por la cancelación de eco y el códec Opus lo comprime.' },
@@ -217,7 +255,8 @@ SD.defineMap('m24-voz', {
       ]
     },
     {
-      id: 'interrupcion', title: 'Una interrupción a mitad de frase',
+      id: 'interrupcion', goal: "Cómo el agente se calla cuando lo interrumpen y borra del historial lo que no llegó a decir.",
+      title: 'Una interrupción a mitad de frase',
       desc: 'El agente va por "…puedo cambiarlo" cuando el usuario dice "No, no, déjalo así". Son los números del simulador de 24.9: el usuario empieza a hablar a los 5 230 ms y el audio del agente se corta a los 5 540.',
       steps: [
         { at: 'app', kind: 'info', tag: 'el agente habla', ms: 0, title: 'El agente va por la mitad', text: 'Lleva 5.2 s de una respuesta de 10.4 s. Lo que falta, con el precio del cambio, ya está generado y en camino.' },
@@ -237,7 +276,8 @@ SD.defineMap('m24-voz', {
       ]
     },
     {
-      id: 'pausa', title: 'Una pausa larga y un falso fin de turno',
+      id: 'pausa', goal: "Qué pasa cuando el usuario hace una pausa en mitad de la frase y el detector se apura.",
+      title: 'Una pausa larga y un falso fin de turno',
       desc: 'El usuario dice "Quiero cambiar mi vuelo al…", piensa 700 ms y sigue: "…del viernes". Con un umbral de silencio de 500 ms, el agente lo habría cortado.',
       steps: [
         { from: 'app', to: 'sfu', kind: 'req', tag: '«…mi vuelo al…»', ms: 55, title: 'Primera mitad', text: 'Captura y red de ida.' },
@@ -253,7 +293,8 @@ SD.defineMap('m24-voz', {
       ]
     },
     {
-      id: 'perdida', title: '4G en movimiento: jitter y pérdida',
+      id: 'perdida', goal: "Cómo el jitter buffer y la redundancia mantienen el audio parejo en una red móvil mala.",
+      title: '4G en movimiento: jitter y pérdida',
       desc: 'El usuario habla desde un auto. Los paquetes llegan con jitter de red alto y alguno se pierde. Son los números del simulador de 24.4.',
       steps: [
         { from: 'app', to: 'sfu', kind: 'req', tag: 'cuadros con jitter', ms: 25, title: 'Llegan desordenados', text: 'Algunos paquetes tardan 150 ms más que otros.' },
@@ -267,7 +308,8 @@ SD.defineMap('m24-voz', {
       ]
     },
     {
-      id: 'red', title: 'De wifi a datos móviles',
+      id: 'red', goal: "Cómo la llamada sobrevive a un cambio de wifi a datos sin cortarse.",
+      title: 'De wifi a datos móviles',
       desc: 'El usuario sale de su casa a mitad de la conversación. La IP cambia y el camino de audio se rompe. ICE restart arma uno nuevo sin cerrar la sesión.',
       steps: [
         { at: 'app', kind: 'fail', tag: 'se pierde el wifi', ms: 0, title: 'Cambia la red', text: 'El sistema operativo avisa el cambio de interfaz; la app no espera a notar que los paquetes dejaron de llegar.' },
@@ -281,7 +323,8 @@ SD.defineMap('m24-voz', {
       ]
     },
     {
-      id: 'firewall', title: 'Una red que solo deja salir el 443',
+      id: 'firewall', goal: "Cómo TURN hace funcionar la llamada en una red que bloquea UDP.",
+      title: 'Una red que solo deja salir el 443',
       desc: 'El usuario está en la red de una empresa que bloquea UDP y todo puerto que no sea 443. WebRTC funciona igual, por TURN sobre TLS, con un costo.',
       steps: [
         { from: 'app', to: 'appsrv', kind: 'req', tag: 'POST /voice/session', ms: 40, title: 'HTTPS sí pasa', text: 'La sesión se crea como siempre.' },
@@ -293,7 +336,8 @@ SD.defineMap('m24-voz', {
       ]
     },
     {
-      id: 'worker-muere', title: 'Un worker muere a mitad del turno',
+      id: 'worker-muere', goal: "Cómo otro worker retoma la conversación desde el estado guardado.",
+      title: 'Un worker muere a mitad del turno',
       desc: 'El nodo del worker se recicla mientras el agente habla. El SFU despacha otro worker, que lee el estado y sigue sin inventar.',
       steps: [
         { at: 'worker', kind: 'fail', tag: 'se recicla el nodo', ms: 0, title: 'Muere el worker', text: 'Una instancia spot reclamada o un OOM. Sus 80 sesiones se quedan sin agente.', down: ['worker'] },
@@ -310,7 +354,8 @@ SD.defineMap('m24-voz', {
       ]
     },
     {
-      id: 'telefono', title: 'Una llamada telefónica por SIP',
+      id: 'telefono', goal: "El mismo agente atendiendo una llamada telefónica por SIP.",
+      title: 'Una llamada telefónica por SIP',
       desc: 'Alguien llama al número del banco desde un teléfono fijo. El agente es el mismo; cambian la entrada, el códec y lo que cuesta cada minuto.',
       steps: [
         { from: 'pstn', to: 'sip', kind: 'req', tag: 'INVITE', ms: 0, title: 'Entra la llamada', text: 'Por un troncal SIP, por ejemplo Chime SDK Voice Connector.' },
@@ -326,7 +371,8 @@ SD.defineMap('m24-voz', {
       ]
     },
     {
-      id: 'herramienta', title: 'Una herramienta lenta y una frase de relleno',
+      id: 'herramienta', goal: "Qué dice el agente mientras espera una herramienta lenta, para no quedarse en silencio.",
+      title: 'Una herramienta lenta y una frase de relleno',
       desc: '"¿Hay asientos en el de las 10:15?" El modelo llama a una herramienta que tarda 2.4 s. El usuario no puede quedarse en silencio.',
       steps: [
         { from: 'worker', to: 'llm', kind: 'req', tag: 'turno', ms: 0, title: 'Al LLM', text: 'El turno, con las herramientas disponibles.' },
@@ -348,7 +394,8 @@ SD.defineMap('m24-voz', {
       ]
     },
     {
-      id: 's2s', title: 'El mismo turno con speech-to-speech: 700 ms',
+      id: 's2s', goal: "El mismo turno con un modelo speech-to-speech, para compararlo con la cascada.",
+      title: 'El mismo turno con speech-to-speech: 700 ms',
       desc: 'El worker manda el audio a un modelo que recibe y devuelve audio, con su propio VAD en el servidor. Desaparecen el STT, la primera frase y el TTS.',
       steps: [
         { at: 'app', kind: 'info', tag: 'el usuario calla', ms: 30, title: 'Último cuadro', text: 'Captura y códec.' },

@@ -60,6 +60,18 @@
 
       <h2 id="anatomia"><span class="sec-num">13.1</span>Qué hay dentro de una GPU</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Una GPU es, vista desde afuera, dos cosas: mucho cómputo (132 unidades llamadas SMs en la H100, cada una con circuitos que solo multiplican matrices) y una memoria rápida pegada a ese cómputo (la HBM). Los pesos del modelo y el KV cache viven en la HBM. Cuanto más lejos del cómputo está un dato, más tarda en llegar, y casi todo el arte de servir modelos es no mover datos de más.</p>
+        <p class="jr-like"><b>Es como</b> una cocina profesional: muchos cocineros (los SMs), una mesada chica al alcance de la mano (la SRAM), la heladera de la cocina (la HBM) y el depósito del fondo (la memoria de la CPU y el disco).</p>
+        <dl class="jr-words">
+          <dt>SM</dt><dd>unidad de cómputo que se repite dentro de la GPU.</dd>
+          <dt>Tensor core</dt><dd>circuito especializado en multiplicar matrices.</dd>
+          <dt>HBM</dt><dd>la memoria principal de la GPU: grande y muy rápida.</dd>
+          <dt>SRAM</dt><dd>memoria minúscula dentro de cada SM, la más rápida de todas.</dd>
+        </dl>
+      </aside>
+
       <p>Una GPU de datacenter es, para quien la usa desde afuera, dos cosas: mucho cómputo y una memoria rápida pegada a él. El cómputo está repartido en unidades llamadas SMs (la H100 tiene 132), cada una con <dfn data-term="tensor-core">tensor cores</dfn>, circuitos que solo multiplican matrices pero lo hacen muy rápido. La memoria principal es <dfn data-term="hbm">HBM</dfn>: pilas de chips de memoria montadas junto al procesador. En la H100 son 80 GB, que se leen a 3.35 TB/s.</p>
 
       <figure class="figure">
@@ -195,6 +207,17 @@
 
       <h2 id="cifras"><span class="sec-num">13.2</span>Las cifras que importan</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>De la hoja de especificaciones solo importan cuatro números: cuánta <b>memoria</b> tiene (qué modelo cabe), qué tan rápido la lee (<b>ancho de banda</b>, que decide la velocidad del decode), cuántas cuentas por segundo hace (<b>FLOPS</b>, que deciden la velocidad del prefill) y qué tan rápido habla con otras GPUs. Ojo con las cifras de marketing "con sparsity": son el doble de lo que obtendrás.</p>
+        <p class="jr-like"><b>Es como</b> comparar autos: no importa el tablero, importan la capacidad del baúl, la velocidad máxima y el consumo.</p>
+        <dl class="jr-words">
+          <dt>Ancho de banda</dt><dd>bytes por segundo que la GPU puede leer de su memoria.</dd>
+          <dt>FLOPS</dt><dd>operaciones por segundo (TFLOPS = billones por segundo).</dd>
+          <dt>Sparsity</dt><dd>un modo que exige que la mitad de los pesos sea cero; casi ningún LLM lo usa.</dd>
+        </dl>
+      </aside>
+
       <p>De una hoja de especificaciones de varias páginas, para servir modelos importan cuatro números: la memoria (cuánto cabe), el ancho de banda de esa memoria (a qué velocidad va el decode), los <dfn data-term="flops">FLOPS</dfn> en la precisión que uses (a qué velocidad va el prefill) y la interconexión entre GPUs (qué tan bien se reparte un modelo en varias).</p>
 
       <div class="table-wrap">
@@ -273,6 +296,17 @@
 
       <h2 id="roofline"><span class="sec-num">13.3</span>Intensidad aritmética y el modelo roofline</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Para saber qué te limita, haz una cuenta: ¿cuántas operaciones haces por cada byte que lees? (la <b>intensidad aritmética</b>). Si son pocas, la GPU espera datos de la memoria; si son muchas, espera a sus propias cuentas. El <b>roofline</b> dibuja ese límite como un techo con una rampa. El decode con contextos largos queda casi siempre en la rampa de la memoria: por eso la memoria, y no los FLOPS, decide el costo de servir.</p>
+        <p class="jr-like"><b>Es como</b> una fábrica con una cinta que trae materiales: si cada obrero arma rápido pero la cinta es lenta, contratar más obreros no sirve; hay que ensanchar la cinta.</p>
+        <dl class="jr-words">
+          <dt>Intensidad aritmética</dt><dd>FLOPs divididos por bytes leídos.</dd>
+          <dt>Roofline</dt><dd>gráfico que muestra el máximo de rendimiento según esa intensidad.</dd>
+          <dt>Punto de quiebre</dt><dd>la intensidad desde la cual el cómputo pasa a ser el límite.</dd>
+        </dl>
+      </aside>
+
       <p>Para saber qué recurso limita una carga hay una sola cuenta: la <dfn data-term="intensidad-aritmetica">intensidad aritmética</dfn>, las operaciones que hace por cada byte que lee de memoria. Si es baja, la GPU espera datos; si es alta, espera al cómputo. El punto de quiebre es el cociente entre el pico de FLOPS y el ancho de banda: en la H100, en FP8, 1979 ÷ 3.35 ≈ <b>590 operaciones por byte</b>. El <dfn data-term="roofline">modelo roofline</dfn> lo dibuja: la velocidad alcanzable es el mínimo entre el pico de cómputo y la intensidad por el ancho de banda.</p>
 
       <ul>
@@ -336,6 +370,17 @@
       <div data-sim="roofline"></div>
 
       <h2 id="multi-gpu"><span class="sec-num">13.4</span>Cuando no entra en una GPU: NVLink e InfiniBand</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un modelo de 70B en BF16 pesa 141 GB y no entra en una GPU de 80 GB. Hay que repartirlo entre varias, y cómo se reparte depende de qué tan rápido se hablan. Dentro de un servidor, <b>NVLink</b> es tan rápido que se puede partir cada capa (tensor parallelism). Entre servidores, <b>InfiniBand</b> es más lento, así que se reparten cosas que necesitan hablar menos.</p>
+        <p class="jr-like"><b>Es como</b> cuatro personas armando un rompecabezas: si están en la misma mesa pueden pasarse piezas todo el tiempo; si están en salas distintas, conviene que cada una arme una esquina y se junten al final.</p>
+        <dl class="jr-words">
+          <dt>NVLink</dt><dd>conexión directa y muy rápida entre las GPUs de un mismo servidor.</dd>
+          <dt>InfiniBand</dt><dd>la red rápida entre servidores.</dd>
+          <dt>Tensor parallelism</dt><dd>partir cada capa entre varias GPUs, que se sincronizan dos veces por capa.</dd>
+        </dl>
+      </aside>
 
       <p>Llama 3.1 70B en BF16 ocupa 141 GB: no entra en una GPU de 80 GB, y aunque entrara en una de 141, no quedaría lugar para el KV cache. Hay que repartirlo, y cómo se reparte depende de qué tan rápido se hablan las GPUs:</p>
 
@@ -559,6 +604,16 @@
 
       <h2 id="sizing"><span class="sec-num">13.5</span>Cuántas GPUs necesita un modelo</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Cuántas GPUs necesita un modelo sale de una suma: lo que ocupan los <b>pesos</b> más lo que ocupa el <b>KV cache</b> de todos los usuarios a la vez, más un margen. Después se elige la combinación de GPUs donde eso entra con lugar para crecer. La sección lo hace en cinco pasos con números del M12.</p>
+        <p class="jr-like"><b>Es como</b> elegir una camioneta para una mudanza: sumas el volumen de los muebles (los pesos) y de las cajas de cada persona (el KV cache), y eliges la que lo lleve con algo de aire.</p>
+        <dl class="jr-words">
+          <dt>Sizing</dt><dd>calcular cuántas máquinas o GPUs hacen falta.</dd>
+          <dt>Contexto</dt><dd>cuántos tokens tiene cada conversación en memoria.</dd>
+        </dl>
+      </aside>
+
       <p>El método tiene cinco pasos y todos salen del M12:</p>
       <ol class="steps">
         <li><span class="step-title">Pesos</span>Parámetros por bytes por parámetro: 70 600 millones en FP8 son 70.6 GB.</li>
@@ -642,6 +697,16 @@
       </aside>
 
       <h2 id="operacion"><span class="sec-num">13.6</span>Energía, fallas y disponibilidad</h2>
+
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Las GPUs tienen límites físicos que el diseño tiene que asumir: consumen mucha energía, se calientan y fallan con más frecuencia que una CPU. Cuando una falla, no se pierde una request: se pierde una réplica entera por minutos, y levantar otra tarda porque hay que cargar decenas de GB de pesos. Por eso se mantienen réplicas de reserva precalentadas.</p>
+        <p class="jr-like"><b>Es como</b> un generador eléctrico de respaldo: no puedes encenderlo cuando se corta la luz y esperar que funcione al instante; tiene que estar listo antes.</p>
+        <dl class="jr-words">
+          <dt>Réplica</dt><dd>una copia del modelo cargada en un grupo de GPUs.</dd>
+          <dt>Precalentar</dt><dd>tener una réplica ya cargada antes de necesitarla.</dd>
+        </dl>
+      </aside>
 
       <p>Tres límites físicos que el diseño tiene que asumir:</p>
       <ul>

@@ -3,7 +3,8 @@
    Definición:
      { title, intro, width, height, pieces?, stepPanel?,
        groups: [{ id, label, x, y, w, h }],
-       nodes:  [{ id, layer, label, sub, brief?, x, y, w?, h?, bus?, info: { resp, api, data, fail, nums } }]   (x, y = centro)
+       nodes:  [{ id, layer, label, sub, brief?, why?, x, y, w?, h?, bus?, info: { resp, api, data, fail, nums } }]   (x, y = centro)
+               (why: HTML con por qué hace falta la pieza y qué pasaría sin ella; sale en su detalle, arriba de las pestañas)
                (bus: true = una barra larga, como un log, que recibe cada arista de frente a la altura o en la columna del otro nodo)
                (brief: una frase con lo que hace la pieza; sale en el tooltip, en el detalle y en la lista de piezas)
        pieces: true = el panel lateral lista las piezas por grupo, con su brief, y cada una abre su detalle
@@ -610,6 +611,7 @@
     inner.appendChild(h('h3', { text: d.label }));
     if (d.sub) inner.appendChild(h('p', { class: 'muted', text: d.sub }));
     if (d.brief) inner.appendChild(h('p', { class: 'sdm-brief', text: d.brief }));
+    if (d.why) inner.appendChild(h('div', { class: 'sdm-why' }, [h('p', { class: 'sdm-why-label', text: 'Por qué existe' }), h('p', { html: d.why })]));
 
     var tablist = h('div', { class: 'sdm-tabs', role: 'tablist', 'aria-label': 'Detalle de ' + d.label });
     var body = h('div', { class: 'sdm-tabbody', role: 'tabpanel', tabindex: '0' });
