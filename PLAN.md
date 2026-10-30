@@ -286,7 +286,7 @@ En cada checkpoint **me detengo** para que abras el sitio en el navegador y lo r
 | **CP13** | Parte IV: Ciberseguridad (M32–M38 + Checkpoint E). Publicados M32–M38 y el Checkpoint E; la Parte IV está completa | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 | **CP14** | Parte V: Manejo de pagos (M39 en adelante). Publicado M39; M40 y M41 propuestos | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 | **CP15** | Parte VII: Blue Team y DevSecOps (M54–M61 + Checkpoint G) y la serie SEC00–SEC08 | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
-| **CP16** | Parte VIII: AI Engineering (M62–M72 + Checkpoint H) y las guías IA07 e IA08. Publicados M62, M63, M64, M65 y M69 | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
+| **CP16** | Parte VIII: AI Engineering (M62–M72 + Checkpoint H) y las guías IA07 e IA08. Publicados M62 a M69 | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 | **CP17** | Parte IX: Seguridad web (M73–M85 + Checkpoint I) y las guías WEB00–WEB10 | Cada módulo: 0 errores de consola, 0 términos faltantes, quiz aprobado, sin desborde a 390 px |
 
 ---
