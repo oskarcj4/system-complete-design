@@ -1,0 +1,802 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M67. Extender un harness</title>
+<meta name="description" content="Los seis puntos de extensión de un harness: archivo de memoria, servidores MCP, skills, hooks, subagentes y plugins. Qué pone cada uno en el contexto, cuándo conviene cada uno, cómo se combinan y qué código corre con tus permisos cuando instalas uno.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m67">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Extender un harness</h1>
+        <p class="lead">Un harness recién instalado sabe programar en general y no sabe nada de tu equipo. Este módulo recorre las seis formas de enseñarle, darle herramientas y ponerle reglas, con un criterio para cada una: qué ocupa en el contexto, quién decide que se use y qué código corre en tu máquina.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M67</dd></div>
+          <div><dt>Parte</dt><dd>VIII. AI Engineering: modelos, harnesses y agentes</dd></div>
+          <div><dt>Duración</dt><dd>110 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M25, M64, M66</dd></div>
+          <div><dt>Estado</dt><dd data-status="m67">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Nombrar los seis puntos de extensión de un harness y decir qué pone cada uno en el contexto, y cuándo.</li>
+    <li>Conectar servidores MCP a Claude Code y a Codex en el alcance correcto, y medir lo que cuestan sus definiciones.</li>
+    <li>Escribir una skill que se cargue solo cuando hace falta, y un subagente que devuelva poco.</li>
+    <li>Usar hooks para lo que tiene que pasar siempre: formatear, probar, impedir que el agente termine con pruebas rotas.</li>
+    <li>Empaquetar todo en un plugin y repartirlo a un equipo.</li>
+    <li>Revisar una extensión antes de instalarla: qué código corre como tú y qué texto entra al contexto.</li>
+  </ul>
+</section>
+
+<h2 id="mapa"><span class="sec-num">67.1</span>Seis formas de extender un harness</h2>
+
+<p>En <a href="m64-anatomia-harness.html#piezas">M64</a> desarmaste un harness: el bucle, el system prompt por capas, las herramientas, el contexto. Todo eso viene de fábrica. Lo que lo vuelve útil para <i>tu</i> equipo se agrega desde afuera, y hay seis lugares donde agregarlo. En <a href="m62-pila-agente.html#extensiones">M62.8</a> los nombraste; aquí se configura cada uno.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una persona nueva en el equipo. El primer día lee una hoja con lo indispensable (el archivo de memoria). Tiene en el escritorio carpetas con procedimientos que abre cuando le toca (skills). Le dan accesos a sistemas (servidores MCP). Hay cosas que pasan sí o sí, como el CI que corre al hacer push (hooks). A veces le pide a alguien que investigue algo y le traiga un resumen (subagentes). Y cuando entra otra persona, se le entrega el kit completo de una vez (un plugin).</p>
+</aside>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 380" role="img" aria-labelledby="f67Lt f67Ld">
+<title id="f67Lt">Los seis puntos de extensión de un harness</title>
+<desc id="f67Ld">En el centro, el bucle del harness con el modelo. Alrededor, seis formas de extenderlo. A la izquierda, lo que agrega conocimiento: el archivo de memoria, que entra siempre, y las skills, que entran cuando hacen falta. Arriba a la derecha, lo que agrega capacidades: los servidores MCP, con herramientas nuevas. Abajo a la derecha, lo que agrega control: los hooks, que corren en momentos fijos del ciclo. Abajo a la izquierda, los subagentes, que hacen trabajo en un contexto aparte. Todo eso puede viajar junto en un plugin, el paquete que lo instala de una vez.</desc>
+<defs><marker id="f67La" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="14" width="742" height="330" rx="12"/>
+<text class="dg-group" x="28" y="36" text-anchor="start">Plugin: el paquete que instala todo lo de adentro</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="285" y="140" width="200" height="90" rx="8"/>
+<text class="dg-label" x="385" y="172" text-anchor="middle">Bucle del harness</text>
+<text class="dg-tiny" x="385" y="194" text-anchor="middle">modelo, herramientas,</text>
+<text class="dg-tiny" x="385" y="210" text-anchor="middle">contexto, permisos</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="40" y="60" width="190" height="62" rx="8"/>
+<text class="dg-label" x="135.0" y="87.5" text-anchor="middle">Archivo de memoria</text>
+<text class="dg-tiny" x="135.0" y="102.5" text-anchor="middle">CLAUDE.md, AGENTS.md</text>
+<text class="dg-tiny" x="135" y="138" text-anchor="middle">siempre en contexto</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="40" y="160" width="190" height="62" rx="8"/>
+<text class="dg-label" x="135.0" y="187.5" text-anchor="middle">Skills</text>
+<text class="dg-tiny" x="135.0" y="202.5" text-anchor="middle">SKILL.md y archivos</text>
+<text class="dg-tiny" x="135" y="238" text-anchor="middle">entran al usarse</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="40" y="260" width="190" height="62" rx="8"/>
+<text class="dg-label" x="135.0" y="287.5" text-anchor="middle">Subagentes</text>
+<text class="dg-tiny" x="135.0" y="302.5" text-anchor="middle">.claude/agents/*.md</text>
+<text class="dg-tiny" x="135" y="338" text-anchor="middle">contexto aparte</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="540" y="60" width="190" height="62" rx="8"/>
+<text class="dg-label" x="635.0" y="87.5" text-anchor="middle">Servidores MCP</text>
+<text class="dg-tiny" x="635.0" y="102.5" text-anchor="middle">herramientas nuevas</text>
+<text class="dg-tiny" x="635" y="138" text-anchor="middle">nombres al inicio</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="540" y="160" width="190" height="62" rx="8"/>
+<text class="dg-label" x="635.0" y="187.5" text-anchor="middle">Reglas por ruta</text>
+<text class="dg-tiny" x="635.0" y="202.5" text-anchor="middle">.claude/rules/*.md</text>
+<text class="dg-tiny" x="635" y="238" text-anchor="middle">entran al tocar el archivo</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="540" y="260" width="190" height="62" rx="8"/>
+<text class="dg-label" x="635.0" y="287.5" text-anchor="middle">Hooks</text>
+<text class="dg-tiny" x="635.0" y="302.5" text-anchor="middle">programas en eventos</text>
+<text class="dg-tiny" x="635" y="338" text-anchor="middle">fuera del contexto</text>
+<path class="dg-feedback" d="M230 91 L283 155.0"/>
+<path class="dg-feedback" d="M230 191 L283 185.0"/>
+<path class="dg-feedback" d="M230 291 L283 215.0"/>
+<path class="dg-feedback" d="M540 91 L487 155.0"/>
+<path class="dg-feedback" d="M540 191 L487 185.0"/>
+<path class="dg-feedback" d="M540 291 L487 215.0"/>
+<text class="dg-small" x="385" y="366" text-anchor="middle">Conocimiento a la izquierda, capacidades y control a la derecha; el plugin solo empaqueta.</text>
+<g class="pl-pin"><circle cx="218" cy="72" r="11"/><text x="218" y="76" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="218" cy="172" r="11"/><text x="218" y="176" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="218" cy="272" r="11"/><text x="218" y="276" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="718" cy="72" r="11"/><text x="718" y="76" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="718" cy="172" r="11"/><text x="718" y="176" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="718" cy="272" r="11"/><text x="718" y="276" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="463" cy="152" r="11"/><text x="463" y="156" text-anchor="middle">7</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 67.A.</b> Los puntos de extensión alrededor del bucle. Todos pueden viajar dentro de un plugin.</figcaption>
+</figure>
+
+
+<ol class="plate-key">
+  <li><b>Archivo de memoria</b><span>Lo que el agente tiene que saber en cada turno. <a href="m64-anatomia-harness.html#memoria">M64.9</a></span></li>
+  <li><b>Skills</b><span>Procedimientos y conocimiento que se cargan cuando la tarea los pide. <a href="#skills">67.4</a></span></li>
+  <li><b>Subagentes</b><span>Un agente con su propio contexto y sus propias herramientas. <a href="#subagentes-def">67.6</a></span></li>
+  <li><b>Servidores MCP</b><span>Herramientas nuevas con acceso a otros sistemas. <a href="#mcp">67.2</a></span></li>
+  <li><b>Reglas por ruta</b><span>Instrucciones que entran al tocar ciertos archivos. <a href="#mapa-costo">67.1</a></span></li>
+  <li><b>Hooks</b><span>Programas que corren en momentos fijos, fuera del modelo. <a href="#hooks">67.5</a></span></li>
+  <li><b>El bucle</b><span>El harness, que decide qué entra al contexto y qué se ejecuta. <a href="m64-anatomia-harness.html#piezas">M64.1</a></span></li>
+</ol>
+
+<h3 id="mapa-costo">Lo que cada una pone en el contexto</h3>
+
+<p>La pregunta que ordena este módulo es la de <a href="m64-anatomia-harness.html#contexto">M64.8</a>: la ventana es finita y todo lo que entra compite por la atención del modelo. Las extensiones se distinguen por <b>cuándo</b> entran. Lo que entra al empezar se paga en cada turno; lo que entra al usarse, solo cuando sirve; y hay cosas que no entran nunca.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f672t f672d">
+<title id="f672t">Qué pone cada extensión en el contexto y cuándo</title>
+<desc id="f672d">Una tabla dibujada. Filas: archivo de memoria, servidor MCP, skill, subagente, hook y plugin. Columnas: al empezar la sesión, cuando se usa y lo que nunca entra. El archivo de memoria entra entero al empezar. Un servidor MCP con búsqueda de herramientas pone solo los nombres; la definición entra al usarse. Una skill pone su nombre y descripción; el cuerpo entra al invocarla. Un subagente pone su descripción; su trabajo queda en su propio contexto y solo vuelve el resultado. Un hook no entra: corre fuera, y solo su salida puede volver. Un plugin suma lo de sus piezas.</desc>
+<defs><marker id="f672a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="292.5" y="30" text-anchor="middle">Al empezar</text>
+<text class="dg-small" x="477.5" y="30" text-anchor="middle">Al usarse</text>
+<text class="dg-small" x="662.5" y="30" text-anchor="middle">Nunca entra</text>
+<text class="dg-small" x="190" y="63" text-anchor="end">Archivo de memoria</text>
+<rect class="dg-warnbox" x="204" y="42" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="292.5" y="63" text-anchor="middle">entero</text>
+<rect class="dg-box" x="389" y="42" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="477.5" y="63" text-anchor="middle">—</text>
+<rect class="dg-box" x="574" y="42" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="662.5" y="63" text-anchor="middle">—</text>
+<text class="dg-small" x="190" y="103" text-anchor="end">Servidor MCP</text>
+<rect class="dg-warnbox" x="204" y="82" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="292.5" y="103" text-anchor="middle">nombres de herramientas</text>
+<rect class="dg-box" x="389" y="82" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="477.5" y="103" text-anchor="middle">definición y resultado</text>
+<rect class="dg-ok" x="574" y="82" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="662.5" y="103" text-anchor="middle">lo que filtra el servidor</text>
+<text class="dg-small" x="190" y="143" text-anchor="end">Skill</text>
+<rect class="dg-warnbox" x="204" y="122" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="292.5" y="143" text-anchor="middle">nombre y descripción</text>
+<rect class="dg-box" x="389" y="122" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="477.5" y="143" text-anchor="middle">cuerpo; archivos si se leen</text>
+<rect class="dg-ok" x="574" y="122" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="662.5" y="143" text-anchor="middle">archivos no leídos</text>
+<text class="dg-small" x="190" y="183" text-anchor="end">Subagente</text>
+<rect class="dg-warnbox" x="204" y="162" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="292.5" y="183" text-anchor="middle">nombre y descripción</text>
+<rect class="dg-box" x="389" y="162" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="477.5" y="183" text-anchor="middle">el resultado final</text>
+<rect class="dg-ok" x="574" y="162" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="662.5" y="183" text-anchor="middle">su trabajo intermedio</text>
+<text class="dg-small" x="190" y="223" text-anchor="end">Hook</text>
+<rect class="dg-box" x="204" y="202" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="292.5" y="223" text-anchor="middle">nada</text>
+<rect class="dg-box" x="389" y="202" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="477.5" y="223" text-anchor="middle">su salida, si la hay</text>
+<rect class="dg-ok" x="574" y="202" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="662.5" y="223" text-anchor="middle">el programa</text>
+<text class="dg-small" x="190" y="263" text-anchor="end">Plugin</text>
+<rect class="dg-warnbox" x="204" y="242" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="292.5" y="263" text-anchor="middle">lo de sus piezas</text>
+<rect class="dg-box" x="389" y="242" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="477.5" y="263" text-anchor="middle">lo de sus piezas</text>
+<rect class="dg-box" x="574" y="242" width="177" height="32" rx="6"/>
+<text class="dg-tiny" x="662.5" y="263" text-anchor="middle">—</text>
+<text class="dg-small" x="385" y="290" text-anchor="middle">La columna de la izquierda se paga en cada turno; la de la derecha no se paga nunca.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 67.2.</b> Cuándo entra cada extensión al contexto. La primera columna es la que conviene mantener corta.</figcaption>
+</figure>
+
+
+<p>Las <b>reglas por ruta</b> son un caso intermedio: archivos en <code>.claude/rules/</code> con un <code>paths:</code> en el frontmatter, que Claude Code carga solo cuando el agente lee o edita un archivo que coincide <span class="badge badge--doc">Documentado</span>. Sirven para "en <code>db/migrations/</code>, nunca un índice sin <code>CONCURRENTLY</code>" sin pagar esa línea en cada turno de una tarea de frontend.</p>
+
+<h2 id="mcp"><span class="sec-num">67.2</span>Servidores MCP dentro de un harness</h2>
+
+<p>Qué es MCP, sus roles, su mensaje y sus transportes están en <a href="m25-agentes.html#mcp">M25.5</a>; cómo se autoriza un servidor remoto con OAuth, en <a href="m25-agentes.html#mcp-auth">M25.5</a> también. Aquí, lo que cambia cuando el host es un harness de código: dónde se configura, a quién le llega y cuánto cuesta.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f673t f673d">
+<title id="f673t">Servidores MCP en Claude Code: transporte y alcance</title>
+<desc id="f673d">Arriba, Claude Code como host con un cliente por servidor. A la izquierda, un servidor local por stdio, que Claude Code arranca como subproceso con tus permisos y credenciales del entorno. A la derecha, un servidor remoto por HTTP con OAuth. Abajo, los tres alcances de la configuración: local, solo para ti en este proyecto, en ~/.claude.json; proyecto, en .mcp.json versionado, que pide aprobación; usuario, para todos tus proyectos.</desc>
+<defs><marker id="f673a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="260" y="20" width="250" height="70" rx="8"/>
+<text class="dg-label" x="385.0" y="51.5" text-anchor="middle">Claude Code (host)</text>
+<text class="dg-tiny" x="385.0" y="66.5" text-anchor="middle">un cliente MCP por servidor</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="30" y="140" width="230" height="62" rx="8"/>
+<text class="dg-label" x="145.0" y="167.5" text-anchor="middle">Servidor local</text>
+<text class="dg-tiny" x="145.0" y="182.5" text-anchor="middle">subproceso, stdio, tus permisos</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="510" y="140" width="230" height="62" rx="8"/>
+<text class="dg-label" x="625.0" y="167.5" text-anchor="middle">Servidor remoto</text>
+<text class="dg-tiny" x="625.0" y="182.5" text-anchor="middle">Streamable HTTP, OAuth</text>
+<path class="dg-edge" d="M300 90 L160 138" marker-end="url(#f673a)"/>
+<text class="dg-tiny" x="190" y="108" text-anchor="middle">JSON-RPC por stdin/stdout</text>
+<path class="dg-edge" d="M470 90 L610 138" marker-end="url(#f673a)"/>
+<text class="dg-tiny" x="590" y="108" text-anchor="middle">POST con Bearer</text>
+<text class="dg-group" x="385" y="232" text-anchor="middle">Dónde se guarda la configuración</text>
+<rect class="dg-box" x="30" y="244" width="210" height="48" rx="8"/>
+<text class="dg-tiny dg-mono" x="135" y="264" text-anchor="middle">local · ~/.claude.json</text>
+<text class="dg-tiny" x="135" y="282" text-anchor="middle">solo tú, este proyecto</text>
+<rect class="dg-box" x="280" y="244" width="210" height="48" rx="8"/>
+<text class="dg-tiny dg-mono" x="385" y="264" text-anchor="middle">proyecto · .mcp.json</text>
+<text class="dg-tiny" x="385" y="282" text-anchor="middle">todo el equipo; pide aprobación</text>
+<rect class="dg-box" x="530" y="244" width="210" height="48" rx="8"/>
+<text class="dg-tiny dg-mono" x="635" y="264" text-anchor="middle">usuario · ~/.claude.json</text>
+<text class="dg-tiny" x="635" y="282" text-anchor="middle">tú, todos los proyectos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 67.3.</b> Un servidor local corre como subproceso con tus permisos; uno remoto se autoriza con OAuth. La configuración vive en uno de tres alcances.</figcaption>
+</figure>
+
+
+<pre data-lang="shell"><code># Un servidor remoto por HTTP (pide OAuth la primera vez, desde /mcp)
+claude mcp add --transport http sentry https://mcp.sentry.dev/mcp
+
+# Un servidor local por stdio: todo lo que va después de -- es el comando
+claude mcp add --env PGURL=postgres://lector@localhost/tienda postgres -- npx -y @tuempresa/mcp-postgres-lectura
+
+# Compartido con el equipo: se guarda en .mcp.json, en la raíz del repositorio
+claude mcp add --scope project --transport http linear https://mcp.linear.app/mcp
+
+claude mcp list          # qué servidores hay y si conectan</code></pre>
+
+<p>Los tres alcances <span class="badge badge--doc">Documentado</span>:</p>
+<ul>
+  <li><b>local</b> (por defecto): solo para ti y solo en este proyecto; se guarda en <code>~/.claude.json</code>.</li>
+  <li><b>project</b>: en <code>.mcp.json</code>, versionado con el repositorio. Claude Code pide aprobación antes de usar los servidores de ese archivo en una sesión interactiva.</li>
+  <li><b>user</b>: para ti en todos tus proyectos.</li>
+</ul>
+
+<pre data-lang="json"><code>{
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@tuempresa/mcp-postgres-lectura@1.4.2"],
+      "env": { "PGURL": "${PGURL_LECTURA}" }
+    },
+    "linear": { "type": "http", "url": "https://mcp.linear.app/mcp" }
+  }
+}</code></pre>
+
+<p><code>.mcp.json</code> admite variables de entorno con <code>${VAR}</code>, así la credencial no queda en el repositorio. Fija la versión del paquete (<code>@1.4.2</code>): <code>npx -y paquete</code> sin versión ejecuta lo último que se publicó, cada vez que arranca la sesión, que es exactamente el riesgo de cadena de suministro de <a href="m56-supply-chain.html#dependencias">M56</a>.</p>
+
+<div class="tabs" data-tabs="MCP en otros harnesses">
+  <section data-tab="Codex CLI">
+    <pre data-lang="shell"><code># ~/.codex/config.toml
+[mcp_servers.postgres]
+command = "npx"
+args = ["-y", "@tuempresa/mcp-postgres-lectura@1.4.2"]
+env = { PGURL = "postgres://lector@localhost/tienda" }</code></pre>
+    <p>Codex lee los servidores de <code>config.toml</code>, en tablas <code>[mcp_servers.nombre]</code> <span class="badge badge--doc">Documentado</span>. Un servidor escrito para Claude Code funciona igual: el protocolo es el mismo.</p>
+  </section>
+  <section data-tab="OpenCode">
+    <pre data-lang="json"><code>{ "mcp": { "postgres": { "type": "local", "command": ["npx", "-y", "@tuempresa/mcp-postgres-lectura@1.4.2"] } } }</code></pre>
+    <p>OpenCode los declara en <code>opencode.json</code>, con <code>type</code> <code>local</code> o <code>remote</code> <span class="badge badge--doc">Documentado</span>.</p>
+  </section>
+</div>
+
+<h3 id="mcp-salida">Lo que devuelve un servidor también ocupa</h3>
+
+<p>Un <code>tools/call</code> que devuelve 4&#8239;000 filas de una tabla mete esas filas en el contexto. Claude Code avisa cuando una respuesta pasa de 10&#8239;000 tokens y la corta en 25&#8239;000 por defecto; el tope se cambia con <code>MAX_MCP_OUTPUT_TOKENS</code> <span class="badge badge--doc">Documentado</span>. Subir el tope es la salida fácil; la buena es la de <a href="m25-agentes.html#herramientas">M25.4</a>: herramientas que filtran, paginan y resumen del lado del servidor. Un servidor bien diseñado devuelve lo que el modelo necesita para decidir, no lo que tiene.</p>
+
+<h2 id="bajo-demanda"><span class="sec-num">67.3</span>Herramientas bajo demanda</h2>
+
+<p>Cada herramienta que el modelo puede llamar trae su definición: nombre, descripción y esquema de argumentos, como viste en <a href="m63-tool-calling.html#esquema">M63.5</a>. Cinco servidores con 16 herramientas cada uno son 80 definiciones; a unos 400 tokens cada una son 32&#8239;000 tokens que entran <b>en cada turno</b>, antes de que el agente lea un archivo. Ocupan ventana, distraen al modelo con herramientas que no van a servir y se pagan siempre.</p>
+
+<p>La <dfn data-term="carga-bajo-demanda">carga bajo demanda</dfn> invierte el orden: al empezar entran solo los nombres, más una herramienta para buscar. Cuando el modelo necesita algo, busca, y entonces entra la definición completa de lo que encontró. Es lo que en <a href="m63-tool-calling.html#esquema">M63.5</a> quedó pendiente.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f674t f674d">
+<title id="f674t">Cargar todas las definiciones o buscarlas</title>
+<desc id="f674d">Dos barras sobre una ventana de 200 000 tokens. Arriba, cinco servidores con 80 herramientas cargadas por adelantado: a unos 400 tokens por definición son 32 000 tokens en cada turno, el 16 por ciento de la ventana. Abajo, con búsqueda de herramientas: solo los nombres, unos 1 200 tokens, más las definiciones de las tres herramientas que el modelo buscó y usó en la tarea. Supuestos de 400 tokens por definición y 15 por nombre.</desc>
+<defs><marker id="f674a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="35" y="42" text-anchor="start">Todo por adelantado</text>
+<rect class="dg-warnbox" x="35.0" y="50" width="112.0" height="36" rx="4"/>
+<text class="dg-tiny" x="91.0" y="73" text-anchor="middle">80 definiciones · 32 000</text>
+<rect class="dg-frame" x="35" y="50" width="700.0" height="36" rx="4" fill="none"/>
+<text class="dg-small" x="35" y="132" text-anchor="start">Con búsqueda de herramientas</text>
+<rect class="dg-ok" x="35.0" y="140" width="4.2" height="36" rx="4"/>
+<rect class="dg-ok" x="39.2" y="140" width="4.2" height="36" rx="4"/>
+<rect class="dg-frame" x="35" y="140" width="700.0" height="36" rx="4" fill="none"/>
+<text class="dg-tiny" x="140" y="200" text-anchor="start">80 nombres (1 200) + 3 definiciones usadas (1 200)</text>
+<path class="dg-feedback" d="M80 176 L136 196"/>
+<text class="dg-small" x="385" y="240" text-anchor="middle">Lo que no se carga no compite por la atención ni se paga en cada turno.</text>
+<text class="dg-tiny" x="385" y="262" text-anchor="middle">Con ENABLE_TOOL_SEARCH=auto, Claude Code carga todo mientras las definiciones ocupen menos del 10 % de la ventana.</text>
+<text class="dg-tiny" x="35" y="116" text-anchor="start">0</text>
+<text class="dg-tiny" x="735" y="116" text-anchor="end">200 000 tokens</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 67.4.</b> La misma sesión con todo cargado y con búsqueda. Las cifras por definición y por nombre son supuestos; mide las tuyas con <code>/context</code>.</figcaption>
+</figure>
+
+
+<p>En Claude Code la búsqueda de herramientas MCP está activa por defecto, y se controla con <code>ENABLE_TOOL_SEARCH</code>: <code>true</code> (siempre buscar), <code>auto</code> (cargar todo mientras las definiciones ocupen menos del 10&#8239;% de la ventana, y buscar si pasan), <code>auto:N</code> (otro porcentaje) o <code>false</code> (todo por adelantado) <span class="badge badge--doc">Documentado</span>. La API de Anthropic ofrece lo mismo como herramienta de servidor, para quien arma su propio harness con el <a href="m69-orquestadores.html#sdk">Agent SDK</a>.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Buscar cuesta un turno y puede fallar: si la descripción de la herramienta no usa las palabras que el modelo busca, no la encuentra. Con pocas herramientas que se usan siempre, cargarlas por adelantado es mejor. Por eso existe <code>auto</code>: la búsqueda paga cuando la lista es larga.</p>
+</aside>
+
+<p>Prueba los tres ejemplos. El de "plugins a granel" es el que aparece cuando cada persona del equipo instala lo que vio en un blog.</p>
+
+<div data-calc="extbudget"></div>
+
+<p>El caché del prefijo (<a href="m16-context-windows.html#prompt-caching">M16</a>) baja el costo de lo fijo a una décima, pero no la ventana ni la atención: 50&#8239;000 tokens de definiciones cacheadas siguen siendo 50&#8239;000 tokens que el modelo tiene que mirar. Cómo se ordena todo lo que entra, y por qué el orden cambia la factura, es <a href="m68-context-engineering.html#orden">M68</a>.</p>
+
+<h2 id="skills"><span class="sec-num">67.4</span>Skills: conocimiento que se carga al usarse</h2>
+
+<p>Una <dfn data-term="skill">skill</dfn> es una carpeta con un archivo <code>SKILL.md</code>: un frontmatter con nombre y descripción, y un cuerpo con instrucciones; al lado, si hace falta, referencias, plantillas y scripts. El harness pone solo el nombre y la descripción en el contexto; cuando la tarea coincide con la descripción, o la persona la invoca con <code>/nombre</code>, carga el cuerpo <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f675t f675d">
+<title id="f675t">Una skill se carga en tres niveles</title>
+<desc id="f675d">Tres niveles de izquierda a derecha. Nivel 1: el nombre y la descripción de cada skill están siempre en contexto, unas decenas de tokens cada una. Nivel 2: cuando la tarea coincide con la descripción, o la persona la invoca con barra, entra el cuerpo de SKILL.md y se queda. Nivel 3: los archivos de la carpeta, como referencias o scripts, entran solo si el cuerpo dice que se lean, y un script puede ejecutarse sin que su código entre al contexto.</desc>
+<defs><marker id="f675a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="30" width="220" height="92" rx="8"/>
+<text class="dg-label" x="130" y="56" text-anchor="middle">Nivel 1: siempre</text>
+<text class="dg-small dg-mono" x="130" y="80" text-anchor="middle">name + description</text>
+<text class="dg-tiny" x="130" y="104" text-anchor="middle">decenas de tokens por skill</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="275" y="30" width="220" height="92" rx="8"/>
+<text class="dg-label" x="385" y="56" text-anchor="middle">Nivel 2: al usarse</text>
+<text class="dg-small dg-mono" x="385" y="80" text-anchor="middle">el cuerpo de SKILL.md</text>
+<text class="dg-tiny" x="385" y="104" text-anchor="middle">hasta ~500 líneas</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="530" y="30" width="220" height="92" rx="8"/>
+<text class="dg-label" x="640" y="56" text-anchor="middle">Nivel 3: si hace falta</text>
+<text class="dg-small dg-mono" x="640" y="80" text-anchor="middle">referencias, scripts, plantillas</text>
+<text class="dg-tiny" x="640" y="104" text-anchor="middle">lo que se lea o ejecute</text>
+<path class="dg-edge" d="M240 76 L273 76" marker-end="url(#f675a)"/>
+<text class="dg-tiny" x="256" y="68" text-anchor="middle">coincide</text>
+<path class="dg-edge" d="M495 76 L528 76" marker-end="url(#f675a)"/>
+<text class="dg-tiny" x="512" y="68" text-anchor="middle">lo pide</text>
+<rect class="dg-box" x="20" y="150" width="730" height="110" rx="10"/>
+<text class="dg-small dg-mono" x="40" y="176" text-anchor="start">.claude/skills/release/</text>
+<text class="dg-small dg-mono" x="40" y="198" text-anchor="start">├── SKILL.md            nivel 1 (frontmatter) y nivel 2 (cuerpo)</text>
+<text class="dg-small dg-mono" x="40" y="220" text-anchor="start">├── checklist.md        nivel 3: se lee si el cuerpo lo indica</text>
+<text class="dg-small dg-mono" x="40" y="242" text-anchor="start">└── scripts/version.py  nivel 3: se ejecuta; su código no entra</text>
+<text class="dg-small" x="385" y="282" text-anchor="middle">Una skill instalada y nunca usada cuesta solo su descripción.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 67.5.</b> Tres niveles de carga. Una skill que no se usa cuesta su descripción; una que se usa no carga los archivos que no lee.</figcaption>
+</figure>
+
+
+<pre data-lang="markdown"><code>---
+name: revisar-migracion
+description: Revisa una migración SQL de PostgreSQL antes de mergearla. Úsala cuando el
+  usuario pida revisar, aprobar o escribir una migración, o cuando cambie algo en db/migrations/.
+allowed-tools: Read Grep Glob Bash(psql -c "EXPLAIN *")
+---
+
+# Revisar una migración
+
+1. Lee la migración y la anterior en `db/migrations/`.
+2. Busca operaciones que bloquean la tabla en producción:
+   - `ALTER TABLE … ADD COLUMN … DEFAULT` con función volátil
+   - `CREATE INDEX` sin `CONCURRENTLY`
+   - `ALTER COLUMN … TYPE` sobre tablas de más de 1 millón de filas
+3. Si hay alguna, propone la versión en varios pasos de [patrones.md](patrones.md).
+4. Comprueba que existe la migración de vuelta (`down`).
+
+Responde con una lista: bloqueante, riesgo o bien, y la línea.</code></pre>
+
+<p>Lo que importa del ejemplo:</p>
+<ul>
+  <li><b>La descripción es el disparador.</b> El modelo decide usar la skill leyendo solo esa frase, así que dice qué hace y <i>cuándo</i> usarla, con las palabras que aparecerán en el pedido. Una descripción vaga es una skill que nunca se usa.</li>
+  <li><b>El cuerpo es corto y apunta a archivos.</b> La documentación sugiere mantener <code>SKILL.md</code> por debajo de 500 líneas y mover lo largo a archivos que el cuerpo enlaza; esos solo entran si se leen <span class="badge badge--doc">Documentado</span>.</li>
+  <li><b><code>allowed-tools</code> aprueba, no restringe.</b> Mientras la skill está activa, esas herramientas no piden permiso; las demás siguen las reglas normales de <a href="m66-permisos-sandbox.html#reglas">M66.2</a> <span class="badge badge--doc">Documentado</span>. Para restringir, <code>disallowed-tools</code> o las reglas deny.</li>
+</ul>
+
+<p>Otros campos útiles <span class="badge badge--doc">Documentado</span>: <code>disable-model-invocation: true</code> hace que solo la persona pueda invocarla (para un deploy, que no tiene que dispararse porque el modelo lo creyó oportuno); <code>context: fork</code> la ejecuta en un subagente, con su propio contexto; <code>paths</code> la limita a ciertos archivos. Los comandos con barra que antes eran archivos aparte ahora son skills: un mismo mecanismo con dos formas de invocarlo.</p>
+
+<h3 id="skills-compactar">Qué pasa con una skill al compactar</h3>
+
+<p>El cuerpo de una skill invocada queda en la conversación. Cuando el harness compacta (<a href="m64-anatomia-harness.html#contexto">M64.8</a>), Claude Code vuelve a adjuntar cada skill usada con sus primeros 5&#8239;000 tokens, dentro de un presupuesto de 25&#8239;000 para todas, y descarta primero las más viejas <span class="badge badge--doc">Documentado</span>. La consecuencia práctica: lo más importante va arriba en <code>SKILL.md</code>.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>El formato de las skills es un estándar abierto (Agent Skills): <code>name</code>, <code>description</code>, <code>license</code>, <code>compatibility</code>, <code>metadata</code> y <code>allowed-tools</code> son los campos portables, y otros harnesses leen la misma carpeta <span class="badge badge--doc">Documentado</span>. Lo que una skill sabe de tu equipo es lo menos atado a un proveedor de toda la configuración, el argumento de <a href="m65-elegir-harness.html#salir">M65</a> para no quedar atrapado.</p>
+</aside>
+
+<h2 id="hooks"><span class="sec-num">67.5</span>Hooks: lo que pasa siempre</h2>
+
+<p>Un <dfn data-term="hook-harness">hook</dfn> es un programa que el harness ejecuta en un momento fijo de la sesión, con un JSON por stdin que describe el evento. No le pide nada al modelo: corre siempre, igual. En <a href="m66-permisos-sandbox.html#hooks-politica">M66.9</a> lo usaste para bloquear; aquí, el mecanismo completo.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f676t f676d">
+<title id="f676t">Dónde corren los hooks en una sesión</title>
+<desc id="f676d">Una línea de tiempo de una sesión: SessionStart al abrir, UserPromptSubmit al mandar un pedido, PreToolUse y PostToolUse alrededor de cada herramienta, PreCompact antes de compactar, Stop cuando el agente termina su turno y SessionEnd al cerrar. Debajo, para qué se usa cada uno: cargar contexto, filtrar el pedido, aprobar o bloquear, formatear y probar, guardar notas, verificar antes de terminar y limpiar.</desc>
+<defs><marker id="f676a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<line class="dg-edge" x1="30" y1="110" x2="740" y2="110"/>
+<circle class="dg-box" cx="60" cy="110" r="7"/>
+<text class="dg-tiny dg-mono" x="60" y="70" text-anchor="middle">SessionStart</text>
+<line class="dg-feedback" x1="60" y1="76" x2="60" y2="102"/>
+<text class="dg-tiny" x="60" y="140" text-anchor="middle">cargar contexto</text>
+<circle class="dg-box" cx="168" cy="110" r="7"/>
+<text class="dg-tiny dg-mono" x="168" y="50" text-anchor="middle">UserPromptSubmit</text>
+<line class="dg-feedback" x1="168" y1="56" x2="168" y2="102"/>
+<text class="dg-tiny" x="168" y="158" text-anchor="middle">revisar el pedido</text>
+<circle class="dg-box" cx="276" cy="110" r="7"/>
+<text class="dg-tiny dg-mono" x="276" y="70" text-anchor="middle">PreToolUse</text>
+<line class="dg-feedback" x1="276" y1="76" x2="276" y2="102"/>
+<text class="dg-tiny" x="276" y="140" text-anchor="middle">bloquear o aprobar</text>
+<circle class="dg-box" cx="384" cy="110" r="7"/>
+<text class="dg-tiny dg-mono" x="384" y="50" text-anchor="middle">PostToolUse</text>
+<line class="dg-feedback" x1="384" y1="56" x2="384" y2="102"/>
+<text class="dg-tiny" x="384" y="158" text-anchor="middle">formatear, probar</text>
+<circle class="dg-box" cx="492" cy="110" r="7"/>
+<text class="dg-tiny dg-mono" x="492" y="70" text-anchor="middle">PreCompact</text>
+<line class="dg-feedback" x1="492" y1="76" x2="492" y2="102"/>
+<text class="dg-tiny" x="492" y="140" text-anchor="middle">guardar notas</text>
+<circle class="dg-box" cx="600" cy="110" r="7"/>
+<text class="dg-tiny dg-mono" x="600" y="50" text-anchor="middle">Stop</text>
+<line class="dg-feedback" x1="600" y1="56" x2="600" y2="102"/>
+<text class="dg-tiny" x="600" y="158" text-anchor="middle">¿terminó de verdad?</text>
+<circle class="dg-box" cx="708" cy="110" r="7"/>
+<text class="dg-tiny dg-mono" x="708" y="70" text-anchor="middle">SessionEnd</text>
+<line class="dg-feedback" x1="708" y1="76" x2="708" y2="102"/>
+<text class="dg-tiny" x="708" y="140" text-anchor="middle">limpiar, registrar</text>
+<rect class="dg-box" x="20" y="186" width="730" height="58" rx="8"/>
+<text class="dg-small" x="385" y="208" text-anchor="middle">Entrada: JSON por stdin (session_id, cwd, hook_event_name, tool_name, tool_input…).</text>
+<text class="dg-small" x="385" y="230" text-anchor="middle">Salida: código 0 sigue, 2 bloquea con stderr como razón; o JSON con la decisión.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 67.6.</b> Algunos de los eventos de una sesión de Claude Code y para qué se usa cada uno.</figcaption>
+</figure>
+
+
+<p>Claude Code tiene más de 30 eventos; los que más se usan son los de la figura, más <code>PermissionRequest</code> (cuando aparece un diálogo de permiso), <code>Notification</code>, <code>SubagentStop</code> y <code>PostCompact</code> <span class="badge badge--doc">Documentado</span>. Cada hook se configura con un <code>matcher</code> (el nombre de una herramienta, <code>Edit|Write</code> o una expresión regular como <code>mcp__memoria__.*</code>) y uno o más manejadores. El manejador más común es <code>command</code>, un programa; también hay <code>http</code>, que manda el JSON a una URL, <code>prompt</code>, que se lo pasa a un modelo para que decida, y <code>mcp_tool</code> <span class="badge badge--doc">Documentado</span>.</p>
+
+<pre data-lang="json"><code>{
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Edit|Write",
+        "hooks": [ { "type": "command", "command": "npx prettier --write \"$(jq -r '.tool_input.file_path')\"" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pruebas-verdes.sh" } ] }
+    ]
+  }
+}</code></pre>
+
+<p>El primer hook formatea cada archivo que el agente edita. Podrías pedirlo en <code>CLAUDE.md</code>, y el modelo lo haría casi siempre; con un hook pasa siempre, y no gasta tokens. El segundo impide que el agente diga "listo" con las pruebas rotas:</p>
+
+<pre data-lang="shell"><code>#!/usr/bin/env bash
+# .claude/hooks/pruebas-verdes.sh: el agente no termina con las pruebas rotas
+entrada=$(cat)                                              # (1) el evento Stop, en JSON
+if [ "$(echo "$entrada" | jq -r '.stop_hook_active')" = "true" ]; then
+  exit 0                                                    # (2) ya se le pidió una vez: no lo encierres en un bucle
+fi
+if ! salida=$(npm test --silent 2&gt;&amp;1); then
+  echo "Las pruebas fallan. Arréglalas antes de terminar:" &gt;&amp;2
+  echo "$salida" | tail -n 30 &gt;&amp;2
+  exit 2                                                    # (3) en Stop, 2 significa: sigue trabajando
+fi
+exit 0</code></pre>
+<ol class="code-key">
+  <li>El evento <code>Stop</code> llega cuando el agente termina su turno.</li>
+  <li><code>stop_hook_active</code> dice que el agente ya está siguiendo por un hook anterior. Sin este corte, un error que no sabe arreglar lo deja en un bucle sin fin.</li>
+  <li>En <code>Stop</code>, el código 2 no bloquea una herramienta: impide que el agente se detenga, y stderr le dice por qué <span class="badge badge--doc">Documentado</span>.</li>
+</ol>
+
+<p>La salida se lee igual que en M66: código 0 sigue (y si imprime JSON, se aplica), código 2 bloquea con stderr como razón, cualquier otro es un error que no bloquea. En lugar del código, un hook puede imprimir un JSON con <code>decision</code>, <code>continue</code>, <code>systemMessage</code> o, en <code>PreToolUse</code>, <code>permissionDecision</code> y <code>updatedInput</code>, que cambia los argumentos antes de ejecutar <span class="badge badge--doc">Documentado</span>.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un hook lento frena cada llamada: el timeout por defecto de un <code>command</code> es de 600 segundos <span class="badge badge--doc">Documentado</span>, así que un <code>npm test</code> de 4 minutos en <code>PostToolUse</code> convierte cada edición en una espera de 4 minutos. Las pruebas van en <code>Stop</code>, una vez por turno; en <code>PostToolUse</code>, lo que tarda menos de un segundo.</p>
+</aside>
+
+<h2 id="subagentes-def"><span class="sec-num">67.6</span>Definir subagentes</h2>
+
+<p>Qué es un subagente y por qué protege el contexto está en <a href="m64-anatomia-harness.html#subagentes">M64.10</a>: un agente con contexto propio que trabaja y devuelve solo su resultado. Claude Code trae tres (Explore y Plan, de solo lectura, y uno de propósito general); los tuyos se definen en un Markdown <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f677t f677d">
+<title id="f677t">Un subagente trabaja en su propio contexto</title>
+<desc id="f677d">A la izquierda, el contexto del agente principal, con el pedido y la conversación. Delega una investigación: el subagente arranca con un contexto nuevo que tiene solo su system prompt, su descripción de tarea y sus herramientas, lee veinte archivos y usa 60 000 tokens. Al agente principal vuelve solo el resultado final, unos 1 500 tokens. El trabajo intermedio no contamina el contexto principal.</desc>
+<defs><marker id="f677a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="20" width="300" height="220" rx="10"/>
+<text class="dg-group" x="164" y="44" text-anchor="middle">Contexto principal</text>
+<rect class="dg-box" x="34" y="60" width="260" height="40" rx="8"/>
+<text class="dg-small" x="164.0" y="84.0" text-anchor="middle">pedido y conversación</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="34" y="112" width="260" height="40" rx="8"/>
+<text class="dg-tiny" x="164.0" y="136.0" text-anchor="middle">Task: "¿dónde se valida el token?"</text>
+<rect class="dg-ok" x="34" y="180" width="260" height="40" rx="8"/>
+<text class="dg-small" x="164.0" y="204.0" text-anchor="middle">resultado: ~1 500 tokens</text>
+<rect class="dg-frame" x="456" y="20" width="300" height="220" rx="10"/>
+<text class="dg-group" x="606" y="44" text-anchor="middle">Contexto del subagente (nuevo)</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="476" y="60" width="260" height="40" rx="8"/>
+<text class="dg-tiny" x="606.0" y="84.0" text-anchor="middle">su prompt, su tarea, sus herramientas</text>
+<rect class="dg-warnbox" x="476" y="112" width="260" height="56" rx="8"/>
+<text class="dg-small" x="606.0" y="136.5" text-anchor="middle">lee 20 archivos, 14 greps</text>
+<text class="dg-tiny" x="606.0" y="151.5" text-anchor="middle">~60 000 tokens que no vuelven</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="476" y="180" width="260" height="40" rx="8"/>
+<text class="dg-small" x="606.0" y="204.0" text-anchor="middle">escribe el resumen</text>
+<path class="dg-edge" d="M294 132 L474 80" marker-end="url(#f677a)"/>
+<text class="dg-tiny" x="385" y="96" text-anchor="middle">delega</text>
+<path class="dg-edge" d="M474 200 L296 200" marker-end="url(#f677a)"/>
+<text class="dg-tiny" x="385" y="192" text-anchor="middle">solo esto vuelve</text>
+<text class="dg-tiny" x="385" y="266" text-anchor="middle">Cifras ilustrativas. Anthropic sugiere resúmenes de 1 000 a 2 000 tokens.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 67.7.</b> El subagente lee mucho en su contexto y devuelve poco al principal.</figcaption>
+</figure>
+
+
+<pre data-lang="markdown"><code>---
+name: auditor-sql
+description: Audita consultas SQL y migraciones buscando bloqueos, índices faltantes y
+  N+1. Úsalo de forma proactiva después de cambiar código que toca la base.
+tools: Read, Grep, Glob
+model: haiku
+skills: revisar-migracion
+---
+
+Eres un auditor de SQL. Lee el código que te indiquen, busca los problemas de la lista
+y devuelve como máximo 15 líneas: archivo:línea, problema, arreglo. No edites nada.</code></pre>
+
+<p>El archivo va en <code>.claude/agents/</code> (del proyecto) o en <code>~/.claude/agents/</code> (tuyo). El frontmatter decide lo que lo hace útil <span class="badge badge--doc">Documentado</span>:</p>
+<ul>
+  <li><code>description</code>: igual que en una skill, es lo que el agente principal lee para decidir delegar. "Úsalo de forma proactiva" lo invita a hacerlo sin que se lo pidas.</li>
+  <li><code>tools</code>: la lista de herramientas. Un auditor que no edita no tiene Edit, y eso sí restringe.</li>
+  <li><code>model</code>: un modelo más chico y barato para trabajo de lectura.</li>
+  <li><code>skills</code>, <code>mcpServers</code>, <code>hooks</code> y <code>permissionMode</code>: lo que se carga solo dentro del subagente. Un servidor MCP pesado que solo usa el auditor no ocupa el contexto principal.</li>
+  <li><code>isolation: worktree</code>: corre en una copia del repositorio, para que dos subagentes que editan no se pisen.</li>
+</ul>
+
+<p>Lo que devuelve es la pieza que más se descuida. El prompt del subagente dice cuánto y en qué forma: "como máximo 15 líneas". Anthropic sugiere resúmenes de 1&#8239;000 a 2&#8239;000 tokens <span class="badge badge--doc">Documentado</span>; un subagente que devuelve todo lo que leyó no protegió nada.</p>
+
+<h2 id="plugins"><span class="sec-num">67.7</span>Plugins: empaquetar y repartir</h2>
+
+<p>Un <dfn data-term="plugin-harness">plugin</dfn> es una carpeta con un manifiesto que agrupa skills, subagentes, hooks y servidores MCP para instalarlos de una vez <span class="badge badge--doc">Documentado</span>. No agrega un mecanismo nuevo: empaqueta los anteriores.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f678t f678d">
+<title id="f678t">Qué hay dentro de un plugin</title>
+<desc id="f678d">A la izquierda, el árbol de carpetas de un plugin: el manifiesto en .claude-plugin/plugin.json, y las carpetas skills, agents, hooks con hooks.json y el archivo .mcp.json. A la derecha, de dónde se instala: un marketplace, que es un repositorio con un marketplace.json que lista plugins, y el comando /plugin install. Abajo, la advertencia: un plugin corre código con tus permisos.</desc>
+<defs><marker id="f678a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="20" width="400" height="200" rx="10"/>
+<text class="dg-small dg-mono" x="36" y="46" text-anchor="start">revision-pagos/</text>
+<text class="dg-small dg-mono" x="36" y="70" text-anchor="start">├── .claude-plugin/plugin.json   manifiesto</text>
+<text class="dg-small dg-mono" x="36" y="94" text-anchor="start">├── skills/revisar-migracion/SKILL.md</text>
+<text class="dg-small dg-mono" x="36" y="118" text-anchor="start">├── agents/auditor-sql.md</text>
+<text class="dg-small dg-mono" x="36" y="142" text-anchor="start">├── hooks/hooks.json</text>
+<text class="dg-small dg-mono" x="36" y="166" text-anchor="start">├── .mcp.json                   servidores</text>
+<text class="dg-small dg-mono" x="36" y="190" text-anchor="start">└── scripts/…</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="500" y="30" width="250" height="62" rx="8"/>
+<text class="dg-label" x="625.0" y="57.5" text-anchor="middle">Marketplace</text>
+<text class="dg-tiny" x="625.0" y="72.5" text-anchor="middle">repo con marketplace.json</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="500" y="130" width="250" height="62" rx="8"/>
+<text class="dg-label" x="625.0" y="157.5" text-anchor="middle">/plugin install</text>
+<text class="dg-tiny" x="625.0" y="172.5" text-anchor="middle">alcance: usuario, proyecto o local</text>
+<path class="dg-edge" d="M625 92 L625 128" marker-end="url(#f678a)"/>
+<path class="dg-edge" d="M498 160 L422 120" marker-end="url(#f678a)"/>
+<rect class="dg-warnbox" x="20" y="232" width="730" height="36" rx="8"/>
+<text class="dg-small" x="385" y="255" text-anchor="middle">Hooks, scripts y servidores stdio de un plugin corren en tu máquina con tus permisos.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 67.8.</b> Un plugin por dentro y de dónde se instala.</figcaption>
+</figure>
+
+
+<pre data-lang="json"><code>{
+  "name": "revision-pagos",
+  "version": "0.3.0",
+  "description": "Skills, subagente y hooks para revisar cambios en el servicio de pagos",
+  "author": { "name": "Equipo de Pagos" }
+}</code></pre>
+<pre data-lang="shell"><code># Agregar el marketplace del equipo (un repositorio con .claude-plugin/marketplace.json)
+/plugin marketplace add tuempresa/plugins-internos
+
+# Instalar un plugin de ese marketplace, para todo el proyecto
+/plugin install revision-pagos@plugins-internos --scope project</code></pre>
+
+<p>Tres detalles que cambian el uso <span class="badge badge--doc">Documentado</span>. Las skills de un plugin se invocan con su espacio de nombres, <code>/revision-pagos:revisar-migracion</code>, para que dos plugins no choquen. Sus herramientas MCP llevan el prefijo <code>mcp__plugin_&lt;plugin&gt;_&lt;servidor&gt;__</code>. Y cada plugin activado pone los nombres y descripciones de lo que trae en el contexto <b>de cada turno</b>: diez plugins instalados "por si acaso" son la barra roja del widget de 67.3.</p>
+
+<h2 id="cuando"><span class="sec-num">67.8</span>Cuándo usar cada una</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f679t f679d">
+<title id="f679t">Qué extensión usar</title>
+<desc id="f679d">Un árbol de decisión. ¿El modelo tiene que saberlo siempre? Va al archivo de memoria. ¿Es un procedimiento o conocimiento que se usa a veces? Una skill. ¿Tiene que pasar siempre, sin depender del modelo? Un hook. ¿Necesita acceso a un sistema externo con credenciales? Un servidor MCP. ¿Es una tarea que lee mucho y devuelve poco? Un subagente. ¿Hay que repartirlo a varias personas o repositorios? Un plugin que lo empaquete.</desc>
+<defs><marker id="f679a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="20" width="330" height="40" rx="8"/>
+<text class="dg-small" x="185.0" y="44.0" text-anchor="middle">¿Lo tiene que saber en cada turno?</text>
+<path class="dg-edge" d="M350 40 L438 40" marker-end="url(#f679a)"/>
+<text class="dg-tiny" x="394" y="33" text-anchor="middle">sí</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="440" y="20" width="170" height="40" rx="8"/>
+<text class="dg-label" x="525.0" y="44.0" text-anchor="middle">Archivo de memoria</text>
+<text class="dg-tiny" x="625" y="45" text-anchor="start">pocas líneas, estables</text>
+<path class="dg-edge" d="M185 60 L185 70" marker-end="url(#f679a)"/>
+<rect class="dg-box" x="20" y="70" width="330" height="40" rx="8"/>
+<text class="dg-small" x="185.0" y="94.0" text-anchor="middle">¿Procedimiento o saber que se usa a veces?</text>
+<path class="dg-edge" d="M350 90 L438 90" marker-end="url(#f679a)"/>
+<text class="dg-tiny" x="394" y="83" text-anchor="middle">sí</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="440" y="70" width="170" height="40" rx="8"/>
+<text class="dg-label" x="525.0" y="94.0" text-anchor="middle">Skill</text>
+<text class="dg-tiny" x="625" y="95" text-anchor="start">carga bajo demanda</text>
+<path class="dg-edge" d="M185 110 L185 120" marker-end="url(#f679a)"/>
+<rect class="dg-box" x="20" y="120" width="330" height="40" rx="8"/>
+<text class="dg-small" x="185.0" y="144.0" text-anchor="middle">¿Tiene que pasar siempre, sin el modelo?</text>
+<path class="dg-edge" d="M350 140 L438 140" marker-end="url(#f679a)"/>
+<text class="dg-tiny" x="394" y="133" text-anchor="middle">sí</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="440" y="120" width="170" height="40" rx="8"/>
+<text class="dg-label" x="525.0" y="144.0" text-anchor="middle">Hook</text>
+<text class="dg-tiny" x="625" y="145" text-anchor="start">determinista</text>
+<path class="dg-edge" d="M185 160 L185 170" marker-end="url(#f679a)"/>
+<rect class="dg-box" x="20" y="170" width="330" height="40" rx="8"/>
+<text class="dg-small" x="185.0" y="194.0" text-anchor="middle">¿Un sistema externo con credenciales?</text>
+<path class="dg-edge" d="M350 190 L438 190" marker-end="url(#f679a)"/>
+<text class="dg-tiny" x="394" y="183" text-anchor="middle">sí</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="440" y="170" width="170" height="40" rx="8"/>
+<text class="dg-label" x="525.0" y="194.0" text-anchor="middle">Servidor MCP</text>
+<text class="dg-tiny" x="625" y="195" text-anchor="start">herramientas y auth</text>
+<path class="dg-edge" d="M185 210 L185 220" marker-end="url(#f679a)"/>
+<rect class="dg-box" x="20" y="220" width="330" height="40" rx="8"/>
+<text class="dg-small" x="185.0" y="244.0" text-anchor="middle">¿Lee mucho y devuelve poco?</text>
+<path class="dg-edge" d="M350 240 L438 240" marker-end="url(#f679a)"/>
+<text class="dg-tiny" x="394" y="233" text-anchor="middle">sí</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="440" y="220" width="170" height="40" rx="8"/>
+<text class="dg-label" x="525.0" y="244.0" text-anchor="middle">Subagente</text>
+<text class="dg-tiny" x="625" y="245" text-anchor="start">contexto aparte</text>
+<path class="dg-edge" d="M185 260 L185 270" marker-end="url(#f679a)"/>
+<rect class="dg-box" x="20" y="270" width="330" height="40" rx="8"/>
+<text class="dg-small" x="185.0" y="294.0" text-anchor="middle">¿Para varias personas o repos?</text>
+<path class="dg-edge" d="M350 290 L438 290" marker-end="url(#f679a)"/>
+<text class="dg-tiny" x="394" y="283" text-anchor="middle">sí</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="440" y="270" width="170" height="40" rx="8"/>
+<text class="dg-label" x="525.0" y="294.0" text-anchor="middle">Plugin</text>
+<text class="dg-tiny" x="625" y="295" text-anchor="start">empaqueta lo anterior</text>
+<text class="dg-tiny" x="385" y="322" text-anchor="middle">Las preguntas no son excluyentes: una skill puede usar un servidor MCP, y un plugin trae de todo.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 67.9.</b> Un árbol para decidir. Se recorre de arriba abajo; la primera respuesta afirmativa da el lugar.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Lo que quieres</th><th>Dónde va</th><th>Por qué no en otro lado</th></tr></thead>
+    <tbody>
+      <tr><td>"Las pruebas se corren con <code>pnpm test:unit</code>"</td><td>Archivo de memoria</td><td>Una línea que sirve en casi todas las tareas</td></tr>
+      <tr><td>Cómo se escribe una migración segura</td><td>Skill</td><td>Una página que solo sirve al tocar la base</td></tr>
+      <tr><td>Formatear cada archivo editado</td><td>Hook <code>PostToolUse</code></td><td>Tiene que pasar siempre y no necesita al modelo</td></tr>
+      <tr><td>Consultar los errores de Sentry</td><td>Servidor MCP</td><td>Necesita credenciales y una API</td></tr>
+      <tr><td>Encontrar todos los usos de una función en 200 archivos</td><td>Subagente</td><td>Lee mucho y devuelve una lista</td></tr>
+      <tr><td>Que las 40 personas del equipo tengan lo anterior</td><td>Plugin del proyecto</td><td>Se instala y se actualiza de una vez</td></tr>
+      <tr><td>"No uses <code>any</code> en TypeScript"</td><td>Linter en un hook, no en texto</td><td>Una regla que se puede comprobar no se le pide al modelo</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>El error más común es usar el archivo de memoria para todo. Cada línea se paga en cada turno, y un <code>CLAUDE.md</code> de 800 líneas diluye las 20 que importan. La documentación de Claude Code lo resume en una prueba por línea: ¿el agente se equivocaría sin ella? Si no, sobra <span class="badge badge--doc">Documentado</span>.</p>
+
+<h2 id="combinar"><span class="sec-num">67.9</span>Combinar: un equipo de pagos</h2>
+
+<p>Las extensiones se combinan. El equipo de pagos de la <a href="m27-pagos-stripe.html#ledger">Parte III</a> quiere que el agente revise cada cambio en las migraciones del ledger. Lo arman así <span class="badge badge--ref">Diseño de referencia</span>:</p>
+
+<ol class="steps">
+  <li><span class="step-title">Una línea en CLAUDE.md</span>"Las migraciones del ledger se revisan con la skill revisar-migracion antes de proponer un cambio." Diez palabras que se pagan siempre y apuntan a lo que se paga solo al usarse.</li>
+  <li><span class="step-title">La skill revisar-migracion</span>El procedimiento de 67.4, con <code>patrones.md</code> al lado, que solo se lee si hay un problema.</li>
+  <li><span class="step-title">Un servidor MCP de solo lectura</span>Conectado a una réplica de staging con un rol que solo puede <code>SELECT</code> y <code>EXPLAIN</code>: el permiso lo impone la base, no el prompt (<a href="m35-seguridad-bd.html#rbac">M35</a>).</li>
+  <li><span class="step-title">El subagente auditor-sql</span>Con Haiku, sin Edit, con la skill precargada y el servidor MCP solo en su contexto. El agente principal nunca carga las definiciones de la base.</li>
+  <li><span class="step-title">Un hook</span><code>PostToolUse</code> sobre <code>Write</code> en <code>db/migrations/</code> que corre <code>squawk</code>, un linter de migraciones, y devuelve los avisos al modelo.</li>
+  <li><span class="step-title">Un plugin del proyecto</span>Todo lo anterior en <code>revision-pagos</code>, instalado con <code>--scope project</code>, versionado en el marketplace interno.</li>
+</ol>
+
+<p>El resultado: una tarea que no toca la base paga una línea de memoria, un par de descripciones y nada más. Una que toca una migración carga la skill, delega en el auditor y recibe 15 líneas.</p>
+
+<h2 id="seguridad"><span class="sec-num">67.10</span>Seguridad de las extensiones</h2>
+
+<p>Instalar una extensión es darle algo a un tercero. Conviene separar tres cosas, porque cada una se controla distinto.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f6710t f6710d">
+<title id="f6710t">Quién ejecuta qué cuando instalas una extensión</title>
+<desc id="f6710d">Tres columnas. Lo que corre en tu máquina con tus permisos: servidores MCP por stdio, hooks y scripts de skills. Lo que entra al contexto del modelo y puede llevar una injection: descripciones de herramientas, resultados de MCP, cuerpos de skills. Lo que sale de tu máquina: los argumentos que el modelo manda a un servidor remoto. Cada columna con su control.</desc>
+<defs><marker id="f6710a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="20" y="20" width="220" height="44" rx="8"/>
+<text class="dg-label" x="130.0" y="46.0" text-anchor="middle">Corre como tú</text>
+<rect class="dg-box" x="20" y="76" width="220" height="110" rx="8"/>
+<text class="dg-small" x="130" y="104" text-anchor="middle">servidores stdio</text>
+<text class="dg-small" x="130" y="132" text-anchor="middle">hooks</text>
+<text class="dg-small" x="130" y="160" text-anchor="middle">scripts de skills y plugins</text>
+<rect class="dg-ok" x="20" y="198" width="220" height="48" rx="8"/>
+<text class="dg-tiny" x="130" y="226" text-anchor="middle">revisar el código; fijar versión</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="275" y="20" width="220" height="44" rx="8"/>
+<text class="dg-label" x="385.0" y="46.0" text-anchor="middle">Entra al contexto</text>
+<rect class="dg-box" x="275" y="76" width="220" height="110" rx="8"/>
+<text class="dg-small" x="385" y="104" text-anchor="middle">descripciones de herramientas</text>
+<text class="dg-small" x="385" y="132" text-anchor="middle">resultados de MCP</text>
+<text class="dg-small" x="385" y="160" text-anchor="middle">cuerpos de skills</text>
+<rect class="dg-ok" x="275" y="198" width="220" height="48" rx="8"/>
+<text class="dg-tiny" x="385" y="226" text-anchor="middle">tratarlo como no confiable</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="530" y="20" width="220" height="44" rx="8"/>
+<text class="dg-label" x="640.0" y="46.0" text-anchor="middle">Sale de tu máquina</text>
+<rect class="dg-box" x="530" y="76" width="220" height="110" rx="8"/>
+<text class="dg-small" x="640" y="104" text-anchor="middle">argumentos a servidores remotos</text>
+<text class="dg-small" x="640" y="132" text-anchor="middle">lo que leyó el modelo</text>
+<text class="dg-small" x="640" y="160" text-anchor="middle">tokens OAuth del servidor</text>
+<rect class="dg-ok" x="530" y="198" width="220" height="48" rx="8"/>
+<text class="dg-tiny" x="640" y="226" text-anchor="middle">scopes mínimos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 67.10.</b> Tres riesgos de una extensión, con su control.</figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Código que corre como tú.</b> Un servidor MCP por stdio, un hook o el script de una skill se ejecutan en tu máquina con tus permisos, fuera del sandbox de comandos de <a href="m66-permisos-sandbox.html#sandbox-claude">M66.4</a> <span class="badge badge--doc">Documentado</span>. Un plugin que trae los tres es un programa que instalaste. Se revisa como una dependencia: de dónde viene, quién lo mantiene, versión fijada (<a href="m56-supply-chain.html#dependencias">M56</a>).</li>
+  <li><b>Texto que entra al contexto.</b> La descripción de una herramienta MCP, lo que devuelve y el cuerpo de una skill entran al contexto como cualquier otro texto, y pueden traer instrucciones: es la <a href="m25-agentes.html#injection">injection indirecta</a> de M25, con la diferencia de que la instalaste tú. La especificación de MCP dice que las descripciones y anotaciones de una herramienta se traten como no confiables salvo que el servidor lo sea <span class="badge badge--doc">Documentado</span>. Una descripción que cambia entre versiones sin que cambie el código es una señal.</li>
+  <li><b>Datos que salen.</b> Los argumentos de una llamada a un servidor remoto salen de tu máquina; si el modelo leyó un secreto, puede mandarlo como argumento. Es la tercera pata de la <a href="m25-agentes.html#injection-regla">trifecta</a>, y se corta con servidores de confianza y scopes OAuth mínimos.</li>
+</ul>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>El <code>.mcp.json</code> y el <code>.claude/settings.json</code> de un repositorio que clonas pueden traer servidores y hooks. Claude Code pide aprobación antes de usarlos en una sesión interactiva; en modo headless (<a href="m69-orquestadores.html#headless">M69.1</a>) no hay nadie a quien preguntar, y una automatización sobre repositorios ajenos corre con <code>--bare</code>, que no carga la configuración del proyecto. Las organizaciones restringen qué marketplaces y servidores se permiten desde managed settings.</p>
+</aside>
+
+<h2 id="fallas"><span class="sec-num">67.11</span>Qué falla</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+      <tr><td>La skill nunca se usa</td><td>Descripción vaga o sin las palabras del pedido</td><td>Decir qué hace y cuándo, con los términos del usuario (67.4)</td></tr>
+      <tr><td>El agente "se olvidó" de la skill a mitad de una tarea larga</td><td>Compactación: cuerpo cortado a 5&#8239;000 tokens</td><td>Lo importante arriba en <code>SKILL.md</code> (67.4)</td></tr>
+      <tr><td>El contexto empieza al 30&#8239;% antes del primer pedido</td><td>Muchos servidores y plugins con todo por adelantado</td><td>Búsqueda de herramientas; desinstalar lo que no se usa (67.3)</td></tr>
+      <tr><td>Una consulta MCP llena la ventana</td><td>El servidor devuelve todo</td><td>Paginar y filtrar en el servidor (67.2)</td></tr>
+      <tr><td>Cada edición tarda minutos</td><td>Pruebas en un hook <code>PostToolUse</code></td><td>Moverlas a <code>Stop</code> (67.5)</td></tr>
+      <tr><td>El agente no termina nunca</td><td>Hook <code>Stop</code> sin el corte de <code>stop_hook_active</code></td><td>Salir con 0 si ya se le pidió una vez (67.5)</td></tr>
+      <tr><td>El subagente devuelve 30&#8239;000 tokens</td><td>Su prompt no dice cuánto devolver</td><td>Formato y largo máximos en el prompt (67.6)</td></tr>
+      <tr><td>Un servidor nuevo ejecuta código distinto cada día</td><td><code>npx -y paquete</code> sin versión</td><td>Fijar la versión (67.2)</td></tr>
+      <tr><td>Una herramienta pide "también lee ~/.aws"</td><td>Instrucciones en la descripción de un servidor</td><td>Revisar descripciones; quitar el servidor (67.10)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Todo lo de este módulo agrega cosas al contexto o las mantiene afuera. Cómo se arma el contexto completo de un agente (qué entra, en qué orden, qué se recuerda entre sesiones y qué se pierde al compactar) es el tema de <a href="m68-context-engineering.html#capas">M68</a>.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m67"></div>
+<div data-exercise="m67-extender"></div>
+<div data-checkpoint="m67"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m67.data.js"></script>
+<script src="../assets/js/data/exercises/m67.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-extend.js"></script>
+</body>
+</html>

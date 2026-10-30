@@ -1,0 +1,924 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M66. Permisos, sandbox y autonomía</title>
+<meta name="description" content="Cómo se le da autonomía a un agente sin riesgo: reglas allow, ask y deny y su orden, modos de permiso, el sandbox del sistema operativo (Seatbelt, bubblewrap, Landlock), contenedores y microVMs, salida por un proxy con lista de dominios, credenciales fuera de la caja y hooks como política determinista.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m66">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Permisos, sandbox y autonomía</h1>
+        <p class="lead">En M62 viste que "menos restricción" mezcla cuatro capas y que solo dos están en tus manos. Este módulo las configura a fondo: qué decide el harness antes de ejecutar, qué impone el sistema operativo mientras el comando corre, y cómo se arma una caja donde el agente puede hacer cualquier cosa sin que eso sea un problema.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M66</dd></div>
+          <div><dt>Parte</dt><dd>VIII. AI Engineering: modelos, harnesses y agentes</dd></div>
+          <div><dt>Duración</dt><dd>110 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M62, M64, M69</dd></div>
+          <div><dt>Estado</dt><dd data-status="m66">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Recorrer una llamada a herramienta por las nueve capas que pueden frenarla y decir cuáles dependen del texto del comando.</li>
+    <li>Escribir reglas allow, ask y deny sabiendo en qué orden se evalúan y qué formas del mismo comando no ven.</li>
+    <li>Elegir un modo de permiso para cada situación: trabajo diario, exploración, CI y autonomía total.</li>
+    <li>Configurar el sandbox del sistema (Seatbelt, bubblewrap) y saber cuándo hace falta un contenedor o una microVM.</li>
+    <li>Cerrar la salida con un proxy y una lista de dominios, y sacar las credenciales de la caja.</li>
+    <li>Escribir un hook que imponga una política que el modelo no puede saltear.</li>
+  </ul>
+</section>
+
+<h2 id="capas"><span class="sec-num">66.1</span>Nueve lugares donde se puede frenar una llamada</h2>
+
+<p>En <a href="m62-pila-agente.html#capas">M62.10</a> separaste cuatro capas: lo que aprendió el modelo, las reglas del proveedor, los permisos del harness y la caja del sistema operativo. Las dos primeras no se configuran. Este módulo abre las otras dos y muestra que, por dentro, son varias piezas en fila. Cada llamada que el modelo propone (<a href="m63-tool-calling.html#stop">M63.9</a>) las recorre en orden.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un empleado nuevo en un banco. Antes de actuar, hay un manual (reglas), un supervisor que firma lo dudoso (la persona) y un sistema que no deja operar sin firma (el modo). Pero además la bóveda tiene paredes, la puerta solo abre a ciertas salas y las llaves no las tiene él: aunque el manual tenga un hueco o el supervisor firme sin leer, hay cosas que físicamente no puede hacer. Este módulo es sobre las dos mitades, y sobre por qué la segunda importa más.</p>
+</aside>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 360" role="img" aria-labelledby="f66Lt f66Ld">
+<title id="f66Lt">El viaje de una llamada a herramienta por los controles</title>
+<desc id="f66Ld">Arriba, lo que decide el harness antes de ejecutar: el modelo propone una llamada, un hook PreToolUse puede bloquearla, las reglas deny, ask y allow se evalúan en ese orden, el modo decide lo que ninguna regla resolvió y, si hay que preguntar, responde una persona. Abajo, lo que impone el sistema mientras el comando corre: el sandbox del sistema operativo limita archivos y red, el contenedor o la microVM limita qué máquina ve, el proxy de salida deja pasar solo los dominios de la lista y las credenciales se agregan fuera de la caja. Al final, un hook posterior y el registro de la sesión.</desc>
+<defs><marker id="f66La" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="14" width="742" height="138" rx="10"/>
+<text class="dg-group" x="28" y="36" text-anchor="start">Antes de ejecutar: decide el harness</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="30" y="58" width="130" height="64" rx="8"/>
+<text class="dg-label" x="95.0" y="86.5" text-anchor="middle">Modelo</text>
+<text class="dg-tiny" x="95.0" y="101.5" text-anchor="middle">propone tool_use</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="170" y="58" width="130" height="64" rx="8"/>
+<text class="dg-label" x="235.0" y="86.5" text-anchor="middle">Hook previo</text>
+<text class="dg-tiny" x="235.0" y="101.5" text-anchor="middle">PreToolUse</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="310" y="58" width="130" height="64" rx="8"/>
+<text class="dg-label" x="375.0" y="86.5" text-anchor="middle">Reglas</text>
+<text class="dg-tiny" x="375.0" y="101.5" text-anchor="middle">deny, ask, allow</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="450" y="58" width="130" height="64" rx="8"/>
+<text class="dg-label" x="515.0" y="86.5" text-anchor="middle">Modo</text>
+<text class="dg-tiny" x="515.0" y="101.5" text-anchor="middle">lo no resuelto</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="590" y="58" width="130" height="64" rx="8"/>
+<text class="dg-label" x="655.0" y="86.5" text-anchor="middle">Persona</text>
+<text class="dg-tiny" x="655.0" y="101.5" text-anchor="middle">si hay que preguntar</text>
+<path class="dg-edge" d="M160 90 L169 90" marker-end="url(#f66La)"/>
+<path class="dg-edge" d="M300 90 L309 90" marker-end="url(#f66La)"/>
+<path class="dg-edge" d="M440 90 L449 90" marker-end="url(#f66La)"/>
+<path class="dg-edge" d="M580 90 L589 90" marker-end="url(#f66La)"/>
+<rect class="dg-frame" x="14" y="176" width="742" height="138" rx="10"/>
+<text class="dg-group" x="742" y="198" text-anchor="end">Al ejecutar: impone el sistema</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="30" y="220" width="130" height="64" rx="8"/>
+<text class="dg-label" x="95.0" y="248.5" text-anchor="middle">Sandbox del SO</text>
+<text class="dg-tiny" x="95.0" y="263.5" text-anchor="middle">archivos y red</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="170" y="220" width="130" height="64" rx="8"/>
+<text class="dg-label" x="235.0" y="248.5" text-anchor="middle">Contenedor o VM</text>
+<text class="dg-tiny" x="235.0" y="263.5" text-anchor="middle">qué máquina ve</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="310" y="220" width="130" height="64" rx="8"/>
+<text class="dg-label" x="375.0" y="248.5" text-anchor="middle">Proxy de salida</text>
+<text class="dg-tiny" x="375.0" y="263.5" text-anchor="middle">lista de dominios</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="450" y="220" width="130" height="64" rx="8"/>
+<text class="dg-label" x="515.0" y="248.5" text-anchor="middle">Credenciales</text>
+<text class="dg-tiny" x="515.0" y="263.5" text-anchor="middle">se agregan fuera</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="590" y="220" width="130" height="64" rx="8"/>
+<text class="dg-label" x="655.0" y="248.5" text-anchor="middle">Hook posterior</text>
+<text class="dg-tiny" x="655.0" y="263.5" text-anchor="middle">y registro</text>
+<path class="dg-edge" d="M160 252 L169 252" marker-end="url(#f66La)"/>
+<path class="dg-edge" d="M300 252 L309 252" marker-end="url(#f66La)"/>
+<path class="dg-edge" d="M440 252 L449 252" marker-end="url(#f66La)"/>
+<path class="dg-edge" d="M580 252 L589 252" marker-end="url(#f66La)"/>
+<path class="dg-edge" d="M655 122 L655 160 L95 160 L655 140"/>
+<path class="dg-edge" d="M95 160 L95 218" marker-end="url(#f66La)"/>
+<text class="dg-small" x="385" y="340" text-anchor="middle">Cualquiera de las nueve puede frenar la llamada; las cuatro de abajo no dependen de cómo se escribió el comando.</text>
+<g class="pl-pin"><circle cx="148" cy="66" r="11"/><text x="148" y="70" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="288" cy="66" r="11"/><text x="288" y="70" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="428" cy="66" r="11"/><text x="428" y="70" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="568" cy="66" r="11"/><text x="568" y="70" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="708" cy="66" r="11"/><text x="708" y="70" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="148" cy="228" r="11"/><text x="148" y="232" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="288" cy="228" r="11"/><text x="288" y="232" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="428" cy="228" r="11"/><text x="428" y="232" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="568" cy="228" r="11"/><text x="568" y="232" text-anchor="middle">9</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 66.A.</b> El viaje de una llamada. Arriba decide el harness mirando el texto de la llamada; abajo impone el sistema mirando lo que el proceso hace de verdad.</figcaption>
+</figure>
+
+
+<ol class="plate-key">
+  <li><b>El modelo propone</b><span>Una llamada con su nombre y argumentos; todavía no pasó nada. <a href="m63-tool-calling.html#stop">M63.9</a></span></li>
+  <li><b>Hook previo</b><span>Un programa tuyo que ve la llamada y puede bloquearla, siempre igual. <a href="#hooks-politica">66.9</a></span></li>
+  <li><b>Reglas</b><span>Listas allow, ask y deny por herramienta y patrón. <a href="#reglas">66.2</a></span></li>
+  <li><b>Modo</b><span>Qué pasa con lo que ninguna regla resolvió. <a href="#modos">66.3</a></span></li>
+  <li><b>Persona</b><span>La que contesta cuando el harness pregunta, y se cansa. <a href="#modos-fatiga">66.3</a></span></li>
+  <li><b>Sandbox del sistema</b><span>Seatbelt o bubblewrap limitan archivos y red del proceso. <a href="#sandbox">66.4</a></span></li>
+  <li><b>Contenedor o VM</b><span>Qué máquina, qué disco y qué kernel ve el agente. <a href="#contenedor">66.5</a></span></li>
+  <li><b>Proxy de salida</b><span>Solo los dominios de la lista. <a href="#egress">66.6</a></span></li>
+  <li><b>Credenciales fuera</b><span>La clave se agrega afuera; dentro no hay nada que robar. <a href="#credenciales">66.7</a></span></li>
+</ol>
+
+<p>La diferencia que organiza todo el módulo: las piezas de arriba deciden <b>por el texto</b> de la llamada. Si el modelo escribe lo mismo de otra forma, o una <a href="m25-agentes.html#injection">prompt injection</a> lo convence de hacerlo, pueden no verlo. Las de abajo deciden <b>por lo que el proceso hace</b>: abrir un archivo, conectarse a un host. No importa cómo se escribió el comando. Por eso la regla de oro de <a href="m62-pila-agente.html#capas-caja">M62</a> se sostiene: si quitas preguntas arriba, pon paredes abajo.</p>
+
+<h2 id="reglas"><span class="sec-num">66.2</span>Reglas: allow, ask y deny</h2>
+
+<p>Una <dfn data-term="regla-permiso">regla de permiso</dfn> es un patrón sobre una herramienta y sus argumentos, con uno de tres efectos: <code>allow</code> (se ejecuta sin preguntar), <code>ask</code> (se pregunta) o <code>deny</code> (no se ejecuta). En Claude Code se escriben como <code>Herramienta(patrón)</code> <span class="badge badge--doc">Documentado</span>:</p>
+
+<pre data-lang="json"><code>{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": ["Bash(npm test)", "Bash(npm test *)", "Bash(git diff *)", "Bash(git status)"],
+    "ask":   ["Bash(git push *)"],
+    "deny":  ["Read(./.env)", "Read(./secrets/**)", "Bash(curl *)", "WebFetch"]
+  }
+}</code></pre>
+
+<p>El orden de evaluación es fijo y no depende de cuán específica sea la regla: <b>primero deny, después ask, después allow</b>, y decide la primera que coincide <span class="badge badge--doc">Documentado</span>. Un allow no puede abrir una excepción dentro de un deny.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f662t f662d">
+<title id="f662t">El orden en que se decide una llamada</title>
+<desc id="f662d">Una llamada entra por la izquierda. Primero corren los hooks PreToolUse: si uno sale con código 2, la llamada se bloquea antes de mirar las reglas. Después las reglas deny de todos los archivos de configuración: si alguna coincide, bloquea. Después las ask: si coincide, pregunta. Después las allow: si coincide, ejecuta. Si ninguna regla coincide, decide el modo de permiso. Un allow más específico nunca le gana a un deny más amplio.</desc>
+<defs><marker id="f662a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="40" width="130" height="60" rx="8"/>
+<text class="dg-label" x="85.0" y="66.5" text-anchor="middle">Hook previo</text>
+<text class="dg-tiny" x="85.0" y="81.5" text-anchor="middle">exit 2</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="170" y="40" width="130" height="60" rx="8"/>
+<text class="dg-label" x="235.0" y="66.5" text-anchor="middle">deny</text>
+<text class="dg-tiny" x="235.0" y="81.5" text-anchor="middle">¿coincide alguna?</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="320" y="40" width="130" height="60" rx="8"/>
+<text class="dg-label" x="385.0" y="66.5" text-anchor="middle">ask</text>
+<text class="dg-tiny" x="385.0" y="81.5" text-anchor="middle">¿coincide alguna?</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="470" y="40" width="130" height="60" rx="8"/>
+<text class="dg-label" x="535.0" y="66.5" text-anchor="middle">allow</text>
+<text class="dg-tiny" x="535.0" y="81.5" text-anchor="middle">¿coincide alguna?</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="620" y="40" width="130" height="60" rx="8"/>
+<text class="dg-label" x="685.0" y="66.5" text-anchor="middle">Modo</text>
+<text class="dg-tiny" x="685.0" y="81.5" text-anchor="middle">decide el resto</text>
+<path class="dg-edge" d="M150 70 L168 70" marker-end="url(#f662a)"/>
+<text class="dg-tiny" x="159" y="62" text-anchor="middle">no</text>
+<path class="dg-edge" d="M300 70 L318 70" marker-end="url(#f662a)"/>
+<text class="dg-tiny" x="309" y="62" text-anchor="middle">no</text>
+<path class="dg-edge" d="M450 70 L468 70" marker-end="url(#f662a)"/>
+<text class="dg-tiny" x="459" y="62" text-anchor="middle">no</text>
+<path class="dg-edge" d="M600 70 L618 70" marker-end="url(#f662a)"/>
+<text class="dg-tiny" x="609" y="62" text-anchor="middle">no</text>
+<path class="dg-edge" d="M85 100 L85 146" marker-end="url(#f662a)"/>
+<text class="dg-tiny" x="98" y="128" text-anchor="start">sí</text>
+<rect class="dg-bad" x="20" y="148" width="130" height="40" rx="8"/>
+<text class="dg-label" x="85" y="172" text-anchor="middle">Bloquea</text>
+<text class="dg-tiny" x="85" y="206" text-anchor="middle">stderr vuelve al modelo</text>
+<path class="dg-edge" d="M235 100 L235 146" marker-end="url(#f662a)"/>
+<text class="dg-tiny" x="248" y="128" text-anchor="start">sí</text>
+<rect class="dg-bad" x="170" y="148" width="130" height="40" rx="8"/>
+<text class="dg-label" x="235" y="172" text-anchor="middle">Bloquea</text>
+<text class="dg-tiny" x="235" y="206" text-anchor="middle">en cualquier modo</text>
+<path class="dg-edge" d="M385 100 L385 146" marker-end="url(#f662a)"/>
+<text class="dg-tiny" x="398" y="128" text-anchor="start">sí</text>
+<rect class="dg-warnbox" x="320" y="148" width="130" height="40" rx="8"/>
+<text class="dg-label" x="385" y="172" text-anchor="middle">Pregunta</text>
+<text class="dg-tiny" x="385" y="206" text-anchor="middle">dontAsk: niega</text>
+<path class="dg-edge" d="M535 100 L535 146" marker-end="url(#f662a)"/>
+<text class="dg-tiny" x="548" y="128" text-anchor="start">sí</text>
+<rect class="dg-ok" x="470" y="148" width="130" height="40" rx="8"/>
+<text class="dg-label" x="535" y="172" text-anchor="middle">Ejecuta</text>
+<text class="dg-tiny" x="535" y="206" text-anchor="middle">bypass: sin efecto</text>
+<text class="dg-small" x="685" y="172" text-anchor="middle">default: pregunta</text>
+<text class="dg-tiny" x="685" y="192" text-anchor="middle">plan, acceptEdits, auto…</text>
+<path class="dg-edge" d="M685 100 L685 150" marker-end="url(#f662a)"/>
+<text class="dg-small" x="385" y="238" text-anchor="middle">El orden no depende de cuán específica sea la regla: Bash(aws *) en deny gana sobre Bash(aws s3 ls) en allow.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 66.2.</b> El orden en que se decide una llamada. Un hook que sale con código 2 bloquea antes de mirar las reglas; si ninguna regla coincide, decide el modo.</figcaption>
+</figure>
+
+
+<h3 id="reglas-donde">Dónde viven y quién gana</h3>
+
+<p>Las reglas se suman desde varios archivos: los de la organización (managed settings), los flags de la línea de comandos, <code>.claude/settings.local.json</code> (tuyo, sin versionar), <code>.claude/settings.json</code> (del proyecto, versionado) y <code>~/.claude/settings.json</code> (todos tus proyectos). Para las demás opciones gana el más específico, pero con los permisos manda el deny: <b>un deny en cualquier nivel bloquea aunque otro nivel lo permita</b>, y nada puede saltar un deny de la organización, tampoco <code>--allowedTools</code> <span class="badge badge--doc">Documentado</span>. Esa asimetría es la que permite que una empresa imponga sus límites y cada persona los ajuste solo hacia más restricción.</p>
+
+<h3 id="reglas-bash">Las reglas de bash miran el texto</h3>
+
+<p><code>Bash(npm test *)</code> coincide con cualquier comando que empiece así. Claude Code entiende la estructura del shell: separa los comandos compuestos por <code>&amp;&amp;</code>, <code>||</code>, <code>;</code>, <code>|</code> y saltos de línea, exige que cada parte esté permitida, aplica los deny a cualquier parte (también dentro de <code>$( )</code> o de un <code>for</code>) y quita envoltorios como <code>timeout</code>, <code>nice</code> o <code>nohup</code> antes de comparar <span class="badge badge--doc">Documentado</span>. Aun así, la documentación lo dice sin rodeos: una regla de bash mira el texto que escribe el modelo y no es un límite de seguridad alrededor del programa <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f663t f663d">
+<title id="f663t">Una regla mira el texto; el sandbox mira lo que pasa</title>
+<desc id="f663d">A la izquierda, cuatro formas de hacer lo mismo: curl a un dominio, la ruta completa de curl, curl dentro de sh -c y un script de Python que abre la conexión. La regla deny Bash(curl *) solo frena la primera, porque compara el texto del comando. A la derecha, el sandbox del sistema operativo: las cuatro terminan pidiendo una conexión de red al kernel, y el proxy con lista de dominios las rechaza todas.</desc>
+<defs><marker id="f663a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="130" y="30" text-anchor="middle">Lo que escribe el modelo</text>
+<text class="dg-group" x="395" y="30" text-anchor="middle">Regla Bash(curl *)</text>
+<text class="dg-group" x="640" y="30" text-anchor="middle">Sandbox con proxy</text>
+<rect class="dg-box" x="20" y="50" width="230" height="40" rx="8"/>
+<text class="dg-tiny dg-mono" x="135" y="75" text-anchor="middle">curl https://x.example</text>
+<path class="dg-edge" d="M250 70 L338 70" marker-end="url(#f663a)"/>
+<rect class="dg-ok" x="340" y="54" width="110" height="32" rx="8"/>
+<text class="dg-small" x="395" y="75" text-anchor="middle">frena</text>
+<path class="dg-edge" d="M450 70 L548 119.0" marker-end="url(#f663a)"/>
+<rect class="dg-box" x="20" y="104" width="230" height="40" rx="8"/>
+<text class="dg-tiny dg-mono" x="135" y="129" text-anchor="middle">/usr/bin/curl https://x.example</text>
+<path class="dg-edge" d="M250 124 L338 124" marker-end="url(#f663a)"/>
+<rect class="dg-bad" x="340" y="108" width="110" height="32" rx="8"/>
+<text class="dg-small" x="395" y="129" text-anchor="middle">pasa</text>
+<path class="dg-edge" d="M450 124 L548 133.0" marker-end="url(#f663a)"/>
+<rect class="dg-box" x="20" y="158" width="230" height="40" rx="8"/>
+<text class="dg-tiny dg-mono" x="135" y="183" text-anchor="middle">sh -c 'curl https://x.example'</text>
+<path class="dg-edge" d="M250 178 L338 178" marker-end="url(#f663a)"/>
+<rect class="dg-bad" x="340" y="162" width="110" height="32" rx="8"/>
+<text class="dg-small" x="395" y="183" text-anchor="middle">pasa</text>
+<path class="dg-edge" d="M450 178 L548 147.0" marker-end="url(#f663a)"/>
+<rect class="dg-box" x="20" y="212" width="230" height="40" rx="8"/>
+<text class="dg-tiny dg-mono" x="135" y="237" text-anchor="middle">python3 -c "urlopen(…)"</text>
+<path class="dg-edge" d="M250 232 L338 232" marker-end="url(#f663a)"/>
+<rect class="dg-bad" x="340" y="216" width="110" height="32" rx="8"/>
+<text class="dg-small" x="395" y="237" text-anchor="middle">pasa</text>
+<path class="dg-edge" d="M450 232 L548 161.0" marker-end="url(#f663a)"/>
+<rect class="dg-ok" x="550" y="96" width="190" height="88" rx="8"/>
+<text class="dg-small" x="645" y="124" text-anchor="middle">connect() al kernel</text>
+<text class="dg-small" x="645" y="146" text-anchor="middle">x.example no está</text>
+<text class="dg-small" x="645" y="166" text-anchor="middle">en la lista: rechaza las 4</text>
+<text class="dg-small" x="385" y="278" text-anchor="middle">Las reglas guían al modelo y frenan la forma habitual; el límite que no depende del texto lo pone el sistema operativo.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 66.3.</b> Cuatro formas de la misma conexión. La regla frena la primera; el sandbox, las cuatro.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Regla en deny</th><th>Frena</th><th>No frena</th></tr></thead>
+    <tbody>
+      <tr><td><code>Bash(curl *)</code></td><td><code>curl https://x.example</code></td><td><code>/usr/bin/curl …</code>, <code>sh -c 'curl …'</code></td></tr>
+      <tr><td><code>Bash(rm *)</code></td><td><code>rm -rf build/</code></td><td><code>/bin/rm -rf build/</code>, <code>bash -c 'rm …'</code></td></tr>
+      <tr><td><code>Bash(git push *)</code></td><td><code>git push origin main</code></td><td><code>git -C . push …</code>, <code>git 'push' …</code></td></tr>
+      <tr><td><code>Read(./.env)</code></td><td>la herramienta Read, <code>cat .env</code>, <code>head .env</code></td><td>un script de Python que abre el archivo, <code>grep -r clave .</code></td></tr>
+    </tbody>
+  </table>
+</div>
+<p class="figure-note">Ejemplos de la documentación de permisos de Claude Code <span class="badge badge--doc">Documentado</span>.</p>
+
+<p>Esto cambia para qué sirve cada lista. Un <b>allow</b> es una comodidad que se piensa como si el agente pudiera abusar de él: <code>Bash(npm test *)</code> es seguro; <code>Bash(npm *)</code> permite <code>npm publish</code> y <code>npm exec</code> de cualquier paquete, y <code>Bash(python *)</code> es permitir cualquier cosa. Un <b>deny</b> frena la forma habitual de un error honesto y orienta al modelo, pero no a quien busca un camino: para eso está el sandbox (66.4). Un <b>ask</b> sirve para lo que tiene efectos fuera del repositorio, como un push.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un clásico de los modos sin persona: en <a href="m69-orquestadores.html#headless-claude">M69.2</a> viste que <code>--allowedTools</code> <b>aprueba</b> herramientas sin preguntar, pero no <b>restringe</b> las demás. Un orquestador que pasa <code>--allowedTools "Read,Grep"</code> pensando que el agente solo puede leer le está dejando todo lo demás a lo que decida el modo. Para restringir, <code>--disallowedTools</code> o reglas deny, y <code>dontAsk</code> para que lo no aprobado se niegue.</p>
+</aside>
+
+<h3 id="reglas-otros">Lo mismo en Codex y OpenCode</h3>
+
+<div class="tabs" data-tabs="Permisos en otros harnesses">
+  <section data-tab="Codex CLI">
+    <pre data-lang="shell"><code># ~/.codex/config.toml o .codex/config.toml del proyecto
+sandbox_mode    = "workspace-write"   # read-only | workspace-write | danger-full-access
+approval_policy = "on-request"        # on-request | never
+
+[sandbox_workspace_write]
+writable_roots = ["/home/ana/.cache/pnpm"]   # además del workspace</code></pre>
+    <p>Codex no tiene listas por comando: separa <b>qué permite el sistema operativo</b> (<code>sandbox_mode</code>) de <b>cuándo te pregunta</b> (<code>approval_policy</code>). <code>read-only</code> lee y no edita ni ejecuta sin aprobación; <code>workspace-write</code> lee, edita en el workspace y corre comandos dentro de ese límite; <code>danger-full-access</code> quita los límites de archivos y red. Con <code>on-request</code> pide aprobación para salir del límite; con <code>never</code> no se detiene <span class="badge badge--doc">Documentado</span>. El diseño pone el peso en la segunda mitad de la lámina, que es la que no depende del texto.</p>
+  </section>
+  <section data-tab="OpenCode">
+    <pre data-lang="json"><code>{ "permission": { "edit": "ask", "bash": { "*": "ask", "git status": "allow", "git diff *": "allow", "rm *": "deny" } } }</code></pre>
+    <p>Cada herramienta lleva <code>allow</code>, <code>ask</code> o <code>deny</code>, y bash acepta un mapa de patrones <span class="badge badge--doc">Documentado</span>. Es política sobre el texto, como las reglas de Claude Code, sin un sandbox propio: para la mitad de abajo hace falta un contenedor (66.5).</p>
+  </section>
+</div>
+
+<h2 id="modos"><span class="sec-num">66.3</span>Modos: quién decide lo que ninguna regla resolvió</h2>
+
+<p>Un <dfn data-term="modo-permiso">modo de permiso</dfn> es la política por defecto de la sesión: qué pasa con una llamada que no coincide con ninguna regla. Claude Code tiene seis <span class="badge badge--doc">Documentado</span>:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f664t f664d">
+<title id="f664t">Qué hace cada modo de permiso de Claude Code</title>
+<desc id="f664d">Una matriz. Filas: los seis modos de Claude Code. Columnas: leer en el directorio de trabajo, editar en el directorio, un comando de bash sin regla, una llamada que coincide con una regla ask y una que coincide con una regla deny. Plan lee y no edita; default pregunta todo lo que no es lectura; acceptEdits edita solo; auto manda lo dudoso a un clasificador; dontAsk niega todo lo que preguntaría; bypassPermissions ejecuta todo salvo las reglas ask y deny y unos pocos borrados críticos. La columna deny dice bloquea en todos los modos.</desc>
+<defs><marker id="f664a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="228.0" y="30" text-anchor="middle">Leer</text>
+<text class="dg-small" x="344.0" y="30" text-anchor="middle">Editar</text>
+<text class="dg-small" x="460.0" y="30" text-anchor="middle">Bash sin regla</text>
+<text class="dg-small" x="576.0" y="30" text-anchor="middle">Regla ask</text>
+<text class="dg-small" x="692.0" y="30" text-anchor="middle">Regla deny</text>
+<text class="dg-small dg-mono" x="160" y="63" text-anchor="end">plan</text>
+<rect class="dg-ok" x="174" y="42" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="228.0" y="62" text-anchor="middle">sí</text>
+<rect class="dg-bad" x="290" y="42" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="344.0" y="62" text-anchor="middle">no</text>
+<rect class="dg-box" x="406" y="42" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="460.0" y="62" text-anchor="middle">solo lectura</text>
+<rect class="dg-warnbox" x="522" y="42" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="576.0" y="62" text-anchor="middle">pregunta</text>
+<rect class="dg-bad" x="638" y="42" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="692.0" y="62" text-anchor="middle">bloquea</text>
+<text class="dg-small dg-mono" x="160" y="101" text-anchor="end">default</text>
+<rect class="dg-ok" x="174" y="80" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="228.0" y="100" text-anchor="middle">sí</text>
+<rect class="dg-warnbox" x="290" y="80" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="344.0" y="100" text-anchor="middle">pregunta</text>
+<rect class="dg-warnbox" x="406" y="80" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="460.0" y="100" text-anchor="middle">pregunta</text>
+<rect class="dg-warnbox" x="522" y="80" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="576.0" y="100" text-anchor="middle">pregunta</text>
+<rect class="dg-bad" x="638" y="80" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="692.0" y="100" text-anchor="middle">bloquea</text>
+<text class="dg-small dg-mono" x="160" y="139" text-anchor="end">acceptEdits</text>
+<rect class="dg-ok" x="174" y="118" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="228.0" y="138" text-anchor="middle">sí</text>
+<rect class="dg-ok" x="290" y="118" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="344.0" y="138" text-anchor="middle">sí</text>
+<rect class="dg-warnbox" x="406" y="118" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="460.0" y="138" text-anchor="middle">pregunta*</text>
+<rect class="dg-warnbox" x="522" y="118" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="576.0" y="138" text-anchor="middle">pregunta</text>
+<rect class="dg-bad" x="638" y="118" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="692.0" y="138" text-anchor="middle">bloquea</text>
+<text class="dg-small dg-mono" x="160" y="177" text-anchor="end">auto</text>
+<rect class="dg-ok" x="174" y="156" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="228.0" y="176" text-anchor="middle">sí</text>
+<rect class="dg-ok" x="290" y="156" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="344.0" y="176" text-anchor="middle">sí</text>
+<rect class="dg-box" x="406" y="156" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="460.0" y="176" text-anchor="middle">clasificador</text>
+<rect class="dg-warnbox" x="522" y="156" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="576.0" y="176" text-anchor="middle">pregunta</text>
+<rect class="dg-bad" x="638" y="156" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="692.0" y="176" text-anchor="middle">bloquea</text>
+<text class="dg-small dg-mono" x="160" y="215" text-anchor="end">dontAsk</text>
+<rect class="dg-ok" x="174" y="194" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="228.0" y="214" text-anchor="middle">sí</text>
+<rect class="dg-bad" x="290" y="194" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="344.0" y="214" text-anchor="middle">no</text>
+<rect class="dg-bad" x="406" y="194" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="460.0" y="214" text-anchor="middle">no</text>
+<rect class="dg-bad" x="522" y="194" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="576.0" y="214" text-anchor="middle">no</text>
+<rect class="dg-bad" x="638" y="194" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="692.0" y="214" text-anchor="middle">bloquea</text>
+<text class="dg-small dg-mono" x="160" y="253" text-anchor="end">bypassPermissions</text>
+<rect class="dg-ok" x="174" y="232" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="228.0" y="252" text-anchor="middle">sí</text>
+<rect class="dg-ok" x="290" y="232" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="344.0" y="252" text-anchor="middle">sí</text>
+<rect class="dg-ok" x="406" y="232" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="460.0" y="252" text-anchor="middle">sí</text>
+<rect class="dg-warnbox" x="522" y="232" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="576.0" y="252" text-anchor="middle">pregunta</text>
+<rect class="dg-bad" x="638" y="232" width="108" height="30" rx="6"/>
+<text class="dg-tiny" x="692.0" y="252" text-anchor="middle">bloquea</text>
+<text class="dg-tiny" x="385" y="282" text-anchor="middle">* acceptEdits también aprueba mkdir, touch, rm, mv, cp y sed dentro del directorio. Datos de la documentación de Claude Code.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 66.4.</b> Los seis modos de Claude Code frente a cinco tipos de llamada. La columna deny es igual en todos.</figcaption>
+</figure>
+
+
+<ul>
+  <li><b><code>plan</code></b>: lee y corre comandos de solo lectura; no edita. Para entender un problema antes de tocar nada.</li>
+  <li><b><code>default</code></b> (Manual): pregunta la primera vez por cada herramienta que no es de lectura.</li>
+  <li><b><code>acceptEdits</code></b>: edita dentro del directorio de trabajo sin preguntar, y aprueba <code>mkdir</code>, <code>touch</code>, <code>rm</code>, <code>mv</code>, <code>cp</code> y <code>sed</code> en esas rutas. Los demás comandos preguntan.</li>
+  <li><b><code>auto</code></b>: un clasificador, otro modelo, revisa cada acción antes de ejecutarla en lugar de preguntarte. Bloquea por defecto cosas como descargar y ejecutar código (<code>curl | bash</code>), mandar datos sensibles afuera, deploys a producción, force push y borrar lo que existía antes de la sesión. No ve los resultados de las herramientas, para que un contenido hostil no lo convenza <span class="badge badge--doc">Documentado</span>.</li>
+  <li><b><code>dontAsk</code></b>: niega todo lo que preguntaría. Solo corre lo aprobado por reglas. Es el modo de CI.</li>
+  <li><b><code>bypassPermissions</code></b>: no pregunta. Los deny siguen bloqueando y los ask siguen preguntando, y unos pocos borrados críticos nunca se aprueban solos; los allow dejan de importar porque todo está permitido <span class="badge badge--doc">Documentado</span>.</li>
+</ul>
+
+<p>La documentación es explícita con el último: solo en entornos aislados, como contenedores, VMs o devcontainers sin internet, y no protege contra prompt injection. Claude Code se niega a arrancarlo como root <span class="badge badge--doc">Documentado</span>. Una organización puede deshabilitarlo con <code>permissions.disableBypassPermissionsMode</code>, y <code>auto</code> con <code>permissions.disableAutoMode</code>, en managed settings <span class="badge badge--doc">Documentado</span>.</p>
+
+<h3 id="modos-fatiga">La persona es la capa más débil</h3>
+
+<p>El modo <code>default</code> parece el más seguro y en la práctica se degrada: una sesión de una hora puede hacer cien preguntas, y a la décima la persona aprueba sin leer. Esa es la razón de ser de <code>acceptEdits</code>, de <code>auto</code> y de las reglas allow: <b>bajar la cantidad de preguntas para que las que quedan se lean</b>. Una buena configuración pregunta poco y pregunta lo que importa: un push, un comando con red, algo fuera del repositorio. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Situación</th><th>Modo</th><th>Lo que lo hace seguro</th></tr></thead>
+    <tbody>
+      <tr><td>Entender un bug en un repositorio que no conoces</td><td><code>plan</code></td><td>No edita</td></tr>
+      <tr><td>Trabajo diario en tu máquina</td><td><code>acceptEdits</code> o <code>auto</code></td><td>Reglas, sandbox y revisar el diff</td></tr>
+      <tr><td>CI, revisión de PRs, orquestador</td><td><code>dontAsk</code></td><td>Solo lo que aprueban las reglas (<a href="m69-orquestadores.html#headless-claude">M69.2</a>)</td></tr>
+      <tr><td>Tarea larga sin nadie mirando</td><td><code>bypassPermissions</code></td><td>Solo dentro de una caja desechable (66.8)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="sandbox"><span class="sec-num">66.4</span>El sandbox del sistema operativo</h2>
+
+<p>Un <dfn data-term="sandbox-so">sandbox del sistema operativo</dfn> es un límite que el kernel impone a un proceso y a todos sus hijos: qué archivos puede leer y escribir, y a dónde se puede conectar. Como lo aplica el kernel mientras el comando corre, no importa si el modelo escribió <code>curl</code>, <code>/usr/bin/curl</code> o un script de Python: el <code>connect()</code> se rechaza igual. Es lo que en <a href="m25-agentes.html#sandbox">M25.10</a> llamaste <a href="m20-producto-chatgpt.html#herramientas">sandbox de código</a>, aplicado a la máquina del desarrollador.</p>
+
+<h3 id="sandbox-primitivas">Las primitivas</h3>
+
+<div class="tabs" data-tabs="Primitivas de sandbox">
+  <section data-tab="Seatbelt (macOS)">
+    <p>El framework de sandbox de macOS. Un perfil en SBPL, un lenguaje con forma de Lisp, dice qué operaciones se permiten; se aplica con <code>sandbox-exec</code>, cuya página de manual lo marca como obsoleto aunque sigue funcionando y lo usan Claude Code y Codex <span class="badge badge--doc">Documentado</span>.</p>
+    <pre data-lang="shell"><code>; perfil.sb: perfil de Seatbelt simplificado (uno real necesita más permisos del sistema)
+(version 1)
+(deny default)                                    ; todo lo que no se permite, se niega
+(allow process-exec process-fork)
+(allow file-read*)                                ; leer, sí (y por eso conviene negar ~/.ssh)
+(deny file-read* (subpath "/Users/ana/.ssh"))
+(allow file-write* (subpath "/Users/ana/repo") (subpath "/private/tmp"))
+(allow network-outbound (remote ip "localhost:8888"))   ; solo hacia el proxy</code></pre>
+  </section>
+  <section data-tab="bubblewrap (Linux)">
+    <p><code>bwrap</code> arma una vista del sistema con <a href="m57-contenedores-k8s.html#contenedor">namespaces</a> de usuario, de montajes, de PID y de red, sin necesitar root: monta lo que el proceso puede ver, en solo lectura o con escritura, y le da una red vacía. Es lo que usan Claude Code y Codex en Linux y WSL2 <span class="badge badge--doc">Documentado</span>.</p>
+    <pre data-lang="shell"><code># La vista de la figura 66.5, a mano. Los montajes posteriores pisan a los anteriores.
+bwrap --ro-bind / / \
+      --dev /dev --proc /proc \
+      --bind "$PWD" "$PWD" \
+      --tmpfs /tmp \
+      --tmpfs "$HOME/.ssh" \
+      --unshare-net --unshare-pid \
+      --die-with-parent --new-session \
+      bash -c 'npm test'</code></pre>
+  </section>
+  <section data-tab="Landlock y seccomp (Linux)">
+    <p><b>Landlock</b> es un módulo de seguridad del kernel (desde Linux 5.13) que deja a un proceso sin privilegios restringirse a sí mismo: qué rutas puede leer o escribir y, desde la ABI 4 (Linux 6.7), a qué puertos TCP puede conectarse. Es irreversible para ese proceso y sus hijos. <b><a href="m57-contenedores-k8s.html#contenedor">seccomp</a></b> filtra llamadas al sistema; el sandbox de Claude Code lo usa de forma opcional para bloquear sockets Unix <span class="badge badge--doc">Documentado</span>. Ninguno de los dos arma una vista de archivos como bubblewrap: se combinan.</p>
+  </section>
+</div>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f665t f665d">
+<title id="f665t">Lo que ve un comando dentro de bubblewrap</title>
+<desc id="f665d">A la izquierda, el sistema de archivos del host: la raíz, el repositorio, el directorio temporal, la carpeta .ssh y la configuración del harness. A la derecha, la vista que bubblewrap arma para el comando con un namespace de montajes: la raíz en solo lectura, el repositorio y el temporal con escritura, .ssh oculta si se configuró denyRead y la configuración del harness protegida contra escritura. Abajo, un namespace de red nuevo sin salida directa: lo único que hay es un socket hacia el proxy del host.</desc>
+<defs><marker id="f665a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="14" width="270" height="230" rx="10"/>
+<text class="dg-group" x="149" y="36" text-anchor="middle">Host</text>
+<rect class="dg-frame" x="486" y="14" width="270" height="230" rx="10"/>
+<text class="dg-group" x="621" y="36" text-anchor="middle">Lo que ve el comando</text>
+<rect class="dg-box" x="30" y="50" width="238" height="30" rx="8"/>
+<text class="dg-tiny dg-mono" x="149" y="70" text-anchor="middle">/ (sistema)</text>
+<rect class="dg-box" x="502" y="50" width="238" height="30" rx="8"/>
+<text class="dg-tiny" x="621" y="70" text-anchor="middle">/ · solo lectura</text>
+<path class="dg-feedback" d="M268 65 L500 65" marker-end="url(#f665a)"/>
+<rect class="dg-box" x="30" y="88" width="238" height="30" rx="8"/>
+<text class="dg-tiny dg-mono" x="149" y="108" text-anchor="middle">~/repo</text>
+<rect class="dg-ok" x="502" y="88" width="238" height="30" rx="8"/>
+<text class="dg-tiny" x="621" y="108" text-anchor="middle">~/repo · lectura y escritura</text>
+<path class="dg-feedback" d="M268 103 L500 103" marker-end="url(#f665a)"/>
+<rect class="dg-box" x="30" y="126" width="238" height="30" rx="8"/>
+<text class="dg-tiny dg-mono" x="149" y="146" text-anchor="middle">$TMPDIR</text>
+<rect class="dg-ok" x="502" y="126" width="238" height="30" rx="8"/>
+<text class="dg-tiny" x="621" y="146" text-anchor="middle">$TMPDIR · lectura y escritura</text>
+<path class="dg-feedback" d="M268 141 L500 141" marker-end="url(#f665a)"/>
+<rect class="dg-box" x="30" y="164" width="238" height="30" rx="8"/>
+<text class="dg-tiny dg-mono" x="149" y="184" text-anchor="middle">~/.ssh</text>
+<rect class="dg-bad" x="502" y="164" width="238" height="30" rx="8"/>
+<text class="dg-tiny" x="621" y="184" text-anchor="middle">~/.ssh · oculto (denyRead)</text>
+<path class="dg-feedback" d="M268 179 L500 179" marker-end="url(#f665a)"/>
+<rect class="dg-box" x="30" y="202" width="238" height="30" rx="8"/>
+<text class="dg-tiny dg-mono" x="149" y="222" text-anchor="middle">.claude/settings.json</text>
+<rect class="dg-warnbox" x="502" y="202" width="238" height="30" rx="8"/>
+<text class="dg-tiny" x="621" y="222" text-anchor="middle">.claude/settings.json · no se escribe</text>
+<path class="dg-feedback" d="M268 217 L500 217" marker-end="url(#f665a)"/>
+<text class="dg-tiny dg-mono" x="385" y="44" text-anchor="middle">--ro-bind, --bind</text>
+<rect class="dg-box" x="30" y="258" width="238" height="32" rx="8"/>
+<text class="dg-tiny" x="149.0" y="278.0" text-anchor="middle">Red del host</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="502" y="258" width="238" height="32" rx="8"/>
+<text class="dg-tiny" x="621.0" y="278.0" text-anchor="middle">Red nueva: solo el socket al proxy</text>
+<path class="dg-edge" d="M500 274 L270 274" marker-end="url(#f665a)"/>
+<text class="dg-tiny dg-mono" x="385" y="268" text-anchor="middle">--unshare-net</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 66.5.</b> La vista que arma bubblewrap. El repositorio y el temporal se escriben; el resto se lee o no existe; la red es nueva y solo tiene el camino al proxy.</figcaption>
+</figure>
+
+
+<h3 id="sandbox-claude">El sandbox de Claude Code</h3>
+
+<p>Viene apagado y se enciende con <code>/sandbox</code> o en la configuración. Cubre los comandos de shell y lo que ellos lancen; <b>no</b> cubre las herramientas Read, Edit y WebFetch, los servidores MCP ni los hooks, que se controlan con las reglas <span class="badge badge--doc">Documentado</span>. Por defecto:</p>
+<ul>
+  <li><b>Escritura</b>: el directorio de trabajo, un temporal propio y lo agregado con <code>--add-dir</code>. Rutas como <code>.claude/settings*</code>, <code>.mcp.json</code>, <code>.bashrc</code> y <code>.gitconfig</code> quedan protegidas: un comando no puede escribir su propia configuración para darse más permisos.</li>
+  <li><b>Lectura</b>: casi toda la máquina, <b>incluidos <code>~/.ssh</code> y <code>~/.aws/credentials</code></b>, salvo que los niegues con <code>denyRead</code>.</li>
+  <li><b>Red</b>: sin ruta directa; todo pasa por un proxy local que compara el host con una lista que arranca vacía. UDP, QUIC e ICMP no salen.</li>
+</ul>
+
+<pre data-lang="json"><code>{
+  "sandbox": {
+    "enabled": true,
+    "allowUnsandboxedCommands": false,
+    "failIfUnavailable": true,
+    "filesystem": { "denyRead": ["~/.ssh", "~/.aws"] },
+    "network": { "allowedDomains": ["registry.npmjs.org", "github.com"] }
+  },
+  "permissions": { "deny": ["Read(~/.ssh/**)", "Read(~/.aws/**)"] }
+}</code></pre>
+
+<p>Tres opciones de esa configuración cierran huecos. <code>allowUnsandboxedCommands: false</code> apaga la vía de escape: si un comando falla dentro del sandbox, el modelo puede reintentarlo con <code>dangerouslyDisableSandbox</code>, que corre fuera y pasa por el flujo de permisos normal; con la opción en <code>false</code>, el parámetro se ignora. <code>failIfUnavailable</code> hace que Claude Code no arranque si el sandbox no puede iniciarse, en lugar de seguir sin él. Y el deny de <code>Read</code> cubre la herramienta Read, que el sandbox no ve <span class="badge badge--doc">Documentado</span>. Con el sandbox encendido, <code>autoAllowBashIfSandboxed</code> (activo por defecto) aprueba los comandos que corren dentro: preguntar menos es seguro porque la pared está abajo.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>El sandbox rompe cosas: <code>docker</code> no funciona dentro, <code>ssh</code> y la mayoría de los drivers de base de datos ignoran el proxy, y en Linux <code>localhost</code> es privado de la caja. La salida fácil es <code>excludedCommands</code>, que corre esos comandos fuera con acceso total; un patrón amplio, o uno que incluya un intérprete, deshace todo el sandbox <span class="badge badge--doc">Documentado</span>. Excluye lo mínimo y con el comando completo, no con <code>python *</code>.</p>
+</aside>
+
+<h2 id="contenedor"><span class="sec-num">66.5</span>Contenedores, devcontainers y microVMs</h2>
+
+<p>El sandbox del proceso corre en tu máquina, con tu usuario y tu kernel. Una caja más gruesa cambia qué máquina ve el agente: en un contenedor no existe tu <code>$HOME</code>, ni tus llaves, ni tus otros proyectos, salvo que los montes. Cada caja más gruesa cuesta algo y protege de una clase de error más.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f666t f666d">
+<title id="f666t">Cuatro cajas, de la más fina a la más gruesa</title>
+<desc id="f666d">Cajas anidadas de izquierda a derecha. Un proceso con sandbox comparte el kernel y el usuario con el host y solo ve otra vista de archivos y red. Un contenedor suma namespaces propios, cgroups y una imagen, pero comparte el kernel. Una microVM tiene kernel propio sobre un hipervisor mínimo y arranca en una fracción de segundo. Una VM o una máquina aparte tiene todo propio. Abajo, qué hace falta para escapar de cada una: un error en el perfil del sandbox, un error del kernel compartido, un error del hipervisor.</desc>
+<defs><marker id="f666a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="30" width="175" height="170" rx="8"/>
+<text class="dg-label" x="107" y="56" text-anchor="middle">Proceso con sandbox</text>
+<text class="dg-tiny" x="107" y="76" text-anchor="middle">Seatbelt, bubblewrap</text>
+<text class="dg-small" x="107" y="110" text-anchor="middle">mismo kernel</text>
+<text class="dg-small" x="107" y="136" text-anchor="middle">mismo usuario</text>
+<text class="dg-small" x="107" y="162" text-anchor="middle">arranca: nada</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="205" y="30" width="175" height="170" rx="8"/>
+<text class="dg-label" x="292" y="56" text-anchor="middle">Contenedor</text>
+<text class="dg-tiny" x="292" y="76" text-anchor="middle">Docker, devcontainer</text>
+<text class="dg-small" x="292" y="110" text-anchor="middle">mismo kernel</text>
+<text class="dg-small" x="292" y="136" text-anchor="middle">namespaces, cgroups</text>
+<text class="dg-small" x="292" y="162" text-anchor="middle">arranca: &lt; 1 s</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="390" y="30" width="175" height="170" rx="8"/>
+<text class="dg-label" x="477" y="56" text-anchor="middle">MicroVM</text>
+<text class="dg-tiny" x="477" y="76" text-anchor="middle">Firecracker, Kata</text>
+<text class="dg-small" x="477" y="110" text-anchor="middle">kernel propio</text>
+<text class="dg-small" x="477" y="136" text-anchor="middle">hipervisor mínimo</text>
+<text class="dg-small" x="477" y="162" text-anchor="middle">arranca: décimas de s</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="575" y="30" width="175" height="170" rx="8"/>
+<text class="dg-label" x="662" y="56" text-anchor="middle">VM o máquina aparte</text>
+<text class="dg-tiny" x="662" y="76" text-anchor="middle">nube, laptop vieja</text>
+<text class="dg-small" x="662" y="110" text-anchor="middle">todo propio</text>
+<text class="dg-small" x="662" y="136" text-anchor="middle">se tira entera</text>
+<text class="dg-small" x="662" y="162" text-anchor="middle">arranca: minutos</text>
+<path class="dg-edge" d="M195 115 L204 115" marker-end="url(#f666a)"/>
+<path class="dg-edge" d="M380 115 L389 115" marker-end="url(#f666a)"/>
+<path class="dg-edge" d="M565 115 L574 115" marker-end="url(#f666a)"/>
+<text class="dg-group" x="385" y="232" text-anchor="middle">Para escapar hace falta…</text>
+<text class="dg-small" x="107" y="258" text-anchor="middle">un error en el perfil</text>
+<text class="dg-small" x="292" y="258" text-anchor="middle">un error del kernel</text>
+<text class="dg-small" x="477" y="258" text-anchor="middle">un error del hipervisor</text>
+<text class="dg-small" x="662" y="258" text-anchor="middle">acceso de red o físico</text>
+<text class="dg-tiny" x="385" y="288" text-anchor="middle">Arranques aproximados; ver M57 para contenedores y M69.10 para microVMs por tarea.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 66.6.</b> De la caja más fina a la más gruesa. Un contenedor comparte el kernel con el host; una microVM no.</figcaption>
+</figure>
+
+
+<p>Un <b>devcontainer</b> es la forma cómoda de vivir dentro de un contenedor: el editor abre el proyecto adentro, y el harness corre ahí. La especificación es abierta y la entienden VS Code, JetBrains y la CLI <code>devcontainer</code>. Las opciones que importan para un agente son las de <a href="m57-contenedores-k8s.html#pss">M57</a>: usuario sin privilegios, sin capabilities, sin <code>no-new-privileges</code> desactivado, límites de memoria y procesos, y nada del host montado salvo el repositorio.</p>
+
+<pre data-lang="json"><code>// .devcontainer/devcontainer.json
+{
+  "name": "agente",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:22",
+  "remoteUser": "node",                                   // nunca root
+  "runArgs": ["--cap-drop=ALL", "--security-opt=no-new-privileges",
+              "--pids-limit=512", "--memory=4g", "--network=agente-interna"],
+  "mounts": [],                                           // nada del $HOME del host
+  "containerEnv": { "HTTPS_PROXY": "http://proxy:3128", "HTTP_PROXY": "http://proxy:3128" },
+  "postCreateCommand": "npm ci"
+}</code></pre>
+
+<p>Un contenedor comparte el kernel: un error del kernel es una salida. Para código que no es tuyo (revisar un PR de un desconocido, un orquestador que analiza repositorios ajenos) la caja adecuada es una <a href="m20-producto-chatgpt.html#herramientas">microVM</a> por tarea, como hace DeepSec con Vercel Sandbox (<a href="m69-orquestadores.html#aislamiento">M69.10</a>), o gVisor, que intercepta las llamadas al sistema con un kernel en espacio de usuario. Para tu propio repositorio en tu laptop, un contenedor bien configurado alcanza. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Caja</th><th>Protege de</th><th>No protege de</th><th>Cuándo</th></tr></thead>
+    <tbody>
+      <tr><td>Sandbox del proceso</td><td>Un comando que escribe fuera o sale a la red</td><td>Lo que lee dentro del repo; un error del kernel</td><td>Siempre que se pueda</td></tr>
+      <tr><td>Contenedor</td><td>Tu <code>$HOME</code>, tus llaves, tus otros proyectos</td><td>Un error del kernel; lo que montes</td><td>Autonomía en tu repo</td></tr>
+      <tr><td>MicroVM</td><td>Un escape del kernel compartido</td><td>Lo que le pases: red, claves</td><td>Código ajeno, orquestadores</td></tr>
+      <tr><td>VM o máquina aparte</td><td>Casi todo lo local</td><td>La red y las credenciales que tenga</td><td>Tareas largas sin supervisión</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="egress"><span class="sec-num">66.6</span>Salida: un proxy con lista de dominios</h2>
+
+<p>Una caja sin red es la más segura y la menos útil: <code>npm install</code>, <code>git fetch</code> y la propia API del modelo necesitan salir. La solución es una <dfn data-term="egress-allowlist">lista de dominios de salida</dfn>: la caja no tiene ruta a internet salvo un proxy que deja pasar solo ciertos hosts. Es el <a href="m32-firewalls.html#entrada-salida">filtrado de salida</a> de M32 con una regla por dominio en lugar de por IP, porque las IPs de un registro de paquetes cambian.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f667t f667d">
+<title id="f667t">La salida pasa por un proxy con lista</title>
+<desc id="f667d">Dentro de la caja, el agente. Su única salida es un proxy en el host con una lista de dominios: registry.npmjs.org y github.com pasan; x.example se rechaza; las conexiones directas, UDP y DNS propio no tienen ruta. Abajo, dos advertencias: un dominio permitido también puede ser un canal de salida (un gist en github.com), y el proxy decide por nombre de host sin ver el contenido cifrado.</desc>
+<defs><marker id="f667a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="14" y="30" width="190" height="160" rx="10"/>
+<text class="dg-group" x="109" y="52" text-anchor="middle">La caja</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="34" y="70" width="150" height="50" rx="8"/>
+<text class="dg-label" x="109.0" y="91.5" text-anchor="middle">Agente</text>
+<text class="dg-tiny" x="109.0" y="106.5" text-anchor="middle">npm, git, curl</text>
+<rect class="dg-bad" x="34" y="132" width="150" height="40" rx="8"/>
+<text class="dg-tiny" x="109.0" y="156.0" text-anchor="middle">sin ruta directa</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="280" y="70" width="180" height="90" rx="8"/>
+<text class="dg-label" x="370" y="96" text-anchor="middle">Proxy de salida</text>
+<text class="dg-tiny" x="370" y="118" text-anchor="middle">decide por host</text>
+<text class="dg-tiny dg-mono" x="370" y="138" text-anchor="middle">(CONNECT, SNI)</text>
+<path class="dg-edge" d="M184 95 L278 105" marker-end="url(#f667a)"/>
+<rect class="dg-ok" x="560" y="40" width="190" height="40" rx="8"/>
+<text class="dg-tiny dg-mono" x="655" y="58" text-anchor="middle">registry.npmjs.org</text>
+<text class="dg-tiny" x="655" y="73" text-anchor="middle">pasa</text>
+<path class="dg-edge" d="M460 115 L558 60" marker-end="url(#f667a)"/>
+<rect class="dg-ok" x="560" y="92" width="190" height="40" rx="8"/>
+<text class="dg-tiny dg-mono" x="655" y="110" text-anchor="middle">github.com</text>
+<text class="dg-tiny" x="655" y="125" text-anchor="middle">pasa</text>
+<path class="dg-edge" d="M460 115 L558 112" marker-end="url(#f667a)"/>
+<rect class="dg-bad" x="560" y="144" width="190" height="40" rx="8"/>
+<text class="dg-tiny dg-mono" x="655" y="162" text-anchor="middle">x.example</text>
+<text class="dg-tiny" x="655" y="177" text-anchor="middle">rechazado</text>
+<path class="dg-edge" d="M460 115 L558 164" marker-end="url(#f667a)"/>
+<rect class="dg-warnbox" x="20" y="214" width="730" height="52" rx="8"/>
+<text class="dg-small" x="385" y="236" text-anchor="middle">Un dominio permitido también es un canal: con un token, github.com recibe un gist con lo que el agente leyó.</text>
+<text class="dg-small" x="385" y="255" text-anchor="middle">Lista corta, sin credenciales de escritura dentro de la caja y, si hace falta, un proxy que inspeccione.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 66.7.</b> La caja sale solo por el proxy. El proxy decide por el nombre del host, sin ver el contenido cifrado.</figcaption>
+</figure>
+
+
+<p>Con Docker se arma con dos redes: una interna sin ruta a internet, donde vive el agente, y el proxy conectado a las dos.</p>
+
+<pre data-lang="shell"><code># compose.yaml: el agente solo ve una red interna; el proxy es la única puerta
+services:
+  agente:
+    build: .
+    networks: [interna]
+    environment:
+      HTTPS_PROXY: http://proxy:3128
+      HTTP_PROXY: http://proxy:3128
+  proxy:
+    image: ubuntu/squid:6.10-24.10_beta
+    volumes: ["./squid.conf:/etc/squid/squid.conf:ro"]
+    networks: [interna, salida]
+networks:
+  interna: { internal: true }      # sin ruta a internet
+  salida: {}</code></pre>
+<pre data-lang="shell"><code># squid.conf: lista de dominios, nada más
+http_port 3128
+acl permitidos dstdomain registry.npmjs.org .github.com api.anthropic.com
+acl SSL_ports port 443
+acl CONNECT method CONNECT
+http_access deny CONNECT !SSL_ports
+http_access allow permitidos
+http_access deny all</code></pre>
+
+<p>El proxy decide por el nombre que llega en el <code>CONNECT</code> (o en el SNI, si es transparente) y no ve el contenido: es la contracara de no tener que confiar en un certificado propio dentro de la caja. Eso deja tres huecos que conviene conocer <span class="badge badge--ref">Diseño de referencia</span>:</p>
+<ul>
+  <li><b>Un dominio permitido es un canal.</b> Si <code>github.com</code> está en la lista y en la caja hay un token, el agente puede crear un gist con lo que leyó. La lista corta y sin tokens de escritura van juntos.</li>
+  <li><b>El DNS también sale.</b> Si la caja resuelve nombres con un DNS externo, un subdominio como <code>secreto.x.example</code> lleva datos en la consulta. Con una red interna, el DNS lo resuelve el proxy.</li>
+  <li><b>Lo que ignora el proxy no sale</b>, y eso es bueno y molesto: <code>ssh</code>, UDP y muchos drivers no usan las variables <code>HTTPS_PROXY</code>, así que no conectan.</li>
+</ul>
+
+<h2 id="credenciales"><span class="sec-num">66.7</span>Credenciales fuera de la caja</h2>
+
+<p>La pregunta que decide cuánto daño puede hacer un agente comprometido no es qué puede ejecutar sino <b>qué credenciales tiene a mano</b>. Una clave en una variable de entorno se imprime con <code>env</code>, se lee en <code>/proc/self/environ</code> y viaja en cualquier request. Tres prácticas, de la más simple a la más completa:</p>
+
+<ol class="steps">
+  <li><span class="step-title">Una clave propia de la caja</span>No la tuya: una clave de API creada para el agente, con <a href="m21-metering.html#topes">tope de gasto</a>, que puedas revocar sin afectar nada más. Si se filtra, el daño tiene techo.</li>
+  <li><span class="step-title">Tokens de vida corta</span>En CI, el proveedor de identidad emite un token por corrida (<a href="m56-supply-chain.html#ci-oidc">OIDC</a>, M56) con permisos de solo lectura; para la nube, roles con sesiones de minutos (<a href="m37-nube.html#iam">M37</a>). Lo que dura una hora vale una hora.</li>
+  <li><span class="step-title">La clave no entra</span>Un <dfn data-term="proxy-credenciales">proxy de credenciales</dfn> en el host recibe la request de la caja con un valor de relleno y le agrega la clave real solo si el destino es el permitido. Dentro de la caja no hay nada que robar.</li>
+</ol>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f668t f668d">
+<title id="f668t">La credencial fuera de la caja</title>
+<desc id="f668d">Arriba, la clave dentro de la caja: el agente puede leerla con env y una injection puede mandarla afuera. Abajo, la clave fuera: el agente manda la request sin clave o con un valor de relleno, el proxy del host la reconoce, agrega la clave real solo si el destino es el proveedor permitido y la reenvía. Dentro de la caja no hay nada que robar.</desc>
+<defs><marker id="f668a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="30" text-anchor="start">Clave dentro</text>
+<rect class="dg-frame" x="14" y="40" width="250" height="80" rx="10"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="30" y="54" width="218" height="52" rx="8"/>
+<text class="dg-label" x="139.0" y="76.5" text-anchor="middle">Agente</text>
+<text class="dg-tiny" x="139.0" y="91.5" text-anchor="middle">ANTHROPIC_API_KEY=sk-…</text>
+<rect class="dg-bad" x="330" y="56" width="420" height="48" rx="8"/>
+<text class="dg-small" x="540" y="76" text-anchor="middle">env la imprime; una injection la manda a cualquier host</text>
+<text class="dg-tiny" x="540" y="94" text-anchor="middle">y vale hasta que alguien la revoque</text>
+<path class="dg-edge" d="M264 80 L328 80" marker-end="url(#f668a)"/>
+<text class="dg-group" x="20" y="150" text-anchor="start">Clave fuera</text>
+<rect class="dg-frame" x="14" y="160" width="250" height="80" rx="10"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="30" y="174" width="218" height="52" rx="8"/>
+<text class="dg-label" x="139.0" y="196.5" text-anchor="middle">Agente</text>
+<text class="dg-tiny" x="139.0" y="211.5" text-anchor="middle">clave = RELLENO</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="330" y="170" width="190" height="60" rx="8"/>
+<text class="dg-label" x="425.0" y="196.5" text-anchor="middle">Proxy del host</text>
+<text class="dg-tiny" x="425.0" y="211.5" text-anchor="middle">cambia RELLENO por la real</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="590" y="170" width="160" height="60" rx="8"/>
+<text class="dg-label" x="670.0" y="196.5" text-anchor="middle">API del proveedor</text>
+<text class="dg-tiny" x="670.0" y="211.5" text-anchor="middle">único destino</text>
+<path class="dg-edge" d="M264 200 L328 200" marker-end="url(#f668a)"/>
+<path class="dg-edge" d="M520 200 L588 200" marker-end="url(#f668a)"/>
+<text class="dg-small" x="385" y="258" text-anchor="middle">Así lo hacen DeepSec en sus microVMs y el modo mask del sandbox de Claude Code.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 66.8.</b> Con la clave fuera, una injection que lee <code>env</code> encuentra un valor de relleno, y el proxy no agrega la clave real hacia otros hosts.</figcaption>
+</figure>
+
+
+<p>Es el patrón de DeepSec (<a href="m69-orquestadores.html#aislamiento">M69.10</a>) y el del modo <code>mask</code> del sandbox de Claude Code: <code>sandbox.credentials</code> puede negar archivos y variables, o reemplazarlas por un valor centinela que el proxy cambia por el real solo hacia los hosts permitidos <span class="badge badge--doc">Documentado</span>. Lo mismo vale para lo que no es la API del modelo: el token de GitHub con permiso de escritura no entra; el push lo hace el sistema que revisa el resultado (66.8).</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>El secreto que más se olvida es el que está dentro del repositorio: el <code>.env</code> de desarrollo. Ninguna caja lo protege, porque el repositorio es justo lo que se monta. Un deny de <code>Read(./.env)</code> frena la forma habitual; lo único que lo resuelve es que la caja tenga un <code>.env</code> de mentira, con credenciales de un entorno de prueba que no importa perder.</p>
+</aside>
+
+<h2 id="autonomia"><span class="sec-num">66.8</span>Autonomía total dentro de una caja desechable</h2>
+
+<p>Con las piezas anteriores se puede hacer lo que en M62 se prometió: dejar al agente trabajar una hora sin preguntar nada, con <code>bypassPermissions</code>, y que eso no sea un riesgo. La idea no es confiar en el modelo sino que <b>lo peor que puede pasar sea tirar la caja</b>. Mira la trifecta de <a href="m25-agentes.html#injection-regla">M25.11</a>: con datos privados, contenido no confiable y comunicación hacia afuera a la vez, una injection puede robar. La caja corta dos patas.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f669t f669d">
+<title id="f669t">Qué pata de la trifecta corta cada control</title>
+<desc id="f669d">Tres columnas, una por pata de la trifecta letal: datos privados, contenido no confiable y comunicación hacia afuera. Debajo de cada una, los controles de este módulo que la cortan. Datos privados: sin credenciales en la caja, sin ~/.ssh ni ~/.aws montados, .env fuera del repositorio. Contenido no confiable: no se puede cortar en un agente que lee issues, dependencias y READMEs. Comunicación: lista de dominios en el proxy, sin tokens de escritura, revisión humana del diff antes de publicar. Basta con cortar una pata para que una injection no pueda robar.</desc>
+<defs><marker id="f669a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="24" width="220" height="50" rx="8"/>
+<text class="dg-label" x="130.0" y="53.0" text-anchor="middle">Datos privados</text>
+<rect class="dg-box" x="20" y="90" width="220" height="140" rx="8"/>
+<text class="dg-small" x="130" y="118" text-anchor="middle">sin credenciales en la caja</text>
+<text class="dg-small" x="130" y="146" text-anchor="middle">sin ~/.ssh ni ~/.aws</text>
+<text class="dg-small" x="130" y="174" text-anchor="middle">.env fuera del repo</text>
+<text class="dg-small" x="130" y="202" text-anchor="middle">denyRead en el sandbox</text>
+<path class="dg-edge" d="M130 74 L130 88" marker-end="url(#f669a)"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="275" y="24" width="220" height="50" rx="8"/>
+<text class="dg-label" x="385.0" y="53.0" text-anchor="middle">Contenido no confiable</text>
+<rect class="dg-box" x="275" y="90" width="220" height="140" rx="8"/>
+<text class="dg-small" x="385" y="118" text-anchor="middle">issues, READMEs, páginas</text>
+<text class="dg-small" x="385" y="146" text-anchor="middle">dependencias y sus scripts</text>
+<text class="dg-small" x="385" y="174" text-anchor="middle">no se puede cortar:</text>
+<text class="dg-small" x="385" y="202" text-anchor="middle">es el trabajo del agente</text>
+<path class="dg-edge" d="M385 74 L385 88" marker-end="url(#f669a)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="530" y="24" width="220" height="50" rx="8"/>
+<text class="dg-label" x="640.0" y="53.0" text-anchor="middle">Comunicación externa</text>
+<rect class="dg-box" x="530" y="90" width="220" height="140" rx="8"/>
+<text class="dg-small" x="640" y="118" text-anchor="middle">lista de dominios</text>
+<text class="dg-small" x="640" y="146" text-anchor="middle">sin token de escritura</text>
+<text class="dg-small" x="640" y="174" text-anchor="middle">push y PR los hace</text>
+<text class="dg-small" x="640" y="202" text-anchor="middle">una persona o CI</text>
+<path class="dg-edge" d="M640 74 L640 88" marker-end="url(#f669a)"/>
+<text class="dg-small" x="385" y="262" text-anchor="middle">Con las tres a la vez, una injection puede robar. Una autonomía segura corta al menos una, y mejor dos.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 66.9.</b> La pata del medio no se puede cortar en un agente de código: leer issues y dependencias es su trabajo. Las otras dos se cortan con la caja.</figcaption>
+</figure>
+
+
+<pre data-lang="shell"><code># Autonomía total, dentro de una caja desechable
+git worktree add ../tarea-1234 -b agente/tarea-1234     # (1) una rama y una copia propias
+docker compose run --rm agente \
+  claude -p "Actualiza las dependencias con vulnerabilidades y deja las pruebas en verde" \
+  --permission-mode bypassPermissions --output-format json --max-turns 80
+# (2) dentro: sin credenciales de la nube, sin token de push, salida solo por el proxy
+git -C ../tarea-1234 diff main --stat                    # (3) una persona revisa el diff</code></pre>
+<ol class="code-key">
+  <li>Una rama y una copia del repositorio solo para esta tarea: lo que haga no toca tu árbol de trabajo.</li>
+  <li>La caja de 66.5 a 66.7: contenedor sin <code>$HOME</code>, red interna con proxy, clave propia con tope y sin token de push.</li>
+  <li>El resultado es un diff. Lo publica una persona, o un CI que corre las pruebas en limpio; el agente no publica nada.</li>
+</ol>
+
+<p>La lista de comprobación de una caja para autonomía total <span class="badge badge--ref">Diseño de referencia</span>:</p>
+<ul>
+  <li>Usuario sin privilegios, sin capabilities, sin el socket de Docker montado (con él, la caja crea otra caja sin límites).</li>
+  <li>Solo el repositorio montado, en una rama o un worktree propio; un <code>.env</code> de prueba.</li>
+  <li>Red interna y salida por proxy con lista corta: el registro de paquetes, el servidor del modelo y, si hace falta, lectura de GitHub.</li>
+  <li>Clave del modelo con tope de gasto o inyectada desde afuera; ninguna credencial de nube ni de escritura.</li>
+  <li>Límites de tiempo, turnos y presupuesto (<a href="m69-orquestadores.html#presupuesto">M69.7</a>), y el transcript guardado para auditar.</li>
+  <li>El resultado sale como diff y lo revisa alguien o algo que no es el agente.</li>
+</ul>
+
+<h2 id="hooks-politica"><span class="sec-num">66.9</span>Hooks como política determinista</h2>
+
+<p>Lo que escribes en <code>CLAUDE.md</code> cambia lo que el modelo intenta; lo que escribes en un <a href="m67-extender-harness.html#hooks">hook</a> cambia lo que el harness permite. Un hook <code>PreToolUse</code> es un programa tuyo que recibe cada llamada como JSON antes de que se ejecute y puede bloquearla: si sale con código 2, la llamada se cancela y lo que escribió en stderr vuelve al modelo como razón <span class="badge badge--doc">Documentado</span>. No es una sugerencia: corre siempre, igual, y el modelo no puede negociar con él. Cómo funcionan los hooks en general (eventos, entrada, salida) es <a href="m67-extender-harness.html#hooks">M67.5</a>; aquí, cómo se usan para imponer una política.</p>
+
+<pre data-lang="python"><code>#!/usr/bin/env python3
+# .claude/hooks/politica.py: bloquea force push y borrados fuera del repositorio
+import json, os, re, shlex, sys
+
+evento = json.load(sys.stdin)                       # (1) el harness manda el evento por stdin
+cmd = evento.get("tool_input", {}).get("command", "")
+repo = os.path.realpath(evento.get("cwd", "."))
+
+def fuera_del_repo(ruta):
+    destino = os.path.realpath(os.path.join(repo, os.path.expanduser(ruta)))
+    return not (destino == repo or destino.startswith(repo + os.sep))
+
+if re.search(r"\bpush\b.*(--force\b|-f\b|--force-with-lease\b|\+\S+)", cmd):
+    print("Force push bloqueado por política: abre un PR.", file=sys.stderr)
+    sys.exit(2)                                     # (2) exit 2: bloquea y stderr vuelve al modelo
+
+try:
+    partes = shlex.split(cmd)
+except ValueError:                                  # (3) si no se puede leer, no se adivina
+    print("Comando que no se puede analizar: reescríbelo más simple.", file=sys.stderr)
+    sys.exit(2)
+if partes[:1] == ["rm"] and any(fuera_del_repo(p) for p in partes[1:] if not p.startswith("-")):
+    print("rm fuera del repositorio bloqueado por política.", file=sys.stderr)
+    sys.exit(2)
+
+sys.exit(0)                                         # (4) exit 0: sigue el flujo normal (reglas y modo)</code></pre>
+<ol class="code-key">
+  <li>Claude Code manda por stdin un JSON con <code>tool_name</code>, <code>tool_input</code>, <code>cwd</code>, <code>session_id</code> y el modo de permiso.</li>
+  <li>Código 2 es el único que bloquea. Un código 1, o una excepción de Python sin capturar, es un error que <b>no bloquea</b>: la llamada sigue <span class="badge badge--doc">Documentado</span>.</li>
+  <li>Ante la duda, el hook bloquea y pide un comando más simple. Una política que adivina falla abierta.</li>
+  <li>Código 0 no aprueba nada: deja que sigan las reglas y el modo.</li>
+</ol>
+
+<pre data-lang="json"><code>{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash",
+        "hooks": [ { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/politica.py\"", "timeout": 10 } ] }
+    ]
+  }
+}</code></pre>
+
+<p>Tres propiedades que hay que tener presentes <span class="badge badge--doc">Documentado</span>:</p>
+<ul>
+  <li><b>Un hook que bloquea gana sobre un allow</b>: el bloqueo ocurre antes de evaluar las reglas. Eso permite el patrón "todo bash permitido salvo esto": <code>Bash</code> en allow y un hook que rechaza lo puntual.</li>
+  <li><b>Un hook que aprueba no salta un deny</b>: si el hook devuelve <code>"permissionDecision": "allow"</code>, las reglas deny y ask se siguen aplicando.</li>
+  <li><b>El hook ve el mismo texto que las reglas.</b> Es más expresivo (puedes resolver rutas, como el ejemplo), pero <code>sh -c</code> o un script escriben lo mismo de otra forma. El hook ordena; el límite sigue siendo el sandbox.</li>
+</ul>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Un hook es código que corre con tus permisos en cada llamada, fuera del sandbox. Si viene en el <code>.claude/settings.json</code> de un repositorio que clonaste, es código de un tercero que se ejecuta en tu máquina: por eso Claude Code pide confiar en la carpeta antes de cargar la configuración del proyecto, y <code>claude --bare</code> no la carga (<a href="m69-orquestadores.html#headless-claude">M69.2</a>). En una empresa, los hooks de política van en managed settings, donde el proyecto no los puede quitar.</p>
+</aside>
+
+<h2 id="recorrido"><span class="sec-num">66.10</span>Un pedido contra todas las capas</h2>
+
+<p>Junta todo. Elige un pedido, un modo y qué capas están encendidas, y mira cuál lo frena. Prueba primero <code>/usr/bin/curl</code> con todo apagado y después enciende una capa por vez; después <code>python3 -c</code> con el <code>.env</code>, que ninguna caja frena.</p>
+
+<div data-sim="permcheck"></div>
+
+<p>Tres cosas para ver en el widget. Las reglas frenan <code>curl</code> pero no <code>/usr/bin/curl</code>. El sandbox frena las dos, sin importar el modo, porque decide en el kernel. Y en <code>bypassPermissions</code> con todas las cajas encendidas, ningún pedido produce daño: esa es la configuración de 66.8.</p>
+
+<h2 id="fallas"><span class="sec-num">66.11</span>Qué falla</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+      <tr><td>Un deny de <code>curl</code> y el agente igual sale a internet</td><td>La regla mira el texto; usó otra forma</td><td>Sandbox con lista de dominios (66.4, 66.6)</td></tr>
+      <tr><td>El orquestador "solo lee" y editó archivos</td><td><code>--allowedTools</code> aprueba, no restringe</td><td><code>--disallowedTools</code> y <code>dontAsk</code> (66.2)</td></tr>
+      <tr><td>La persona aprueba todo sin leer</td><td>Demasiadas preguntas</td><td>Allow para lo seguro, <code>acceptEdits</code> o <code>auto</code>, ask solo para lo que importa (66.3)</td></tr>
+      <tr><td>Con el sandbox encendido, la clave SSH igual se lee</td><td>El sandbox lee casi todo por defecto</td><td><code>denyRead</code> de <code>~/.ssh</code> y <code>~/.aws</code> (66.4)</td></tr>
+      <tr><td>Un comando falla en el sandbox y el agente lo reintenta fuera</td><td>La vía <code>dangerouslyDisableSandbox</code></td><td><code>allowUnsandboxedCommands: false</code> (66.4)</td></tr>
+      <tr><td>La caja crea contenedores sin límites</td><td>El socket de Docker montado</td><td>No montarlo; si hace falta, un daemon aparte (66.8)</td></tr>
+      <tr><td>Datos fuera por un dominio permitido</td><td>Token de escritura dentro de la caja</td><td>Lista corta y sin tokens (66.6, 66.7)</td></tr>
+      <tr><td>El hook "bloqueaba" y la llamada pasó</td><td>Salía con código 1 o con una excepción</td><td>Solo el 2 bloquea; capturar y salir con 2 (66.9)</td></tr>
+      <tr><td>Un repositorio clonado trae hooks y servidores MCP</td><td>Configuración del proyecto cargada sin revisar</td><td>Revisar antes de confiar; <code>--bare</code> en automatizaciones (66.9)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Ninguna de estas capas toca las dos de arriba de <a href="m62-pila-agente.html#capas-modelo">M62.10</a>: lo que el modelo aprendió y las reglas del proveedor. Configurar un harness sin preguntas dentro de una caja es ingeniería; intentar que el modelo ignore su entrenamiento con texto es un jailbreak, y cómo se defiende un sistema de eso es M71. Las extensiones que se cargan en esta configuración (servidores MCP, skills, hooks, plugins) son el tema de <a href="m67-extender-harness.html#mapa">M67</a>.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m66"></div>
+<div data-exercise="m66-noche"></div>
+<div data-checkpoint="m66"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m66.data.js"></script>
+<script src="../assets/js/data/exercises/m66.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-perms.js"></script>
+</body>
+</html>

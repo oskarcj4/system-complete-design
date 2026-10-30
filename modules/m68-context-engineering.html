@@ -1,0 +1,801 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M68. Context engineering y memoria</title>
+<meta name="description" content="Qué entra en la ventana de un agente y en qué orden, por qué el orden cambia la factura, context rot, búsqueda justo a tiempo contra RAG, memoria entre sesiones, compactación, edición de contexto y subagentes como aislamiento.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m68">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Context engineering y memoria</h1>
+        <p class="lead">Un agente que trabaja cuatro horas no puede tener todo en la ventana, y aunque pudiera, rendiría peor. Este módulo trata el contexto como un presupuesto: qué entra en cada turno, en qué orden para que el caché sirva, qué se busca cuando hace falta, qué se guarda en disco y qué se pierde al resumir.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M68</dd></div>
+          <div><dt>Parte</dt><dd>VIII. AI Engineering: modelos, harnesses y agentes</dd></div>
+          <div><dt>Duración</dt><dd>100 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M16, M25, M64, M67</dd></div>
+          <div><dt>Estado</dt><dd data-status="m68">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Nombrar las capas de la ventana de un agente, en el orden en que se mandan, y medir cuánto ocupa cada una.</li>
+    <li>Ordenar un prompt para que el caché del prefijo sirva, y reconocer qué acciones lo invalidan.</li>
+    <li>Explicar por qué más contexto puede dar peores respuestas, y qué hacer al respecto.</li>
+    <li>Elegir entre traer el contexto por adelantado o buscarlo justo a tiempo.</li>
+    <li>Diseñar la memoria de un agente entre sesiones y dentro de una tarea larga.</li>
+    <li>Decidir entre compactar, limpiar resultados de herramientas y delegar a un subagente.</li>
+  </ul>
+</section>
+
+<h2 id="capas"><span class="sec-num">68.1</span>Qué entra en la ventana y en qué orden</h2>
+
+<p>En <a href="m16-context-windows.html#limites">M16</a> la ventana de contexto era un límite del modelo: cuántos tokens caben. En <a href="m64-anatomia-harness.html#contexto">M64.8</a> viste que el harness la llena con piezas que vienen de lugares distintos, y en <a href="m67-extender-harness.html#mapa-costo">M67.1</a>, que cada extensión entra en un momento distinto. Este módulo junta todo eso en una disciplina con nombre propio.</p>
+
+<p>La <dfn data-term="context-engineering">context engineering</dfn> es decidir qué entra en la ventana en cada turno, en qué orden, cuándo sale y qué queda en disco para traerlo después. El prompt engineering pensaba en un pedido; un agente hace cuarenta, doscientos o mil, y en cada uno el harness vuelve a armar el contexto entero <span class="badge badge--doc">Documentado</span>.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un escritorio chico en una biblioteca enorme. En el escritorio cabe poco y todo lo que hay compite por tu atención: si lo llenas de libros abiertos, tardas más en encontrar la página que importa. Lo bueno no es tener el escritorio lleno, sino tener a mano lo justo, saber dónde está lo demás en los estantes y dejar notas que sobrevivan cuando ordenas el escritorio.</p>
+</aside>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f68Lt f68Ld">
+<title id="f68Lt">La ventana de un agente, capa por capa</title>
+<desc id="f68Ld">Una columna que representa la ventana de contexto, de arriba abajo en el orden en que se manda: el system prompt con las definiciones de herramientas, el contexto del proyecto con el archivo de memoria, la memoria automática y las reglas, y la conversación con los mensajes, los resultados de herramientas y los cuerpos de skills, y al final el pedido nuevo. Una línea marca hasta dónde llega el prefijo cacheado y otra el umbral de compactación. A la derecha, fuera de la ventana, lo que vive en disco y entra solo cuando se pide: archivos de notas, archivos de memoria por tema, el repositorio y el contexto de los subagentes.</desc>
+<defs><marker id="f68La" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="200" y="24" text-anchor="middle">Lo que se manda en cada request</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="40" y="40" width="320" height="56" rx="8"/>
+<text class="dg-label" x="200.0" y="64.5" text-anchor="middle">System prompt y herramientas</text>
+<text class="dg-tiny" x="200.0" y="79.5" text-anchor="middle">cambia casi nunca</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="40" y="104" width="320" height="56" rx="8"/>
+<text class="dg-label" x="200.0" y="128.5" text-anchor="middle">Contexto del proyecto</text>
+<text class="dg-tiny" x="200.0" y="143.5" text-anchor="middle">CLAUDE.md, memoria, reglas</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="40" y="168" width="320" height="132" rx="8"/>
+<text class="dg-label" x="200.0" y="230.5" text-anchor="middle">Conversación</text>
+<text class="dg-tiny" x="200.0" y="245.5" text-anchor="middle">mensajes, resultados, skills</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="40" y="308" width="320" height="40" rx="8"/>
+<text class="dg-label" x="200.0" y="324.5" text-anchor="middle">Pedido nuevo</text>
+<text class="dg-tiny" x="200.0" y="339.5" text-anchor="middle">lo único distinto</text>
+<line class="dg-feedback" x1="24" y1="300" x2="376" y2="300"/>
+<text class="dg-tiny" x="382" y="304" text-anchor="start">fin del prefijo cacheado</text>
+<line class="dg-feedback" x1="24" y1="356" x2="376" y2="356"/>
+<text class="dg-tiny" x="382" y="360" text-anchor="start">umbral de compactación</text>
+<text class="dg-group" x="610" y="24" text-anchor="middle">En disco, fuera de la ventana</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="500" y="40" width="230" height="56" rx="8"/>
+<text class="dg-label" x="615.0" y="64.5" text-anchor="middle">Repositorio</text>
+<text class="dg-tiny" x="615.0" y="79.5" text-anchor="middle">se lee con grep y Read</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="500" y="104" width="230" height="56" rx="8"/>
+<text class="dg-label" x="615.0" y="128.5" text-anchor="middle">Notas y memoria por tema</text>
+<text class="dg-tiny" x="615.0" y="143.5" text-anchor="middle">se leen cuando hacen falta</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="500" y="168" width="230" height="56" rx="8"/>
+<text class="dg-label" x="615.0" y="192.5" text-anchor="middle">Transcript completo</text>
+<text class="dg-tiny" x="615.0" y="207.5" text-anchor="middle">lo que la compactación resumió</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="500" y="232" width="230" height="56" rx="8"/>
+<text class="dg-label" x="615.0" y="256.5" text-anchor="middle">Contexto de subagentes</text>
+<text class="dg-tiny" x="615.0" y="271.5" text-anchor="middle">solo vuelve el resultado</text>
+<path class="dg-feedback" d="M498 68 L362 230" marker-end="url(#f68La)"/>
+<path class="dg-edge" d="M498 132 L362 240" marker-end="url(#f68La)"/>
+<path class="dg-edge" d="M498 260 L362 250" marker-end="url(#f68La)"/>
+<text class="dg-small" x="385" y="392" text-anchor="middle">Context engineering: decidir qué entra, en qué orden, cuándo sale y qué queda en disco.</text>
+<g class="pl-pin"><circle cx="346" cy="54" r="11"/><text x="346" y="58" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="346" cy="118" r="11"/><text x="346" y="122" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="346" cy="182" r="11"/><text x="346" y="186" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="346" cy="322" r="11"/><text x="346" y="326" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="716" cy="54" r="11"/><text x="716" y="58" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="716" cy="118" r="11"/><text x="716" y="122" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="716" cy="182" r="11"/><text x="716" y="186" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="716" cy="246" r="11"/><text x="716" y="250" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="352" cy="300" r="11"/><text x="352" y="304" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="352" cy="356" r="11"/><text x="352" y="360" text-anchor="middle">10</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 68.A.</b> La ventana de un agente en el orden en que se manda, y lo que vive fuera de ella.</figcaption>
+</figure>
+
+
+<ol class="plate-key">
+  <li><b>System prompt y herramientas</b><span>Instrucciones del harness y definiciones de herramientas. Cambia casi nunca. <a href="#orden">68.3</a></span></li>
+  <li><b>Contexto del proyecto</b><span>Archivo de memoria, memoria automática y reglas sin ruta. <a href="#memoria">68.6</a></span></li>
+  <li><b>Conversación</b><span>Mensajes, resultados de herramientas y cuerpos de skills; es lo que más crece. <a href="#presupuesto">68.2</a></span></li>
+  <li><b>Pedido nuevo</b><span>Lo único distinto del request anterior. <a href="#orden">68.3</a></span></li>
+  <li><b>Repositorio</b><span>Se trae con búsqueda, no por adelantado. <a href="#jit">68.5</a></span></li>
+  <li><b>Notas y memoria por tema</b><span>Archivos que el agente escribe y lee cuando los necesita. <a href="#memoria">68.6</a></span></li>
+  <li><b>Transcript completo</b><span>Lo que la compactación resumió sigue en disco. <a href="#compactar">68.7</a></span></li>
+  <li><b>Contexto de subagentes</b><span>Su trabajo no entra; solo vuelve el resultado. <a href="#subagentes">68.9</a></span></li>
+  <li><b>Fin del prefijo cacheado</b><span>Todo lo anterior se lee del caché. <a href="#orden">68.3</a></span></li>
+  <li><b>Umbral de compactación</b><span>Al llegar, el harness resume la conversación. <a href="#compactar">68.7</a></span></li>
+</ol>
+
+<p>Claude Code documenta las tres capas de arriba con lo que contiene cada una y cuándo cambia <span class="badge badge--doc">Documentado</span>:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Capa</th><th>Contiene</th><th>Cambia cuando</th></tr></thead>
+    <tbody>
+      <tr><td>System prompt</td><td>Instrucciones del harness y definiciones de herramientas</td><td>Cambia el conjunto de herramientas cargadas</td></tr>
+      <tr><td>Contexto del proyecto</td><td><code>CLAUDE.md</code>, memoria automática, reglas sin <code>paths:</code></td><td>Empieza la sesión, o después de <code>/clear</code> o <code>/compact</code></td></tr>
+      <tr><td>Conversación</td><td>Tus mensajes, las respuestas, los resultados de herramientas</td><td>En cada turno</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>El orden no es casual: lo que menos cambia va primero. La razón es el caché (<a href="#orden">68.3</a>), y el criterio sirve para cualquier agente que armes, no solo para Claude Code.</p>
+
+<h2 id="presupuesto"><span class="sec-num">68.2</span>De qué está hecha la ventana</h2>
+
+<p>Antes de optimizar, se mide. En Claude Code, <code>/context</code> muestra cuánto ocupa cada capa <span class="badge badge--doc">Documentado</span>. Un ejemplo al empezar una sesión (las cifras son ilustrativas; mide las tuyas):</p>
+
+<pre data-lang="shell"><code>&gt; /context
+  Context Usage  claude-sonnet · 41k/200k tokens (21%)
+  ⛁ System prompt:      3.1k
+  ⛁ System tools:      12.4k
+  ⛁ MCP tools:          6.2k
+  ⛁ Memory files:       4.0k
+  ⛁ Skills:             1.1k
+  ⛁ Messages:          14.2k
+  ⛶ Free space:       159k</code></pre>
+
+<p>Al empezar manda lo fijo. Pero lo fijo no es lo que llena la ventana en una tarea larga: la llenan los <b>resultados de herramientas</b>. Un <code>Read</code> de un archivo de 600 líneas son unos 8&#8239;000 tokens; una corrida de pruebas con su salida, otros tantos. El agente los lee una vez y quedan en la historia en todos los turnos siguientes.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f683t f683d">
+<title id="f683t">De qué está hecha la ventana a lo largo de una sesión</title>
+<desc id="f683d">Barras apiladas en los turnos 1, 10, 20, 30 y 40 de una sesión de ejemplo. El prefijo fijo de 25 000 tokens es igual en todas. Los mensajes crecen poco, unos 400 tokens por turno. Los resultados de herramientas crecen 3 000 tokens por turno y en el turno 40 son 120 000 de los 161 000 totales. Supuestos del ejemplo, calculados a mano.</desc>
+<defs><marker id="f683a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="120" y="213.5" width="70" height="26.5" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="120" y="213.1" width="70" height="1.0" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="120" y="209.9" width="70" height="3.2" rx="3"/>
+<text class="dg-tiny dg-num" x="155" y="201.92941176470586" text-anchor="middle">28 k</text>
+<text class="dg-tiny" x="155" y="258" text-anchor="middle">turno 1</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="240" y="213.5" width="70" height="26.5" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="240" y="209.3" width="70" height="4.2" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="240" y="177.5" width="70" height="31.8" rx="3"/>
+<text class="dg-tiny dg-num" x="275" y="169.52941176470588" text-anchor="middle">59 k</text>
+<text class="dg-tiny" x="275" y="258" text-anchor="middle">turno 10</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="360" y="213.5" width="70" height="26.5" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="360" y="205.1" width="70" height="8.5" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="360" y="141.5" width="70" height="63.5" rx="3"/>
+<text class="dg-tiny dg-num" x="395" y="133.52941176470588" text-anchor="middle">93 k</text>
+<text class="dg-tiny" x="395" y="258" text-anchor="middle">turno 20</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="480" y="213.5" width="70" height="26.5" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="480" y="200.8" width="70" height="12.7" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="480" y="105.5" width="70" height="95.3" rx="3"/>
+<text class="dg-tiny dg-num" x="515" y="97.52941176470588" text-anchor="middle">127 k</text>
+<text class="dg-tiny" x="515" y="258" text-anchor="middle">turno 30</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="600" y="213.5" width="70" height="26.5" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="600" y="196.6" width="70" height="16.9" rx="3"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="600" y="69.5" width="70" height="127.1" rx="3"/>
+<text class="dg-tiny dg-num" x="635" y="61.5294117647059" text-anchor="middle">161 k</text>
+<text class="dg-tiny" x="635" y="258" text-anchor="middle">turno 40</text>
+<line class="sim-axis" x1="100" y1="240" x2="720" y2="240"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="110" y="276" width="14" height="14" rx="3"/>
+<text class="dg-tiny" x="130" y="288" text-anchor="start">prefijo fijo (25 k)</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="310" y="276" width="14" height="14" rx="3"/>
+<text class="dg-tiny" x="330" y="288" text-anchor="start">mensajes (+400 por turno)</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="510" y="276" width="14" height="14" rx="3"/>
+<text class="dg-tiny" x="530" y="288" text-anchor="start">resultados de herramientas (+3 000 por turno)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 68.2.</b> La misma sesión en cinco momentos. El prefijo no cambia; los resultados de herramientas pasan a ser casi todo.</figcaption>
+</figure>
+
+
+<p>La cuenta de la figura, con sus supuestos (25&#8239;000 tokens fijos, 400 de mensajes y 3&#8239;000 de herramientas por turno): en el turno 40 hay 25&#8239;000 + 40 × 400 + 40 × 3&#8239;000 = 25&#8239;000 + 16&#8239;000 + 120&#8239;000 = 161&#8239;000 tokens. El 75&#8239;% son salidas de herramientas, y la mayoría se leyó para una decisión que ya se tomó. Por eso las técnicas de este módulo apuntan ahí: buscar lo justo (<a href="#jit">68.5</a>), limpiar lo viejo (<a href="#editar">68.8</a>) y delegar la lectura (<a href="#subagentes">68.9</a>).</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Una ventana de un millón de tokens no resuelve el problema, lo posterga. Entra más, pero cada turno cuesta más, tarda más en el prefill (<a href="m16-context-windows.html#costo">M16.2</a>) y, como verás en <a href="#rot">68.4</a>, el modelo no rinde igual con todo eso adentro.</p>
+</aside>
+
+<h2 id="orden"><span class="sec-num">68.3</span>El orden y el caché del prefijo</h2>
+
+<p>El <dfn data-term="prompt-caching">prompt caching</dfn> de <a href="m16-context-windows.html#prompt-caching">M16.6</a> guarda el resultado de procesar el comienzo de un request para no recalcularlo en el siguiente. La regla que importa aquí: <b>coincide por prefijo exacto</b>. El orden del request es herramientas, después system, después mensajes; un cambio en cualquier punto invalida todo lo que viene detrás <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f684t f684d">
+<title id="f684t">El orden decide qué se cachea</title>
+<desc id="f684d">Dos versiones de tres requests seguidos. Arriba, el system prompt empieza con la hora exacta: cambia en cada request, así que el prefijo no coincide desde el primer token y todo se vuelve a escribir en el caché, a 1.25 veces el precio. Abajo, la hora va al final, junto al mensaje nuevo: todo lo anterior coincide, se lee del caché a 0.1 veces y solo se escribe lo nuevo.</desc>
+<defs><marker id="f684a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="20" y="24" text-anchor="start">Hora al principio: nada coincide</text>
+<rect class="dg-warnbox" x="20" y="34" width="60" height="26" rx="4"/>
+<text class="dg-tiny" x="50.0" y="51" text-anchor="middle">hora</text>
+<rect class="dg-warnbox" x="82" y="34" width="260" height="26" rx="4"/>
+<text class="dg-tiny" x="212.0" y="51" text-anchor="middle">herramientas y system</text>
+<rect class="dg-warnbox" x="344" y="34" width="120" height="26" rx="4"/>
+<text class="dg-tiny" x="404.0" y="51" text-anchor="middle">proyecto</text>
+<rect class="dg-warnbox" x="466" y="34" width="140" height="26" rx="4"/>
+<text class="dg-tiny" x="536.0" y="51" text-anchor="middle">conversación</text>
+<text class="dg-tiny" x="740" y="51" text-anchor="end">request 1</text>
+<rect class="dg-warnbox" x="20" y="68" width="60" height="26" rx="4"/>
+<text class="dg-tiny" x="50.0" y="85" text-anchor="middle">hora</text>
+<rect class="dg-warnbox" x="82" y="68" width="260" height="26" rx="4"/>
+<text class="dg-tiny" x="212.0" y="85" text-anchor="middle">herramientas y system</text>
+<rect class="dg-warnbox" x="344" y="68" width="120" height="26" rx="4"/>
+<text class="dg-tiny" x="404.0" y="85" text-anchor="middle">proyecto</text>
+<rect class="dg-warnbox" x="466" y="68" width="180" height="26" rx="4"/>
+<text class="dg-tiny" x="556.0" y="85" text-anchor="middle">conversación</text>
+<text class="dg-tiny" x="740" y="85" text-anchor="end">request 2</text>
+<rect class="dg-warnbox" x="20" y="102" width="60" height="26" rx="4"/>
+<text class="dg-tiny" x="50.0" y="119" text-anchor="middle">hora</text>
+<rect class="dg-warnbox" x="82" y="102" width="260" height="26" rx="4"/>
+<text class="dg-tiny" x="212.0" y="119" text-anchor="middle">herramientas y system</text>
+<rect class="dg-warnbox" x="344" y="102" width="120" height="26" rx="4"/>
+<text class="dg-tiny" x="404.0" y="119" text-anchor="middle">proyecto</text>
+<rect class="dg-warnbox" x="466" y="102" width="220" height="26" rx="4"/>
+<text class="dg-tiny" x="576.0" y="119" text-anchor="middle">conversación</text>
+<text class="dg-tiny" x="740" y="119" text-anchor="end">request 3</text>
+<text class="dg-label" x="20" y="166" text-anchor="start">Hora al final: coincide todo lo anterior</text>
+<rect class="dg-warnbox" x="20" y="176" width="260" height="26" rx="4"/>
+<text class="dg-tiny" x="150.0" y="193" text-anchor="middle">herramientas y system</text>
+<rect class="dg-warnbox" x="282" y="176" width="120" height="26" rx="4"/>
+<text class="dg-tiny" x="342.0" y="193" text-anchor="middle">proyecto</text>
+<rect class="dg-warnbox" x="404" y="176" width="140" height="26" rx="4"/>
+<text class="dg-tiny" x="474.0" y="193" text-anchor="middle">conversación</text>
+<rect class="dg-warnbox" x="546" y="176" width="60" height="26" rx="4"/>
+<text class="dg-tiny" x="576.0" y="193" text-anchor="middle">hora</text>
+<text class="dg-tiny" x="740" y="193" text-anchor="end">request 1</text>
+<rect class="dg-ok" x="20" y="210" width="260" height="26" rx="4"/>
+<text class="dg-tiny" x="150.0" y="227" text-anchor="middle">herramientas y system</text>
+<rect class="dg-ok" x="282" y="210" width="120" height="26" rx="4"/>
+<text class="dg-tiny" x="342.0" y="227" text-anchor="middle">proyecto</text>
+<rect class="dg-ok" x="404" y="210" width="140" height="26" rx="4"/>
+<rect class="dg-warnbox" x="544" y="210" width="40" height="26" rx="4"/>
+<text class="dg-tiny" x="474.0" y="227" text-anchor="middle">conversación</text>
+<rect class="dg-warnbox" x="586" y="210" width="60" height="26" rx="4"/>
+<text class="dg-tiny" x="616.0" y="227" text-anchor="middle">hora</text>
+<text class="dg-tiny" x="740" y="227" text-anchor="end">request 2</text>
+<rect class="dg-ok" x="20" y="244" width="260" height="26" rx="4"/>
+<text class="dg-tiny" x="150.0" y="261" text-anchor="middle">herramientas y system</text>
+<rect class="dg-ok" x="282" y="244" width="120" height="26" rx="4"/>
+<text class="dg-tiny" x="342.0" y="261" text-anchor="middle">proyecto</text>
+<rect class="dg-ok" x="404" y="244" width="180" height="26" rx="4"/>
+<rect class="dg-warnbox" x="584" y="244" width="40" height="26" rx="4"/>
+<text class="dg-tiny" x="494.0" y="261" text-anchor="middle">conversación</text>
+<rect class="dg-warnbox" x="626" y="244" width="60" height="26" rx="4"/>
+<text class="dg-tiny" x="656.0" y="261" text-anchor="middle">hora</text>
+<text class="dg-tiny" x="740" y="261" text-anchor="end">request 3</text>
+<rect class="dg-ok" x="20" y="282" width="14" height="12" rx="3"/>
+<text class="dg-tiny" x="40" y="292" text-anchor="start">leído del caché (0.1×)</text>
+<rect class="dg-warnbox" x="200" y="282" width="14" height="12" rx="3"/>
+<text class="dg-tiny" x="220" y="292" text-anchor="start">escrito en el caché (1.25×)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 68.3.</b> Tres requests seguidos con un dato que cambia en cada uno. La posición del dato decide cuánto se lee del caché.</figcaption>
+</figure>
+
+
+<p>Los números de la API de Anthropic <span class="badge badge--doc">Documentado</span>:</p>
+
+<ul>
+  <li><b>Escribir</b> en el caché cuesta 1.25 veces la entrada normal con TTL de 5 minutos, o 2 veces con TTL de 1 hora.</li>
+  <li><b>Leer</b> del caché cuesta 0.1 veces la entrada normal.</li>
+  <li>Hasta 4 puntos de corte (<code>cache_control</code>) por request; el sistema busca coincidencias hasta 20 bloques hacia atrás de cada uno.</li>
+  <li>Hay un largo mínimo para cachear, entre 512 y 4&#8239;096 tokens según el modelo.</li>
+  <li>Cada respuesta dice qué pasó en <code>usage</code>: <code>cache_creation_input_tokens</code> (escritos) y <code>cache_read_input_tokens</code> (leídos).</li>
+</ul>
+
+<p>Un request armado a mano con el punto de corte en el system prompt, y la fecha con la hora en el mensaje, no en el system:</p>
+
+<pre data-lang="json"><code>{
+  "model": "claude-sonnet-5-5",
+  "max_tokens": 4096,
+  "tools": [ ... ],
+  "system": [
+    { "type": "text", "text": "Eres el agente de revisión de Tienda Norte. ...",
+      "cache_control": { "type": "ephemeral" } }
+  ],
+  "messages": [
+    { "role": "user", "content": [
+      { "type": "text", "text": "Fecha: 2026-10-28 14:07. Revisa el PR 412." }
+    ] }
+  ]
+}</code></pre>
+
+<p>La cuenta del segundo turno de una sesión, con 21&#8239;050 tokens fijos y 3&#8239;000 nuevos por turno: el turno 1 midió 24&#8239;050; el turno 2 mide 27&#8239;050. Si el dato que cambia va al final, los 24&#8239;050 del turno anterior se leen y los 3&#8239;000 nuevos se escriben: 24&#8239;050 × 0.1 + 3&#8239;000 × 1.25 = 2&#8239;405 + 3&#8239;750 = 6&#8239;155 tokens equivalentes, contra 27&#8239;050 sin caché. Si la hora va al principio, nada coincide y se escribe todo: 27&#8239;050 × 1.25 = 33&#8239;812, más caro que sin caché. La respuesta del caso bueno se ve así:</p>
+
+<pre data-lang="json"><code>"usage": {
+  "input_tokens": 50,
+  "cache_creation_input_tokens": 2950,
+  "cache_read_input_tokens": 24050,
+  "output_tokens": 640
+}</code></pre>
+
+<h3 id="orden-widget">Pruébalo: mueve el dato que cambia</h3>
+
+<div data-sim="promptorder"></div>
+
+<h3 id="orden-invalida">Qué invalida el caché en un harness</h3>
+
+<p>En un harness no armas el request a mano, pero tus acciones lo cambian. Claude Code documenta cuáles rompen el prefijo y cuáles no <span class="badge badge--doc">Documentado</span>:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Rompe el prefijo</th><th>Lo conserva</th></tr></thead>
+    <tbody>
+      <tr><td>Cambiar de modelo: cada modelo tiene su caché</td><td>Editar archivos del repositorio: la lectura vieja queda en la historia y se agrega un aviso</td></tr>
+      <tr><td>Conectar o quitar un servidor MCP con las herramientas cargadas por adelantado</td><td>Editar <code>CLAUDE.md</code> a mitad de sesión (tampoco se aplica hasta <code>/clear</code>, <code>/compact</code> o reiniciar)</td></tr>
+      <tr><td>Negar una herramienta entera sin búsqueda de herramientas</td><td>Cambiar el modo de permisos</td></tr>
+      <tr><td>Compactar: la conversación se reemplaza por un resumen</td><td>Invocar una skill: su cuerpo se agrega al final</td></tr>
+      <tr><td>Actualizar el harness: cambia su system prompt</td><td>Retroceder con <code>/rewind</code> a un prefijo ya cacheado</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>La búsqueda de herramientas de <a href="m67-extender-harness.html#bajo-demanda">M67.3</a> tiene un efecto que no se ve a primera vista: con las herramientas diferidas, la lista queda fija desde el primer request, así que conectar un servidor a mitad de sesión ya no invalida nada <span class="badge badge--doc">Documentado</span>.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Una plantilla de system prompt con <code>{{fecha_hora}}</code> en la primera línea, o con el <code>git status</code> completo regenerado en cada turno. Funciona, las respuestas son correctas, y la factura de entrada es mayor que sin caché. Se detecta mirando <code>cache_creation_input_tokens</code>: si es alto turno tras turno, algo cambia en el prefijo.</p>
+</aside>
+
+<h2 id="rot"><span class="sec-num">68.4</span>Más contexto no es mejor contexto</h2>
+
+<p>El costo es la mitad del problema. La otra mitad es la calidad. Anthropic llama <dfn data-term="context-rot">context rot</dfn> a la caída de precisión del modelo cuando crece lo que tiene en contexto, aunque todo entre en la ventana <span class="badge badge--doc">Documentado</span>. La explicación de fondo es la atención de <a href="m121-prefill-decode-a-fondo.html#atencion">M12.1</a>: cada token se relaciona con todos los anteriores, n tokens dan n² pares, y el modelo tiene un presupuesto de atención finito que se reparte entre lo que importa y lo que sobra.</p>
+
+<p>Un efecto relacionado ya apareció en <a href="m16-context-windows.html#limites">M16.1</a>: <i>lost in the middle</i>. Liu y otros (2023) midieron que un dato al principio o al final del contexto se recupera mejor que uno en el medio <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f682t f682d">
+<title id="f682t">Más contexto no es mejor contexto</title>
+<desc id="f682d">Dos gráficos cualitativos. A la izquierda, la precisión de un modelo al recuperar un dato baja a medida que crece el contexto, aunque todo entre en la ventana: context rot. A la derecha, la curva en U de lost in the middle: un dato al principio o al final del contexto se encuentra mejor que uno en el medio. Las curvas son ilustrativas; las cifras dependen del modelo y la tarea.</desc>
+<defs><marker id="f682a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="195" y="24" text-anchor="middle">Context rot</text>
+<line class="sim-axis" x1="40" y1="220" x2="350" y2="220"/>
+<line class="sim-axis" x1="40" y1="40" x2="40" y2="220"/>
+<text class="dg-tiny" x="195" y="244" text-anchor="middle">tokens en contexto</text>
+<text class="dg-tiny" x="32" y="130" text-anchor="end">acierto</text>
+<text class="dg-label" x="575" y="24" text-anchor="middle">Lost in the middle</text>
+<line class="sim-axis" x1="420" y1="220" x2="730" y2="220"/>
+<line class="sim-axis" x1="420" y1="40" x2="420" y2="220"/>
+<text class="dg-tiny" x="575" y="244" text-anchor="middle">posición del dato</text>
+<text class="dg-tiny" x="412" y="130" text-anchor="end">acierto</text>
+<path class="dg-edge" fill="none" d="M40 60 C 120 64, 180 90, 220 130 S 320 190, 350 200"/>
+<path class="dg-edge" fill="none" d="M420 60 C 470 150, 520 190, 575 190 S 690 140, 730 70"/>
+<text class="dg-tiny" x="60" y="54" text-anchor="start">poco y relevante</text>
+<text class="dg-tiny" x="345" y="192" text-anchor="end">mucho y diluido</text>
+<text class="dg-tiny" x="430" y="54" text-anchor="start">principio</text>
+<text class="dg-tiny" x="575" y="210" text-anchor="middle">medio</text>
+<text class="dg-tiny" x="725" y="62" text-anchor="end">final</text>
+<text class="dg-tiny" x="385" y="278" text-anchor="middle">Curvas ilustrativas. Fuentes: Anthropic (2025) sobre context rot; Liu y otros (2023) sobre lost in the middle.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 68.4.</b> Dos efectos que empujan en la misma dirección: menos contexto, mejor elegido, y lo importante en los extremos.</figcaption>
+</figure>
+
+
+<p>La guía de Anthropic lo resume en una meta: el conjunto más chico posible de tokens con mucha señal que maximice la probabilidad del resultado que quieres <span class="badge badge--doc">Documentado</span>. En la práctica:</p>
+
+<ul>
+  <li><b>Instrucciones claras y en su lugar.</b> Las reglas generales arriba, en el system o el archivo de memoria; el pedido concreto abajo, cerca del final.</li>
+  <li><b>Herramientas que no se pisan.</b> Si una persona no puede decir cuál usar, el modelo tampoco (<a href="m63-tool-calling.html#esquema">M63.5</a>).</li>
+  <li><b>Pocos ejemplos, bien elegidos.</b> Tres casos que muestran la idea sirven más que treinta reglas de borde.</li>
+  <li><b>Sacar lo que ya se usó.</b> Un resultado de herramienta de hace 30 turnos es ruido para la decisión de ahora (<a href="#editar">68.8</a>).</li>
+</ul>
+
+<h2 id="jit"><span class="sec-num">68.5</span>Traer el contexto justo a tiempo</h2>
+
+<p>Hay dos formas de darle a un modelo la información que necesita. La primera es la <dfn data-term="rag">RAG</dfn> de <a href="m16-context-windows.html#rag">M16.4</a>: antes de llamar al modelo, un buscador por embeddings trae los fragmentos más parecidos al pedido y los mete en el prompt. La segunda es la <dfn data-term="busqueda-agentica">búsqueda agéntica</dfn> de <a href="m64-anatomia-harness.html#buscar">M64.5</a>: el modelo usa <code>glob</code>, <code>grep</code> y <code>Read</code> en varias vueltas, y trae solo lo que confirma.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f685t f685d">
+<title id="f685t">Traer contexto antes o cuando hace falta</title>
+<desc id="f685d">Tres filas. Recuperación previa, o RAG: antes de llamar al modelo, un buscador por embeddings trae los cinco fragmentos más parecidos al pedido y los mete en el contexto; rápido, pero puede traer fragmentos que no sirven y no ve lo que cambió desde la indexación. Recuperación justo a tiempo, o búsqueda agéntica: el modelo usa glob, grep y Read en varias vueltas y trae solo lo que confirma; siempre fresco, pero gasta turnos. Híbrido: lo estable y chico entra al empezar, como el archivo de memoria, y lo demás se busca.</desc>
+<defs><marker id="f685a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="20" y="56" text-anchor="start">Previa (RAG)</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="150" y="34" width="120" height="40" rx="8"/>
+<text class="dg-tiny" x="210.0" y="58.0" text-anchor="middle">pedido</text>
+<path class="dg-edge" d="M270 54 L288 54" marker-end="url(#f685a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="290" y="34" width="120" height="40" rx="8"/>
+<text class="dg-tiny" x="350.0" y="58.0" text-anchor="middle">índice vectorial</text>
+<path class="dg-edge" d="M410 54 L428 54" marker-end="url(#f685a)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="430" y="34" width="120" height="40" rx="8"/>
+<text class="dg-tiny" x="490.0" y="58.0" text-anchor="middle">top 5 fragmentos</text>
+<path class="dg-edge" d="M550 54 L568 54" marker-end="url(#f685a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="570" y="34" width="120" height="40" rx="8"/>
+<text class="dg-tiny" x="630.0" y="58.0" text-anchor="middle">modelo</text>
+<text class="dg-tiny" x="720" y="58" text-anchor="middle"></text>
+<text class="dg-tiny" x="150" y="94" text-anchor="start">una vuelta; trae lo parecido, no lo exacto</text>
+<text class="dg-label" x="20" y="146" text-anchor="start">Justo a tiempo</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="150" y="124" width="120" height="40" rx="8"/>
+<text class="dg-tiny" x="210.0" y="148.0" text-anchor="middle">pedido</text>
+<path class="dg-edge" d="M270 144 L288 144" marker-end="url(#f685a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="290" y="124" width="120" height="40" rx="8"/>
+<text class="dg-tiny" x="350.0" y="148.0" text-anchor="middle">modelo</text>
+<path class="dg-edge" d="M410 144 L428 144" marker-end="url(#f685a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="430" y="124" width="120" height="40" rx="8"/>
+<text class="dg-tiny" x="490.0" y="148.0" text-anchor="middle">glob, grep, Read</text>
+<path class="dg-edge" d="M550 144 L568 144" marker-end="url(#f685a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="570" y="124" width="120" height="40" rx="8"/>
+<text class="dg-tiny" x="630.0" y="148.0" text-anchor="middle">modelo</text>
+<path class="dg-feedback" d="M560 164 L560 178 L430 178 L430 164" marker-end="url(#f685a)"/>
+<text class="dg-tiny" x="495" y="192" text-anchor="middle">repite</text>
+<text class="dg-tiny" x="720" y="148" text-anchor="middle"></text>
+<text class="dg-tiny" x="150" y="204" text-anchor="start">varias vueltas; trae lo que confirma</text>
+<text class="dg-label" x="20" y="236" text-anchor="start">Híbrido</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="150" y="214" width="120" height="40" rx="8"/>
+<text class="dg-tiny" x="210.0" y="238.0" text-anchor="middle">memoria al empezar</text>
+<path class="dg-edge" d="M270 234 L288 234" marker-end="url(#f685a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="290" y="214" width="120" height="40" rx="8"/>
+<text class="dg-tiny" x="350.0" y="238.0" text-anchor="middle">modelo</text>
+<path class="dg-edge" d="M410 234 L428 234" marker-end="url(#f685a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="430" y="214" width="120" height="40" rx="8"/>
+<text class="dg-tiny" x="490.0" y="238.0" text-anchor="middle">búsqueda</text>
+<path class="dg-edge" d="M550 234 L568 234" marker-end="url(#f685a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="570" y="214" width="120" height="40" rx="8"/>
+<text class="dg-tiny" x="630.0" y="238.0" text-anchor="middle">modelo</text>
+<text class="dg-tiny" x="720" y="238" text-anchor="middle"></text>
+<text class="dg-tiny" x="150" y="274" text-anchor="start">lo estable por adelantado, lo demás al buscar</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 68.5.</b> Por adelantado, justo a tiempo, o los dos. Claude Code usa el híbrido.</figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th></th><th>Por adelantado (RAG)</th><th>Justo a tiempo (búsqueda agéntica)</th></tr></thead>
+    <tbody>
+      <tr><td>Qué entra</td><td>Los k fragmentos más parecidos, sirvan o no</td><td>Lo que el modelo leyó y decidió usar</td></tr>
+      <tr><td>Frescura</td><td>La del último indexado</td><td>La del disco en ese momento</td></tr>
+      <tr><td>Turnos</td><td>Uno</td><td>Varios; cada vuelta suma latencia</td></tr>
+      <tr><td>Infraestructura</td><td>Índice, embeddings, reindexado</td><td>Herramientas de lectura</td></tr>
+      <tr><td>Rinde mejor en</td><td>Texto libre, millones de documentos, preguntas de "qué dice sobre"</td><td>Código y datos con nombres exactos que se pueden buscar</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>La idea que hace funcionar lo justo a tiempo: el contexto guarda <b>identificadores livianos</b> (una ruta, el nombre de una tabla, una consulta) y no el contenido. La ruta <code>payments/refunds.py</code> son cinco tokens; el archivo, ocho mil. El modelo carga el contenido cuando lo necesita, y la estructura misma (nombres de carpetas, fechas, tamaños) ya le dice algo antes de abrir nada <span class="badge badge--doc">Documentado</span>.</p>
+
+<p>El híbrido es lo que hacen los harnesses de código: lo estable y chico entra al empezar (el archivo de memoria), lo demás se busca. En un monorepo de millones de líneas, la búsqueda pura se vuelve lenta, y ahí un índice semántico como herramienta, no como precarga, completa el cuadro.</p>
+
+<h2 id="memoria"><span class="sec-num">68.6</span>Memoria entre sesiones y dentro de una tarea</h2>
+
+<p>Cada sesión empieza con la ventana vacía. Lo que el agente aprendió ayer existe solo si quedó en disco. Hay tres mecanismos, y conviene no confundirlos.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f688t f688d">
+<title id="f688t">Memoria entre sesiones</title>
+<desc id="f688d">Tres sesiones en una línea de tiempo. En la primera, el agente aprende algo y lo escribe en disco: un índice MEMORY.md y archivos por tema. Al empezar la segunda, el harness carga las primeras 200 líneas del índice; los archivos por tema se leen solo si la tarea los necesita. En una tarea larga, un archivo de notas como NOTES.md lleva el estado entre compactaciones: qué se hizo, qué falta, qué se descartó.</desc>
+<defs><marker id="f688a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="30" y="30" width="210" height="54" rx="8"/>
+<text class="dg-label" x="135.0" y="53.5" text-anchor="middle">Sesión 1</text>
+<text class="dg-tiny" x="135.0" y="68.5" text-anchor="middle">aprende y escribe</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="280" y="30" width="210" height="54" rx="8"/>
+<text class="dg-label" x="385.0" y="53.5" text-anchor="middle">Sesión 2</text>
+<text class="dg-tiny" x="385.0" y="68.5" text-anchor="middle">lee el índice al empezar</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="530" y="30" width="210" height="54" rx="8"/>
+<text class="dg-label" x="635.0" y="53.5" text-anchor="middle">Sesión 3</text>
+<text class="dg-tiny" x="635.0" y="68.5" text-anchor="middle">lee un tema si hace falta</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="260" y="140" width="250" height="70" rx="8"/>
+<text class="dg-small dg-mono" x="385" y="164" text-anchor="middle">memory/</text>
+<text class="dg-tiny dg-mono" x="385" y="184" text-anchor="middle">MEMORY.md (índice, ≤ 200 líneas)</text>
+<text class="dg-tiny dg-mono" x="385" y="200" text-anchor="middle">tema-*.md (se leen a pedido)</text>
+<path class="dg-edge" d="M135 84 L300 138" marker-end="url(#f688a)"/>
+<text class="dg-tiny" x="200" y="118" text-anchor="middle">escribe</text>
+<path class="dg-edge" d="M385 138 L385 86" marker-end="url(#f688a)"/>
+<text class="dg-tiny" x="392" y="116" text-anchor="start">carga el índice</text>
+<path class="dg-edge" d="M500 160 L630 86" marker-end="url(#f688a)"/>
+<text class="dg-tiny" x="590" y="134" text-anchor="middle">lee un tema</text>
+<rect class="dg-box" x="30" y="232" width="710" height="44" rx="8"/>
+<text class="dg-small" x="385" y="252" text-anchor="middle">En una tarea larga: NOTES.md con lo hecho, lo pendiente y lo descartado, actualizado en cada hito.</text>
+<text class="dg-tiny" x="385" y="268" text-anchor="middle">Sobrevive a la compactación porque está en disco, no en la conversación.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 68.6.</b> La memoria vive en disco. Al empezar entra solo el índice; los temas y las notas se leen cuando hacen falta.</figcaption>
+</figure>
+
+
+<h3 id="memoria-instrucciones">Lo que escribes tú: el archivo de memoria</h3>
+
+<p>El <dfn data-term="archivo-memoria">archivo de memoria</dfn> de <a href="m64-anatomia-harness.html#memoria">M64.9</a> (<code>CLAUDE.md</code>, <code>AGENTS.md</code>) entra entero en cada sesión. Claude Code recomienda menos de 200 líneas por archivo: más largo ocupa más contexto y se sigue peor. Los <code>@imports</code> ordenan un archivo largo, pero no lo abaratan, porque lo importado se carga junto; lo que vale solo para una parte del código va en reglas por ruta, que entran al tocar esos archivos <span class="badge badge--doc">Documentado</span>.</p>
+
+<h3 id="memoria-auto">Lo que escribe el agente: memoria automática</h3>
+
+<p>Claude Code guarda notas propias en <code>~/.claude/projects/&lt;proyecto&gt;/memory/</code>, compartidas entre los worktrees del mismo repositorio. Al empezar carga las primeras 200 líneas o 25 KB de <code>MEMORY.md</code>, lo que llegue antes; los archivos por tema se leen a pedido <span class="badge badge--doc">Documentado</span>. El índice es un ejemplo de identificador liviano (<a href="#jit">68.5</a>): una línea por tema, con el detalle afuera.</p>
+
+<pre data-lang="markdown"><code># Índice de memoria (se carga entero al empezar: mantenerlo corto)
+
+- [Perfil](perfil.md): backend intermedio, prefiere ejemplos en Python
+- [Pruebas](pruebas.md): `make test` tarda 4 min; usar `make test-fast` para iterar
+- [Deploy](deploy.md): nunca un viernes; el runbook está en ops/deploy.md</code></pre>
+
+<p>En la API, la herramienta de memoria (<code>memory_20250818</code>) hace lo mismo para tus agentes: el modelo pide ver, crear y editar archivos de un directorio <code>/memories</code>, y tu código ejecuta esas operaciones donde quieras guardarlas <span class="badge badge--doc">Documentado</span>. Como cualquier herramienta, el permiso lo pone tu código, no el modelo.</p>
+
+<h3 id="memoria-notas">Dentro de una tarea larga: notas estructuradas</h3>
+
+<p>Las <dfn data-term="nota-estructurada">notas estructuradas</dfn> son un archivo que el agente actualiza en cada hito, con lo hecho, lo pendiente y lo descartado <span class="badge badge--doc">Documentado</span>. No son memoria del proyecto: son el estado de una tarea. Sobreviven a la compactación porque viven en disco, y después de un resumen el agente las vuelve a leer y sabe dónde estaba.</p>
+
+<pre data-lang="markdown"><code># NOTES.md · migración de pagos a la API v2
+
+## Hecho
+- Cliente nuevo en payments/v2/client.py, con pruebas (14 pasan)
+- Webhooks: firma verificada, idempotencia por event_id
+
+## Pendiente
+- Reembolsos parciales (payments/refunds.py, línea 80 en adelante)
+- Quitar el cliente v1 cuando no quede ningún import
+
+## Descartado
+- Reintentar en el cliente: los reintentos ya los hace la cola (ver ADR-012)</code></pre>
+
+<p>La sección "Descartado" es la que más se pierde sin notas: un resumen guarda lo que se hizo, pero rara vez por qué no se hizo lo otro, y el agente vuelve a intentarlo.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>La memoria es contexto, no configuración: el modelo la lee y la puede ignorar. Lo que tiene que cumplirse siempre va en un hook o en una regla de permisos (<a href="m66-permisos-sandbox.html#hooks-politica">M66.9</a>). Y una memoria que el agente escribe a partir de contenido no confiable (una issue, una página web) es una prompt injection que dura entre sesiones (<a href="m25-agentes.html#injection">M25</a>). Se revisa como se revisa código.</p>
+</aside>
+
+<h2 id="compactar"><span class="sec-num">68.7</span>Compactar: qué sobrevive y qué no</h2>
+
+<p>La <dfn data-term="compactacion">compactación</dfn> de <a href="m25-agentes.html#contexto">M25</a> reemplaza la historia por un resumen cuando el contexto se acerca al límite. En Claude Code se dispara sola cerca del umbral o a mano con <code>/compact</code>, que acepta qué conservar <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f687t f687d">
+<title id="f687t">Qué sobrevive a una compactación en Claude Code</title>
+<desc id="f687d">A la izquierda, la ventana antes de compactar: system prompt, contexto del proyecto, 150 000 tokens de conversación. A la derecha, después: el system prompt sigue; el contexto del proyecto se vuelve a leer del disco; la conversación es un resumen; vuelven a entrar hasta cinco archivos leídos o editados recientes y los cuerpos de las skills usadas con tope. Lo que se pierde: los detalles que el resumen no guardó y lo que agregaron los hooks.</desc>
+<defs><marker id="f687a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="160" y="24" text-anchor="middle">Antes</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="40" y="36" width="240" height="36" rx="8"/>
+<text class="dg-small" x="160.0" y="58.0" text-anchor="middle">System prompt</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="40" y="76" width="240" height="36" rx="8"/>
+<text class="dg-small" x="160.0" y="98.0" text-anchor="middle">Contexto del proyecto</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="40" y="116" width="240" height="150" rx="8"/>
+<text class="dg-label" x="160.0" y="187.5" text-anchor="middle">Conversación</text>
+<text class="dg-tiny" x="160.0" y="202.5" text-anchor="middle">150 000 tokens</text>
+<path class="dg-edge" d="M290 150 L380 150" marker-end="url(#f687a)"/>
+<text class="dg-tiny dg-mono" x="335" y="142" text-anchor="middle">/compact</text>
+<text class="dg-group" x="560" y="24" text-anchor="middle">Después</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="390" y="36" width="340" height="38" rx="8"/>
+<text class="dg-small" x="400" y="60" text-anchor="start">System prompt</text>
+<text class="dg-tiny" x="720" y="60" text-anchor="end">sigue igual</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="390" y="80" width="340" height="38" rx="8"/>
+<text class="dg-small" x="400" y="104" text-anchor="start">Contexto del proyecto</text>
+<text class="dg-tiny" x="720" y="104" text-anchor="end">se relee del disco</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="390" y="124" width="340" height="38" rx="8"/>
+<text class="dg-small" x="400" y="148" text-anchor="start">Resumen estructurado</text>
+<text class="dg-tiny" x="720" y="148" text-anchor="end">reemplaza la conversación</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="390" y="168" width="340" height="38" rx="8"/>
+<text class="dg-small" x="400" y="192" text-anchor="start">Hasta 5 archivos recientes</text>
+<text class="dg-tiny" x="720" y="192" text-anchor="end">se releen; &gt; 5 000 tokens: solo la ruta</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="390" y="212" width="340" height="38" rx="8"/>
+<text class="dg-small" x="400" y="236" text-anchor="start">Skills usadas</text>
+<text class="dg-tiny" x="720" y="236" text-anchor="end">5 000 tokens c/u, 25 000 en total</text>
+<rect class="dg-bad" x="390" y="262" width="340" height="30" rx="6"/>
+<text class="dg-small" x="560" y="282" text-anchor="middle">Se pierde: lo que el resumen no guardó</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 68.7.</b> Lo que Claude Code vuelve a poner en la ventana después de compactar.</figcaption>
+</figure>
+
+
+<p>Lo que pasa con cada pieza <span class="badge badge--doc">Documentado</span>:</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Pieza</th><th>Después de compactar</th></tr></thead>
+    <tbody>
+      <tr><td>System prompt</td><td>Sigue igual; se lee del caché</td></tr>
+      <tr><td><code>CLAUDE.md</code> de la raíz y memoria automática</td><td>Se vuelven a leer del disco</td></tr>
+      <tr><td>Descripciones de skills</td><td>Se reconstruyen</td></tr>
+      <tr><td>Archivos leídos o editados</td><td>Vuelven hasta 5 recientes; uno de más de 5&#8239;000 tokens vuelve solo como referencia</td></tr>
+      <tr><td>Cuerpos de skills usadas</td><td>Vuelven con hasta 5&#8239;000 tokens cada uno y 25&#8239;000 en total</td></tr>
+      <tr><td>Reglas por ruta y <code>CLAUDE.md</code> de subcarpetas</td><td>Salen; vuelven a entrar al tocar esos archivos</td></tr>
+      <tr><td>La conversación</td><td>Un resumen; lo que no recogió se pierde de la ventana (el transcript sigue en disco)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<pre data-lang="shell"><code>/compact conserva las decisiones sobre la API de reembolsos y los archivos tocados; descarta las salidas de pytest
+/context            # cuánto ocupa cada capa ahora
+/rewind             # volver a un turno anterior: reusa un prefijo ya cacheado
+/clear              # sesión nueva; CLAUDE.md y la memoria se vuelven a leer del disco</code></pre>
+
+<p>Dos consecuencias prácticas. Primero, compactar en una pausa natural (entre tareas) es mejor que dejar que salte a mitad de una edición: el resumen corta donde corta. Segundo, si el camino entero era un error, <code>/rewind</code> es más barato que compactar: vuelve a un prefijo que el caché ya tiene, en lugar de escribir uno nuevo <span class="badge badge--doc">Documentado</span>. En la API, la compactación del lado del servidor (<code>compact_20260112</code>) hace lo mismo para tus agentes sin que escribas el resumen.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Un resumen pierde. Lo que tiene efectos (qué pagos se hicieron, qué archivos se borraron) no puede vivir solo en el resumen: va en el estado de la tarea, como en la ejecución durable de <a href="m25-agentes.html#durable">M25</a>, o en las notas de <a href="#memoria-notas">68.6</a>.</p>
+</aside>
+
+<h2 id="editar"><span class="sec-num">68.8</span>Editar el contexto sin resumirlo</h2>
+
+<p>Compactar reescribe todo. Muchas veces alcanza con menos: sacar los resultados de herramientas viejos, que son el 75&#8239;% de la ventana del ejemplo de <a href="#presupuesto">68.2</a>. La <dfn data-term="edicion-contexto">edición de contexto</dfn> hace eso: cuando el contexto pasa un umbral, reemplaza el contenido de los resultados más viejos por una marca, y deja la llamada en la historia, así el modelo sabe que la hizo y puede repetirla si la necesita <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f686t f686d">
+<title id="f686t">Limpiar resultados viejos de herramientas</title>
+<desc id="f686d">Una conversación con seis llamadas a herramientas. Antes: los seis resultados completos ocupan 48 000 tokens. Después de limpiar con keep igual a 3: los tres más viejos se reemplazan por una marca corta que dice que el resultado se quitó, y los tres más recientes quedan completos. La llamada sigue en la historia, así el modelo sabe que la hizo y puede repetirla si la necesita.</desc>
+<defs><marker id="f686a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="20" y="26" text-anchor="start">Antes</text>
+<text class="dg-label" x="20" y="146" text-anchor="start">Después (keep = 3)</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="20" y="38" width="114" height="70" rx="6"/>
+<text class="dg-tiny dg-mono" x="77" y="64" text-anchor="middle">Read #1</text>
+<text class="dg-tiny" x="77" y="86" text-anchor="middle">8 000 tokens</text>
+<rect class="dg-box" x="20" y="158" width="114" height="34" rx="6"/>
+<text class="dg-tiny" x="77" y="180" text-anchor="middle">[resultado quitado]</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="142" y="38" width="114" height="70" rx="6"/>
+<text class="dg-tiny dg-mono" x="199" y="64" text-anchor="middle">Read #2</text>
+<text class="dg-tiny" x="199" y="86" text-anchor="middle">8 000 tokens</text>
+<rect class="dg-box" x="142" y="158" width="114" height="34" rx="6"/>
+<text class="dg-tiny" x="199" y="180" text-anchor="middle">[resultado quitado]</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="264" y="38" width="114" height="70" rx="6"/>
+<text class="dg-tiny dg-mono" x="321" y="64" text-anchor="middle">Read #3</text>
+<text class="dg-tiny" x="321" y="86" text-anchor="middle">8 000 tokens</text>
+<rect class="dg-box" x="264" y="158" width="114" height="34" rx="6"/>
+<text class="dg-tiny" x="321" y="180" text-anchor="middle">[resultado quitado]</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="386" y="38" width="114" height="70" rx="6"/>
+<text class="dg-tiny dg-mono" x="443" y="64" text-anchor="middle">Read #4</text>
+<text class="dg-tiny" x="443" y="86" text-anchor="middle">8 000 tokens</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="386" y="158" width="114" height="70" rx="6"/>
+<text class="dg-tiny dg-mono" x="443" y="184" text-anchor="middle">Read #4</text>
+<text class="dg-tiny" x="443" y="206" text-anchor="middle">8 000 tokens</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="508" y="38" width="114" height="70" rx="6"/>
+<text class="dg-tiny dg-mono" x="565" y="64" text-anchor="middle">Read #5</text>
+<text class="dg-tiny" x="565" y="86" text-anchor="middle">8 000 tokens</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="508" y="158" width="114" height="70" rx="6"/>
+<text class="dg-tiny dg-mono" x="565" y="184" text-anchor="middle">Read #5</text>
+<text class="dg-tiny" x="565" y="206" text-anchor="middle">8 000 tokens</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="630" y="38" width="114" height="70" rx="6"/>
+<text class="dg-tiny dg-mono" x="687" y="64" text-anchor="middle">Read #6</text>
+<text class="dg-tiny" x="687" y="86" text-anchor="middle">8 000 tokens</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="630" y="158" width="114" height="70" rx="6"/>
+<text class="dg-tiny dg-mono" x="687" y="184" text-anchor="middle">Read #6</text>
+<text class="dg-tiny" x="687" y="206" text-anchor="middle">8 000 tokens</text>
+<text class="dg-small" x="385" y="128" text-anchor="middle">48 000 tokens de resultados</text>
+<text class="dg-tiny" x="190" y="214" text-anchor="middle">la llamada queda; el contenido no</text>
+<text class="dg-small" x="385" y="256" text-anchor="middle">24 000 tokens + 3 marcas. Limpiar cambia la historia: el caché desde ese punto se vuelve a escribir.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 68.8.</b> Limpiar con <code>keep = 3</code>: las tres llamadas más recientes quedan completas.</figcaption>
+</figure>
+
+
+<p>En la API se pide en el request, con la estrategia <code>clear_tool_uses_20250919</code> <span class="badge badge--doc">Documentado</span>:</p>
+
+<pre data-lang="json"><code>{
+  "model": "claude-sonnet-5-5",
+  "max_tokens": 4096,
+  "tools": [ ... ],
+  "messages": [ ... ],
+  "context_management": {
+    "edits": [
+      { "type": "clear_tool_uses_20250919",
+        "trigger": { "type": "input_tokens", "value": 100000 },
+        "keep": { "type": "tool_uses", "value": 3 },
+        "clear_at_least": { "type": "input_tokens", "value": 20000 },
+        "exclude_tools": ["memory"] }
+    ]
+  }
+}</code></pre>
+
+<ul>
+  <li><code>trigger</code>: cuándo empieza a limpiar (por defecto, a los 100&#8239;000 tokens de entrada).</li>
+  <li><code>keep</code>: cuántos usos de herramientas recientes quedan intactos (por defecto, 3).</li>
+  <li><code>clear_at_least</code>: limpiar al menos esa cantidad, o nada. Existe por el caché: cada limpieza cambia la historia y obliga a escribir el prefijo de nuevo desde ese punto, así que limpiar poco y seguido sale caro.</li>
+  <li><code>exclude_tools</code>: herramientas cuyos resultados no se tocan, como la de memoria.</li>
+</ul>
+
+<p>Edición y memoria se combinan: antes de que se limpie un resultado, el agente puede anotar en su memoria o en las notas lo que sacó de él. Lo que queda en la ventana es la conclusión, no el archivo de 8&#8239;000 tokens.</p>
+
+<h2 id="subagentes"><span class="sec-num">68.9</span>Subagentes como aislamiento</h2>
+
+<p>La tercera forma de no llenar la ventana es no leer en ella. Un <dfn data-term="subagente">subagente</dfn> (<a href="m64-anatomia-harness.html#subagentes">M64.10</a>, configurado en <a href="m67-extender-harness.html#subagentes-def">M67.6</a>) trabaja en su propio contexto: puede leer 80 archivos y gastar 150&#8239;000 tokens, y al agente principal le devuelve un resumen. La guía de Anthropic habla de resúmenes de 1&#8239;000 a 2&#8239;000 tokens <span class="badge badge--doc">Documentado</span>.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Técnica</th><th>Qué hace con lo leído</th><th>Pierde</th><th>Caché</th></tr></thead>
+    <tbody>
+      <tr><td>Compactar</td><td>Lo resume junto con todo lo demás</td><td>Lo que el resumen no guardó</td><td>Reescribe la conversación</td></tr>
+      <tr><td>Editar el contexto</td><td>Quita resultados viejos y deja la llamada</td><td>El contenido de esos resultados</td><td>Reescribe desde el primer cambio</td></tr>
+      <tr><td>Subagente</td><td>Nunca entra; vuelve un resumen</td><td>Lo que el subagente no devolvió</td><td>El del principal queda intacto</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Un detalle de costo: el subagente arranca con su propio system prompt y sus herramientas, así que su primer request no lee el caché del principal y calienta uno propio; en Claude Code, además, los subagentes usan el TTL de 5 minutos por defecto <span class="badge badge--doc">Documentado</span>. Para tareas de lectura amplia sigue conviniendo; para una pregunta que se responde con un <code>grep</code>, no.</p>
+
+<p>Cuando hay muchos subagentes en paralelo, cada uno con su tarea y un orquestador que junta los resultados, el patrón se vuelve una arquitectura propia: es <a href="m69-orquestadores.html#por-que">M69</a>.</p>
+
+<h2 id="largo"><span class="sec-num">68.10</span>Una tarea de cuatro horas</h2>
+
+<p>Todo junto, en una migración que no entra en una ventana <span class="badge badge--ref">Diseño de referencia</span>:</p>
+
+<ol class="steps">
+  <li><span class="step-title">Empezar liviano</span>Archivo de memoria de 60 líneas, herramientas con búsqueda, y la fecha en el mensaje, no en el system. Menos del 10&#8239;% de la ventana antes del primer pedido.</li>
+  <li><span class="step-title">Planear en notas</span>Lo primero que escribe el agente es <code>NOTES.md</code> con el plan y los criterios de terminado. Es lo que va a releer después de cada compactación.</li>
+  <li><span class="step-title">Investigar afuera</span>"¿Quién usa el cliente v1?" va a un subagente de solo lectura, que devuelve la lista de archivos y no los archivos.</li>
+  <li><span class="step-title">Trabajar por hitos</span>Cada hito termina con las pruebas en verde y una actualización de las notas: hecho, pendiente, descartado.</li>
+  <li><span class="step-title">Limpiar y compactar en las pausas</span>Resultados viejos fuera con edición de contexto; <code>/compact</code> entre hitos, diciendo qué conservar, no a mitad de una edición.</li>
+  <li><span class="step-title">Cerrar con memoria</span>Lo que vale para la próxima vez (un comando lento, una trampa del repositorio) pasa a la memoria del proyecto. Lo de esta tarea queda en las notas.</li>
+</ol>
+
+<h2 id="fallas"><span class="sec-num">68.11</span>Qué falla</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+      <tr><td>La factura de entrada no baja con caché</td><td>Un dato que cambia en cada turno al principio del prompt</td><td>Moverlo al final, junto al pedido (68.3)</td></tr>
+      <tr><td>Un turno lento y caro a mitad de sesión</td><td>Cambio de modelo, servidor MCP nuevo sin búsqueda o compactación</td><td>Hacerlo al empezar o en una pausa (68.3)</td></tr>
+      <tr><td>Cambié <code>CLAUDE.md</code> y el agente no lo sigue</td><td>Se leyó al empezar; la edición no entra a mitad de sesión</td><td><code>/clear</code>, <code>/compact</code> o reiniciar (68.3)</td></tr>
+      <tr><td>Respuestas peores en el turno 150 que en el 10</td><td>Context rot: la ventana está llena de resultados viejos</td><td>Edición de contexto o subagentes (68.4)</td></tr>
+      <tr><td>Después de compactar, el agente repite algo que ya se descartó</td><td>El resumen guardó lo hecho, no lo descartado</td><td>Notas con sección "Descartado" (68.6)</td></tr>
+      <tr><td>El agente "olvida" una regla en una sesión nueva</td><td>Quedó en una conversación, no en disco</td><td>Pasarla al archivo de memoria o a un hook (68.6)</td></tr>
+      <tr><td>La memoria automática crece y deja de cargarse entera</td><td><code>MEMORY.md</code> pasó de 200 líneas</td><td>Índice corto, detalle en archivos por tema (68.6)</td></tr>
+      <tr><td>Limpiar resultados encarece la sesión</td><td>Se limpia poco y seguido; cada vez se reescribe el prefijo</td><td><code>clear_at_least</code> alto (68.8)</td></tr>
+      <tr><td>El subagente devuelve 30&#8239;000 tokens</td><td>Su prompt no fija formato ni largo</td><td>Pedir un resumen de 1&#8239;000 a 2&#8239;000 tokens (68.9)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Todo lo de este módulo cambia lo que el modelo ve, y lo que el modelo ve cambia lo que hace. Se mide igual que cualquier cambio: con un set de tareas, varias corridas por caso y pass^k, como en <a href="m65-elegir-harness.html#medir">M65</a>. Cómo armar esos evals para agentes es el tema de M72.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m68"></div>
+<div data-exercise="m68-contexto"></div>
+<div data-checkpoint="m68"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m68.data.js"></script>
+<script src="../assets/js/data/exercises/m68.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-ctxeng.js"></script>
+</body>
+</html>
