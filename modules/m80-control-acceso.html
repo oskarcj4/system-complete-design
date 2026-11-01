@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M80. Control de acceso roto</title>
+<meta name="description" content="La falla número uno de la web: las tres preguntas del control de acceso (quién eres, qué función puedes usar, sobre qué objeto), BOLA, BFLA y asignación masiva en el sistema de prácticas, denegar por defecto, consultas con el dueño en el WHERE, una política central con su matriz de pruebas, y path traversal al descargar archivos.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m80">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Control de acceso roto</h1>
+        <p class="lead">El navegador no te protege aquí. CORS, SameSite y la CSP deciden qué puede hacer otro sitio; el control de acceso decide qué puede hacer tu propio usuario, con su sesión válida, mandando requests a mano. Y esa pregunta solo la puede contestar el servidor.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M80</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>100 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M10, M76</dd></div>
+          <div><dt>Estado</dt><dd data-status="m80">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Separar las tres preguntas del control de acceso (sesión, función y objeto) y nombrar la falla de cada una.</li>
+    <li>Reconocer BOLA, BFLA y asignación masiva en el sistema de prácticas, y arreglarlas en el lugar correcto.</li>
+    <li>Escribir una política central que niega por defecto, y consultas que llevan el dueño en el <code>WHERE</code>.</li>
+    <li>Elegir entre 403 y 404, y saber por qué un id difícil de adivinar no es un control.</li>
+    <li>Probar el control de acceso con una matriz de persona por acción, y cerrar el path traversal al servir archivos.</li>
+  </ul>
+</section>
+
+<p>Todo lo de M74 a M78 protege a tu usuario de <b>otro sitio</b>. Este módulo es distinto: el atacante es un usuario legítimo de tu sistema, con su sesión, su cookie y su token CSRF, que abre las herramientas del navegador o <code>curl</code> y cambia un número. El navegador no tiene nada que decir, porque la request es del mismo origen y la manda quien tiene permiso de mandarla. El control de acceso roto encabeza el OWASP Top 10 de 2021 <span class="badge badge--doc">Documentado</span>, y en <a href="m10-seguridad.html#bola-detalle">M10</a> viste su versión de API en dos párrafos.</p>
+
+
+<h2 id="preguntas"><span class="sec-num">80.1</span>Las tres preguntas</h2>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es un hotel. La recepción comprueba que eres huésped (la sesión). La tarjeta abre el gimnasio pero no la cocina (la función). Y abre tu habitación, no la del vecino, aunque sea del mismo piso y el mismo tipo (el objeto). Un hotel que solo comprueba lo primero deja a cualquier huésped entrar a cualquier habitación.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f801t f801d">
+<title id="f801t">Las tres preguntas del control de acceso</title>
+<desc id="f801d">Una request pasa por tres puertas en fila. La primera pregunta quién eres: sin sesión, 401. La segunda, si tu rol puede usar esta función: si no, 403; fallar aquí es BFLA. La tercera, si este objeto concreto es tuyo o te corresponde: si no, 404; fallar aquí es BOLA. Abajo, la regla: cada puerta se pregunta en el servidor, en cada request, y si no hay una regla que permita, se niega.</desc>
+<defs><marker id="f801a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="50" width="110" height="56" rx="8"/>
+<text class="dg-small" x="69.0" y="74.5" text-anchor="middle">Request</text>
+<text class="dg-tiny" x="69.0" y="89.5" text-anchor="middle">con cookie</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="160" y="40" width="185" height="76" rx="8"/>
+<text class="dg-small" x="252.5" y="74.5" text-anchor="middle">1. ¿Quién eres?</text>
+<text class="dg-tiny" x="252.5" y="89.5" text-anchor="middle">sesión válida</text>
+<text class="dg-tiny" x="252" y="136" text-anchor="middle">401</text>
+<path class="dg-edge" d="M124 78 L158 78" marker-end="url(#f801a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="365" y="40" width="185" height="76" rx="8"/>
+<text class="dg-small" x="457.5" y="74.5" text-anchor="middle">2. ¿Puedes usar la función?</text>
+<text class="dg-tiny" x="457.5" y="89.5" text-anchor="middle">rol</text>
+<text class="dg-tiny" x="457" y="136" text-anchor="middle">403 · si falta: BFLA</text>
+<path class="dg-edge" d="M343 78 L363 78" marker-end="url(#f801a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="570" y="40" width="185" height="76" rx="8"/>
+<text class="dg-small" x="662.5" y="74.5" text-anchor="middle">3. ¿Este objeto es tuyo?</text>
+<text class="dg-tiny" x="662.5" y="89.5" text-anchor="middle">dueño o relación</text>
+<text class="dg-tiny" x="662" y="136" text-anchor="middle">404 · si falta: BOLA</text>
+<path class="dg-edge" d="M548 78 L568 78" marker-end="url(#f801a)"/>
+<rect class="dg-warnbox" x="14" y="166" width="742" height="48" rx="8"/>
+<text class="dg-small" x="385" y="186" text-anchor="middle">En el servidor, en cada request. Si ninguna regla permite, se niega.</text>
+<text class="dg-tiny" x="385" y="204" text-anchor="middle">Ocultar un botón en el frontend no responde ninguna de las tres.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 80.1.</b> Las tres preguntas, en ese orden. Cada una tiene su falla con nombre y su código de respuesta.</figcaption>
+</figure>
+
+<p>La <b>autenticación</b> responde la primera pregunta (<a href="m81-autenticacion-sesiones.html#modelos">M81</a>). La <b>autorización</b>, las otras dos, y es donde fallan la mayoría de las APIs: comprueban que hay sesión y suponen que quien tiene sesión solo pedirá lo suyo. El <dfn data-term="control-acceso-roto">control de acceso roto</dfn> es responder mal o no responder alguna de las tres.</p>
+
+
+<h2 id="auditoria"><span class="sec-num">80.2</span>Tu API hoy</h2>
+
+<p>Antes de los ataques, el estado real. Leído del código del proyecto:</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f802t f802d">
+<title id="f802t">Qué endpoints responden cada pregunta hoy</title>
+<desc id="f802d">Una rejilla con los once endpoints del sistema en filas y las tres preguntas en columnas. login, notificaciones y oportunidades llaman a requireAuth; oportunidades además pide rol 2 o 3 para escribir, pero no comprueba el dueño al editar. Los otros ocho, entre ellos usuarios, postulaciones, roles y asignaciones_roles, no preguntan nada: cualquiera sin sesión los usa.</desc>
+<defs><marker id="f802a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="20" y="22" text-anchor="start">Endpoint</text>
+<text class="dg-label" x="420" y="22" text-anchor="middle">1. Sesión</text>
+<text class="dg-label" x="540" y="22" text-anchor="middle">2. Rol</text>
+<text class="dg-label" x="660" y="22" text-anchor="middle">3. Dueño</text>
+<text class="dg-tiny dg-mono" x="20" y="47" text-anchor="start">login.php</text>
+<rect class="dg-ok" x="366" y="32" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="420.0" y="47.0" text-anchor="middle">sí</text>
+<rect class="dg-box" x="486" y="32" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="540.0" y="47.0" text-anchor="middle">n/a</text>
+<rect class="dg-box" x="606" y="32" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="660.0" y="47.0" text-anchor="middle">n/a</text>
+<text class="dg-tiny dg-mono" x="20" y="73" text-anchor="start">notificaciones.php</text>
+<rect class="dg-ok" x="366" y="58" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="420.0" y="73.0" text-anchor="middle">sí</text>
+<rect class="dg-box" x="486" y="58" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="540.0" y="73.0" text-anchor="middle">—</text>
+<rect class="dg-warnbox" x="606" y="58" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="660.0" y="73.0" text-anchor="middle">parcial</text>
+<text class="dg-tiny dg-mono" x="20" y="99" text-anchor="start">oportunidades.php</text>
+<rect class="dg-ok" x="366" y="84" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="420.0" y="99.0" text-anchor="middle">sí</text>
+<rect class="dg-ok" x="486" y="84" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="540.0" y="99.0" text-anchor="middle">sí (escribir)</text>
+<rect class="dg-bad" x="606" y="84" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="660.0" y="99.0" text-anchor="middle">no</text>
+<text class="dg-tiny dg-mono" x="20" y="125" text-anchor="start">postulaciones.php</text>
+<rect class="dg-bad" x="366" y="110" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="420.0" y="125.0" text-anchor="middle">no</text>
+<rect class="dg-bad" x="486" y="110" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="540.0" y="125.0" text-anchor="middle">no</text>
+<rect class="dg-bad" x="606" y="110" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="660.0" y="125.0" text-anchor="middle">no</text>
+<text class="dg-tiny dg-mono" x="20" y="151" text-anchor="start">usuarios.php</text>
+<rect class="dg-bad" x="366" y="136" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="420.0" y="151.0" text-anchor="middle">no</text>
+<rect class="dg-bad" x="486" y="136" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="540.0" y="151.0" text-anchor="middle">no</text>
+<rect class="dg-bad" x="606" y="136" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="660.0" y="151.0" text-anchor="middle">no</text>
+<text class="dg-tiny dg-mono" x="20" y="177" text-anchor="start">roles.php</text>
+<rect class="dg-bad" x="366" y="162" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="420.0" y="177.0" text-anchor="middle">no</text>
+<rect class="dg-bad" x="486" y="162" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="540.0" y="177.0" text-anchor="middle">no</text>
+<rect class="dg-box" x="606" y="162" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="660.0" y="177.0" text-anchor="middle">n/a</text>
+<text class="dg-tiny dg-mono" x="20" y="203" text-anchor="start">asignaciones_roles.php</text>
+<rect class="dg-bad" x="366" y="188" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="420.0" y="203.0" text-anchor="middle">no</text>
+<rect class="dg-bad" x="486" y="188" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="540.0" y="203.0" text-anchor="middle">no</text>
+<rect class="dg-box" x="606" y="188" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="660.0" y="203.0" text-anchor="middle">n/a</text>
+<text class="dg-tiny dg-mono" x="20" y="229" text-anchor="start">instituciones.php</text>
+<rect class="dg-bad" x="366" y="214" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="420.0" y="229.0" text-anchor="middle">no</text>
+<rect class="dg-bad" x="486" y="214" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="540.0" y="229.0" text-anchor="middle">no</text>
+<rect class="dg-box" x="606" y="214" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="660.0" y="229.0" text-anchor="middle">n/a</text>
+<text class="dg-tiny dg-mono" x="20" y="255" text-anchor="start">carreras.php</text>
+<rect class="dg-bad" x="366" y="240" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="420.0" y="255.0" text-anchor="middle">no</text>
+<rect class="dg-bad" x="486" y="240" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="540.0" y="255.0" text-anchor="middle">no</text>
+<rect class="dg-box" x="606" y="240" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="660.0" y="255.0" text-anchor="middle">n/a</text>
+<text class="dg-tiny dg-mono" x="20" y="281" text-anchor="start">solicitudes_publicacion.php</text>
+<rect class="dg-bad" x="366" y="266" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="420.0" y="281.0" text-anchor="middle">no</text>
+<rect class="dg-bad" x="486" y="266" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="540.0" y="281.0" text-anchor="middle">no</text>
+<rect class="dg-bad" x="606" y="266" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="660.0" y="281.0" text-anchor="middle">no</text>
+<text class="dg-tiny dg-mono" x="20" y="307" text-anchor="start">historial_estado_postulacion.php</text>
+<rect class="dg-bad" x="366" y="292" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="420.0" y="307.0" text-anchor="middle">no</text>
+<rect class="dg-bad" x="486" y="292" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="540.0" y="307.0" text-anchor="middle">no</text>
+<rect class="dg-bad" x="606" y="292" width="108" height="22" rx="8"/>
+<text class="dg-tiny" x="660.0" y="307.0" text-anchor="middle">no</text>
+<text class="dg-tiny" x="385" y="326" text-anchor="middle">Leído del código el 31 de octubre de 2026. n/a: el endpoint no tiene objetos de un dueño.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 80.2.</b> Ocho de los once endpoints no piden sesión. En los que sí, la tercera pregunta casi no aparece.</figcaption>
+</figure>
+
+<ul>
+  <li><b>Ocho endpoints sin <code>requireAuth</code>.</b> <code>usuarios.php</code> lista los usuarios con sus correos para cualquiera, sin sesión. <code>asignaciones_roles.php</code> permite asignar roles. Es la falla más grave del proyecto y la más fácil de cerrar.</li>
+  <li><b><code>oportunidades.php</code></b> pide rol de reclutador para escribir, pero el <code>UPDATE</code> busca solo por id: cualquier reclutador edita la oportunidad de otro.</li>
+  <li><b><code>postulaciones.php</code></b> toma <code>estudiante_id</code> del body al crear, y busca por id al leer.</li>
+</ul>
+
+
+<h2 id="bola"><span class="sec-num">80.3</span>BOLA: el objeto de otro</h2>
+
+<p><dfn data-term="bola">BOLA</dfn> (Broken Object Level Authorization), también llamada IDOR (Insecure Direct Object Reference), es la falla de la tercera pregunta: el usuario tiene permiso para la función, pero no para ese objeto, y la API no lo comprueba. Es la primera del OWASP API Security Top 10 de 2023 <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="f803t f803d">
+<title id="f803t">BOLA: Beto lee la postulación de Ana</title>
+<desc id="f803d">Beto, estudiante 15, tiene sesión. Abre su propia postulación, que tiene id 102, y ve el número en la URL. Cambia el número a 101 y la API devuelve la postulación de Ana, con su CV, porque findById busca solo por id. Con el dueño en el WHERE, la misma request devuelve 404.</desc>
+<defs><marker id="f803-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f803-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f803-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f803-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Beto (estudiante 15)</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">postulaciones.php</text>
+<path class="dg-frame" d="M385.0 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<path class="dg-edge" d="M73.0 72 L380.0 72" marker-end="url(#f803-a)"/>
+<rect x="152.2" y="55" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="66" text-anchor="middle">GET ?id=102 (la suya)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 106 L75.0 106" marker-end="url(#f803-r)"/>
+<rect x="158.8" y="89" width="137.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="100" text-anchor="middle">200: su postulación</text>
+<path class="dg-edge" d="M73.0 140 L380.0 140" marker-end="url(#f803-a)"/>
+<rect x="122.5" y="123" width="210.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="134" text-anchor="middle">GET ?id=101 (cambia el número)</text>
+<path class="dg-edge" d="M388.0 174 L695.0 174" marker-end="url(#f803-a)"/>
+<rect x="460.6" y="157" width="163.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="168" text-anchor="middle">SELECT … WHERE id = 101</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M382.0 208 L75.0 208" marker-end="url(#f803-f)"/>
+<rect x="96.10000000000002" y="191" width="262.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="202" text-anchor="middle">200: la postulación de Ana, con cv_url</text>
+<path d="M20 240 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="229" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="244" text-anchor="middle" style="fill:var(--fail)">con el dueño en la consulta</text>
+<path class="dg-edge" d="M388.0 276 L695.0 276" marker-end="url(#f803-a)"/>
+<rect x="414.4" y="259" width="256.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="270" text-anchor="middle">WHERE id = 101 AND estudiante_id = 15</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 310 L75.0 310" marker-end="url(#f803-r)"/>
+<rect x="211.6" y="293" width="31.799999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="304" text-anchor="middle">404</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 80.3.</b> Beto no rompió nada: cambió un número en la URL. La API respondió lo que se le pidió, porque nadie le dijo que preguntara de quién era.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// models/postulaciones.php: el dueño va en la consulta, no en un if después
+public function findByIdPara(int $id, array $sesion): void
+{
+    $stmt = $this-&gt;connection-&gt;prepare(
+        "SELECT p.id, p.estado_postulacion, p.cv_url, p.fecha_postulacion, o.titulo
+           FROM postulaciones p
+           JOIN oportunidades o ON o.id = p.oportunidad_id
+          WHERE p.id = ? AND p.estado = 1
+            AND (p.estudiante_id = ? OR o.creado_por = ? OR ? = 1)");   // alumno, reclutador, admin
+    $stmt-&gt;execute([$id, $sesion['id'], $sesion['id'], (int)$sesion['isAdmin']]);
+    $fila = $stmt-&gt;fetch(PDO::FETCH_ASSOC);
+    if (!$fila) {
+        Response::json(-1, 'No encontrada', [], 404);              // igual si no existe o no es tuya
+    }
+    $this-&gt;response-&gt;success($fila);
+}</code></pre>
+<ul>
+  <li><b>El dueño en el <code>WHERE</code>, no en un <code>if</code> después.</b> Un <code>if</code> que compara después de leer se olvida en el siguiente endpoint; una consulta que solo puede devolver lo tuyo, no. Y en las listas (<code>findAll</code>) es la única forma de que no salgan filas de otros.</li>
+  <li><b>404, no 403.</b> Si la respuesta dice "existe, pero no es tuya", el atacante aprende qué ids existen. Para un objeto que no te corresponde, la API responde lo mismo que si no existiera.</li>
+  <li><b>Un id aleatorio no es un control.</b> Un UUID en lugar de 101 hace más difícil adivinar, pero los ids se filtran (en URLs compartidas, en logs, en el <code>Referer</code>) y entonces no queda nada. Los UUID son útiles, como capa extra; la comprobación del dueño es obligatoria.</li>
+</ul>
+<pre data-lang="php"><code>&lt;?php
+// models/oportunidades.php: hoy WHERE id = ? AND estado = 1 deja a Diego editar la 7 de Carla
+$query = "UPDATE oportunidades
+             SET titulo = ?, descripcion = ?, requisitos = ?, modalidad = ?, ubicacion = ?, fecha_cierre = ?
+           WHERE id = ? AND estado = 1 AND (creado_por = ? OR ? = 1)";
+$stmt = $this-&gt;connection-&gt;prepare($query);
+$stmt-&gt;execute([...$campos, $id, $sesion['id'], (int)$sesion['isAdmin']]);
+if ($stmt-&gt;rowCount() === 0) {
+    Response::json(-1, 'No encontrada', [], 404);
+}</code></pre>
+
+
+<h2 id="bfla"><span class="sec-num">80.4</span>BFLA: la función de otro rol</h2>
+
+<p><dfn data-term="bfla">BFLA</dfn> (Broken Function Level Authorization) es la falla de la segunda pregunta: un estudiante llama a una función de administración porque la API solo comprueba que hay sesión, o porque el frontend esconde el botón y nadie pensó en la request. Es la quinta del Top 10 de APIs <span class="badge badge--doc">Documentado</span>.</p>
+<p>La defensa es una política central que <b>niega por defecto</b>: una tabla que dice, por endpoint y por método, qué roles pueden usarlo. Lo que no está en la tabla, se rechaza. Así, un endpoint nuevo sin política queda cerrado, no abierto.</p>
+<pre data-lang="php"><code>&lt;?php
+// core/politica.php: una tabla por endpoint; lo que no está, se niega
+const POLITICA = [
+    'postulaciones' =&gt; [
+        'GET'    =&gt; [ROL_ESTUDIANTE, ROL_RECLUTADOR, ROL_ADMIN],   // y el modelo filtra por dueño
+        'POST'   =&gt; [ROL_ESTUDIANTE],
+        'PUT'    =&gt; [ROL_RECLUTADOR, ROL_ADMIN],                   // cambiar estado
+        'DELETE' =&gt; [ROL_ESTUDIANTE],                              // retirar la propia
+    ],
+    'usuarios' =&gt; ['GET' =&gt; [ROL_ADMIN], 'PUT' =&gt; [ROL_ADMIN]],
+    'roles'    =&gt; ['GET' =&gt; [ROL_ADMIN]],
+];
+
+function autorizar(string $endpoint): array
+{
+    $metodo = $_SERVER['REQUEST_METHOD'];
+    $roles  = POLITICA[$endpoint][$metodo] ?? null;
+    if ($roles === null) {                                         // denegar por defecto
+        Response::json(-1, 'Método no permitido', [], 405);
+    }
+    return requireAuth($roles);                                    // sesión, CSRF y rol (M76)
+}</code></pre>
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Tu <code>requireAuth</code> deja pasar a <code>isAdmin</code> por encima de la lista de roles. Es cómodo y es un riesgo: cualquier error que ponga <code>isAdmin</code> en verdadero (una asignación masiva, un bug en el login) abre todo. Las funciones peligrosas (asignar roles, borrar usuarios) pueden pedir además una reautenticación (<a href="m81-autenticacion-sesiones.html#mfa">M81</a>) y quedar en el log de auditoría con quién lo hizo.</p>
+</aside>
+
+
+<h2 id="mass-assignment"><span class="sec-num">80.5</span>Asignación masiva: los campos de más</h2>
+
+<p>La <dfn data-term="mass-assignment">asignación masiva</dfn> pasa cuando el código copia los campos del body al modelo sin una lista. El atacante agrega campos que el formulario no tiene: <code>rol_id</code>, <code>isAdmin</code>, <code>estudiante_id</code>, <code>estado_postulacion</code>. El Top 10 de APIs de 2023 la agrupa con la exposición de datos de más en "autorización por propiedad" <span class="badge badge--doc">Documentado</span>: qué campos puedes escribir y qué campos te devuelve la respuesta.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f804t f804d">
+<title id="f804t">Asignación masiva</title>
+<desc id="f804d">A la izquierda, el body de un PUT a usuarios.php con nombre y apellido, más dos campos que el formulario no tiene: rol_id 1 y estado_cuenta activo. En el centro, un modelo que copia todos los campos del body al UPDATE. A la derecha, la fila de la base con el rol cambiado a administrador. Abajo, la versión con lista: solo nombre y apellido pasan.</desc>
+<defs><marker id="f804a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="20" width="230" height="110" rx="8"/>
+<text class="dg-tiny dg-mono" x="30" y="42" text-anchor="start">PUT usuarios.php</text>
+<text class="dg-tiny dg-mono" x="30" y="62" text-anchor="start">id=15</text>
+<text class="dg-tiny dg-mono" x="30" y="82" text-anchor="start">nombre=Beto</text>
+<text class="dg-tiny dg-mono dg-fail-text" x="30" y="102" text-anchor="start">rol_id=1</text>
+<text class="dg-tiny dg-mono dg-fail-text" x="30" y="122" text-anchor="start">estado_cuenta=activo</text>
+<rect class="dg-bad" x="284" y="44" width="200" height="60" rx="8"/>
+<text class="dg-small" x="384.0" y="70.5" text-anchor="middle">UPDATE con todo el body</text>
+<text class="dg-tiny dg-mono" x="384.0" y="85.5" text-anchor="middle">foreach ($_PUT as $k=&gt;$v)</text>
+<rect class="dg-bad" x="524" y="44" width="232" height="60" rx="8"/>
+<text class="dg-small dg-mono" x="640.0" y="70.5" text-anchor="middle">usuarios 15: rol_id = 1</text>
+<text class="dg-tiny" x="640.0" y="85.5" text-anchor="middle">Beto es administrador</text>
+<path class="dg-edge" d="M244 74 L282 74" marker-end="url(#f804a)"/>
+<path class="dg-edge" d="M484 74 L522 74" marker-end="url(#f804a)"/>
+<rect class="dg-ok" x="14" y="156" width="742" height="48" rx="8"/>
+<text class="dg-tiny dg-mono" x="385" y="176" text-anchor="middle">Lista por rol: el estudiante solo puede cambiar ['nombre', 'apellido', 'telefono'].</text>
+<text class="dg-tiny" x="385" y="194" text-anchor="middle">El id de quién edita sale de la sesión; los campos de más se ignoran o dan 400.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 80.4.</b> El formulario tiene tres campos; la request, los que quiera el atacante. La lista de campos permitidos es por rol.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// endpoints/postulaciones.php POST: hoy estudiante_id sale del body
+$sesion = autorizar('postulaciones');
+$datos = [
+    'oportunidad_id' =&gt; (int)($_POST['oportunidad_id'] ?? 0),
+    'estudiante_id'  =&gt; (int)$sesion['id'],          // de la sesión, nunca del body
+    'cv_url'         =&gt; $_POST['cv_url'] ?? '',      // se valida en M82
+];
+
+// endpoints/usuarios.php PUT: una lista de campos por rol
+const CAMPOS_EDITABLES = [
+    'propio' =&gt; ['nombre', 'apellido', 'telefono'],
+    'admin'  =&gt; ['nombre', 'apellido', 'telefono', 'rol_id', 'estado_cuenta'],
+];
+$permitidos = $sesion['isAdmin'] ? CAMPOS_EDITABLES['admin'] : CAMPOS_EDITABLES['propio'];
+$extra = array_diff(array_keys($_PUT), [...$permitidos, 'id']);
+if ($extra) {
+    Response::json(-1, 'Campos no permitidos: ' . implode(', ', $extra), [], 400);
+}</code></pre>
+<p>La otra mitad es la salida: <code>findAll</code> de usuarios devuelve cada columna, y el frontend muestra tres. Las respuestas también llevan una lista de campos por rol, porque un dato que viaja en el JSON ya se filtró, aunque la pantalla no lo muestre.</p>
+
+
+<h2 id="probar"><span class="sec-num">80.6</span>Prueba las cuatro comprobaciones</h2>
+
+<p>Seis personas, cinco acciones y cuatro comprobaciones que puedes prender y apagar. El botón "lo que hace tu código hoy" pone las que tiene cada endpoint en el proyecto.</p>
+<div data-sim="acl"></div>
+
+
+<h2 id="centralizar"><span class="sec-num">80.7</span>Dónde va cada comprobación</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="f805t f805d">
+<title id="f805t">Dónde vive cada comprobación</title>
+<desc id="f805d">Tres capas. Arriba, el middleware de cada endpoint: sesión, CSRF y rol, con una tabla de política por método. En el medio, el modelo: cada consulta lleva el dueño en el WHERE y cada escritura toma el id de la sesión. Abajo, la base: claves foráneas y, si hace falta, una vista o un usuario de base con permisos mínimos. A la derecha, la matriz de pruebas que recorre persona por acción contra las tres capas.</desc>
+<defs><marker id="f805a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="14" width="520" height="60" rx="8"/>
+<text class="dg-small" x="274.0" y="40.5" text-anchor="middle">Middleware: requireAuth + política por método</text>
+<text class="dg-tiny" x="274.0" y="55.5" text-anchor="middle">pregunta 1 y 2: sesión, CSRF, rol</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="88" width="520" height="60" rx="8"/>
+<text class="dg-small" x="274.0" y="114.5" text-anchor="middle">Modelo: el dueño en el WHERE, el id de la sesión</text>
+<text class="dg-tiny" x="274.0" y="129.5" text-anchor="middle">pregunta 3: este objeto</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="162" width="520" height="60" rx="8"/>
+<text class="dg-small" x="274.0" y="188.5" text-anchor="middle">Base: usuario con permisos mínimos, vistas</text>
+<text class="dg-tiny" x="274.0" y="203.5" text-anchor="middle">el último límite (M35)</text>
+<rect class="dg-box--em" x="570" y="14" width="186" height="208" rx="8"/>
+<text class="dg-small" x="663.0" y="114.5" text-anchor="middle">Matriz de pruebas</text>
+<text class="dg-tiny" x="663.0" y="129.5" text-anchor="middle">persona × acción</text>
+<text class="dg-tiny" x="663" y="120" text-anchor="middle">6 personas</text>
+<text class="dg-tiny" x="663" y="140" text-anchor="middle">× 12 acciones</text>
+<text class="dg-tiny" x="663" y="160" text-anchor="middle">= 72 casos con su</text>
+<text class="dg-tiny" x="663" y="180" text-anchor="middle">resultado esperado</text>
+<path class="dg-feedback" d="M568 44 L536 44" marker-end="url(#f805a)"/>
+<path class="dg-feedback" d="M568 118 L536 118" marker-end="url(#f805a)"/>
+<path class="dg-feedback" d="M568 192 L536 192" marker-end="url(#f805a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 80.5.</b> El middleware responde las preguntas que no dependen del objeto; el modelo, la que sí. La base es el último límite si las dos anteriores fallan, y la matriz de pruebas comprueba las tres.</figcaption>
+</figure>
+
+<ul>
+  <li><b>Middleware:</b> la política por método de 80.4, en la primera línea de cada endpoint.</li>
+  <li><b>Modelo:</b> cada método recibe la sesión y la usa en el <code>WHERE</code>. Un método sin sesión (<code>findById(int $id)</code>) es una invitación a usarlo mal; renómbralo o quítalo.</li>
+  <li><b>Base:</b> en <a href="m35-seguridad-bd.html#abac">M35</a> viste RLS y vistas por usuario. En MariaDB no hay RLS; un usuario de base para la API con permisos solo sobre las tablas que usa, sin <code>DROP</code> ni <code>GRANT</code>, limita lo que hace una inyección.</li>
+</ul>
+<p>Y la prueba: una matriz de persona por acción con el resultado esperado, que corre en el CI de <a href="m55-appsec.html#pipeline">M55</a> y falla si un endpoint nuevo responde 200 donde debía responder 404.</p>
+<pre data-lang="php"><code>&lt;?php
+// tests/AccesoTest.php (PHPUnit): la matriz como datos; cada fila es un caso
+public static function matriz(): array
+{
+    return [
+        //  persona      método  ruta                              esperado
+        ['anonimo',    'GET',  'postulaciones.php?id=101',        401],
+        ['beto',       'GET',  'postulaciones.php?id=101',        404],   // BOLA
+        ['ana',        'GET',  'postulaciones.php?id=101',        200],
+        ['diego',      'PUT',  'oportunidades.php?id=7',          404],   // BOLA en escritura
+        ['carla',      'PUT',  'oportunidades.php?id=7',          200],
+        ['ana',        'GET',  'usuarios.php',                    403],   // BFLA
+        ['ana',        'PUT',  'usuarios.php?id=12&amp;rol_id=1',     400],   // asignación masiva
+    ];
+}</code></pre>
+
+
+<h2 id="traversal"><span class="sec-num">80.8</span>Path traversal: el archivo de otro</h2>
+
+<p>El <dfn data-term="path-traversal">path traversal</dfn> es la misma falla con archivos: la ruta sale de la request y <code>../</code> la saca de la carpeta permitida. Lo viste como caso en <a href="m55-appsec.html#casos-traversal">M55</a>; aquí aparece al servir los CVs, que hoy son una URL en <code>cv_url</code> y en la guía WEB08 pasan a ser archivos subidos (<a href="m82-archivos-ssrf.html#subidas">M82</a>).</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f806t f806d">
+<title id="f806t">Path traversal al descargar un CV</title>
+<desc id="f806d">La ruta base es la carpeta de CVs. El usuario pide el archivo con ../../ delante: al unir los dos strings, la ruta sale de la carpeta y llega a configuration.php. Con realpath, la ruta se resuelve y se compara con la base: si no empieza con la base, se rechaza. Mejor todavía: el usuario pide un id y la base devuelve el nombre del archivo.</desc>
+<defs><marker id="f806a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="20" width="240" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="134.0" y="46.0" text-anchor="middle">/var/www/cvs/ + $_GET['f']</text>
+<rect class="dg-bad" x="290" y="20" width="220" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="400.0" y="46.0" text-anchor="middle">f = ../api/core/env.php</text>
+<rect class="dg-bad" x="546" y="20" width="210" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="651.0" y="38.5" text-anchor="middle">/var/www/api/core/env.php</text>
+<text class="dg-tiny" x="651.0" y="53.5" text-anchor="middle">el archivo con las claves</text>
+<path class="dg-edge" d="M254 42 L288 42" marker-end="url(#f806a)"/>
+<path class="dg-edge" d="M510 42 L544 42" marker-end="url(#f806a)"/>
+<rect class="dg-warnbox" x="14" y="100" width="742" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="385" y="127" text-anchor="middle">realpath($base . $f) y str_starts_with($real, $base . '/'): rechaza lo que sale de la carpeta</text>
+<rect class="dg-ok" x="14" y="160" width="742" height="44" rx="8"/>
+<text class="dg-tiny" x="385" y="187" text-anchor="middle">Mejor: GET ?postulacion=101 → la base da el nombre del archivo, después de comprobar el dueño</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 80.6.</b> Dos defensas: comprobar con <code>realpath</code> que la ruta resuelta sigue dentro de la carpeta, y no aceptar rutas: el usuario pide un id, la base da el nombre.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// endpoints/cv.php: descargar el CV de una postulación
+$sesion = autorizar('cv');
+$fila = $postulaciones-&gt;cvPara((int)($_GET['postulacion'] ?? 0), $sesion);   // dueño en el WHERE
+$base = realpath(__DIR__ . '/../../storage/cvs');
+$real = realpath($base . '/' . $fila['archivo']);                           // el nombre lo dio la base
+if ($real === false || !str_starts_with($real, $base . DIRECTORY_SEPARATOR)) {
+    Response::json(-1, 'No encontrado', [], 404);
+}
+header('Content-Type: application/pdf');
+header('Content-Disposition: attachment; filename="cv.pdf"');
+header('X-Content-Type-Options: nosniff');
+readfile($real);</code></pre>
+<p>El orden importa: primero el control de acceso (la postulación es tuya), después la ruta. Comprobar solo la ruta deja descargar cualquier CV de la carpeta, que es un BOLA con archivos.</p>
+
+
+<h2 id="fallas"><span class="sec-num">80.9</span>Fallas típicas y cómo reconocerlas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+<tr><td>Cambiar el número de la URL muestra datos de otro</td><td>Consulta por id sin dueño (BOLA)</td><td>Dueño en el <code>WHERE</code>, 404</td></tr>
+<tr><td>Un estudiante lista usuarios con <code>curl</code></td><td>Endpoint sin <code>requireAuth</code> o sin rol (BFLA)</td><td>Política por método que niega por defecto</td></tr>
+<tr><td>Un usuario se vuelve administrador editando su perfil</td><td><code>rol_id</code> aceptado del body</td><td>Lista de campos por rol</td></tr>
+<tr><td>Una postulación aparece a nombre de otro estudiante</td><td><code>estudiante_id</code> del body</td><td>El id sale de la sesión</td></tr>
+<tr><td>El frontend no muestra el correo, pero el JSON sí</td><td>La respuesta lleva todas las columnas</td><td>Lista de campos de salida por rol</td></tr>
+<tr><td>Un endpoint nuevo quedó abierto</td><td>La política permite por defecto</td><td>Lo que no está en la tabla, se rechaza</td></tr>
+<tr><td><code>?f=../</code> descarga otro archivo</td><td>Ruta de la request sin <code>realpath</code></td><td>Id a nombre desde la base, y <code>realpath</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>El control de acceso no se encuentra con escáneres: un DAST no sabe que la postulación 101 no es de Beto. Se encuentra con la matriz, con revisión de código buscando consultas por id sin sesión (<code>grep -rn "WHERE id = ?" api/models/</code>) y con pruebas manuales con dos cuentas del mismo rol. La guía WEB06 pone <code>autorizar()</code> en los once endpoints, el dueño en cada consulta y la matriz en PHPUnit. Con quién eres respondido por la sesión, falta ver qué tan buena es esa sesión: <a href="m81-autenticacion-sesiones.html">M81</a>.</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m80"></div>
+<div data-exercise="m80-matriz"></div>
+<div data-checkpoint="m80"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m80.data.js"></script>
+<script src="../assets/js/data/exercises/m80.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>

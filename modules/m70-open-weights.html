@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M70. Modelos open weights y serving propio</title>
+<meta name="description" content="Cuándo conviene servir un modelo propio, qué hace cada servidor (Ollama, llama.cpp, vLLM, LM Studio), el formato GGUF, cuánta memoria pide de verdad un MoE, la cuenta de la VRAM, gateways y routing por costo, y por qué un modelo local falla como agente.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m70">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Modelos open weights y serving propio</h1>
+        <p class="lead">Los pesos de Kimi, Qwen o DeepSeek se descargan gratis, pero servirlos no es gratis. Este módulo hace las cuentas que deciden si un modelo entra en tu GPU, cuál servidor usar para una persona o para un equipo, cómo poner un gateway delante y por qué el mismo modelo que funciona en un chat se rompe como agente.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M70</dd></div>
+          <div><dt>Parte</dt><dd>VIII. AI Engineering: modelos, harnesses y agentes</dd></div>
+          <div><dt>Duración</dt><dd>110 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M13, M14, M15, M62</dd></div>
+          <div><dt>Estado</dt><dd data-status="m70">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Decidir con números si conviene servir un modelo propio o usar una API.</li>
+    <li>Elegir entre Ollama, llama.cpp, vLLM y LM Studio según la escala y el hardware.</li>
+    <li>Leer un archivo GGUF y el nombre de una cuantización sin adivinar.</li>
+    <li>Calcular la memoria de un modelo denso o MoE con su KV cache, y la cota de velocidad del decode.</li>
+    <li>Poner un gateway delante de varios modelos con routing por costo y fallback.</li>
+    <li>Diagnosticar por qué un modelo local que funciona en un chat falla como agente.</li>
+  </ul>
+</section>
+
+
+<h2 id="por-que"><span class="sec-num">70.1</span>Cuándo conviene un modelo propio</h2>
+
+<p>En <a href="m62-pila-agente.html#modelo">M62.2</a> viste que un modelo <dfn data-term="open-weights">open weights</dfn> publica sus pesos: los descargas y los sirves donde quieras. En <a href="m62-pila-agente.html#local">M62.11</a> lo probaste con Ollama en una máquina. Este módulo es la versión seria de esa decisión: cuándo vale la pena, con qué servidor, en qué hardware y cómo se integra con el resto de la plataforma.</p>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Tener un auto contra usar taxis. El auto propio conviene si lo usas todos los días, si necesitas ir a lugares donde no llegan los taxis o si no quieres que nadie sepa adónde vas. Si lo usas dos veces por semana, el estacionamiento, el seguro y el mantenimiento cuestan más que los viajes. Y el auto que te alcanza para comprar casi nunca es el mejor del mercado.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f701t f701d">
+<title id="f701t">Cuándo conviene un modelo propio</title>
+<desc id="f701d">A la izquierda, cuatro razones para servir un modelo propio: los datos no pueden salir, el volumen es alto y constante, hace falta funcionar sin red o con latencia fija, y hace falta congelar la versión del modelo. A la derecha, tres costos: calidad menor que la de los modelos grandes por API, operación (actualizar, monitorear, guardias) y hardware que se paga aunque esté ocioso. En el centro, la pregunta que decide: si alguna razón de la izquierda es obligatoria, o si el volumen paga los tres costos.</desc>
+<defs><marker id="f701a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="190" y="28" text-anchor="middle">Razones para servirlo tú</text>
+<text class="dg-label" x="580" y="28" text-anchor="middle">Lo que pagas a cambio</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="24" y="46" width="330" height="48" rx="8"/>
+<text class="dg-small" x="189.0" y="66.5" text-anchor="middle">Los datos no pueden salir</text>
+<text class="dg-tiny" x="189.0" y="81.5" text-anchor="middle">contrato, regulación, código ajeno</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="24" y="106" width="330" height="48" rx="8"/>
+<text class="dg-small" x="189.0" y="126.5" text-anchor="middle">Volumen alto y constante</text>
+<text class="dg-tiny" x="189.0" y="141.5" text-anchor="middle">la GPU se usa casi todo el día</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="24" y="166" width="330" height="48" rx="8"/>
+<text class="dg-small" x="189.0" y="186.5" text-anchor="middle">Sin red o latencia fija</text>
+<text class="dg-tiny" x="189.0" y="201.5" text-anchor="middle">en planta, en un avión, en el borde</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="24" y="226" width="330" height="48" rx="8"/>
+<text class="dg-small" x="189.0" y="246.5" text-anchor="middle">Congelar la versión</text>
+<text class="dg-tiny" x="189.0" y="261.5" text-anchor="middle">el mismo modelo dentro de dos años</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="416" y="46" width="330" height="48" rx="8"/>
+<text class="dg-small" x="581.0" y="66.5" text-anchor="middle">Calidad</text>
+<text class="dg-tiny" x="581.0" y="81.5" text-anchor="middle">los que entran en una GPU son más flojos</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="416" y="106" width="330" height="48" rx="8"/>
+<text class="dg-small" x="581.0" y="126.5" text-anchor="middle">Operación</text>
+<text class="dg-tiny" x="581.0" y="141.5" text-anchor="middle">actualizar, medir, guardias de noche</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="416" y="166" width="330" height="48" rx="8"/>
+<text class="dg-small" x="581.0" y="186.5" text-anchor="middle">Hardware ocioso</text>
+<text class="dg-tiny" x="581.0" y="201.5" text-anchor="middle">la GPU se paga aunque nadie la use</text>
+<rect class="dg-box--em" x="416" y="232" width="330" height="48" rx="8"/>
+<text class="dg-small" x="581.0" y="252.5" text-anchor="middle">¿Alguna razón es obligatoria,</text>
+<text class="dg-tiny" x="581.0" y="267.5" text-anchor="middle">o el volumen paga los tres costos?</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 70.1.</b> Cuatro razones para servir un modelo propio y tres costos. Alcanza una razón obligatoria; si ninguna lo es, decide el volumen.</figcaption>
+</figure>
+
+<p>La cuenta de costo usa los números de <a href="m65-elegir-harness.html#costo">M65.7</a>: un equipo de 12 personas gastaba unos 708 USD al mes en tokens con un modelo grande por API. Ahora el lado propio, con supuestos dichos como supuestos <span class="badge badge--ref">Diseño de referencia</span>:</p>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Opción</th><th>Cuenta</th><th>Al mes</th></tr></thead>
+    <tbody>
+<tr><td>API (M65.7)</td><td>1&#8239;584 tareas × 0.447 USD</td><td class="r">708 USD</td></tr>
+<tr><td>Una H100 alquilada todo el mes</td><td>730 horas × 2.50 USD por hora (supuesto)</td><td class="r">1&#8239;825 USD</td></tr>
+<tr><td>Una estación con una RTX 4090</td><td>unos 3&#8239;000 USD en 36 meses, más luz (supuesto)</td><td class="r">unos 100 USD</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Para ese equipo, una GPU de datacenter cuesta más que la API, sin contar a quién opera el servidor, y el modelo que entra en ella es más flojo. La estación de escritorio es barata, pero sirve a una persona y con un modelo de 30B, no a doce con uno de frontera. El modelo propio gana cuando hay una razón que no es de costo (los datos del cliente no pueden salir, la planta no tiene red) o cuando el volumen es tan alto que la GPU trabaja casi todo el día: un clasificador que procesa millones de tickets, no doce personas programando.</p>
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>La comparación honesta es por tarea resuelta, no por token. Un modelo local que necesita el doble de turnos o resuelve el 60&#8239;% de lo que resuelve uno grande no cuesta cero: cuesta el tiempo de la persona que rehace el 40&#8239;%. Se mide con el set de tareas de <a href="m65-elegir-harness.html#medir">M65.8</a>, igual que un harness.</p>
+</aside>
+
+
+
+<h2 id="servidores"><span class="sec-num">70.2</span>Cuatro servidores y para qué escala sirve cada uno</h2>
+
+<p>El <dfn data-term="servidor-inferencia">servidor de inferencia</dfn> es la pieza de <a href="m62-pila-agente.html#inferencia">M62.3</a> que carga los pesos y expone una API. En <a href="m15-motores-inferencia.html#motor">M15</a> viste lo que hace por dentro un motor de producción. Los cuatro que vas a encontrar con modelos abiertos se ordenan por escala:</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f702t f702d">
+<title id="f702t">Cuatro servidores de inferencia por escala</title>
+<desc id="f702d">Un eje de izquierda a derecha va de una persona en su máquina a un equipo y a miles de usuarios. LM Studio es una aplicación de escritorio con interfaz gráfica para una persona. Ollama es un servicio que descarga y sirve modelos con un comando, para una persona o un equipo chico. llama.cpp, con su llama-server, es el motor en C++ que corre en CPU, GPU o Mac y lee GGUF. vLLM es un motor para GPUs de datacenter con continuous batching y PagedAttention, pensado para muchas requests a la vez. Debajo, qué formato leen: GGUF los tres primeros, y safetensors con FP8 o AWQ vLLM.</desc>
+<defs><marker id="f702a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-edge" d="M30 52 L740 52" marker-end="url(#f702a)"/>
+<text class="dg-tiny" x="30" y="36" text-anchor="start">Una persona</text>
+<text class="dg-tiny" x="385" y="36" text-anchor="middle">Un equipo</text>
+<text class="dg-tiny" x="740" y="36" text-anchor="end">Miles de usuarios</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="24" y="74" width="168" height="52" rx="8"/>
+<text class="dg-small" x="108.0" y="96.5" text-anchor="middle">LM Studio</text>
+<text class="dg-tiny" x="108.0" y="111.5" text-anchor="middle">app de escritorio</text>
+<rect class="dg-box" x="24" y="136" width="168" height="30" rx="6"/>
+<text class="dg-tiny" x="108.0" y="155.0" text-anchor="middle">interfaz para probar</text>
+<rect class="dg-box" x="24" y="174" width="168" height="30" rx="6"/>
+<text class="dg-tiny" x="108.0" y="193.0" text-anchor="middle">servidor compatible</text>
+<rect class="dg-box" x="24" y="212" width="168" height="30" rx="6"/>
+<text class="dg-tiny" x="108.0" y="231.0" text-anchor="middle">motor llama.cpp o MLX</text>
+<text class="dg-tiny" x="108" y="270" text-anchor="middle">Lee: GGUF, MLX</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="208" y="74" width="168" height="52" rx="8"/>
+<text class="dg-small" x="292.0" y="96.5" text-anchor="middle">Ollama</text>
+<text class="dg-tiny" x="292.0" y="111.5" text-anchor="middle">un comando y listo</text>
+<rect class="dg-box" x="208" y="136" width="168" height="30" rx="6"/>
+<text class="dg-tiny" x="292.0" y="155.0" text-anchor="middle">ollama pull, ollama run</text>
+<rect class="dg-box" x="208" y="174" width="168" height="30" rx="6"/>
+<text class="dg-tiny" x="292.0" y="193.0" text-anchor="middle">API en :11434</text>
+<rect class="dg-box" x="208" y="212" width="168" height="30" rx="6"/>
+<text class="dg-tiny" x="292.0" y="231.0" text-anchor="middle">dos dialectos</text>
+<text class="dg-tiny" x="292" y="270" text-anchor="middle">Lee: GGUF</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="392" y="74" width="168" height="52" rx="8"/>
+<text class="dg-small" x="476.0" y="96.5" text-anchor="middle">llama.cpp</text>
+<text class="dg-tiny" x="476.0" y="111.5" text-anchor="middle">llama-server</text>
+<rect class="dg-box" x="392" y="136" width="168" height="30" rx="6"/>
+<text class="dg-tiny" x="476.0" y="155.0" text-anchor="middle">C++, CPU, GPU o Mac</text>
+<rect class="dg-box" x="392" y="174" width="168" height="30" rx="6"/>
+<text class="dg-tiny" x="476.0" y="193.0" text-anchor="middle">descarga capas a CPU</text>
+<rect class="dg-box" x="392" y="212" width="168" height="30" rx="6"/>
+<text class="dg-tiny" x="476.0" y="231.0" text-anchor="middle">el motor de los otros</text>
+<text class="dg-tiny" x="476" y="270" text-anchor="middle">Lee: GGUF</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="576" y="74" width="168" height="52" rx="8"/>
+<text class="dg-small" x="660.0" y="96.5" text-anchor="middle">vLLM</text>
+<text class="dg-tiny" x="660.0" y="111.5" text-anchor="middle">motor de datacenter</text>
+<rect class="dg-box" x="576" y="136" width="168" height="30" rx="6"/>
+<text class="dg-tiny" x="660.0" y="155.0" text-anchor="middle">continuous batching</text>
+<rect class="dg-box" x="576" y="174" width="168" height="30" rx="6"/>
+<text class="dg-tiny" x="660.0" y="193.0" text-anchor="middle">PagedAttention</text>
+<rect class="dg-box" x="576" y="212" width="168" height="30" rx="6"/>
+<text class="dg-tiny" x="660.0" y="231.0" text-anchor="middle">tensor parallel</text>
+<text class="dg-tiny" x="660" y="270" text-anchor="middle">Lee: safetensors, FP8, AWQ</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 70.2.</b> Los cuatro servidores por la escala para la que están pensados, y el formato de pesos que leen.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Servidor</th><th>Qué es</th><th>Para quién</th><th>Lo que no hace bien</th></tr></thead>
+    <tbody>
+<tr><td>LM Studio</td><td>Aplicación de escritorio con interfaz para buscar, bajar y probar modelos; expone un servidor compatible con OpenAI <span class="badge badge--doc">Documentado</span></td><td>Una persona que explora</td><td>Servir a otros; automatizar</td></tr>
+<tr><td>Ollama</td><td>Servicio que baja y sirve modelos con un comando, con su biblioteca de modelos ya empaquetados <span class="badge badge--doc">Documentado</span></td><td>Una persona o un equipo chico</td><td>Muchas requests a la vez sobre una GPU</td></tr>
+<tr><td>llama.cpp (<code>llama-server</code>)</td><td>El motor en C++ que lee GGUF; corre en CPU, GPU NVIDIA o AMD y Mac, y puede repartir capas entre GPU y CPU <span class="badge badge--doc">Documentado</span></td><td>Quien quiere control fino o hardware poco común</td><td>Throughput de datacenter</td></tr>
+<tr><td>vLLM</td><td>Motor de datacenter con continuous batching, PagedAttention, prefix caching y tensor parallel (<a href="m15-motores-inferencia.html#batching">M15</a>) <span class="badge badge--doc">Documentado</span></td><td>Un equipo o un producto</td><td>Correr en una laptop; GGUF es secundario</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Los tres primeros comparten motor: Ollama y LM Studio usan por debajo la librería de llama.cpp (ggml) o una propia muy parecida, y por eso leen los mismos archivos GGUF. vLLM viene de otra tradición: pesos en safetensors, como salen del entrenamiento, o cuantizados en FP8 o AWQ para GPUs de datacenter. SGLang es la alternativa más cercana a vLLM y se elige con el mismo criterio.</p>
+<pre data-lang="shell"><code># Descargar y servir (el servidor queda escuchando en localhost:11434)
+$ ollama pull qwen3:30b-a3b
+$ OLLAMA_CONTEXT_LENGTH=32768 ollama serve
+
+# Qué cargó, cuánta memoria usa y si algo quedó en la CPU
+$ ollama ps
+NAME             SIZE     PROCESSOR    CONTEXT
+qwen3:30b-a3b    ...      100% GPU     32768</code></pre>
+<pre data-lang="shell"><code># llama.cpp: el mismo GGUF, con control fino
+$ llama-server -m Qwen3-30B-A3B-Q4_K_M.gguf \
+    --ctx-size 32768 \        # contexto de cada ranura
+    --n-gpu-layers 99 \       # todas las capas en la GPU
+    --jinja \                 # usar el chat template del GGUF (tool calling)
+    --port 8080</code></pre>
+<pre data-lang="shell"><code># vLLM: pesos en safetensors, varias GPUs, muchas requests a la vez
+$ vllm serve Qwen/Qwen3-30B-A3B-FP8 \
+    --max-model-len 32768 \
+    --tensor-parallel-size 2 \
+    --enable-auto-tool-choice --tool-call-parser hermes \
+    --enable-prefix-caching</code></pre>
+<p>La diferencia que más pesa al pasar de una persona a un equipo es el batching. Ollama atiende pocas requests en paralelo por modelo; vLLM mete decenas en la misma pasada de la GPU (<a href="m15-motores-inferencia.html#batching">M15.2</a>) y reutiliza el prefijo compartido entre requests (<a href="m15-motores-inferencia.html#prefix">M15.4</a>), que en agentes es enorme: todas las sesiones empiezan con el mismo system prompt y las mismas herramientas. Con la misma GPU, vLLM sirve a un equipo; Ollama, a una persona.</p>
+
+
+<h2 id="gguf"><span class="sec-num">70.3</span>GGUF y los nombres de las cuantizaciones</h2>
+
+<p>Un <dfn data-term="gguf">GGUF</dfn> es el formato de archivo de llama.cpp: un solo archivo con los pesos y todo lo necesario para usarlos <span class="badge badge--doc">Documentado</span>. Esa es su ventaja sobre una carpeta de safetensors: no hay que buscar aparte el tokenizer ni el chat template.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f703t f703d">
+<title id="f703t">Qué hay dentro de un archivo GGUF</title>
+<desc id="f703d">Un archivo GGUF es un solo archivo con tres partes. Primero, una cabecera con la versión y cuántos tensores y metadatos trae. Después, los metadatos clave y valor: la arquitectura y sus dimensiones (capas, cabezas, largo de contexto), el tokenizer completo con su vocabulario, el chat template en Jinja y el tipo de cuantización. Al final, los tensores, cada uno con su nombre, su forma y su tipo, guardados en bloques; en Q4_K cada bloque trae sus pesos en 4 bits y las escalas que los devuelven a su rango.</desc>
+<defs><marker id="f703a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="24" y="30" width="150" height="190" rx="8"/>
+<text class="dg-small" x="99.0" y="121.5" text-anchor="middle">Cabecera</text>
+<text class="dg-tiny" x="99.0" y="136.5" text-anchor="middle">versión, conteos</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="190" y="30" width="270" height="190" rx="8"/>
+<text class="dg-label" x="325" y="52" text-anchor="middle">Metadatos clave y valor</text>
+<rect class="dg-box" x="202" y="68" width="246" height="28" rx="6"/>
+<text class="dg-tiny" x="325.0" y="86.0" text-anchor="middle">arquitectura: capas, cabezas, contexto</text>
+<rect class="dg-box" x="202" y="104" width="246" height="28" rx="6"/>
+<text class="dg-tiny" x="325.0" y="122.0" text-anchor="middle">tokenizer: vocabulario y reglas</text>
+<rect class="dg-box" x="202" y="140" width="246" height="28" rx="6"/>
+<text class="dg-tiny" x="325.0" y="158.0" text-anchor="middle">chat template (Jinja)</text>
+<rect class="dg-box" x="202" y="176" width="246" height="28" rx="6"/>
+<text class="dg-tiny" x="325.0" y="194.0" text-anchor="middle">tipo de cuantización: Q4_K_M</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="476" y="30" width="270" height="190" rx="8"/>
+<text class="dg-label" x="611" y="52" text-anchor="middle">Tensores</text>
+<rect class="dg-box" x="488" y="68" width="246" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="611.0" y="86.0" text-anchor="middle">blk.0.attn_q.weight  Q4_K</text>
+<rect class="dg-box" x="488" y="104" width="246" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="611.0" y="122.0" text-anchor="middle">blk.0.ffn_up_exps  Q4_K</text>
+<rect class="dg-box" x="488" y="140" width="246" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="611.0" y="158.0" text-anchor="middle">blk.0.attn_v.weight  Q6_K</text>
+<rect class="dg-box" x="488" y="176" width="246" height="28" rx="6"/>
+<text class="dg-tiny dg-mono" x="611.0" y="194.0" text-anchor="middle">… cientos más</text>
+<text class="dg-small" x="385" y="240" text-anchor="middle">Un solo archivo: el modelo, cómo se tokeniza y cómo se arma el prompt</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 70.3.</b> Las tres partes de un GGUF. El chat template viaja dentro del archivo, y de él depende el tool calling (<a href="m63-tool-calling.html#plantilla">M63.2</a>).</figcaption>
+</figure>
+
+<p>La cuantización es la de <a href="m14-cuantizacion.html#como">M14.2</a>: pesos en menos bits, en bloques, cada uno con su escala. Lo nuevo son los nombres. En <code>Q4_K_M</code>, el 4 son los bits de la mayoría de los pesos, la K es la familia de "k-quants" (bloques con escalas por superbloque) y la M es la mezcla mediana: algunos tensores sensibles, como parte de la atención, quedan en más bits. Por eso los bits por peso reales no son 4 sino unos 4.8; <code>Q8_0</code> son unos 8.5, porque cada bloque guarda su escala <span class="badge badge--doc">Documentado</span>.</p>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Nombre</th><th>Bits por peso (aprox.)</th><th>Cuándo se usa</th></tr></thead>
+    <tbody>
+<tr><td><code>F16</code> o <code>BF16</code></td><td class="r">16</td><td>Referencia; casi nunca para servir en una GPU de consumo</td></tr>
+<tr><td><code>Q8_0</code></td><td class="r">8.5</td><td>Calidad prácticamente igual a la original, a mitad de memoria</td></tr>
+<tr><td><code>Q6_K</code>, <code>Q5_K_M</code></td><td class="r">entre 5.5 y 6.6</td><td>Cuando sobra algo de memoria</td></tr>
+<tr><td><code>Q4_K_M</code></td><td class="r">4.8</td><td>El valor por defecto habitual: buen equilibrio</td></tr>
+<tr><td><code>Q3_K</code>, <code>Q2_K</code>, "1-bit dinámicos"</td><td class="r">menos de 4</td><td>Para meter un modelo enorme; la calidad cae y hay que medirla</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un GGUF con un chat template viejo o incompleto sirve para chatear y falla con herramientas: el modelo emite las llamadas en un formato que el servidor no reconoce. El síntoma es una llamada que vuelve como texto. Antes de culpar al modelo, compara el template del archivo con el del repositorio oficial del modelo.</p>
+</aside>
+
+
+
+<h2 id="moe"><span class="sec-num">70.4</span>MoE: lo que se carga contra lo que se usa</h2>
+
+<p>Un <dfn data-term="moe">MoE</dfn> (<a href="m15-motores-inferencia.html#paralelismo">M15.8</a>) tiene muchos expertos por capa y cada token pasa solo por unos pocos. La distinción que importa al servirlo es entre <dfn data-term="parametros-activos">parámetros activos</dfn> y totales: los activos deciden cuánto se calcula y cuánto se lee por token; los totales, cuánta memoria hace falta, porque el router puede elegir cualquier experto en el próximo token y todos tienen que estar cargados.</p>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Modelo</th><th>Totales</th><th>Activos por token</th><th>Expertos</th></tr></thead>
+    <tbody>
+<tr><td>Qwen3-30B-A3B</td><td>30.5 mil millones</td><td>3.3 mil millones</td><td>128, usa 8 <span class="badge badge--doc">Documentado</span></td></tr>
+<tr><td>Qwen3-235B-A22B</td><td>235 mil millones</td><td>22 mil millones</td><td>128, usa 8 <span class="badge badge--doc">Documentado</span></td></tr>
+<tr><td>DeepSeek-V3</td><td>671 mil millones</td><td>37 mil millones</td><td>256 y uno compartido, usa 8 <span class="badge badge--doc">Documentado</span></td></tr>
+<tr><td>Kimi K2</td><td>1 billón</td><td>32 mil millones</td><td>384 y uno compartido, usa 8 <span class="badge badge--doc">Documentado</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>El nombre de los modelos de Qwen ya lo dice: A3B es "3B activos". Con la cuenta de memoria de <a href="m13-gpus.html#sizing">M13.5</a> y 4.8 bits por peso:</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f704t f704d">
+<title id="f704t">Memoria contra lectura por token en tres modelos</title>
+<desc id="f704d">Barras horizontales en escala logarítmica para tres modelos. Para cada uno, una barra de los gigabytes que ocupan los pesos en 4.8 bits por peso y otra de los gigabytes que se leen por token generado. Qwen3-32B, denso: ocupa unos 19.7 GB y lee los mismos 19.7 por token. Qwen3-30B-A3B, MoE: ocupa 18.3 GB y lee unos 2 GB por token. Kimi K2, MoE: ocupa unos 600 GB y lee unos 19 GB por token. La memoria la deciden los parámetros totales y la velocidad, los activos.</desc>
+<defs><marker id="f704a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="sim-grid" d="M200.0 30 V250"/>
+<text class="dg-tiny" x="200.0" y="268" text-anchor="middle">1 GB</text>
+<path class="sim-grid" d="M343.3 30 V250"/>
+<text class="dg-tiny" x="343.3" y="268" text-anchor="middle">10 GB</text>
+<path class="sim-grid" d="M486.7 30 V250"/>
+<text class="dg-tiny" x="486.7" y="268" text-anchor="middle">100 GB</text>
+<path class="sim-grid" d="M630.0 30 V250"/>
+<text class="dg-tiny" x="630.0" y="268" text-anchor="middle">1000 GB</text>
+<text class="dg-small" x="186" y="70" text-anchor="end">Qwen3-32B (denso)</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="200" y="46" width="185.5" height="22" rx="4"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="200" y="74" width="185.5" height="22" rx="4"/>
+<text class="dg-tiny" x="393.5" y="62" text-anchor="start">ocupa 19.7 GB</text>
+<text class="dg-tiny" x="393.5" y="90" text-anchor="start">lee 19.7 GB por token</text>
+<text class="dg-small" x="186" y="142" text-anchor="end">Qwen3-30B-A3B (MoE)</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="200" y="118" width="181.0" height="22" rx="4"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="200" y="146" width="42.5" height="22" rx="4"/>
+<text class="dg-tiny" x="389.0" y="134" text-anchor="start">ocupa 18.3 GB</text>
+<text class="dg-tiny" x="250.5" y="162" text-anchor="start">lee 2.0 GB por token</text>
+<text class="dg-small" x="186" y="214" text-anchor="end">Kimi K2 (MoE)</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="200" y="190" width="398.2" height="22" rx="4"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="200" y="218" width="183.9" height="22" rx="4"/>
+<text class="dg-tiny" x="606.2" y="206" text-anchor="start">ocupa 600 GB</text>
+<text class="dg-tiny" x="391.9" y="234" text-anchor="start">lee 19.2 GB por token</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 70.4.</b> Escala logarítmica. Un MoE ocupa como su total y lee por token como sus activos. Qwen3-30B-A3B ocupa lo mismo que un denso de 32B y lee diez veces menos.</figcaption>
+</figure>
+
+<p>La consecuencia práctica viene del roofline de <a href="m13-gpus.html#roofline">M13.3</a>: el decode de una sola conversación está limitado por cuántos bytes hay que leer de memoria por token. Una cota superior es el ancho de banda dividido por los bytes de los parámetros activos. En una RTX 4090 (1&#8239;008 GB/s) <span class="badge badge--doc">Documentado</span>: el denso de 32B lee unos 19.7 GB por token y no puede pasar de unos 51 tokens por segundo; Qwen3-30B-A3B lee unos 2 GB y su cota es de unos 500. Las cifras reales son menores (hay más que leer que los pesos, y el router no es gratis), pero el orden de magnitud explica por qué los MoE chicos son tan populares para correr en local: ocupan como un modelo mediano y responden como uno chico.</p>
+<aside class="callout callout--def">
+  <p class="callout-label">Definición</p>
+  <p>Kimi K2 en FP8, su formato publicado, ocupa un billón de bytes: 1 TB solo en pesos. Que los pesos sean abiertos no lo vuelve local; lo vuelve servible por cualquiera que tenga un nodo de ocho GPUs grandes, y por eso hay varios proveedores que lo venden por API.</p>
+</aside>
+
+
+
+<h2 id="vram"><span class="sec-num">70.5</span>La cuenta de la memoria, con un ejemplo resuelto</h2>
+
+<p>La memoria de un modelo servido tiene tres partes: los pesos, el KV cache de las conversaciones en curso (<a href="m12-llm-por-dentro.html#kv-cache">M12</a>) y un resto de buffers de cómputo y del runtime. Las dos primeras se calculan; la tercera se mide.</p>
+<ol class="steps">
+  <li><span class="step-title">Pesos</span>Qwen3-30B-A3B en <code>Q4_K_M</code>: 30.5 × 10<sup>9</sup> × 4.8 ÷ 8 = 18.3 GB.</li>
+  <li><span class="step-title">KV por token</span>La configuración publicada dice 48 capas, 4 cabezas KV (GQA) y 128 de dimensión por cabeza <span class="badge badge--doc">Documentado</span>. Por token: 2 (K y V) × 48 × 4 × 128 × 2 bytes = 98&#8239;304 bytes, unos 96 KiB.</li>
+  <li><span class="step-title">KV de una conversación</span>Con 32&#8239;768 tokens, su contexto nativo: 98&#8239;304 × 32&#8239;768 = 3.22 GB.</li>
+  <li><span class="step-title">Resto</span>Supuesto de 1.5 GB; <code>ollama ps</code> o <code>nvidia-smi</code> dicen el real.</li>
+  <li><span class="step-title">Total</span>18.3 + 3.2 + 1.5 = 23.0 GB en una GPU de 24 GB: entra justo, con una sola conversación.</li>
+</ol>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f705t f705d">
+<title id="f705t">La memoria de Qwen3-30B-A3B en una GPU de 24 GB</title>
+<desc id="f705d">Tres barras apiladas contra una línea en 24 GB. Primera: pesos 18.3 GB, KV cache de 32 768 tokens en 16 bits 3.2 GB y resto 1.5 GB, en total 23.0 GB: entra justo. Segunda: lo mismo con el contexto en 65 536 tokens, KV de 6.4 GB, en total 26.2 GB: no entra. Tercera: 65 536 tokens con el KV en q8_0, 3.2 GB, en total 23.0 GB: vuelve a entrar.</desc>
+<defs><marker id="f705a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-feedback" d="M530.0 24 V236"/>
+<text class="dg-tiny" x="530.0" y="252" text-anchor="middle">límite: 24 GB</text>
+<text class="dg-small" x="158" y="58" text-anchor="end">32K, KV en 16 bits</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="170.0" y="34" width="274.5" height="36" rx="4"/>
+<text class="dg-tiny" x="307.2" y="57" text-anchor="middle">pesos 18.3</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="444.5" y="34" width="48.3" height="36" rx="4"/>
+<text class="dg-tiny" x="468.6" y="57" text-anchor="middle">KV 3.2</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="492.8" y="34" width="22.5" height="36" rx="4"/>
+<text class="dg-small" x="600" y="57" text-anchor="start">23.0 GB: entra</text>
+<text class="dg-small" x="158" y="124" text-anchor="end">64K, KV en 16 bits</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="170.0" y="100" width="274.5" height="36" rx="4"/>
+<text class="dg-tiny" x="307.2" y="123" text-anchor="middle">pesos 18.3</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="444.5" y="100" width="96.6" height="36" rx="4"/>
+<text class="dg-tiny" x="492.8" y="123" text-anchor="middle">KV 6.4</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="541.1" y="100" width="22.5" height="36" rx="4"/>
+<text class="dg-small" x="600" y="123" text-anchor="start">26.2 GB: no entra</text>
+<text class="dg-small" x="158" y="190" text-anchor="end">64K, KV en q8_0</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="170.0" y="166" width="274.5" height="36" rx="4"/>
+<text class="dg-tiny" x="307.2" y="189" text-anchor="middle">pesos 18.3</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="444.5" y="166" width="48.3" height="36" rx="4"/>
+<text class="dg-tiny" x="468.6" y="189" text-anchor="middle">KV 3.2</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="492.8" y="166" width="22.5" height="36" rx="4"/>
+<text class="dg-small" x="600" y="189" text-anchor="start">23.0 GB: entra</text>
+<text class="dg-tiny" x="385" y="272" text-anchor="middle">GB de 10^9 bytes. El resto (1.5 GB de buffers y runtime) es un supuesto.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 70.5.</b> El mismo modelo con tres configuraciones. Duplicar el contexto no entra; guardar el KV cache en 8 bits lo vuelve a meter.</figcaption>
+</figure>
+
+<p>Dos palancas aparecen en la figura. Pasar el KV cache a <code>q8_0</code> lo divide por dos con poca pérdida; en Ollama se activa con <code>OLLAMA_KV_CACHE_TYPE=q8_0</code> junto con flash attention <span class="badge badge--doc">Documentado</span>. Y la ventana: Ollama elige el contexto por defecto según la VRAM, 4&#8239;096 tokens con menos de 24 GiB, 32&#8239;768 entre 24 y 48, y 262&#8239;144 con 48 o más, y recomienda al menos 64&#8239;000 para agentes y herramientas de código <span class="badge badge--doc">Documentado</span>. La recomendación choca con la cuenta: en 24 GB, 64&#8239;000 tokens de un modelo de 30B solo entran con el KV en 8 bits, y pasan del contexto nativo de este modelo (32&#8239;768; más allá usa YaRN, <a href="m16-context-windows.html#rope">M16.5</a>).</p>
+<div data-calc="localfit"></div>
+<p>Prueba los cuatro ejemplos. El de Kimi K2 en ocho H100 muestra el otro extremo: los pesos ocupan 1 TB en FP8 y no entran en 640 GB; hace falta un nodo con más memoria (ocho H200, de 141 GB cada una) o una cuantización más agresiva. Y el denso de 32B muestra el precio de no ser MoE: ocupa parecido y su cota de velocidad es diez veces menor.</p>
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Si no entra, llama.cpp y Ollama no fallan: descargan capas a la CPU y el modelo sigue andando, cinco o diez veces más lento, porque esas capas se leen al ancho de banda de la RAM. El síntoma es un <code>PROCESSOR</code> como "35%/65% CPU/GPU" en <code>ollama ps</code>. Para un agente que hace cuarenta turnos, es la diferencia entre minutos y una hora.</p>
+</aside>
+
+
+
+<h2 id="dialectos"><span class="sec-num">70.6</span>Los dialectos de cada servidor</h2>
+
+<p>Un harness y un servidor se entienden si hablan el mismo <dfn data-term="dialecto-api">dialecto</dfn> (<a href="m62-pila-agente.html#inferencia-dialectos">M62.3</a>). Los cuatro servidores hablan el de OpenAI; varios, también el de Anthropic:</p>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Servidor</th><th>OpenAI (<code>/v1/chat/completions</code>)</th><th>Anthropic (<code>/v1/messages</code>)</th></tr></thead>
+    <tbody>
+<tr><td>Ollama</td><td>Sí, en <code>/v1</code></td><td>Sí, desde la 0.14.0 <span class="badge badge--doc">Documentado</span></td></tr>
+<tr><td>llama.cpp (<code>llama-server</code>)</td><td>Sí</td><td>Sí <span class="badge badge--doc">Documentado</span></td></tr>
+<tr><td>vLLM</td><td>Sí</td><td>Sí, en las versiones recientes <span class="badge badge--doc">Documentado</span></td></tr>
+<tr><td>LM Studio</td><td>Sí</td><td>Revisa la versión instalada</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Con el dialecto en común, conectar un harness es cambiar la URL base. Claude Code contra Ollama:</p>
+<pre data-lang="shell"><code># Claude Code contra Ollama, en el dialecto de Anthropic (Ollama 0.14.0 o posterior)
+$ unset ANTHROPIC_API_KEY
+$ export ANTHROPIC_BASE_URL=http://localhost:11434
+$ export ANTHROPIC_AUTH_TOKEN=ollama        # Ollama no la revisa, pero el harness la pide
+$ claude --model qwen3:30b-a3b</code></pre>
+<p>Que el dialecto coincida no garantiza que todo funcione. La traducción entre el formato de la API y el chat template del modelo la hace el servidor, y ahí se pierden cosas (<a href="m63-tool-calling.html#traducir">M63.12</a>): bloques de pensamiento, <code>tool_choice</code> forzado, llamadas en paralelo o el caché del prefijo con <code>cache_control</code>, que un servidor local ignora. El widget de <a href="m62-pila-agente.html#inferencia-traductor">M62.3</a> muestra cuándo hace falta un traductor en el medio.</p>
+
+
+<h2 id="gateways"><span class="sec-num">70.7</span>Gateways: un nombre lógico, varios destinos</h2>
+
+<p>En cuanto hay más de un modelo, conviene un <dfn data-term="gateway-llm">gateway de LLM</dfn> delante. La idea es la del router de flota de <a href="m19-router-flota.html#elegir">M19</a>, del lado de quien consume: las aplicaciones piden un nombre lógico ("barato", "difícil", "confidencial") y el gateway decide a qué servidor va, con qué clave y qué hace si falla.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f706t f706d">
+<title id="f706t">Un gateway delante de varios modelos</title>
+<desc id="f706d">A la izquierda, tres clientes: un harness como Claude Code, un orquestador y una aplicación. Todos hablan con un gateway, por ejemplo LiteLLM, que tiene claves por equipo, topes de gasto, logs y reglas de routing. A la derecha, cuatro destinos: Ollama en la máquina local, vLLM en el servidor del equipo, la API de Anthropic y OpenRouter. Las reglas: lo confidencial va siempre a lo propio; lo barato va primero a vLLM; si falla, cae a la API.</desc>
+<defs><marker id="f706a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="40" width="160" height="52" rx="8"/>
+<text class="dg-small" x="100.0" y="62.5" text-anchor="middle">Claude Code</text>
+<text class="dg-tiny" x="100.0" y="77.5" text-anchor="middle">dialecto Anthropic</text>
+<path class="dg-edge" d="M180 66 L268 150" marker-end="url(#f706a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="120" width="160" height="52" rx="8"/>
+<text class="dg-small" x="100.0" y="142.5" text-anchor="middle">Orquestador</text>
+<text class="dg-tiny" x="100.0" y="157.5" text-anchor="middle">dialecto OpenAI</text>
+<path class="dg-edge" d="M180 146 L268 150" marker-end="url(#f706a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="200" width="160" height="52" rx="8"/>
+<text class="dg-small" x="100.0" y="222.5" text-anchor="middle">Aplicación</text>
+<text class="dg-tiny" x="100.0" y="237.5" text-anchor="middle">SDK de OpenAI</text>
+<path class="dg-edge" d="M180 226 L268 150" marker-end="url(#f706a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="270" y="70" width="220" height="160" rx="8"/>
+<text class="dg-label" x="380" y="96" text-anchor="middle">Gateway (LiteLLM)</text>
+<rect class="dg-box" x="284" y="112" width="192" height="28" rx="6"/>
+<text class="dg-tiny" x="380.0" y="130.0" text-anchor="middle">claves por equipo, topes</text>
+<rect class="dg-box" x="284" y="148" width="192" height="28" rx="6"/>
+<text class="dg-tiny" x="380.0" y="166.0" text-anchor="middle">logs y costo por request</text>
+<rect class="dg-box" x="284" y="184" width="192" height="28" rx="6"/>
+<text class="dg-tiny" x="380.0" y="202.0" text-anchor="middle">routing y fallback</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="586" y="24" width="164" height="50" rx="8"/>
+<text class="dg-small" x="668.0" y="45.5" text-anchor="middle">Ollama, local</text>
+<text class="dg-tiny" x="668.0" y="60.5" text-anchor="middle">datos que no salen</text>
+<path class="dg-edge" d="M490 150 L584 49" marker-end="url(#f706a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="586" y="90" width="164" height="50" rx="8"/>
+<text class="dg-small" x="668.0" y="111.5" text-anchor="middle">vLLM del equipo</text>
+<text class="dg-tiny" x="668.0" y="126.5" text-anchor="middle">barato y constante</text>
+<path class="dg-edge" d="M490 150 L584 115" marker-end="url(#f706a)"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="586" y="156" width="164" height="50" rx="8"/>
+<text class="dg-small" x="668.0" y="177.5" text-anchor="middle">API de Anthropic</text>
+<text class="dg-tiny" x="668.0" y="192.5" text-anchor="middle">lo difícil</text>
+<path class="dg-edge" d="M490 150 L584 181" marker-end="url(#f706a)"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="586" y="222" width="164" height="50" rx="8"/>
+<text class="dg-small" x="668.0" y="243.5" text-anchor="middle">OpenRouter</text>
+<text class="dg-tiny" x="668.0" y="258.5" text-anchor="middle">modelos abiertos grandes</text>
+<path class="dg-edge" d="M490 150 L584 247" marker-end="url(#f706a)"/>
+<text class="dg-tiny" x="380" y="262" text-anchor="middle">confidencial: solo lo propio · barato: vLLM primero · si falla: la API</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 70.6.</b> Los clientes hablan con el gateway en su dialecto; el gateway traduce, registra el costo y enruta por reglas. Lo confidencial no tiene fallback hacia afuera.</figcaption>
+</figure>
+
+<pre data-lang="shell"><code># config.yaml de LiteLLM: tres nombres lógicos, cuatro destinos
+model_list:
+  - model_name: confidencial            # nunca sale de la red
+    litellm_params:
+      model: ollama_chat/qwen3:30b-a3b
+      api_base: http://gpu-local:11434
+  - model_name: barato
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3-30B-A3B-FP8
+      api_base: http://vllm.interno:8000/v1
+  - model_name: dificil
+    litellm_params:
+      model: anthropic/claude-sonnet-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+router_settings:
+  fallbacks: [{"barato": ["dificil"]}]  # si vLLM falla o tarda, la API
+  # "confidencial" no tiene fallback: si lo propio cae, falla</code></pre>
+<p>Tres decisiones de esa configuración merecen explicación <span class="badge badge--ref">Diseño de referencia</span>:</p>
+<ul>
+  <li><b>El routing por costo es por tipo de tarea, no por request.</b> Un clasificador que decide en cada request si es fácil o difícil agrega latencia y errores. Funciona mejor que cada cliente pida el nombre lógico que corresponde: el bot de etiquetas pide "barato", el harness de código pide "difícil".</li>
+  <li><b>El fallback va hacia arriba, nunca hacia afuera con datos confidenciales.</b> Si vLLM cae, "barato" puede ir a la API (<a href="m19-router-flota.html#fallback">M19.9</a>). "Confidencial" no tiene fallback: un error es mejor que mandar el contrato de un cliente a un proveedor que no está en el acuerdo.</li>
+  <li><b>El costo se registra en el gateway.</b> Cada request queda con su equipo, su modelo y sus tokens: es el metering de <a href="m21-metering.html">M21</a> en chico, y la fuente de los topes de gasto por clave.</li>
+</ul>
+<p>OpenRouter es la versión hospedada de la misma idea: una API que enruta a decenas de proveedores, incluidos los que sirven Kimi, DeepSeek o Qwen grandes. Resuelve el acceso a modelos abiertos que no entran en tu hardware, pero los datos salen hacia el proveedor que elija, y eso se configura y se revisa <span class="badge badge--doc">Documentado</span>.</p>
+
+
+<h2 id="agentes-locales"><span class="sec-num">70.8</span>Por qué un modelo local falla como agente</h2>
+
+<p>Un modelo de 30B que conversa bien puede fallar como agente desde el primer turno. Casi nunca es "el modelo es malo": son tres puntos concretos, y dos de ellos son configuración.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f707t f707d">
+<title id="f707t">Tres puntos donde un modelo local se rompe como agente</title>
+<desc id="f707d">El camino de un turno de agente con un modelo local, de izquierda a derecha: el harness arma un prompt de 30 000 tokens; el servidor lo recibe con su contexto configurado; el modelo genera; el parser del servidor convierte el texto en una llamada a herramienta. Tres fallas marcadas: si el servidor tiene 4 096 tokens de contexto, corta el comienzo del prompt y el modelo pierde el system prompt y las herramientas; si el parser no coincide con el formato del modelo, la llamada vuelve como texto y el bucle termina; si la cuantización es muy agresiva o el modelo es chico, los argumentos salen mal formados o repite llamadas.</desc>
+<defs><marker id="f707a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="40" width="160" height="54" rx="8"/>
+<text class="dg-small" x="100.0" y="63.5" text-anchor="middle">Harness</text>
+<text class="dg-tiny" x="100.0" y="78.5" text-anchor="middle">prompt de 30 000 tokens</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="210" y="40" width="160" height="54" rx="8"/>
+<text class="dg-small" x="290.0" y="63.5" text-anchor="middle">Servidor</text>
+<text class="dg-tiny" x="290.0" y="78.5" text-anchor="middle">contexto configurado</text>
+<path class="dg-edge" d="M180 67 L208 67" marker-end="url(#f707a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="400" y="40" width="160" height="54" rx="8"/>
+<text class="dg-small" x="480.0" y="63.5" text-anchor="middle">Modelo</text>
+<text class="dg-tiny" x="480.0" y="78.5" text-anchor="middle">genera texto</text>
+<path class="dg-edge" d="M370 67 L398 67" marker-end="url(#f707a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="590" y="40" width="160" height="54" rx="8"/>
+<text class="dg-small" x="670.0" y="63.5" text-anchor="middle">Parser</text>
+<text class="dg-tiny" x="670.0" y="78.5" text-anchor="middle">texto a tool call</text>
+<path class="dg-edge" d="M560 67 L588 67" marker-end="url(#f707a)"/>
+<rect class="dg-bad" x="20" y="150" width="230" height="76" rx="8"/>
+<text class="dg-small" x="135" y="172" text-anchor="middle">Contexto de 4 096</text>
+<text class="dg-tiny" x="135" y="192" text-anchor="middle">corta el comienzo: se pierden</text>
+<text class="dg-tiny" x="135" y="208" text-anchor="middle">system prompt y herramientas</text>
+<path class="dg-feedback" d="M290 94 L135 150"/>
+<rect class="dg-bad" x="270" y="150" width="230" height="76" rx="8"/>
+<text class="dg-small" x="385" y="172" text-anchor="middle">Modelo chico o muy cuantizado</text>
+<text class="dg-tiny" x="385" y="192" text-anchor="middle">argumentos mal formados,</text>
+<text class="dg-tiny" x="385" y="208" text-anchor="middle">llamadas repetidas</text>
+<path class="dg-feedback" d="M480 94 L385 150"/>
+<rect class="dg-bad" x="520" y="150" width="230" height="76" rx="8"/>
+<text class="dg-small" x="635" y="172" text-anchor="middle">Parser equivocado</text>
+<text class="dg-tiny" x="635" y="192" text-anchor="middle">la llamada vuelve como texto</text>
+<text class="dg-tiny" x="635" y="208" text-anchor="middle">y el bucle termina sin hacer nada</text>
+<path class="dg-feedback" d="M670 94 L635 150"/>
+<text class="dg-small" x="385" y="262" text-anchor="middle">Los tres se arreglan fuera del modelo: configuración, parser y un set de tareas que lo mida.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 70.7.</b> Un turno de agente con un modelo local y sus tres puntos de falla. Los dos primeros son configuración del servidor; el tercero se mide.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+<tr><td>El agente ignora las herramientas o "olvida" quién es a mitad de sesión</td><td>El contexto del servidor es más chico que el prompt y corta el comienzo</td><td>Contexto de al menos 32&#8239;768 tokens; verificarlo en <code>ollama ps</code></td></tr>
+<tr><td>La llamada aparece como texto <code>&lt;tool_call&gt;</code> y el bucle termina</td><td>El parser del servidor no coincide con el formato del modelo (<a href="m63-tool-calling.html#parser">M63.4</a>)</td><td>En vLLM, <code>--enable-auto-tool-choice</code> y el <code>--tool-call-parser</code> del modelo; en llama.cpp, <code>--jinja</code></td></tr>
+<tr><td>JSON mal formado, rutas inventadas, la misma llamada tres veces</td><td>Modelo chico, cuantización agresiva o un modelo sin entrenamiento en trayectorias (<a href="m63-tool-calling.html#entrenamiento">M63.11</a>)</td><td>Subir de cuantización o de modelo; menos herramientas; decodificación restringida (<a href="m63-tool-calling.html#restringida">M63.6</a>)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>El tercer punto no se adivina, se mide: el mismo set de tareas de <a href="m65-elegir-harness.html#medir">M65.8</a>, con el modelo grande por API y el local, cinco corridas por tarea y pass^k. Es común que el modelo local resuelva bien las tareas cortas y se pierda en las largas; ese resultado ya es una decisión de routing: lo corto y confidencial al local, lo largo a la API. Cómo armar esos evals de punta a punta es <a href="m72-evals-agentes.html#set-propio">M72</a>.</p>
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Fija la versión de todo: el archivo de pesos (con su hash), la versión del servidor y sus flags. Un <code>ollama pull</code> que trae una versión nueva del mismo nombre, o una actualización de vLLM que cambia el parser, cambia el comportamiento del agente sin que nadie haya tocado el código. Es la misma razón por la que se versiona el modelo en un registry (<a href="m19-router-flota.html#registry">M19.4</a>).</p>
+</aside>
+
+
+
+<h2 id="fallas"><span class="sec-num">70.9</span>Fallas típicas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa probable</th><th>Qué hacer</th></tr></thead>
+    <tbody>
+<tr><td>El modelo anda diez veces más lento que en la demo</td><td>No entró en la GPU y hay capas en la CPU</td><td>Cuantización menor, contexto menor o KV en 8 bits; mirar <code>ollama ps</code></td></tr>
+<tr><td>Con dos personas a la vez, la segunda espera</td><td>Ollama atiende pocas requests en paralelo y el KV de dos no entra</td><td>vLLM con batching para un equipo; o una GPU por persona</td></tr>
+<tr><td>Respuestas peores que las del mismo modelo por API</td><td>Otra cuantización, otro chat template u otros parámetros de muestreo</td><td>Comparar con el mismo set de tareas; usar los parámetros recomendados en la model card</td></tr>
+<tr><td>La factura de la GPU alquilada supera la de la API</td><td>Volumen bajo: la GPU está ociosa casi todo el día</td><td>Volver a la API, o apagar fuera de horario</td></tr>
+<tr><td>Un dato confidencial salió hacia un proveedor</td><td>Un fallback hacia afuera en el gateway</td><td>Nombre lógico confidencial sin fallback; revisar los logs del gateway</td></tr>
+<tr><td>Cambió el comportamiento sin cambios en el código</td><td>Un <code>pull</code> trajo otra versión del modelo o del servidor</td><td>Fijar versiones y hashes</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Un modelo propio es un servicio más: necesita monitoreo (latencia, tokens por segundo, memoria), alertas, un plan para actualizarlo y alguien que lo atienda de noche. Si nadie en el equipo va a hacer eso, la API con un acuerdo de retención cero (<a href="m65-elegir-harness.html#privacidad">M65.6</a>) suele ser la respuesta, aunque los pesos sean gratis.</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m70"></div>
+<div data-exercise="m70-local"></div>
+<div data-checkpoint="m70"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m70.data.js"></script>
+<script src="../assets/js/data/exercises/m70.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-local.js"></script>
+</body>
+</html>

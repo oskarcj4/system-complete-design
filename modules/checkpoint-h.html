@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CP-H. Checkpoint H: la plataforma de agentes de un equipo</title>
+<meta name="description" content="Examen integrador de la Parte VIII (M62 a M72) y un diseño: la plataforma de agentes de código de un equipo, de la pila a los evals, con solución de referencia.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="cph">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Checkpoint H: la plataforma de agentes de un equipo</h1>
+        <p class="lead">La Parte VIII termina aquí. El examen cruza los once módulos de AI Engineering en situaciones concretas, y el diseño te pide armar la plataforma de agentes de un equipo entero: qué modelo y qué harness, con qué permisos, qué extensiones, qué corre solo, qué se queda en casa y cómo se sabe si funciona.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>CP-H</dd></div>
+          <div><dt>Parte</dt><dd>VIII. AI Engineering: modelos, harnesses y agentes</dd></div>
+          <div><dt>Duración</dt><dd>90 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M62 a M72</dd></div>
+          <div><dt>Estado</dt><dd data-status="cph">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Qué vas a demostrar</h2>
+  <ul>
+    <li>Ubicar cada pieza de un agente en su capa (modelo, inferencia, harness, extensiones, orquestador) y saber cuál cambia qué.</li>
+    <li>Elegir harness y modelo con datos propios, y decidir cuándo un modelo propio tiene sentido.</li>
+    <li>Diseñar permisos, sandbox y regla de dos para agentes que trabajan acompañados y solos.</li>
+    <li>Medir todo lo anterior con evals de trayectoria, pass^k y ataques plantados.</li>
+  </ul>
+</section>
+
+
+<h2 id="examen"><span class="sec-num">H.1</span>El examen</h2>
+
+<p>Veinte preguntas que cruzan los once módulos de la Parte VIII; se aprueba con el 70&#8239;%. Cada explicación dice qué módulo repasar si fallaste, y puedes repetirlo las veces que quieras. Aprobarlo habilita el botón para marcar el checkpoint como completado, al final de la página.</p>
+<div data-quiz="cph"></div>
+
+
+<h2 id="diseno"><span class="sec-num">H.2</span>Diseño: la plataforma de agentes de un equipo</h2>
+
+<p>Una empresa de software de 40 personas quiere ordenar el uso de agentes de código. Hoy cada uno usa lo que quiere, con su tarjeta personal. Tienen tres repositorios: el producto (TypeScript y Python), la infraestructura (Terraform) y uno de un cliente del sector salud, cuyo contrato prohíbe que el código salga de la red de la empresa. Quieren tres cosas: agentes en la máquina de cada persona, un revisor automático de PRs en CI y un agente que de noche actualice dependencias y abra PRs. Presupuesto: 4&#8239;000 USD por mes en total.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 340" role="img" aria-labelledby="fcph1t fcph1d">
+<title id="fcph1t">Las capas de la plataforma de agentes</title>
+<desc id="fcph1d">Cinco capas de arriba abajo. Las personas del equipo usan el harness en su máquina, y un orquestador corre agentes en CI. Debajo, la capa de extensiones y contexto: servidores MCP, skills, hooks y el archivo de memoria del repositorio. Debajo, permisos y sandbox: reglas, modos, contenedor y egress. Debajo, el gateway de modelos, que reparte entre la API de un proveedor y un servidor propio con un modelo open weights. A la derecha, una columna que cruza todas las capas: evals y red teaming, que miden cada cambio. Cada capa lleva los módulos que la cubren.</desc>
+<defs><marker id="fcph1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="20" width="560" height="50" rx="8"/>
+<text class="dg-small" x="120" y="50" text-anchor="middle">Personas y CI</text>
+<text class="dg-tiny" x="360" y="50" text-anchor="middle">harness en cada máquina; orquestador en CI</text>
+<text class="dg-tiny" x="530" y="50" text-anchor="middle">M64, M65, M69</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="82" width="560" height="50" rx="8"/>
+<text class="dg-small" x="120" y="112" text-anchor="middle">Extensiones y contexto</text>
+<text class="dg-tiny" x="360" y="112" text-anchor="middle">MCP, skills, hooks, memoria del repo</text>
+<text class="dg-tiny" x="530" y="112" text-anchor="middle">M67, M68</text>
+<path class="dg-edge" d="M294 71 L294 81" marker-end="url(#fcph1a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="144" width="560" height="50" rx="8"/>
+<text class="dg-small" x="120" y="174" text-anchor="middle">Permisos y sandbox</text>
+<text class="dg-tiny" x="360" y="174" text-anchor="middle">reglas, modos, contenedor, egress</text>
+<text class="dg-tiny" x="530" y="174" text-anchor="middle">M66, M71</text>
+<path class="dg-edge" d="M294 133 L294 143" marker-end="url(#fcph1a)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="14" y="206" width="560" height="50" rx="8"/>
+<text class="dg-small" x="120" y="236" text-anchor="middle">Gateway de modelos</text>
+<text class="dg-tiny" x="360" y="236" text-anchor="middle">nombres lógicos, cuotas, fallback</text>
+<text class="dg-tiny" x="530" y="236" text-anchor="middle">M62, M70</text>
+<path class="dg-edge" d="M294 195 L294 205" marker-end="url(#fcph1a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="14" y="268" width="560" height="50" rx="8"/>
+<text class="dg-small" x="120" y="298" text-anchor="middle">Modelos</text>
+<text class="dg-tiny" x="360" y="298" text-anchor="middle">API del proveedor | servidor propio</text>
+<text class="dg-tiny" x="530" y="298" text-anchor="middle">M63, M70</text>
+<path class="dg-edge" d="M294 257 L294 267" marker-end="url(#fcph1a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="600" y="20" width="156" height="298" rx="8"/>
+<text class="dg-small" x="678" y="150" text-anchor="middle">Evals y</text>
+<text class="dg-small" x="678" y="168" text-anchor="middle">red teaming</text>
+<text class="dg-tiny" x="678" y="192" text-anchor="middle">miden cada cambio</text>
+<text class="dg-tiny" x="678" y="210" text-anchor="middle">M71, M72</text>
+</svg>
+  </div>
+  <figcaption><b>Figura H.1.</b> Las capas de la plataforma y los módulos que cubren cada una. Los evals cruzan todas. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<p>Escribe el diseño como un documento corto. Para cada punto, la decisión y por qué:</p>
+<ol>
+  <li><b>Pila y harness</b> (<a href="m62-pila-agente.html">M62</a>, <a href="m64-anatomia-harness.html">M64</a>, <a href="m65-elegir-harness.html">M65</a>): qué harness para las personas, cómo lo eligen y con qué datos.</li>
+  <li><b>Modelos y gateway</b> (<a href="m63-tool-calling.html">M63</a>, <a href="m70-open-weights.html">M70</a>): qué va a la API, qué al servidor propio y cómo se impide que el código del cliente de salud salga.</li>
+  <li><b>Permisos y sandbox</b> (<a href="m66-permisos-sandbox.html">M66</a>): las reglas por repositorio, qué modo para quién, y cómo corren los agentes que no tienen a nadie mirando.</li>
+  <li><b>Extensiones y contexto</b> (<a href="m67-extender-harness.html">M67</a>, <a href="m68-context-engineering.html">M68</a>): qué servidores MCP, skills y hooks son del equipo, y qué va en el archivo de memoria de cada repo.</li>
+  <li><b>El revisor de PRs y el agente nocturno</b> (<a href="m69-orquestadores.html">M69</a>, <a href="m71-jailbreak-red-teaming.html">M71</a>): cómo corren, con qué credenciales y cómo cumplen la regla de dos.</li>
+  <li><b>Medir</b> (<a href="m72-evals-agentes.html">M72</a>): el set de evals, quién lo mantiene, qué corre en cada PR y qué de noche.</li>
+  <li><b>Costo</b>: la cuenta del mes contra los 4&#8239;000 USD, con los supuestos dichos.</li>
+</ol>
+
+
+<h2 id="solucion"><span class="sec-num">H.3</span>Solución de referencia</h2>
+
+<p>Hay más de una buena respuesta. Esta recorre los puntos en orden; compárala con la tuya decisión por decisión.</p>
+<details class="solution" data-toc="skip">
+  <summary>Ver la solución de referencia</summary>
+  <div class="solution-body">
+    <h3>Pila y harness</h3>
+    <ul>
+      <li>Un harness por defecto para todo el equipo, elegido con un set de 40 tareas sacadas de PRs de los tres repositorios, cinco corridas por tarea y pass^k, comparando dos o tres combinaciones con el modelo fijo (<a href="m65-elegir-harness.html#medir">M65.8</a>). Quien quiera otro puede usarlo, con las mismas reglas.</li>
+      <li>El harness habla con el gateway, no con cada proveedor: cambiar de modelo es cambiar un nombre (<a href="m62-pila-agente.html#inferencia">M62.3</a>).</li>
+    </ul>
+    <h3>Modelos y gateway</h3>
+    <ul>
+      <li>Gateway con nombres lógicos: <code>general</code> y <code>dificil</code> van a la API; <code>salud</code> va solo al servidor propio, sin fallback hacia afuera (<a href="m70-open-weights.html#gateways">M70.7</a>).</li>
+      <li>Servidor propio: vLLM con un MoE de unos 30B activos 3B en FP8 en una GPU de 80 GB, con el parser de herramientas del modelo y prefix caching (<a href="m70-open-weights.html#agentes-locales">M70.8</a>). Se mide contra la API en tareas del repo de salud que se puedan anonimizar, o con tareas equivalentes del producto.</li>
+      <li>Claves por equipo en el gateway, con cuotas y registro de tokens; nadie usa su tarjeta personal.</li>
+    </ul>
+    <h3>Permisos y sandbox</h3>
+    <ul>
+      <li>Reglas versionadas en cada repositorio: deny para <code>.env</code>, llaves y <code>git push --force</code>; ask para comandos con red y para Terraform <code>apply</code>; allow para tests y linters (<a href="m66-permisos-sandbox.html#reglas">M66.2</a>).</li>
+      <li>En infraestructura, el agente nunca tiene credenciales que apliquen cambios: hace <code>plan</code> y la persona aplica (<a href="m66-permisos-sandbox.html#credenciales">M66.7</a>).</li>
+      <li>Lo que corre sin nadie mirando va en contenedor, con egress por lista y sin modo que se salte preguntas fuera de la caja (<a href="m66-permisos-sandbox.html#autonomia">M66.8</a>).</li>
+    </ul>
+    <h3>Extensiones y contexto</h3>
+    <ul>
+      <li>Un plugin del equipo con dos o tres servidores MCP revisados (tickets, documentación interna), skills para tareas repetidas (migraciones, releases) y un hook que bloquea escrituras fuera del repo (<a href="m67-extender-harness.html#combinar">M67.9</a>). Herramientas cargadas bajo demanda para no gastar contexto fijo (<a href="m67-extender-harness.html#bajo-demanda">M67.3</a>).</li>
+      <li>Archivo de memoria corto por repo: comandos de build y test, convenciones y lo que no se toca; lo que cambia, al final del prompt, para no romper el caché (<a href="m68-context-engineering.html#orden">M68.3</a>).</li>
+    </ul>
+    <h3>El revisor de PRs y el agente nocturno</h3>
+    <ul>
+      <li>Revisor: corre en CI sin secretos sobre PRs de forks, solo con permiso de comentar; lee contenido no confiable (A) y comenta (C), sin datos sensibles (B) (<a href="m69-orquestadores.html#ci">M69</a>).</li>
+    </ul>
+    <figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="fcph2t fcph2d">
+<title id="fcph2t">El agente nocturno y la regla de dos</title>
+<desc id="fcph2d">El agente que trabaja de noche sobre las dependencias. Tres propiedades de la regla de dos: entradas no confiables (notas de versión y changelogs de terceros), datos sensibles (no tiene: sin credenciales de producción, solo un token que abre PRs) y cambia estado o se comunica (abre un PR, egress solo al registro de paquetes). Como le falta la propiedad B, puede trabajar solo; el PR lo revisa una persona por la mañana y los evals del CI corren antes del merge.</desc>
+<defs><marker id="fcph2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-warnbox" x="14" y="24" width="238" height="92" rx="8"/>
+<text class="dg-small" x="133" y="52" text-anchor="middle">A: entradas no confiables</text>
+<text class="dg-tiny" x="133" y="74" text-anchor="middle">changelogs de terceros</text>
+<text class="dg-label" x="133" y="100" text-anchor="middle">sí</text>
+<rect class="dg-ok" x="266" y="24" width="238" height="92" rx="8"/>
+<text class="dg-small" x="385" y="52" text-anchor="middle">B: datos sensibles</text>
+<text class="dg-tiny" x="385" y="74" text-anchor="middle">sin credenciales de producción</text>
+<text class="dg-label" x="385" y="100" text-anchor="middle">no</text>
+<rect class="dg-warnbox" x="518" y="24" width="238" height="92" rx="8"/>
+<text class="dg-small" x="637" y="52" text-anchor="middle">C: cambia estado</text>
+<text class="dg-tiny" x="637" y="74" text-anchor="middle">abre un PR; egress con lista</text>
+<text class="dg-label" x="637" y="100" text-anchor="middle">sí</text>
+<rect class="dg-box" x="14" y="150" width="742" height="46" rx="8"/>
+<text class="dg-small" x="385.0" y="177.0" text-anchor="middle">Dos de tres: corre solo. El PR lo aprueba una persona y los evals corren antes del merge</text>
+<path class="dg-edge" d="M133 118 L133 148" marker-end="url(#fcph2a)"/>
+<path class="dg-edge" d="M385 118 L385 148" marker-end="url(#fcph2a)"/>
+<path class="dg-edge" d="M637 118 L637 148" marker-end="url(#fcph2a)"/>
+<text class="dg-tiny" x="385" y="230" text-anchor="middle">Si un día necesita credenciales de producción, deja de correr solo: aprobación humana en cada acción</text>
+</svg>
+  </div>
+  <figcaption><b>Figura H.2.</b> El agente nocturno tiene A y C, no B. Por eso puede correr solo; el merge lo decide una persona. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+    <ul>
+      <li>Agente nocturno: contenedor, token que solo abre PRs, egress al registro de paquetes, presupuesto por corrida y tope diario (<a href="m69-orquestadores.html#presupuesto">M69</a>). Cumple la regla de dos (<a href="m71-jailbreak-red-teaming.html#agentes">M71.7</a>).</li>
+      <li>El repositorio de salud queda fuera de los dos, salvo con el modelo propio y dentro de la red.</li>
+    </ul>
+    <h3>Medir</h3>
+    <ul>
+      <li>Set de 100 tareas de PRs reales con tests ocultos, reglas de trayectoria y presupuesto, más 15 tareas con injection plantada en issues y dependencias (<a href="m72-evals-agentes.html#set-propio">M72.5</a>, <a href="m72-evals-agentes.html#seguridad">M72.9</a>).</li>
+      <li>En cada PR que cambie prompts, herramientas, extensiones o versiones: un subset de 20 tareas. Una noche al mes, y antes de cada cambio de modelo, el set completo con cinco corridas. Dueño: el equipo de plataforma (<a href="m72-evals-agentes.html#ci">M72.8</a>).</li>
+    </ul>
+    <h3>Costo</h3>
+    <ul>
+      <li>Supuesto: 40 personas a unos 60 USD por mes de API cada una, 2&#8239;400 USD.</li>
+      <li>Servidor propio: una GPU de 80 GB alquilada a 2.50 USD por hora, unos 1&#8239;825 USD si está prendida todo el mes (<a href="m70-open-weights.html#por-que">M70.1</a>). No entra junto con lo anterior: se prende en horario laboral (unos 22 días × 10 horas × 2.50 = 550 USD) o se usa un servidor en la empresa.</li>
+      <li>Evals: una corrida completa de 100 × 5 a 0.447 USD son unos 224 USD; con los subsets de los PRs, unos 300 USD al mes. Una completa por semana costaría unos 894 USD.</li>
+      <li>Total con supuestos: 2&#8239;400 + 550 + 300 ≈ 3&#8239;250 USD, con margen para el revisor y el agente nocturno. Los números se reemplazan por los del gateway después del primer mes.</li>
+    </ul>
+  </div>
+</details>
+
+
+<h2 id="repaso"><span class="sec-num">H.4</span>Qué repasar según tus errores</h2>
+
+<p>Si fallaste varias de un bloque, vuelve a su módulo antes de seguir.</p>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Si fallaste en…</th><th>Repasa</th></tr></thead>
+    <tbody>
+<tr><td>Capas, dialectos de API, qué mueve un harness y qué no</td><td><a href="m62-pila-agente.html">M62: La pila de un agente</a></td></tr>
+<tr><td>Chat template, parser, decodificación restringida</td><td><a href="m63-tool-calling.html">M63: Tool calling por dentro</a></td></tr>
+<tr><td>Edición por reemplazo exacto, compactación, subagentes</td><td><a href="m64-anatomia-harness.html">M64: Anatomía de un harness</a></td></tr>
+<tr><td>Criterios, costo por tarea, pass^k</td><td><a href="m65-elegir-harness.html">M65: Elegir un harness</a></td></tr>
+<tr><td>Reglas, modos, sandbox, egress, credenciales</td><td><a href="m66-permisos-sandbox.html">M66: Permisos, sandbox y autonomía</a></td></tr>
+<tr><td>MCP, skills, hooks, plugins</td><td><a href="m67-extender-harness.html">M67: Extender un harness</a></td></tr>
+<tr><td>Orden del prompt, caché, memoria, compactar</td><td><a href="m68-context-engineering.html">M68: Context engineering y memoria</a></td></tr>
+<tr><td>Lotes, presupuesto, CI, aislamiento</td><td><a href="m69-orquestadores.html">M69: Orquestadores</a></td></tr>
+<tr><td>GGUF, MoE, memoria, gateways</td><td><a href="m70-open-weights.html">M70: Modelos open weights y serving propio</a></td></tr>
+<tr><td>Familias de ataque, clasificadores, regla de dos</td><td><a href="m71-jailbreak-red-teaming.html">M71: Jailbreak, injection y red teaming</a></td></tr>
+<tr><td>Trayectoria, graders, ruido, evals en CI</td><td><a href="m72-evals-agentes.html">M72: Evals de agentes</a></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Con esto cierras la Parte&nbsp;VIII. Empezaste con una pila de cinco capas y terminaste con una plataforma que se mide: el modelo decide qué hacer, el harness y los permisos deciden qué puede hacer, y los evals dicen si lo hizo bien.</p>
+<div data-checkpoint="cph"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/cph.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+</body>
+</html>

@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M84. Modelos de renderizado: PHP, SPA y Next.js</title>
+<meta name="description" content="Quién ejecuta qué en cada forma de armar una web: PHP clásico, SPA con API y SSR con hidratación. Server y Client Components, la frontera 'use client', Server Actions como endpoints públicos, secretos que llegan al bundle, el middleware como chequeo optimista y dos CVE documentados de Next.js y React.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m84">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Modelos de renderizado: PHP, SPA y Next.js</h1>
+        <p class="lead">Cambiar de framework no cambia las preguntas de seguridad: qué se ve, qué viaja, qué se ejecuta y quién lo autoriza. Cambia dónde está cada respuesta, y en Next.js la línea entre servidor y navegador pasa por dentro del mismo archivo.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M84</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>120 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M73, M77, M78, M80</dd></div>
+          <div><dt>Estado</dt><dd data-status="m84">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Explicar quién ejecuta qué en PHP clásico, en una SPA con API y en SSR con hidratación, y dónde vive cada defensa.</li>
+    <li>Serializar datos dentro del HTML sin abrir un XSS, en Next.js y en PHP.</li>
+    <li>Trazar la frontera <code>'use client'</code> y decidir qué props pueden cruzarla.</li>
+    <li>Proteger una Server Action como lo que es: un endpoint POST público, con sesión, autorización y validación propias.</li>
+    <li>Evitar que un secreto llegue al bundle, y explicar por qué el middleware no alcanza como control de acceso.</li>
+    <li>Reconocer CVE-2025-29927 y CVE-2025-55182 y lo que enseñan sobre confiar en el framework.</li>
+  </ul>
+</section>
+
+<p>La pregunta que abrió la Parte IX en <a href="m73-navegador.html#quien">M73</a> fue dónde corre cada línea de código, porque de eso depende quién la controla. En PHP clásico la respuesta es fácil; en el sistema de prácticas, que es una SPA que pide JSON a una API en PHP, ya hay dos lugares; en Next.js, los dos lugares conviven en el mismo archivo. Este módulo recorre los tres modelos y vuelve a las mismas cuatro preguntas: qué se ve, qué viaja, qué se ejecuta y quién lo autoriza.</p>
+
+
+<h2 id="modelos"><span class="sec-num">84.1</span>Tres formas de armar una página</h2>
+
+<p>El <b>renderizado</b> es convertir datos en el HTML que el usuario ve. Lo que cambia entre modelos es quién lo hace y cuándo:</p>
+<ul>
+  <li><b>PHP clásico</b> (una página por request, a veces llamado MPA): el servidor arma la página entera y el navegador la muestra.</li>
+  <li><dfn data-term="spa">SPA</dfn> (single-page application): el servidor manda un HTML casi vacío y un bundle de JavaScript, y el navegador pide los datos a una API y arma el DOM. Es el sistema de prácticas.</li>
+  <li><dfn data-term="ssr">SSR</dfn> (server-side rendering) con <dfn data-term="hidratacion">hidratación</dfn>: el servidor arma el HTML con los datos, como PHP, y además manda el JavaScript; el navegador muestra el HTML de inmediato y después lo "hidrata": conecta los eventos para que responda a los clics como una SPA.</li>
+</ul>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f841t f841d">
+<title id="f841t">Quién ejecuta qué en tres modelos de renderizado</title>
+<desc id="f841d">Tres filas, una por modelo. En PHP clásico, el servidor arma la página entera con los datos y el navegador solo la muestra; cada clic pide una página nueva. En una SPA, como el sistema de prácticas, el servidor manda un HTML casi vacío y un bundle de JavaScript; el navegador pide los datos a la API en JSON y arma la página. En SSR con hidratación, como Next.js, el servidor arma el HTML con los datos y además manda el JavaScript; el navegador muestra el HTML y después lo hidrata para que responda a los clics. A la derecha de cada fila, dónde vive la autorización y dónde vive el escape.</desc>
+<defs><marker id="f841a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="110" y="24" text-anchor="middle">Modelo</text>
+<text class="dg-label" x="330" y="24" text-anchor="middle">Servidor</text>
+<text class="dg-label" x="540" y="24" text-anchor="middle">Navegador</text>
+<text class="dg-label" x="690" y="24" text-anchor="middle">Autoriza y escapa</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="40" width="190" height="66" rx="8"/>
+<text class="dg-small" x="109.0" y="69.5" text-anchor="middle">PHP clásico</text>
+<text class="dg-tiny" x="109.0" y="84.5" text-anchor="middle">una página por request</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="224" y="40" width="210" height="66" rx="8"/>
+<text class="dg-small" x="329.0" y="77.0" text-anchor="middle">arma el HTML con los datos</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="454" y="40" width="172" height="66" rx="8"/>
+<text class="dg-small" x="540.0" y="77.0" text-anchor="middle">muestra; recarga al clic</text>
+<path class="dg-edge" d="M434 73 L452 73" marker-end="url(#f841a)"/>
+<rect class="dg-box" x="640" y="40" width="116" height="66" rx="8"/>
+<text class="dg-small" x="698.0" y="69.5" text-anchor="middle">el servidor</text>
+<text class="dg-tiny" x="698.0" y="84.5" text-anchor="middle">el servidor</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="124" width="190" height="66" rx="8"/>
+<text class="dg-small" x="109.0" y="153.5" text-anchor="middle">SPA + API</text>
+<text class="dg-tiny" x="109.0" y="168.5" text-anchor="middle">el sistema de prácticas</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="224" y="124" width="210" height="66" rx="8"/>
+<text class="dg-small" x="329.0" y="161.0" text-anchor="middle">HTML vacío + JSON</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="454" y="124" width="172" height="66" rx="8"/>
+<text class="dg-small" x="540.0" y="161.0" text-anchor="middle">pide JSON y arma el DOM</text>
+<path class="dg-edge" d="M434 157 L452 157" marker-end="url(#f841a)"/>
+<rect class="dg-box" x="640" y="124" width="116" height="66" rx="8"/>
+<text class="dg-small" x="698.0" y="153.5" text-anchor="middle">la API</text>
+<text class="dg-tiny" x="698.0" y="168.5" text-anchor="middle">el JavaScript</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="14" y="208" width="190" height="66" rx="8"/>
+<text class="dg-small" x="109.0" y="237.5" text-anchor="middle">SSR + hidratación</text>
+<text class="dg-tiny" x="109.0" y="252.5" text-anchor="middle">Next.js</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="224" y="208" width="210" height="66" rx="8"/>
+<text class="dg-small" x="329.0" y="245.0" text-anchor="middle">HTML con datos + bundle</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="454" y="208" width="172" height="66" rx="8"/>
+<text class="dg-small" x="540.0" y="245.0" text-anchor="middle">muestra e hidrata</text>
+<path class="dg-edge" d="M434 241 L452 241" marker-end="url(#f841a)"/>
+<rect class="dg-box" x="640" y="208" width="116" height="66" rx="8"/>
+<text class="dg-small" x="698.0" y="237.5" text-anchor="middle">el servidor</text>
+<text class="dg-tiny" x="698.0" y="252.5" text-anchor="middle">React</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 84.1.</b> En los tres modelos la autorización está en el servidor. Lo que se mueve es el escape: del servidor, al JavaScript, a React.</figcaption>
+</figure>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>PHP clásico es un restaurante que sirve el plato armado. La SPA te da los ingredientes y la receta, y cocinas en tu mesa. SSR te sirve el plato armado y además te deja la receta para que puedas seguir cocinando. En los tres, la cocina decide qué ingredientes te da: nadie confía en que el cliente no los cambie.</p>
+</aside>
+
+<pre data-lang="js"><code>// app.js del sistema de prácticas: una SPA que pide JSON y arma el DOM
+const r = await fetch('api/endpoints/oportunidades.php', { credentials: 'same-origin' });
+const { data } = await r.json();              // la API autoriza; este código no
+for (const o of data) {
+  const li = document.createElement('li');
+  li.textContent = o.titulo;                  // el escape es tuyo (M77)
+  feed.append(li);
+}</code></pre>
+<p>En la SPA del proyecto, la API en PHP es la única barrera: el <code>app.js</code> lo puede leer y cambiar cualquiera, y la API se puede llamar sin él (<a href="m80-control-acceso.html#preguntas">M80</a>). El escape, en cambio, ya no lo hace <code>htmlspecialchars</code> sino el JavaScript que arma el DOM, con <code>textContent</code> (<a href="m77-xss-dom.html#dom">M77</a>).</p>
+
+
+<h2 id="hidratacion"><span class="sec-num">84.2</span>El estado que viaja dentro del HTML</h2>
+
+<p>Para hidratar, el JavaScript del cliente necesita los mismos datos con los que el servidor armó el HTML. Los frameworks los dejan dentro de la página, en un <code>&lt;script&gt;</code> con JSON (Next.js manda el payload de React Server Components en scripts como <code>self.__next_f.push(…)</code>) <span class="badge badge--doc">Documentado</span>. Ese script es un contexto de salida nuevo, y es el más traicionero de <a href="m77-xss-dom.html#contexto">M77</a>: dentro de una cadena de JSON, el parser de HTML sigue buscando <code>&lt;/script&gt;</code>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f842t f842d">
+<title id="f842t">El estado que el servidor deja dentro del HTML</title>
+<desc id="f842d">Un HTML generado por el servidor con dos partes. Arriba, el marcado visible, escapado por React. Abajo, un script con los datos serializados en JSON para hidratar. Si un título trae la cadena de cierre de script y se serializa con JSON.stringify sin más, el parser de HTML cierra el script ahí y lo que sigue se interpreta como HTML: un XSS. Los frameworks escapan el signo menor que dentro de ese JSON; en PHP se hace con json_encode y las banderas JSON_HEX_TAG y JSON_HEX_AMP.</desc>
+<defs><marker id="f842a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="20" width="470" height="210" rx="8"/>
+<text class="dg-small" x="30" y="42" text-anchor="start">Respuesta del servidor (HTML)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="30" y="54" width="438" height="50" rx="8"/>
+<text class="dg-tiny dg-mono" x="249.0" y="75.5" text-anchor="middle">&lt;h1&gt;&amp;lt;/script&amp;gt;&amp;lt;img…&amp;gt;&lt;/h1&gt;</text>
+<text class="dg-tiny" x="249.0" y="90.5" text-anchor="middle">marcado: React escapa el título</text>
+<rect class="dg-bad" x="30" y="116" width="438" height="50" rx="8"/>
+<text class="dg-tiny dg-mono" x="249.0" y="137.5" text-anchor="middle">&lt;script&gt;window.__DATOS__ = {"titulo": "&lt;/script&gt;&lt;img…&gt;"}</text>
+<text class="dg-tiny" x="249.0" y="152.5" text-anchor="middle">estado para hidratar</text>
+<text class="dg-tiny" x="249" y="190" text-anchor="middle">El parser de HTML no sabe de JSON: cierra el script</text>
+<text class="dg-tiny" x="249" y="208" text-anchor="middle">en el primer &lt;/script&gt;, aunque esté dentro de una cadena.</text>
+<rect class="dg-ok" x="510" y="20" width="246" height="210" rx="8"/>
+<text class="dg-label" x="633" y="44" text-anchor="middle">Defensa</text>
+<text class="dg-tiny dg-mono" x="633" y="68" text-anchor="middle">\u003c/script&gt; en el JSON,</text>
+<text class="dg-tiny" x="633" y="84" text-anchor="middle">en lugar de &lt;/script&gt;</text>
+<text class="dg-tiny" x="633" y="104" text-anchor="middle">Next.js y React lo hacen solos</text>
+<text class="dg-tiny dg-mono" x="633" y="128" text-anchor="middle">json_encode($x,</text>
+<text class="dg-tiny dg-mono" x="633" y="146" text-anchor="middle">JSON_HEX_TAG | JSON_HEX_AMP</text>
+<text class="dg-tiny dg-mono" x="633" y="164" text-anchor="middle">| JSON_HEX_APOS | JSON_HEX_QUOT)</text>
+<text class="dg-tiny" x="633" y="196" text-anchor="middle">o los datos en un atributo data-</text>
+<text class="dg-tiny" x="633" y="212" text-anchor="middle">escapado, y JSON.parse al leer</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 84.2.</b> <code>JSON.stringify</code> produce JSON válido, no HTML seguro. Un título con <code>&lt;/script&gt;</code> cierra el script antes de tiempo.</figcaption>
+</figure>
+
+<p>Next.js y React escapan el <code>&lt;</code> dentro de ese JSON. El riesgo aparece cuando lo haces tú: un <code>&lt;script&gt;</code> con <code>JSON.stringify</code> armado a mano en un layout, o PHP que deja datos para el frontend.</p>
+<pre data-lang="php"><code>&lt;?php
+// Si PHP deja datos para el JavaScript dentro de la página, escapa también '&lt;'
+$json = json_encode($oportunidades,
+    JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
+?&gt;
+&lt;script nonce="&lt;?= $nonce ?&gt;"&gt;window.__DATOS__ = &lt;?= $json ?&gt;;&lt;/script&gt;</code></pre>
+<p><code>JSON_HEX_TAG</code> convierte <code>&lt;</code> y <code>&gt;</code> en <code>\u003C</code> y <code>\u003E</code>, que el JavaScript lee igual y el parser de HTML no ve como etiqueta <span class="badge badge--doc">Documentado</span>. El <code>nonce</code> es el de la CSP de <a href="m78-csp-cabeceras.html#nonce">M78</a>.</p>
+
+
+<h2 id="rsc"><span class="sec-num">84.3</span>Server Components y la frontera 'use client'</h2>
+
+<p>En el App Router de Next.js, cada componente es un <dfn data-term="server-components">Server Component</dfn> salvo que su archivo empiece con <code>'use client'</code> <span class="badge badge--doc">Documentado</span>. Un Server Component corre solo en el servidor: puede leer la base y usar secretos, y su código nunca llega al navegador. Un Client Component corre en el servidor para el primer HTML y también en el navegador, así que su código está en el bundle.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f843t f843d">
+<title id="f843t">La frontera 'use client'</title>
+<desc id="f843d">Un árbol de componentes. Arriba, Server Components: la página de la oportunidad, que lee la base con la sesión, y un componente que muestra el detalle. La línea punteada es la frontera use client. Debajo, un Client Component, el botón Postular, que corre también en el navegador. Las props que cruzan la frontera se serializan y viajan en el payload de RSC: si se pasa el objeto usuario entero, el hash de la contraseña y el correo llegan al navegador aunque el botón no los use. A la derecha, la regla: pasar solo lo que el cliente necesita, armado a propósito.</desc>
+<defs><marker id="f843a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="20" width="250" height="56" rx="8"/>
+<text class="dg-small" x="139.0" y="44.5" text-anchor="middle">page.tsx (Server Component)</text>
+<text class="dg-tiny" x="139.0" y="59.5" text-anchor="middle">lee la base con la sesión</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="96" width="250" height="56" rx="8"/>
+<text class="dg-small" x="139.0" y="120.5" text-anchor="middle">&lt;Detalle&gt; (Server Component)</text>
+<text class="dg-tiny" x="139.0" y="135.5" text-anchor="middle">HTML, sin JavaScript</text>
+<path class="dg-edge" d="M200 76 L200 94" marker-end="url(#f843a)"/>
+<path class="dg-feedback" d="M14 176 H490"/>
+<text class="dg-tiny" x="20" y="170" text-anchor="start">frontera 'use client'</text>
+<text class="dg-tiny" x="214" y="170" text-anchor="start">lo que cruza se serializa</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="196" width="250" height="56" rx="8"/>
+<text class="dg-small" x="139.0" y="220.5" text-anchor="middle">&lt;BotonPostular&gt; (Client)</text>
+<text class="dg-tiny" x="139.0" y="235.5" text-anchor="middle">corre también en el navegador</text>
+<path class="dg-edge" d="M200 152 L200 194" marker-end="url(#f843a)"/>
+<rect class="dg-bad" x="290" y="96" width="200" height="56" rx="8"/>
+<text class="dg-tiny dg-mono" x="390.0" y="120.5" text-anchor="middle">usuario={usuario}</text>
+<text class="dg-tiny" x="390.0" y="135.5" text-anchor="middle">el objeto entero</text>
+<rect class="dg-bad" x="290" y="196" width="200" height="56" rx="8"/>
+<text class="dg-tiny dg-mono" x="390.0" y="220.5" text-anchor="middle">id, nombre, contrasena,</text>
+<text class="dg-tiny" x="390.0" y="235.5" text-anchor="middle">correo, id_rol… al navegador</text>
+<path class="dg-edge" d="M390 152 L390 194" marker-end="url(#f843a)"/>
+<rect class="dg-ok" x="516" y="20" width="240" height="232" rx="8"/>
+<text class="dg-label" x="636" y="44" text-anchor="middle">Regla</text>
+<text class="dg-tiny" x="636" y="72" text-anchor="middle">pasa solo lo que el cliente usa:</text>
+<text class="dg-tiny dg-mono" x="636" y="94" text-anchor="middle">oportunidadId={o.id}</text>
+<text class="dg-tiny dg-mono" x="636" y="112" text-anchor="middle">yaPostulado={…}</text>
+<text class="dg-tiny" x="636" y="144" text-anchor="middle">import 'server-only' en el</text>
+<text class="dg-tiny" x="636" y="162" text-anchor="middle">módulo que lee la base</text>
+<text class="dg-tiny" x="636" y="194" text-anchor="middle">un DTO armado a propósito,</text>
+<text class="dg-tiny" x="636" y="212" text-anchor="middle">nunca la fila de la base</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 84.3.</b> La directiva <code>'use client'</code> marca una frontera. Todo lo que cruza como prop se serializa y viaja, se muestre o no.</figcaption>
+</figure>
+
+<pre data-lang="js"><code>// app/oportunidades/[id]/page.tsx: Server Component, corre solo en el servidor
+import { obtenerOportunidad } from '@/datos/oportunidades';   // import 'server-only' adentro
+import { BotonPostular } from './boton-postular';
+
+export default async function Pagina({ params }) {
+  const { id } = await params;
+  const o = await obtenerOportunidad(Number(id));              // autoriza y lee la base
+  return (
+    &lt;article&gt;
+      &lt;h1&gt;{o.titulo}&lt;/h1&gt;                                       {/* React escapa */}
+      &lt;BotonPostular oportunidadId={o.id} yaPostulado={o.yaPostulado} /&gt;
+    &lt;/article&gt;
+  );
+}</code></pre>
+<pre data-lang="js"><code>// app/oportunidades/[id]/boton-postular.tsx: Client Component
+'use client';
+import { postular } from './acciones';
+
+export function BotonPostular({ oportunidadId, yaPostulado }) {
+  return (
+    &lt;form action={postular}&gt;
+      &lt;input type="hidden" name="oportunidadId" value={oportunidadId} /&gt;
+      &lt;button disabled={yaPostulado}&gt;Postular&lt;/button&gt;
+    &lt;/form&gt;
+  );
+}</code></pre>
+<p>El error típico no es de código sino de forma: pasar <code>usuario={usuario}</code> a un Client Component porque "solo usa el nombre". La fila entera, con <code>contrasena</code> e <code>id_rol</code>, viaja en el payload y se lee en la pestaña Red. La defensa es la misma que en la API del proyecto: devolver un objeto armado a propósito (un DTO, data transfer object), nunca la fila de la base, como en el <code>SELECT</code> con columnas explícitas de <a href="m80-control-acceso.html#mass-assignment">M80</a>.</p>
+<pre data-lang="js"><code>// datos/oportunidades.ts: la capa de acceso a datos (DAL)
+import 'server-only';                       // si un Client Component lo importa, el build falla
+import { sql } from './db';
+import { verificarSesion } from './sesion';
+
+export async function obtenerOportunidad(id: number) {
+  const sesion = await verificarSesion();   // lee y valida la cookie; sin sesión, lanza
+  const [o] = await sql`SELECT id, titulo, modalidad FROM oportunidades WHERE id = ${id} AND estado = 1`;
+  if (!o) throw new Error('No existe');
+  const [p] = await sql`SELECT 1 FROM postulaciones WHERE oportunidad_id = ${id} AND estudiante_id = ${sesion.id}`;
+  return { id: o.id, titulo: o.titulo, modalidad: o.modalidad, yaPostulado: Boolean(p) };   // DTO, no la fila
+}</code></pre>
+<p>El paquete <code>server-only</code> hace que el build falle si un Client Component importa ese módulo <span class="badge badge--doc">Documentado</span>. Next.js recomienda concentrar la autorización en esta capa de acceso a datos (<abbr title="Data Access Layer">DAL</abbr>): cada lectura comprueba la sesión, sin depender de que la página lo haya hecho antes <span class="badge badge--doc">Documentado</span>.</p>
+
+
+<h2 id="secretos"><span class="sec-num">84.4</span>Secretos que llegan al bundle</h2>
+
+<p>En Next.js, las variables de entorno con el prefijo <code>NEXT_PUBLIC_</code> se reemplazan por su valor literal en el JavaScript del cliente durante el build <span class="badge badge--doc">Documentado</span>. Las demás solo existen en el servidor; en el navegador valen <code>undefined</code>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="f844t f844d">
+<title id="f844t">Qué variables de entorno llegan al bundle</title>
+<desc id="f844d">El archivo .env.local con tres variables. En el build, Next.js reemplaza cada process.env.NEXT_PUBLIC_ por su valor literal dentro del JavaScript del cliente, que cualquiera descarga. Las variables sin el prefijo quedan solo en el servidor; en el cliente valen undefined. Un secreto con el prefijo queda publicado en el bundle aunque ningún componente lo muestre.</desc>
+<defs><marker id="f844a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="30" width="230" height="180" rx="8"/>
+<text class="dg-small dg-mono" x="30" y="54" text-anchor="start">.env.local</text>
+<text class="dg-tiny dg-mono" x="30" y="90" text-anchor="start">NEXT_PUBLIC_API_URL=…</text>
+<text class="dg-tiny dg-mono" x="30" y="126" text-anchor="start">DATABASE_URL=…</text>
+<text class="dg-tiny dg-mono" x="30" y="162" text-anchor="start">NEXT_PUBLIC_STRIPE_SK=…</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="300" y="70" width="150" height="70" rx="8"/>
+<text class="dg-small" x="375.0" y="101.5" text-anchor="middle">next build</text>
+<text class="dg-tiny" x="375.0" y="116.5" text-anchor="middle">reemplaza NEXT_PUBLIC_</text>
+<path class="dg-edge" d="M244 105 L298 105" marker-end="url(#f844a)"/>
+<rect class="dg-bad" x="506" y="30" width="250" height="56" rx="8"/>
+<text class="dg-small" x="631.0" y="54.5" text-anchor="middle">Bundle del cliente</text>
+<text class="dg-tiny" x="631.0" y="69.5" text-anchor="middle">API_URL y STRIPE_SK literales</text>
+<rect class="dg-ok" x="506" y="124" width="250" height="56" rx="8"/>
+<text class="dg-small" x="631.0" y="148.5" text-anchor="middle">Solo en el servidor</text>
+<text class="dg-tiny" x="631.0" y="163.5" text-anchor="middle">DATABASE_URL</text>
+<path class="dg-edge" d="M450 92 L504 58" marker-end="url(#f844a)"/>
+<path class="dg-edge" d="M450 118 L504 152" marker-end="url(#f844a)"/>
+<text class="dg-tiny" x="385" y="228" text-anchor="middle">El prefijo decide quién lo ve, no el nombre: una clave secreta con NEXT_PUBLIC_ es pública.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 84.4.</b> El prefijo es una decisión de publicación, no una etiqueta. Una clave secreta con <code>NEXT_PUBLIC_</code> queda en un archivo que cualquiera descarga.</figcaption>
+</figure>
+
+<pre data-lang="shell"><code># .env.local
+NEXT_PUBLIC_API_URL=https://practicas.edu.gt/api    # pública: va al bundle
+DATABASE_URL=mysql://app:…@db/practicas             # solo servidor
+COOKIE_KEY=…                                        # solo servidor; nunca con NEXT_PUBLIC_
+
+# Comprobar qué quedó publicado después del build
+$ grep -r "COOKIE_KEY\|DATABASE_URL" .next/static/ &amp;&amp; echo "FUGA"</code></pre>
+<p>Es la versión de Next.js del hallazgo 1 del proyecto, el <code>.env</code> con <code>COOKIE_KEY</code> que Apache sirve como texto: un secreto donde el cliente lo alcanza. El arreglo es el mismo en los dos: el secreto vive solo donde corre el código que lo usa, y se comprueba buscándolo en lo que se publica.</p>
+
+
+<h2 id="server-actions"><span class="sec-num">84.5</span>Server Actions: endpoints públicos con forma de función</h2>
+
+<p>Una <dfn data-term="server-actions">Server Action</dfn> es una función con <code>'use server'</code> que un Client Component llama como si fuera local. Por debajo, Next.js la convierte en un <code>POST</code> a la ruta de la página con un identificador de acción <span class="badge badge--doc">Documentado</span>. Eso la hace un endpoint público: cualquiera que conozca el identificador puede llamarla con cualquier argumento, sin pasar por el botón.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 444" role="img" aria-labelledby="f845t f845d">
+<title id="f845t">Una Server Action es un endpoint POST público</title>
+<desc id="f845d">El navegador llama a la función postular, marcada con use server. Next.js la convierte en un POST a la misma ruta con un identificador de acción. Antes de ejecutarla compara la cabecera Origin con el Host; si no coinciden, la rechaza. Dentro de la acción, el código lee la sesión, autoriza y valida la entrada. Un atacante puede mandar el mismo POST con curl, sin pasar por el botón, así que la acción no puede confiar en que el formulario la llamó.</desc>
+<defs><marker id="f845-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f845-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f845-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f845-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador</text>
+<path class="dg-frame" d="M70.0 40 V434"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Next.js</text>
+<path class="dg-frame" d="M280.0 40 V434"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">postular()</text>
+<path class="dg-frame" d="M490.0 40 V434"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Base</text>
+<path class="dg-frame" d="M700.0 40 V434"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#f845-a)"/>
+<rect x="30.400000000000006" y="55" width="289.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">POST /oportunidades/7 · Next-Action: 7f3a…</text>
+<rect x="290.0" y="92" width="230" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="300.0" y="108">Origin == Host, si no: rechaza</text>
+<path class="dg-edge" d="M283.0 140 L485.0 140" marker-end="url(#f845-a)"/>
+<rect x="319.6" y="123" width="130.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="134" text-anchor="middle">postular(formData)</text>
+<rect x="500.0" y="160" width="216" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="510.0" y="176">sesión, rol, validar entrada</text>
+<path class="dg-edge" d="M493.0 208 L695.0 208" marker-end="url(#f845-a)"/>
+<rect x="486.7" y="191" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="202" text-anchor="middle">INSERT … estudiante_id = sesión</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 242 L495.0 242" marker-end="url(#f845-r)"/>
+<rect x="569.2" y="225" width="51.599999999999994" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="236" text-anchor="middle">1 fila</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 276 L75.0 276" marker-end="url(#f845-r)"/>
+<rect x="244.3" y="259" width="71.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="270" text-anchor="middle">resultado</text>
+<path d="M20 308 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="297" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="312" text-anchor="middle" style="fill:var(--fail)">el mismo POST, escrito a mano</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M73.0 344 L275.0 344" marker-end="url(#f845-f)"/>
+<rect x="40.30000000000001" y="327" width="269.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="338" text-anchor="middle">POST con otro estudianteId en el cuerpo</text>
+<rect x="500.0" y="364" width="188" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="510.0" y="380">lo ignora: usa la sesión</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 84.5.</b> Next.js frena el CSRF comparando <code>Origin</code> con <code>Host</code>. La autorización y la validación son tuyas, dentro de cada acción.</figcaption>
+</figure>
+
+<pre data-lang="js"><code>// app/oportunidades/[id]/acciones.ts: cada función exportada es un endpoint POST
+'use server';
+import { z } from 'zod';
+import { verificarSesion } from '@/datos/sesion';
+import { crearPostulacion } from '@/datos/postulaciones';
+
+const Entrada = z.object({ oportunidadId: z.coerce.number().int().positive() });
+
+export async function postular(formData: FormData) {
+  const sesion = await verificarSesion();                 // 1. quién: nunca un id del formulario
+  if (sesion.rol !== 'estudiante') throw new Error('No autorizado');   // 2. puede hacer esto
+  const { oportunidadId } = Entrada.parse(Object.fromEntries(formData)); // 3. validar la forma
+  await crearPostulacion(oportunidadId, sesion.id);       // 4. el dueño sale de la sesión (M80)
+}</code></pre>
+<p>Las cuatro líneas numeradas son las preguntas de <a href="m80-control-acceso.html#preguntas">M80</a> escritas en TypeScript. Lo que Next.js sí hace solo:</p>
+<ul>
+  <li><b>CSRF:</b> las acciones solo aceptan <code>POST</code> y Next.js compara <code>Origin</code> con <code>Host</code> (o <code>X-Forwarded-Host</code>); si no coinciden, no ejecuta la acción <span class="badge badge--doc">Documentado</span>. Junto con <code>SameSite=Lax</code>, cubre lo que en <a href="m76-csrf.html#origin">M76</a> armaste a mano.</li>
+  <li><b>Identificadores:</b> cifrados y no deterministas, y las acciones que nadie usa no se publican <span class="badge badge--doc">Documentado</span>. Eso reduce la superficie, pero no es autorización: el identificador está en el bundle.</li>
+  <li><b>Variables de la clausura:</b> si una acción se define dentro de un componente y usa una variable de afuera, Next.js la cifra para el viaje de ida y vuelta <span class="badge badge--doc">Documentado</span>. Aun así, no pongas secretos ahí: la regla es leerlos dentro de la acción.</li>
+</ul>
+<pre data-lang="js"><code>// next.config.ts: si la app va detrás de un proxy que cambia el Host
+export default {
+  experimental: {
+    serverActions: { allowedOrigins: ['practicas.edu.gt'] },   // la lista exacta, sin comodines amplios
+  },
+};</code></pre>
+<p>Si la app va detrás de un proxy que cambia el <code>Host</code>, la comparación falla y hay que declarar los orígenes permitidos. Una lista amplia, como <code>*.edu.gt</code>, devuelve el problema de <a href="m75-cors.html#errores">M75</a>: confiar en subdominios que no controlas.</p>
+
+
+<h2 id="middleware"><span class="sec-num">84.6</span>El middleware es un chequeo optimista</h2>
+
+<p>El middleware de Next.js corre antes de cada request que coincide con su <code>matcher</code>, y es tentador poner ahí todo el control de acceso, como el <code>requireAuth</code> centralizado de <a href="m80-control-acceso.html#centralizar">M80</a>. La documentación lo describe como un chequeo optimista: rápido, para redirigir pronto, sin consultar la base <span class="badge badge--doc">Documentado</span>. En Next.js 16 el archivo pasó a llamarse <code>proxy.ts</code> <span class="badge badge--doc">Documentado</span>.</p>
+<pre data-lang="js"><code>// middleware.ts (proxy.ts desde Next.js 16): chequeo optimista y barato
+import { NextResponse } from 'next/server';
+export function middleware(req) {
+  if (!req.cookies.has('sesion')) {                 // solo mira si existe; no la valida contra la base
+    return NextResponse.redirect(new URL('/login', req.url));
+  }
+}
+export const config = { matcher: ['/admin/:path*', '/panel/:path*'] };
+// La comprobación de verdad está en verificarSesion(), que llama cada acción y cada lectura.</code></pre>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="f846t f846d">
+<title id="f846t">El middleware no es la última puerta</title>
+<desc id="f846d">Un middleware de Next.js revisa la cookie antes de dejar pasar a /admin. Con la falla CVE-2025-29927, una request con la cabecera interna x-middleware-subrequest hacía que el middleware no corriera y la página se servía sin chequeo. Si la página o la capa de acceso a datos vuelven a comprobar la sesión y el rol, la request llega pero no obtiene nada.</desc>
+<defs><marker id="f846-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f846-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f846-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f846-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Cliente</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">middleware</text>
+<path class="dg-frame" d="M280.0 40 V366"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">/admin (página)</text>
+<path class="dg-frame" d="M490.0 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Acceso a datos</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#f846-a)"/>
+<rect x="99.7" y="55" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">GET /admin sin sesión</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 106 L75.0 106" marker-end="url(#f846-r)"/>
+<rect x="129.4" y="89" width="91.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="100" text-anchor="middle">307 → /login</text>
+<path d="M20 138 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="127" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="142" text-anchor="middle" style="fill:var(--fail)">CVE-2025-29927 (corregida en 15.2.3, 14.2.25, 13.5.9 y 12.3.5)</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M73.0 174 L485.0 174" marker-end="url(#f846-f)"/>
+<rect x="145.3" y="157" width="269.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="168" text-anchor="middle">GET /admin · x-middleware-subrequest: …</text>
+<rect x="290.0" y="194" width="76" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="300.0" y="210">no corre</text>
+<path class="dg-edge" d="M493.0 242 L695.0 242" marker-end="url(#f846-a)"/>
+<rect x="536.2" y="225" width="117.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="236" text-anchor="middle">listarUsuarios()</text>
+<rect x="467.0" y="262" width="223" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="477.0" y="278">verificarSesion(): sin sesión</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 310 L495.0 310" marker-end="url(#f846-r)"/>
+<rect x="523.0" y="293" width="144.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="304" text-anchor="middle">error: no autorizado</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 84.6.</b> Con la autorización repetida en la capa de datos, una falla del middleware deja pasar la request, pero no los datos.</figcaption>
+</figure>
+
+<p>En marzo de 2025 se publicó CVE-2025-29927 (CVSS 9.1): una request con la cabecera interna <code>x-middleware-subrequest</code> hacía que el middleware no corriera <span class="badge badge--doc">Documentado</span>. Afectaba a Next.js autoalojado; se corrigió en 15.2.3, 14.2.25, 13.5.9 y 12.3.5, y la mitigación temporal era quitar esa cabecera en el proxy de entrada. Las apps que solo autorizaban en el middleware quedaron abiertas; las que repetían la comprobación cerca de los datos, no. Es defensa en profundidad con un ejemplo real.</p>
+
+
+<h2 id="escape-react"><span class="sec-num">84.7</span>React escapa, salvo cuando le pides que no</h2>
+
+<p>Al interpolar <code>{o.titulo}</code>, React crea un nodo de texto: es el <code>textContent</code> de <a href="m77-xss-dom.html#dom">M77</a> hecho por defecto. Los huecos tienen nombres que avisan, como prometía M77: <code>dangerouslySetInnerHTML</code> en React y <code>v-html</code> en Vue.</p>
+<pre data-lang="js"><code>// La salida de emergencia de React avisa con el nombre
+&lt;div dangerouslySetInnerHTML={{ __html: o.descripcionHtml }} /&gt;            // XSS si no se sanea
+&lt;div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(o.descripcionHtml) }} /&gt;  // M77
+
+// href con datos del usuario: React escapa las comillas, no el esquema
+&lt;a href={o.sitioWeb}&gt;Sitio&lt;/a&gt;                                              // javascript:… (M82)
+&lt;a href={esHttp(o.sitioWeb) ? o.sitioWeb : undefined}&gt;Sitio&lt;/a&gt;</code></pre>
+<p>El segundo hueco es más sutil: React escapa el valor de un atributo, pero no decide si el esquema de una URL es seguro. Un <code>sitio_web</code> con <code>javascript:</code> en un <code>href</code> es el caso de <a href="m82-archivos-ssrf.html#urls-guardadas">M82</a>. React 16.9 empezó a avisar en consola y React 19 bloquea esas URLs <span class="badge badge--doc">Documentado</span>; validar el esquema al guardar sigue siendo la defensa que no depende de la versión.</p>
+
+
+<h2 id="cve-rsc"><span class="sec-num">84.8</span>Cuando la falla está en el framework</h2>
+
+<p>El 3 de diciembre de 2025, React publicó CVE-2025-55182 (CVSS 10.0): el decodificador del protocolo de Server Components, que convierte el cuerpo de una llamada a una Server Function en objetos, podía terminar ejecutando código en el servidor con una request sin sesión <span class="badge badge--doc">Documentado</span>. Afectaba a <code>react-server-dom-webpack</code>, <code>-parcel</code> y <code>-turbopack</code> 19.0.0, 19.1.0, 19.1.1 y 19.2.0, y a los frameworks que los incluyen, Next.js 15 y 16 entre ellos; se corrigió en 19.0.1, 19.1.2 y 19.2.1, con versiones nuevas de Next.js el mismo día. CISA la agregó a su catálogo de vulnerabilidades explotadas <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f847t f847d">
+<title id="f847t">CVE-2025-55182: el decodificador de Server Functions</title>
+<desc id="f847d">Una request POST llega al endpoint de Server Functions. Antes de que corra cualquier código de la aplicación, el decodificador del protocolo de React Server Components convierte el cuerpo en objetos. Con la falla, un cuerpo armado hacía que esa deserialización terminara ejecutando código en el servidor, sin sesión. El código de la aplicación nunca llegaba a correr, así que ningún chequeo propio la frenaba. La defensa es actualizar React y Next.js.</desc>
+<defs><marker id="f847a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="40" width="180" height="64" rx="8"/>
+<text class="dg-small" x="104.0" y="68.5" text-anchor="middle">POST armado</text>
+<text class="dg-tiny" x="104.0" y="83.5" text-anchor="middle">sin sesión</text>
+<rect class="dg-bad" x="240" y="40" width="260" height="64" rx="8"/>
+<text class="dg-small" x="370.0" y="68.5" text-anchor="middle">Decodificador RSC</text>
+<text class="dg-tiny" x="370.0" y="83.5" text-anchor="middle">deserializa el cuerpo</text>
+<rect class="dg-box" x="546" y="40" width="210" height="64" rx="8"/>
+<text class="dg-small" x="651.0" y="68.5" text-anchor="middle">Tu Server Action</text>
+<text class="dg-tiny" x="651.0" y="83.5" text-anchor="middle">nunca llega a correr</text>
+<path class="dg-edge" d="M194 72 L238 72" marker-end="url(#f847a)"/>
+<path class="dg-edge" d="M500 72 L544 72" marker-end="url(#f847a)" style="stroke-dasharray:5 4"/>
+<rect class="dg-bad" x="240" y="124" width="260" height="40" rx="8"/>
+<text class="dg-tiny" x="370.0" y="148.0" text-anchor="middle">ejecución de código en el servidor</text>
+<path class="dg-edge" d="M370 104 L370 122" marker-end="url(#f847a)"/>
+<text class="dg-tiny" x="385" y="192" text-anchor="middle">React 19.0.0 a 19.2.0 → 19.0.1, 19.1.2, 19.2.1; Next.js 15 y 16 con sus parches de diciembre de 2025.</text>
+<text class="dg-tiny" x="385" y="212" text-anchor="middle">Tus chequeos están después del decodificador: aquí solo protegen el SCA y actualizar a tiempo (M56).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 84.7.</b> Es una deserialización insegura (<a href="m79-inyecciones.html#deserializacion">M79</a>) en la puerta del framework, antes de tu código.</figcaption>
+</figure>
+
+<p>La lección para el diseño: cada capa que agrega un framework es código que corre con los datos del atacante antes que el tuyo. Ninguna validación en la acción frena una falla en el decodificador. Lo que sí sirve es saber qué versiones corren (el SBOM y el SCA de <a href="m56-supply-chain.html">M56</a>) y poder actualizar en horas, con la priorización por KEV de <a href="m58-vulnerabilidades.html">M58</a>.</p>
+
+
+<h2 id="elegir"><span class="sec-num">84.9</span>Qué modelo para el sistema de prácticas</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 310" role="img" aria-labelledby="f848t f848d">
+<title id="f848t">Dónde vive cada defensa en cada modelo</title>
+<desc id="f848d">Una rejilla de cuatro preguntas por tres modelos. Qué se ve: en PHP, lo que imprime el servidor; en la SPA, el bundle y la API; en Next.js, el HTML, el payload de RSC y el bundle. Qué se ejecuta: el escape de htmlspecialchars, textContent, y el escape de React con dangerouslySetInnerHTML como salida de emergencia. Quién autoriza: el script de PHP, cada endpoint de la API, y cada Server Action y la capa de acceso a datos. CSRF: token de formulario, token o Fetch Metadata, y la comparación de Origin de Server Actions.</desc>
+<defs><marker id="f848a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="335" y="26" text-anchor="middle">PHP clásico</text>
+<text class="dg-small" x="505" y="26" text-anchor="middle">SPA + API PHP</text>
+<text class="dg-small" x="675" y="26" text-anchor="middle">Next.js</text>
+<rect class="dg-box--em" x="14" y="40" width="226" height="48" rx="8"/>
+<text class="dg-small" x="127.0" y="68.0" text-anchor="middle">Qué se ve</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="260" y="40" width="156" height="48" rx="8"/>
+<text class="dg-tiny" x="338.0" y="68.0" text-anchor="middle">lo que imprime</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="430" y="40" width="156" height="48" rx="8"/>
+<text class="dg-tiny" x="508.0" y="68.0" text-anchor="middle">bundle + JSON</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="600" y="40" width="156" height="48" rx="8"/>
+<text class="dg-tiny" x="678.0" y="68.0" text-anchor="middle">HTML + RSC + bundle</text>
+<rect class="dg-box--em" x="14" y="100" width="226" height="48" rx="8"/>
+<text class="dg-small" x="127.0" y="128.0" text-anchor="middle">Qué se ejecuta</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="260" y="100" width="156" height="48" rx="8"/>
+<text class="dg-tiny" x="338.0" y="128.0" text-anchor="middle">htmlspecialchars</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="430" y="100" width="156" height="48" rx="8"/>
+<text class="dg-tiny" x="508.0" y="128.0" text-anchor="middle">textContent</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="600" y="100" width="156" height="48" rx="8"/>
+<text class="dg-tiny" x="678.0" y="128.0" text-anchor="middle">React escapa</text>
+<rect class="dg-box--em" x="14" y="160" width="226" height="48" rx="8"/>
+<text class="dg-small" x="127.0" y="188.0" text-anchor="middle">Quién autoriza</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="260" y="160" width="156" height="48" rx="8"/>
+<text class="dg-tiny" x="338.0" y="188.0" text-anchor="middle">cada script</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="430" y="160" width="156" height="48" rx="8"/>
+<text class="dg-tiny" x="508.0" y="188.0" text-anchor="middle">cada endpoint</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="600" y="160" width="156" height="48" rx="8"/>
+<text class="dg-tiny" x="678.0" y="188.0" text-anchor="middle">cada acción + DAL</text>
+<rect class="dg-box--em" x="14" y="220" width="226" height="48" rx="8"/>
+<text class="dg-small" x="127.0" y="248.0" text-anchor="middle">CSRF</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="260" y="220" width="156" height="48" rx="8"/>
+<text class="dg-tiny" x="338.0" y="248.0" text-anchor="middle">token del form</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="430" y="220" width="156" height="48" rx="8"/>
+<text class="dg-tiny" x="508.0" y="248.0" text-anchor="middle">token, Sec-Fetch</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="600" y="220" width="156" height="48" rx="8"/>
+<text class="dg-tiny" x="678.0" y="248.0" text-anchor="middle">Origin == Host</text>
+<text class="dg-tiny" x="385" y="296" text-anchor="middle">Las cuatro preguntas son las mismas de M73; lo que cambia es la casilla donde se responde.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 84.8.</b> Las cuatro preguntas no cambian. Cambia dónde se contesta cada una, y en Next.js hay más casillas que vigilar.</figcaption>
+</figure>
+
+<p>Migrar el frontend del proyecto a Next.js no lo haría más seguro ni menos: haría que el escape lo hiciera React en lugar de <code>textContent</code>, que el CSRF de las acciones lo cubriera el framework, y agregaría tres superficies nuevas (el payload de RSC, el bundle con sus variables y el propio framework). Lo que sí lo haría más seguro es lo de los módulos anteriores: autorizar en cada endpoint (<a href="m80-control-acceso.html#auditoria">M80</a>), la sesión revocable (<a href="m81-autenticacion-sesiones.html#revocacion">M81</a>) y la CSP (<a href="m78-csp-cabeceras.html#php">M78</a>). <span class="badge badge--ref">Diseño de referencia</span></p>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Si eliges…</th><th>Ganas</th><th>Vigilas</th></tr></thead>
+    <tbody>
+<tr><td>PHP clásico</td><td>Una sola línea: todo corre en el servidor</td><td>Escapar cada salida, token CSRF en cada formulario</td></tr>
+<tr><td>SPA + API (hoy)</td><td>Frontend estático, API reutilizable</td><td>Cada endpoint autoriza; el JavaScript escapa</td></tr>
+<tr><td>Next.js</td><td>HTML rápido, menos JavaScript, CSRF de acciones resuelto</td><td>Props que cruzan <code>'use client'</code>, <code>NEXT_PUBLIC_</code>, actualizar el framework</td></tr>
+    </tbody>
+  </table>
+</div>
+
+
+
+<h2 id="fallas"><span class="sec-num">84.10</span>Fallas típicas y cómo reconocerlas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+<tr><td>El hash de la contraseña aparece en la pestaña Red</td><td>Un objeto entero pasado a un Client Component</td><td>DTO con los campos que usa el cliente</td></tr>
+<tr><td>Una clave secreta está en <code>.next/static</code></td><td><code>NEXT_PUBLIC_</code> en un secreto</td><td>Quitar el prefijo, rotar la clave</td></tr>
+<tr><td>Una acción funciona con curl y otro id</td><td>La acción confía en el formulario</td><td>Sesión, rol y validación dentro de la acción</td></tr>
+<tr><td><code>/admin</code> responde sin sesión</td><td>Autorización solo en el middleware</td><td>Repetirla en la capa de datos</td></tr>
+<tr><td>Un título rompe la página al hidratar</td><td>JSON en un <code>&lt;script&gt;</code> sin escapar <code>&lt;</code></td><td>El serializador del framework o <code>JSON_HEX_TAG</code></td></tr>
+<tr><td>Las acciones fallan detrás del proxy</td><td><code>Origin</code> distinto de <code>Host</code></td><td><code>allowedOrigins</code> con la lista exacta</td></tr>
+<tr><td>Un aviso crítico del framework</td><td>Falla antes de tu código</td><td>SBOM, SCA y actualizar en horas</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Si el proyecto migra, la revisión de un PR en Next.js suma tres preguntas a las de siempre: ¿qué props cruzan a un Client Component?, ¿alguna variable nueva lleva <code>NEXT_PUBLIC_</code>?, ¿cada <code>'use server'</code> nuevo comprueba sesión, rol y entrada? Lo que sigue en la Parte IX es el último lugar donde puede correr el código: WebAssembly (<a href="m85-webassembly.html">M85</a>).</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m84"></div>
+<div data-exercise="m84-migrar"></div>
+<div data-checkpoint="m84"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m84.data.js"></script>
+<script src="../assets/js/data/exercises/m84.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>

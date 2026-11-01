@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M83. Otros ataques que toda web debe cerrar</title>
+<meta name="description" content="Los ataques que no caben en una familia: clickjacking, postMessage sin origen, prototype pollution, envenenamiento y engaño de caché, request smuggling, condiciones de carrera de negocio, ReDoS, scripts de terceros con SRI y XS-Leaks. Cada uno con su mecanismo en una figura y su mitigación.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m83">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Otros ataques que toda web debe cerrar</h1>
+        <p class="lead">Cada ataque de este módulo aprovecha una pieza que hace bien su trabajo: un iframe que muestra otra página, una caché que ahorra trabajo, un proxy que reenvía, una regex que busca. La falla está en el supuesto que nadie escribió.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M83</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>120 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M73, M75, M78</dd></div>
+          <div><dt>Estado</dt><dd data-status="m83">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Cerrar el clickjacking con <code>frame-ancestors</code> y validar el origen de cada <code>postMessage</code>.</li>
+    <li>Explicar prototype pollution y mezclar datos del usuario sin tocar el prototipo.</li>
+    <li>Distinguir envenenamiento y engaño de caché, y elegir las cabeceras que los evitan.</li>
+    <li>Reconocer request smuggling y las condiciones de carrera de negocio, y cerrarlas en el lugar correcto.</li>
+    <li>Evitar ReDoS, cargar scripts de terceros con SRI y explicar qué es un XS-Leak.</li>
+  </ul>
+</section>
+
+<p>Los módulos anteriores cubrieron las familias grandes: CSRF (<a href="m76-csrf.html#ataque">M76</a>), XSS (<a href="m77-xss-dom.html#tipos">M77</a>), inyecciones (<a href="m79-inyecciones.html#raiz">M79</a>), control de acceso (<a href="m80-control-acceso.html#preguntas">M80</a>), sesiones (<a href="m81-autenticacion-sesiones.html#modelos">M81</a>) y lo que el servidor hace con URLs y archivos (<a href="m82-archivos-ssrf.html#subidas">M82</a>). Quedan nueve ataques sueltos, cada uno con una defensa corta. Por eso este módulo va rápido: mecanismo, figura y mitigación.</p>
+
+
+<h2 id="clickjacking"><span class="sec-num">83.1</span>Clickjacking</h2>
+
+<p>El <dfn data-term="clickjacking">clickjacking</dfn> carga tu página en un iframe transparente sobre otra que invita a hacer clic. La víctima cree que hace clic en el sitio del atacante y lo hace en el tuyo, con su sesión. SameSite no ayuda del todo: el iframe es una navegación de tu propio sitio dentro de otro, y con <code>SameSite=None</code> lleva la cookie.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f831t f831d">
+<title id="f831t">Clickjacking: un iframe invisible encima de un botón</title>
+<desc id="f831d">Tres capas vistas de lado. Abajo, la página del atacante con un botón que dice Ganar un premio. Encima, un iframe con el sistema de prácticas, con opacidad cero, colocado de forma que el botón Retirar postulación queda justo sobre el botón del premio. Arriba, el cursor de la víctima. El clic va al iframe, con la sesión de la víctima. A la derecha, la defensa: frame-ancestors none o self en la CSP.</desc>
+<defs><marker id="f831a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="150" width="420" height="60" rx="8"/>
+<text class="dg-small" x="224.0" y="176.5" text-anchor="middle">Página del atacante: "Gana un premio"</text>
+<text class="dg-tiny" x="224.0" y="191.5" text-anchor="middle">lo que la víctima ve</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="60" y="72" width="420" height="70" rx="8"/>
+<text class="dg-small" x="70" y="92" text-anchor="start">iframe: practicas.edu.gt · opacity: 0</text>
+<text class="dg-tiny" x="70" y="110" text-anchor="start">recibe el clic, con la sesión</text>
+<rect class="dg-bad" x="332" y="114" width="136" height="22" rx="5"/>
+<text class="dg-tiny" x="400.0" y="129.0" text-anchor="middle">Retirar postulación</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="300" y="14" width="200" height="40" rx="8"/>
+<text class="dg-small" x="400.0" y="30.5" text-anchor="middle">Clic</text>
+<text class="dg-tiny" x="400.0" y="45.5" text-anchor="middle">en "Gana un premio"</text>
+<path class="dg-edge" d="M400 54 L400 112" marker-end="url(#f831a)" style="stroke-dasharray:5 4"/>
+<rect class="dg-ok" x="520" y="40" width="236" height="150" rx="8"/>
+<text class="dg-label" x="638" y="64" text-anchor="middle">Defensa</text>
+<text class="dg-tiny dg-mono" x="638" y="92" text-anchor="middle">frame-ancestors 'none'</text>
+<text class="dg-tiny" x="638" y="114" text-anchor="middle">o 'self' (CSP, M78)</text>
+<text class="dg-tiny dg-mono" x="638" y="142" text-anchor="middle">X-Frame-Options: DENY</text>
+<text class="dg-tiny" x="638" y="164" text-anchor="middle">para navegadores viejos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 83.1.</b> El clic es real y lo hace la víctima. La única forma de evitarlo es que tu página no se deje enmarcar.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// core/cabeceras.php (M78): la página no se deja enmarcar por nadie
+header("Content-Security-Policy: frame-ancestors 'none'; " . CSP_RESTO);
+header('X-Frame-Options: DENY');                 // navegadores que no conocen frame-ancestors</code></pre>
+<p>Es la directiva <code>frame-ancestors</code> que <a href="m78-csp-cabeceras.html#cabeceras">M78</a> dejó en la política, más <code>X-Frame-Options</code> para navegadores viejos. Si una página tiene que poder enmarcarse (un widget para otro sitio), <code>frame-ancestors</code> lleva la lista exacta de quién, y las acciones sensibles piden una confirmación que no se puede hacer con un solo clic.</p>
+
+
+<h2 id="postmessage"><span class="sec-num">83.2</span>postMessage sin origen</h2>
+
+<p><code>postMessage</code> es la forma correcta de que dos ventanas de orígenes distintos se hablen (<a href="m74-origen-cookies.html#sop">M74</a>). El problema es el receptor que no pregunta quién le habla: cualquier página que tenga una referencia a tu ventana, porque la abrió o porque te enmarca, puede mandarte mensajes.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="f832t f832d">
+<title id="f832t">postMessage sin comprobar el origen</title>
+<desc id="f832d">El sistema abre una ventana de ayuda que, al terminar, manda un mensaje con postMessage, y la página principal lo procesa. Si el listener no comprueba event.origin, cualquier página que tenga una referencia a la ventana, por ejemplo porque la abrió, puede mandar un mensaje con la misma forma, y la página lo ejecuta.</desc>
+<defs><marker id="f832-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f832-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f832-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f832-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Página del atacante</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">practicas.edu.gt</text>
+<path class="dg-frame" d="M385.0 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">ayuda.practicas.edu.gt</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<path class="dg-edge" d="M697.0 72 L390.0 72" marker-end="url(#f832-a)"/>
+<rect x="391.3" y="55" width="302.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="66" text-anchor="middle">postMessage({accion: &#x27;irA&#x27;, url: &#x27;/perfil&#x27;})</text>
+<rect x="395.0" y="92" width="188" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="405.0" y="108">location.href = data.url</text>
+<path d="M20 138 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="127" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="142" text-anchor="middle" style="fill:var(--fail)">el listener no mira event.origin</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M73.0 174 L380.0 174" marker-end="url(#f832-f)"/>
+<rect x="-19.399999999999977" y="157" width="493.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="168" text-anchor="middle">w = window.open(app); w.postMessage({accion: &#x27;irA&#x27;, url: &#x27;javascript:…&#x27;})</text>
+<rect x="395.0" y="194" width="195" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="405.0" y="210">ejecuta: XSS de DOM (M77)</text>
+<path d="M20 240 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="229" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="244" text-anchor="middle" style="fill:var(--fail)">con if (e.origin !== &#x27;https://ayuda.practicas.edu.gt&#x27;) return</text>
+<path class="dg-edge" d="M73.0 276 L380.0 276" marker-end="url(#f832-a)"/>
+<rect x="168.7" y="259" width="117.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="270" text-anchor="middle">el mismo mensaje</text>
+<rect x="395.0" y="296" width="76" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="405.0" y="312">ignorado</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 83.2.</b> El mensaje llega con <code>event.origin</code>, que pone el navegador y no se puede falsificar. Basta con mirarlo.</figcaption>
+</figure>
+
+<pre data-lang="js"><code>// js/ayuda.js: solo mensajes del origen esperado, y solo acciones conocidas
+const ORIGEN_AYUDA = 'https://ayuda.practicas.edu.gt';
+window.addEventListener('message', (e) =&gt; {
+  if (e.origin !== ORIGEN_AYUDA) return;                       // comparación exacta, no includes()
+  const d = e.data;
+  if (d?.accion === 'irA' &amp;&amp; ['perfil', 'postulaciones'].includes(d.pantalla)) {
+    location.assign('/' + d.pantalla);                         // nunca una URL que venga en el mensaje
+  }
+});
+// Y al mandar: el origen de destino explícito, nunca '*'
+ventanaPrincipal.postMessage({ accion: 'irA', pantalla: 'perfil' }, 'https://practicas.edu.gt');</code></pre>
+<p>Dos detalles: la comparación es exacta (<code>e.origin.includes('practicas.edu.gt')</code> acepta <code>practicas.edu.gt.evil.example</code>), y el contenido del mensaje se trata como cualquier dato del usuario, con una lista de acciones y nunca como una URL o un HTML.</p>
+
+
+<h2 id="prototype-pollution"><span class="sec-num">83.3</span>Prototype pollution</h2>
+
+<p>En JavaScript, cada objeto hereda de <code>Object.prototype</code>. La <dfn data-term="prototype-pollution">prototype pollution</dfn> pasa cuando una función que mezcla objetos de forma recursiva recibe la clave <code>__proto__</code> y, en lugar de crear una propiedad con ese nombre, escribe en el prototipo de todos los objetos.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="f833t f833d">
+<title id="f833t">Prototype pollution</title>
+<desc id="f833d">Un JSON con la clave __proto__ entra a una función que mezcla objetos de forma recursiva. En lugar de crear una propiedad llamada __proto__, la función escribe en Object.prototype, el prototipo de todos los objetos. Desde ese momento, cualquier objeto vacío, como las opciones de una función, tiene isAdmin true. Abajo, las defensas: Object.create(null), Map, rechazar las claves __proto__, constructor y prototype, y Object.freeze del prototipo.</desc>
+<defs><marker id="f833a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="20" width="250" height="56" rx="8"/>
+<text class="dg-tiny dg-mono" x="139.0" y="44.5" text-anchor="middle">{"__proto__": {"isAdmin": true}}</text>
+<text class="dg-tiny" x="139.0" y="59.5" text-anchor="middle">JSON del usuario</text>
+<rect class="dg-bad" x="300" y="20" width="170" height="56" rx="8"/>
+<text class="dg-tiny dg-mono" x="385.0" y="44.5" text-anchor="middle">merge(config, json)</text>
+<text class="dg-tiny" x="385.0" y="59.5" text-anchor="middle">recursivo, sin filtrar</text>
+<rect class="dg-bad" x="506" y="20" width="250" height="56" rx="8"/>
+<text class="dg-tiny dg-mono" x="631.0" y="44.5" text-anchor="middle">Object.prototype.isAdmin = true</text>
+<text class="dg-tiny" x="631.0" y="59.5" text-anchor="middle">todos los objetos lo heredan</text>
+<path class="dg-edge" d="M264 48 L298 48" marker-end="url(#f833a)"/>
+<path class="dg-edge" d="M470 48 L504 48" marker-end="url(#f833a)"/>
+<rect class="dg-box" x="506" y="100" width="250" height="40" rx="8"/>
+<text class="dg-tiny dg-mono" x="631.0" y="124.0" text-anchor="middle">const opciones = {}</text>
+<rect class="dg-bad" x="506" y="146" width="250" height="26" rx="5"/>
+<text class="dg-tiny dg-mono" x="631.0" y="163.0" text-anchor="middle">opciones.isAdmin → true</text>
+<path class="dg-edge" d="M631 76 L631 98" marker-end="url(#f833a)" style="stroke-dasharray:5 4"/>
+<rect class="dg-ok" x="14" y="100" width="456" height="72" rx="8"/>
+<text class="dg-tiny" x="242" y="122" text-anchor="middle">Object.create(null) o Map para datos del usuario</text>
+<text class="dg-tiny" x="242" y="142" text-anchor="middle">rechazar '__proto__', 'constructor', 'prototype' al mezclar</text>
+<text class="dg-tiny" x="242" y="162" text-anchor="middle">validar con un esquema antes de mezclar</text>
+<text class="dg-tiny" x="385" y="210" text-anchor="middle">Afecta a JavaScript (el frontend y un backend en Node). Los arrays de PHP no tienen prototipo.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 83.3.</b> Una propiedad agregada al prototipo aparece en cada objeto que no la defina, incluidas las opciones que el código daba por vacías.</figcaption>
+</figure>
+
+<pre data-lang="js"><code>// Mezclar opciones del usuario sin tocar el prototipo
+const PROHIBIDAS = new Set(['__proto__', 'constructor', 'prototype']);
+function mezclar(destino, origen) {
+  for (const k of Object.keys(origen)) {
+    if (PROHIBIDAS.has(k)) continue;
+    const v = origen[k];
+    destino[k] = (v &amp;&amp; typeof v === 'object' &amp;&amp; !Array.isArray(v))
+      ? mezclar(destino[k] ?? Object.create(null), v)
+      : v;
+  }
+  return destino;
+}
+const filtros = mezclar(Object.create(null), JSON.parse(texto));   // sin prototipo que contaminar</code></pre>
+<p>Las librerías de mezcla profunda tuvieron este error durante años (lodash lo corrigió en <code>merge</code> y <code>defaultsDeep</code>) <span class="badge badge--doc">Documentado</span>. En el frontend del proyecto, el riesgo está en leer parámetros de la URL o un JSON y mezclarlos con la configuración. El SCA de <a href="m56-supply-chain.html">M56</a> avisa cuando una dependencia tiene la falla conocida.</p>
+
+
+<h2 id="cache"><span class="sec-num">83.4</span>Envenenar y engañar a la caché</h2>
+
+<p>Una caché compartida (Cloudflare, Varnish, un proxy de la universidad) guarda una respuesta bajo una <b>clave</b>, normalmente método, host y ruta, y se la sirve a todos los que piden lo mismo. Las dos fallas son desacuerdos entre la caché y el origen:</p>
+<ul>
+  <li><dfn data-term="cache-poisoning">Envenenamiento de caché</dfn>: el origen usa en la respuesta algo que la caché no usa en la clave (una cabecera como <code>X-Forwarded-Host</code>), y la respuesta armada para el atacante se guarda para todos. En <a href="m75-cors.html#vary">M75</a> viste el caso suave: una respuesta con <code>Access-Control-Allow-Origin</code> sin <code>Vary: Origin</code>.</li>
+  <li><dfn data-term="cache-deception">Engaño de caché</dfn>: el origen y la caché leen distinto la ruta. El origen ignora lo que sobra y devuelve contenido personal; la caché ve <code>.css</code> y lo guarda como público.</li>
+</ul>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f834t f834d">
+<title id="f834t">Envenenar y engañar a la caché</title>
+<desc id="f834d">Arriba, envenenamiento: el atacante manda una request con una cabecera que la caché no usa en su clave, X-Forwarded-Host, y que el origen sí usa para armar una URL en la respuesta. La caché guarda esa respuesta bajo la clave normal y se la sirve a todos. Abajo, engaño: el atacante hace que la víctima visite /perfil.php/x.css; el servidor ignora el resto de la ruta y devuelve el perfil de la víctima, y la caché lo guarda porque termina en .css. Después el atacante lo pide y recibe el perfil.</desc>
+<defs><marker id="f834a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="20" y="24" text-anchor="start">Envenenamiento (cache poisoning)</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="36" width="210" height="52" rx="8"/>
+<text class="dg-small" x="119.0" y="58.5" text-anchor="middle">GET /oportunidades</text>
+<text class="dg-tiny dg-mono" x="119.0" y="73.5" text-anchor="middle">X-Forwarded-Host: evil</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="280" y="36" width="200" height="52" rx="8"/>
+<text class="dg-small" x="380.0" y="58.5" text-anchor="middle">Caché</text>
+<text class="dg-tiny" x="380.0" y="73.5" text-anchor="middle">clave: método + host + ruta</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="536" y="36" width="220" height="52" rx="8"/>
+<text class="dg-small" x="646.0" y="58.5" text-anchor="middle">Origen</text>
+<text class="dg-tiny dg-mono" x="646.0" y="73.5" text-anchor="middle">&lt;script src="//evil/…"&gt;</text>
+<path class="dg-edge" d="M224 62 L278 62" marker-end="url(#f834a)"/>
+<path class="dg-edge" d="M480 62 L534 62" marker-end="url(#f834a)"/>
+<text class="dg-tiny" x="385" y="108" text-anchor="middle">La respuesta envenenada queda guardada y se la sirve a todos los que piden /oportunidades.</text>
+<text class="dg-label" x="20" y="148" text-anchor="start">Engaño (cache deception)</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="160" width="210" height="52" rx="8"/>
+<text class="dg-small" x="119.0" y="182.5" text-anchor="middle">Víctima visita</text>
+<text class="dg-tiny dg-mono" x="119.0" y="197.5" text-anchor="middle">/perfil.php/x.css</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="280" y="160" width="200" height="52" rx="8"/>
+<text class="dg-small" x="380.0" y="182.5" text-anchor="middle">Caché</text>
+<text class="dg-tiny" x="380.0" y="197.5" text-anchor="middle">".css" → se guarda</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="536" y="160" width="220" height="52" rx="8"/>
+<text class="dg-small" x="646.0" y="182.5" text-anchor="middle">Origen</text>
+<text class="dg-tiny" x="646.0" y="197.5" text-anchor="middle">ignora /x.css: el perfil</text>
+<path class="dg-edge" d="M224 186 L278 186" marker-end="url(#f834a)"/>
+<path class="dg-edge" d="M480 186 L534 186" marker-end="url(#f834a)"/>
+<text class="dg-tiny" x="385" y="232" text-anchor="middle">El atacante pide /perfil.php/x.css y recibe el perfil de la víctima desde la caché.</text>
+<text class="dg-tiny" x="385" y="262" text-anchor="middle">Defensas: Cache-Control: private o no-store en lo personal, cachear por Content-Type y no por extensión, Vary (M75).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 83.4.</b> En el envenenamiento, el atacante deja algo para la víctima. En el engaño, la víctima deja algo para el atacante.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// Respuestas personales: nunca en una caché compartida
+header('Cache-Control: private, no-store');
+// Respuestas públicas que dependen de una cabecera: decláralo (M75)
+header('Vary: Origin');
+// Y nunca armar URLs con cabeceras que la caché no usa como clave
+$base = URL_APP;                                  // no $_SERVER['HTTP_X_FORWARDED_HOST']</code></pre>
+
+
+<h2 id="smuggling"><span class="sec-num">83.5</span>Request smuggling</h2>
+
+<p>El <dfn data-term="request-smuggling">request smuggling</dfn> lo viste en <a href="m32-firewalls.html#origen">M32</a> como forma de pasar por debajo de un WAF. El mecanismo: el proxy y el origen comparten una conexión y no están de acuerdo en dónde termina cada request, porque una lleva <code>Content-Length</code> y <code>Transfer-Encoding: chunked</code> a la vez.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f835t f835d">
+<title id="f835t">Request smuggling: dos lecturas del mismo bytes</title>
+<desc id="f835d">Una sola conexión entre el proxy y el servidor de origen. El atacante manda una request con Content-Length y Transfer-Encoding chunked a la vez. El proxy usa Content-Length y ve una request. El origen usa chunked, termina antes y deja el resto en la conexión, que se vuelve el comienzo de la siguiente request, la de otra persona.</desc>
+<defs><marker id="f835a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="24" width="742" height="40" rx="8"/>
+<rect class="dg-box" x="14" y="24" width="360" height="40" rx="4"/>
+<text class="dg-tiny dg-mono" x="194.0" y="48.0" text-anchor="middle">POST · Content-Length: 44 · TE: chunked</text>
+<rect class="dg-box" x="374" y="24" width="90" height="40" rx="4"/>
+<text class="dg-tiny dg-mono" x="419.0" y="48.0" text-anchor="middle">0\r\n\r\n</text>
+<rect class="dg-bad" x="464" y="24" width="292" height="40" rx="4"/>
+<text class="dg-tiny dg-mono" x="610.0" y="48.0" text-anchor="middle">GET /admin/usuarios …</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="88" width="450" height="36" rx="8"/>
+<text class="dg-tiny" x="239.0" y="110.0" text-anchor="middle">Proxy (Content-Length): una sola request</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="136" width="450" height="36" rx="8"/>
+<text class="dg-tiny" x="239.0" y="158.0" text-anchor="middle">Origen (chunked): termina en 0, sobra el resto</text>
+<rect class="dg-bad" x="464" y="136" width="292" height="36" rx="8"/>
+<text class="dg-tiny" x="610.0" y="158.0" text-anchor="middle">se pega a la request siguiente</text>
+<text class="dg-tiny" x="385" y="206" text-anchor="middle">Defensa: HTTP/2 hasta el origen, rechazar CL y TE juntos, y el mismo servidor para las dos lecturas.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 83.5.</b> Lo que sobra para el origen se vuelve el principio de la request siguiente, que puede ser de otro usuario.</figcaption>
+</figure>
+
+<p>No se arregla en PHP sino en la infraestructura: HTTP/2 hasta el origen (que no tiene <code>Content-Length</code> ambiguo), un proxy que rechaza requests con las dos cabeceras (el RFC 9112 manda tratarlas como error o quitar <code>Content-Length</code>) <span class="badge badge--doc">Documentado</span>, y versiones al día del proxy y del servidor. En XAMPP con Apache solo, sin proxy delante, no hay dos lecturas que comparar.</p>
+
+
+<h2 id="carreras"><span class="sec-num">83.6</span>Condiciones de carrera de negocio</h2>
+
+<p>Una <dfn data-term="race-negocio">condición de carrera de negocio</dfn> no rompe la base: cada request hace lo correcto por separado. Lo que falla es una regla del negocio (un cupo, un cupón de un solo uso, un saldo) porque dos requests leen el mismo estado antes de que cualquiera lo cambie. El atacante las provoca a propósito, mandando 20 requests iguales en el mismo milisegundo.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 478" role="img" aria-labelledby="f836t f836d">
+<title id="f836t">Una condición de carrera de negocio: cupos de una oportunidad</title>
+<desc id="f836d">Una oportunidad tiene un cupo libre. Dos estudiantes se postulan al mismo tiempo. Las dos requests leen el contador, ven 1 libre, y las dos insertan su postulación y bajan el contador: quedan dos postulaciones aceptadas para un cupo y el contador en menos uno. Con un UPDATE condicional, solo una fila cambia y la otra request recibe cero filas afectadas.</desc>
+<defs><marker id="f836-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f836-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f836-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f836-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Request de Ana</text>
+<path class="dg-frame" d="M70.0 40 V468"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M385.0 40 V468"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Request de Beto</text>
+<path class="dg-frame" d="M700.0 40 V468"/>
+<path class="dg-edge" d="M73.0 72 L380.0 72" marker-end="url(#f836-a)"/>
+<rect x="76.30000000000001" y="55" width="302.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="66" text-anchor="middle">SELECT cupos FROM oportunidades WHERE id = 7</text>
+<path class="dg-edge" d="M697.0 106 L390.0 106" marker-end="url(#f836-a)"/>
+<rect x="430.9" y="89" width="223.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="100" text-anchor="middle">SELECT cupos … (al mismo tiempo)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 140 L75.0 140" marker-end="url(#f836-r)"/>
+<rect x="191.8" y="123" width="71.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="134" text-anchor="middle">cupos = 1</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M388.0 174 L695.0 174" marker-end="url(#f836-r)"/>
+<rect x="506.8" y="157" width="71.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="168" text-anchor="middle">cupos = 1</text>
+<path class="dg-edge" d="M73.0 208 L380.0 208" marker-end="url(#f836-a)"/>
+<rect x="102.7" y="191" width="249.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="202" text-anchor="middle">INSERT postulación; UPDATE cupos = 0</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M697.0 242 L390.0 242" marker-end="url(#f836-f)"/>
+<rect x="417.7" y="225" width="249.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="236" text-anchor="middle">INSERT postulación; UPDATE cupos = 0</text>
+<path d="M20 274 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="263" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="278" text-anchor="middle" style="fill:var(--fail)">con UPDATE … SET cupos = cupos - 1 WHERE id = 7 AND cupos &gt; 0</text>
+<path class="dg-edge" d="M73.0 310 L380.0 310" marker-end="url(#f836-a)"/>
+<rect x="162.1" y="293" width="130.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="304" text-anchor="middle">UPDATE condicional</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 344 L75.0 344" marker-end="url(#f836-r)"/>
+<rect x="172.0" y="327" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="338" text-anchor="middle">1 fila: inserta</text>
+<path class="dg-edge" d="M697.0 378 L390.0 378" marker-end="url(#f836-a)"/>
+<rect x="477.1" y="361" width="130.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="372" text-anchor="middle">UPDATE condicional</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M388.0 412 L695.0 412" marker-end="url(#f836-r)"/>
+<rect x="480.4" y="395" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="406" text-anchor="middle">0 filas: sin cupo</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 83.6.</b> Leer, decidir en PHP y escribir son tres pasos; otra request cabe entre ellos. El <code>UPDATE</code> condicional los junta en uno.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// models/postulaciones.php: tomar el cupo y postular en una transacción
+$this-&gt;connection-&gt;beginTransaction();
+$stmt = $this-&gt;connection-&gt;prepare(
+    'UPDATE oportunidades SET cupos = cupos - 1 WHERE id = ? AND estado = 1 AND cupos &gt; 0');
+$stmt-&gt;execute([$oportunidadId]);
+if ($stmt-&gt;rowCount() === 0) {                             // otra request se llevó el último
+    $this-&gt;connection-&gt;rollBack();
+    Response::json(-1, 'Sin cupos', [], 409);
+}
+$this-&gt;connection-&gt;prepare('INSERT INTO postulaciones (oportunidad_id, estudiante_id, cv_url) VALUES (?, ?, ?)')
+    -&gt;execute([$oportunidadId, $sesion['id'], $cv]);      // UNIQUE (oportunidad_id, estudiante_id)
+$this-&gt;connection-&gt;commit();</code></pre>
+<p>Es la misma idea que el <code>UPDATE</code> condicional del asiento de <a href="m39-manejo-pagos.html#opciones">M39</a>: que la base decida, en una sola sentencia o con una restricción <code>UNIQUE</code>, en lugar de un <code>if</code> en PHP. La restricción <code>UNIQUE (oportunidad_id, estudiante_id)</code> cubre además el doble clic que postula dos veces.</p>
+
+
+<h2 id="redos"><span class="sec-num">83.7</span>ReDoS</h2>
+
+<p>Los motores de expresiones regulares de PHP (PCRE) y de JavaScript prueban caminos y vuelven atrás cuando uno falla. Con cuantificadores anidados, como <code>(a+)+</code>, la cantidad de caminos crece de forma exponencial con el largo de la entrada. El <dfn data-term="redos">ReDoS</dfn> (Regular expression Denial of Service) es mandar la entrada que fuerza el peor caso.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="f837t f837d">
+<title id="f837t">ReDoS: el backtracking que explota</title>
+<desc id="f837d">Barras de la cantidad de caminos que prueba un motor de regex con backtracking para la expresión (a+)+$ contra una cadena de n letras a seguida de un signo de exclamación. Con 10 letras son unos mil caminos, con 20 un millón y con 30 mil millones: cada letra duplica el trabajo. A la derecha, las defensas: regex sin cuantificadores anidados, límite de largo de la entrada, y en PHP el límite pcre.backtrack_limit, que hace que preg_match devuelva false.</desc>
+<defs><marker id="f837a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="20" y="24" text-anchor="start">(a+)+$ contra "aaa…a!" — caminos probados (escala logarítmica)</text>
+<text class="dg-tiny dg-mono" x="20" y="58" text-anchor="start">n = 10</text>
+<rect class="dg-warnbox" x="80" y="40" width="120.0" height="24" rx="4"/>
+<text class="dg-tiny" x="208.0" y="57" text-anchor="start">≈ 10³</text>
+<text class="dg-tiny dg-mono" x="20" y="92" text-anchor="start">n = 15</text>
+<rect class="dg-warnbox" x="80" y="74" width="180.0" height="24" rx="4"/>
+<text class="dg-tiny" x="268.0" y="91" text-anchor="start">≈ 3 × 10⁴</text>
+<text class="dg-tiny dg-mono" x="20" y="126" text-anchor="start">n = 20</text>
+<rect class="dg-bad" x="80" y="108" width="240.0" height="24" rx="4"/>
+<text class="dg-tiny" x="328.0" y="125" text-anchor="start">≈ 10⁶</text>
+<text class="dg-tiny dg-mono" x="20" y="160" text-anchor="start">n = 25</text>
+<rect class="dg-bad" x="80" y="142" width="300.0" height="24" rx="4"/>
+<text class="dg-tiny" x="388.0" y="159" text-anchor="start">≈ 3 × 10⁷</text>
+<text class="dg-tiny dg-mono" x="20" y="194" text-anchor="start">n = 30</text>
+<rect class="dg-bad" x="80" y="176" width="360.0" height="24" rx="4"/>
+<text class="dg-tiny" x="448.0" y="193" text-anchor="start">≈ 10⁹</text>
+<rect class="dg-ok" x="530" y="40" width="226" height="160" rx="8"/>
+<text class="dg-label" x="643" y="64" text-anchor="middle">Defensas</text>
+<text class="dg-tiny" x="643" y="92" text-anchor="middle">sin cuantificadores anidados</text>
+<text class="dg-tiny" x="643" y="118" text-anchor="middle">largo máximo antes de la regex</text>
+<text class="dg-tiny" x="643" y="144" text-anchor="middle">pcre.backtrack_limit (PHP)</text>
+<text class="dg-tiny" x="643" y="170" text-anchor="middle">preg_match === false → 400</text>
+<text class="dg-tiny" x="385" y="228" text-anchor="middle">Los números son 2ⁿ, la cuenta del peor caso para esta expresión; un motor real hace algo de trabajo más por camino.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 83.7.</b> Cada letra más duplica el trabajo. Treinta letras y un signo de exclamación bastan para ocupar un proceso.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// Validar con un largo máximo antes de la regex, y tratar false como error
+if (strlen($texto) &gt; 200) {
+    Response::json(-1, 'Demasiado largo', [], 400);
+}
+$r = preg_match('/^[a-z0-9._-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i', $texto);   // sin (x+)+
+if ($r === false) {                                       // pcre.backtrack_limit alcanzado
+    error_log('regex: ' . preg_last_error_msg());
+    Response::json(-1, 'Entrada no válida', [], 400);
+}</code></pre>
+<p>En PHP, <code>pcre.backtrack_limit</code> (un millón por defecto) corta la búsqueda y <code>preg_match</code> devuelve <code>false</code> <span class="badge badge--doc">Documentado</span>; el error clásico es tratar <code>false</code> como "no coincide" y seguir. En el navegador no hay límite: una regex mala sobre un texto pegado congela el hilo principal, como viste en el <a href="m73-navegador.html#event-loop">event loop de M73</a>.</p>
+
+
+<h2 id="terceros"><span class="sec-num">83.8</span>Scripts de terceros y SRI</h2>
+
+<p>Un <code>&lt;script src&gt;</code> de otro dominio corre en tu origen con los mismos poderes que tu código: lee el DOM, manda requests con la sesión, reemplaza formularios. Confiar en el script es confiar en el dominio, en su dueño de mañana y en su CDN. En 2024, el dominio <code>polyfill.io</code> cambió de dueño y empezó a servir código que redirigía a algunos visitantes a otros sitios, en miles de páginas que lo cargaban <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f838t f838d">
+<title id="f838t">Un script de terceros con y sin SRI</title>
+<desc id="f838d">La página carga un script desde una CDN. Sin integridad, si la CDN o el dominio cambian de dueño y sirven otro archivo, el navegador lo ejecuta en tu origen con acceso a todo. Con el atributo integrity, el navegador calcula el hash SHA-384 del archivo descargado y, si no coincide con el que escribiste, no lo ejecuta.</desc>
+<defs><marker id="f838a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="30" width="180" height="56" rx="8"/>
+<text class="dg-small" x="104.0" y="54.5" text-anchor="middle">Tu página</text>
+<text class="dg-tiny dg-mono" x="104.0" y="69.5" text-anchor="middle">&lt;script src=cdn…&gt;</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="290" y="30" width="190" height="56" rx="8"/>
+<text class="dg-small" x="385.0" y="54.5" text-anchor="middle">CDN o dominio</text>
+<text class="dg-tiny" x="385.0" y="69.5" text-anchor="middle">cambió de dueño</text>
+<rect class="dg-bad" x="576" y="30" width="180" height="56" rx="8"/>
+<text class="dg-small" x="666.0" y="54.5" text-anchor="middle">Archivo distinto</text>
+<text class="dg-tiny" x="666.0" y="69.5" text-anchor="middle">redirige, roba datos</text>
+<path class="dg-edge" d="M194 58 L288 58" marker-end="url(#f838a)"/>
+<path class="dg-edge" d="M480 58 L574 58" marker-end="url(#f838a)"/>
+<rect class="dg-ok" x="14" y="120" width="742" height="76" rx="8"/>
+<text class="dg-tiny dg-mono" x="385" y="144" text-anchor="middle">&lt;script src="https://cdn…/lib.min.js" integrity="sha384-…" crossorigin="anonymous"&gt;</text>
+<text class="dg-tiny" x="385" y="168" text-anchor="middle">El navegador calcula el hash de lo que bajó. Si no coincide, no lo ejecuta.</text>
+<text class="dg-tiny" x="385" y="186" text-anchor="middle">Mejor todavía: copiar el archivo a tu servidor y servirlo tú.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 83.8.</b> El <dfn data-term="sri">SRI</dfn> (Subresource Integrity) ata la etiqueta a un archivo exacto. Si cambia un byte, no corre.</figcaption>
+</figure>
+
+<pre data-lang="shell"><code># Calcular el hash de un archivo para el atributo integrity
+$ openssl dgst -sha384 -binary lib.min.js | openssl base64 -A
+# Y la CSP limita además de dónde pueden venir los scripts (M78)</code></pre>
+<p>SRI solo sirve para archivos que no cambian; un script que el proveedor actualiza solo (analítica, chat de soporte) no puede llevarlo. Para esos, la CSP con nonce de <a href="m78-csp-cabeceras.html#nonce">M78</a> limita quién los carga, y la pregunta de fondo es si hace falta que corran en tu origen o pueden ir en un iframe de otro dominio.</p>
+
+
+<h2 id="xs-leaks"><span class="sec-num">83.9</span>XS-Leaks</h2>
+
+<p>Los <dfn data-term="xs-leaks">XS-Leaks</dfn> (cross-site leaks) son la familia que <a href="m73-navegador.html#procesos">M73</a> anunció: el atacante no puede leer tus respuestas, pero sí observar sus efectos, y con eso hace preguntas de sí o no sobre lo que ve la víctima.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 210" role="img" aria-labelledby="f839t f839d">
+<title id="f839t">XS-Leaks: preguntas de sí o no a otro sitio</title>
+<desc id="f839d">La página del atacante no puede leer las respuestas del sistema de prácticas, por la política del mismo origen. Pero sí puede observar efectos laterales: cuánto tarda una request, si un iframe disparó onload u onerror, cuántos frames tiene una ventana que abrió. Con eso hace preguntas de sí o no, por ejemplo si la búsqueda de un apellido en el panel de administración devuelve resultados. Abajo, las defensas: SameSite, Fetch Metadata, COOP y respuestas iguales.</desc>
+<defs><marker id="f839a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="24" width="220" height="60" rx="8"/>
+<text class="dg-small" x="124.0" y="50.5" text-anchor="middle">Página del atacante</text>
+<text class="dg-tiny" x="124.0" y="65.5" text-anchor="middle">no lee la respuesta (SOP)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="536" y="24" width="220" height="60" rx="8"/>
+<text class="dg-small" x="646.0" y="50.5" text-anchor="middle">practicas.edu.gt</text>
+<text class="dg-tiny dg-mono" x="646.0" y="65.5" text-anchor="middle">/buscar?apellido=Pérez</text>
+<path class="dg-edge" d="M234 44 L534 44" marker-end="url(#f839a)"/>
+<text class="dg-tiny" x="384" y="36" text-anchor="middle">request con la cookie de la víctima</text>
+<path class="dg-edge" d="M534 66 L236 66" marker-end="url(#f839a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="384" y="84" text-anchor="middle">tiempo, onload/onerror, número de frames</text>
+<rect class="dg-ok" x="14" y="118" width="742" height="72" rx="8"/>
+<text class="dg-tiny" x="385" y="140" text-anchor="middle">SameSite=Lax o Strict (M74): la request no lleva la sesión</text>
+<text class="dg-tiny" x="385" y="160" text-anchor="middle">Fetch Metadata (M76): rechazar Sec-Fetch-Site: cross-site en lo sensible</text>
+<text class="dg-tiny" x="385" y="180" text-anchor="middle">COOP (M78): el atacante pierde la referencia a la ventana que abrió</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 83.9.</b> Un bit por pregunta alcanza: "¿esta persona tiene una postulación a la empresa X?" se responde midiendo si la búsqueda devolvió algo.</figcaption>
+</figure>
+
+<p>Las defensas ya las tienes de módulos anteriores, y aquí se ve por qué van juntas: <code>SameSite</code> (<a href="m74-origen-cookies.html#samesite">M74</a>) hace que la request del atacante llegue sin sesión, Fetch Metadata (<a href="m76-csrf.html#fetch-metadata">M76</a>) deja rechazar en el servidor lo que viene de otro sitio, y COOP (<a href="m78-csp-cabeceras.html#aislamiento">M78</a>) corta la referencia a la ventana. Responder igual en los dos casos (mismo tamaño, mismo tiempo) cierra lo que queda, como el hash de relleno de <a href="m81-autenticacion-sesiones.html#enumeracion">M81</a>.</p>
+
+
+<h2 id="fallas"><span class="sec-num">83.10</span>Fallas típicas y cómo reconocerlas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Ataque</th><th>Arreglo</th></tr></thead>
+    <tbody>
+<tr><td>Tu página aparece dentro de un iframe ajeno</td><td>Clickjacking</td><td><code>frame-ancestors 'none'</code></td></tr>
+<tr><td>Un mensaje de otra ventana cambia de pantalla</td><td>postMessage sin origen</td><td>Comparar <code>e.origin</code> exacto</td></tr>
+<tr><td>Objetos vacíos tienen propiedades que nadie puso</td><td>Prototype pollution</td><td><code>Object.create(null)</code>, claves prohibidas</td></tr>
+<tr><td>Todos ven un script raro en una página pública</td><td>Envenenamiento de caché</td><td>No usar cabeceras fuera de la clave; <code>Vary</code></td></tr>
+<tr><td>Un perfil aparece en la caché de la CDN</td><td>Engaño de caché</td><td><code>Cache-Control: private, no-store</code></td></tr>
+<tr><td>Respuestas cruzadas entre usuarios tras un proxy</td><td>Request smuggling</td><td>HTTP/2 al origen, rechazar CL y TE juntos</td></tr>
+<tr><td>Dos aceptados para un cupo</td><td>Carrera de negocio</td><td><code>UPDATE</code> condicional o <code>UNIQUE</code></td></tr>
+<tr><td>Un proceso al 100&#8239;% con una entrada corta</td><td>ReDoS</td><td>Largo máximo, regex sin anidar, manejar <code>false</code></td></tr>
+<tr><td>Un script de la CDN cambió solo</td><td>Tercero comprometido</td><td>SRI o servirlo tú</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>La mitad de estas defensas son cabeceras (<code>frame-ancestors</code>, <code>Cache-Control</code>, COOP) y viven en el <code>core/cabeceras.php</code> de <a href="m78-csp-cabeceras.html#php">M78</a>; la otra mitad son hábitos de código (comparar el origen, el <code>UPDATE</code> condicional, el largo antes de la regex). La guía WEB09 agrega las cabeceras, y WEB10 provoca la carrera de las postulaciones en el laboratorio y comprueba el <code>UPDATE</code> condicional. Lo que sigue en la Parte IX es mirar dónde corre el código: el renderizado del servidor y Next.js (<a href="m84-renderizado-nextjs.html">M84</a>) y WebAssembly (<a href="m85-webassembly.html">M85</a>).</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m83"></div>
+<div data-exercise="m83-auditoria"></div>
+<div data-checkpoint="m83"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m83.data.js"></script>
+<script src="../assets/js/data/exercises/m83.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>

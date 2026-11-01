@@ -1,0 +1,674 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M76. CSRF</title>
+<meta name="description" content="Cross-Site Request Forgery a fondo: por qué la cookie viaja sola, las formas de disparar el ataque, SameSite y sus huecos, el token sincronizador y el double submit firmado, Origin y Fetch Metadata, login CSRF y la defensa completa en PHP.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m76">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>CSRF</h1>
+        <p class="lead">Otro sitio no puede leer tu API, pero sí puede hacer que el navegador de tu usuario le mande una request con su cookie. CSRF es ese ataque de solo escritura, y se cierra con capas que el servidor comprueba.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M76</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>90 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M74, M75</dd></div>
+          <div><dt>Estado</dt><dd data-status="m76">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Explicar por qué un sitio ajeno puede hacer que el navegador mande una request con la cookie de tu usuario.</li>
+    <li>Reconocer las cuatro formas de disparar un CSRF: formulario, GET con efecto, fetch sin cors y login CSRF.</li>
+    <li>Decir qué frena SameSite y dónde no alcanza: GET de nivel superior y subdominios del mismo sitio.</li>
+    <li>Comparar el token sincronizador, el double submit ingenuo y el token derivado con HMAC del <code>csrf.php</code> del sistema.</li>
+    <li>Comprobar <code>Origin</code> y Fetch Metadata en PHP, y ordenar las capas en el middleware.</li>
+  </ul>
+</section>
+
+<p>En <a href="m75-cors.html#no-csrf">M75</a> quedó una frase incómoda: el navegador bloquea la lectura, no el envío, y una request simple llega y se ejecuta aunque CORS diga que no. Este módulo trata esa mitad. El ataque se llama <dfn data-term="csrf">CSRF</dfn> (Cross-Site Request Forgery, falsificación de requests entre sitios): otro sitio hace que el navegador de tu usuario mande una request a tu API, con su cookie, y tu API la toma por legítima.</p>
+
+<h2 id="ataque"><span class="sec-num">76.1</span>El ataque, paso a paso</h2>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es una carta firmada en blanco. Tu navegador firma (con la cookie) todo lo que sale hacia tu sitio, sin mirar quién la escribió. El atacante escribe la carta; tu navegador la firma y la manda.</p>
+</aside>
+
+<p>Carla es reclutadora en el sistema de prácticas y tiene la sesión abierta. Le llega un correo con un enlace a <code>ofertas-gratis.example</code>. La página tiene esto:</p>
+<pre data-lang="html"><code>&lt;!-- En https://ofertas-gratis.example, una página que el atacante controla --&gt;
+&lt;form id="f" method="POST" action="http://localhost/SistemaControlPracticas/api/endpoints/oportunidades.php"&gt;
+  &lt;input type="hidden" name="titulo" value="Práctica remota, pago inmediato"&gt;
+  &lt;input type="hidden" name="descripcion" value="Escribe a este número para aplicar"&gt;
+&lt;/form&gt;
+&lt;script&gt;document.getElementById('f').submit();&lt;/script&gt;</code></pre>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 342" role="img" aria-labelledby="f761t f761d">
+<title id="f761t">Un ataque CSRF</title>
+<desc id="f761d">Una reclutadora con sesión abierta en el sistema de prácticas visita ofertas-gratis.example. La página tiene un formulario oculto que se envía solo a la API del sistema. El navegador adjunta la cookie de sesión porque la request va a ese sitio. Si la API solo mira la cookie, publica la oportunidad falsa a nombre de la reclutadora. El atacante nunca ve la respuesta: no la necesita.</desc>
+<defs><marker id="f761-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f761-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f761-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f761-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador de Carla</text>
+<path class="dg-frame" d="M70.0 40 V332"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">ofertas-gratis.example</text>
+<path class="dg-frame" d="M385.0 40 V332"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">API de prácticas</text>
+<path class="dg-frame" d="M700.0 40 V332"/>
+<path class="dg-edge" d="M73.0 72 L695.0 72" marker-end="url(#f761-a)"/>
+<rect x="293.2" y="55" width="183.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="66" text-anchor="middle">login: Set-Cookie sesion=…</text>
+<path d="M20 104 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="93" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="108" text-anchor="middle" style="fill:var(--fail)">más tarde, en otra pestaña</text>
+<path class="dg-edge" d="M73.0 140 L380.0 140" marker-end="url(#f761-a)"/>
+<rect x="122.5" y="123" width="210.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="134" text-anchor="middle">GET / (un enlace en un correo)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 174 L75.0 174" marker-end="url(#f761-r)"/>
+<rect x="112.60000000000001" y="157" width="229.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="168" text-anchor="middle">HTML con &lt;form&gt; oculto y submit()</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M73.0 208 L695.0 208" marker-end="url(#f761-f)"/>
+<rect x="243.70000000000002" y="191" width="282.59999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="202" text-anchor="middle">POST oportunidades.php + Cookie: sesion=…</text>
+<rect x="341.0" y="228" width="349" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="351.0" y="244">si solo mira la cookie: publica la oferta falsa</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 276 L75.0 276" marker-end="url(#f761-r)"/>
+<rect x="233.8" y="259" width="302.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">200 (el atacante no lo lee, y no le importa)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 76.1.</b> El atacante no necesita la contraseña ni la cookie de Carla: le alcanza con que su navegador la adjunte. Tampoco necesita leer la respuesta.</figcaption>
+</figure>
+
+<p>Tres condiciones hacen posible el ataque, y cada defensa rompe una:</p>
+<ol class="steps">
+  <li><span class="step-title">Una acción que vale la pena</span>Publicar una oferta, cambiar el correo, aprobar una postulación, borrar algo.</li>
+  <li><span class="step-title">La sesión va sola en la request</span>Cookies (o autenticación HTTP básica, o un certificado de cliente): algo que el navegador agrega sin que la página lo pida.</li>
+  <li><span class="step-title">Nada impredecible en la request</span>El atacante puede escribir todos los parámetros de antemano.</li>
+</ol>
+<p>Hoy, ese formulario contra tu sistema <b>falla</b>: <code>requireAuth()</code> exige el token en todo método que no sea <code>GET</code>, <code>HEAD</code>, <code>OPTIONS</code> o <code>QUERY</code>, y el formulario no puede ponerlo. Rompe la tercera condición. Vas a ver por qué funciona, dónde no llega, y qué capas le faltan.</p>
+
+
+<h2 id="por-que-funciona"><span class="sec-num">76.2</span>Por qué la cookie viaja sola</h2>
+
+<p>Una cookie es <i>autoridad ambiental</i>: no la presenta la página que hace la request, la agrega el navegador según el destino (<a href="m74-origen-cookies.html#cookies">74.4</a>). El navegador no distingue entre "Carla hizo clic en Publicar" y "una página ajena envió un formulario": las dos requests van a tu sitio, y las dos llevan la cookie, salvo que <code>SameSite</code> diga lo contrario (<a href="m74-origen-cookies.html#samesite">74.6</a>).</p>
+<p>La Same-Origin Policy no ayuda aquí porque CSRF no necesita leer nada (<a href="m74-origen-cookies.html#sop">74.3</a>). El ataque es de solo escritura: el efecto ocurre en tu servidor cuando la request llega.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 236" role="img" aria-labelledby="f762t f762d">
+<title id="f762t">Lo que puede y no puede el otro sitio</title>
+<desc id="f762d">Dos columnas. A la izquierda, lo que el sitio atacante sí puede hacer con el navegador de la víctima: enviar formularios, cargar imágenes y hacer fetch sin leer la respuesta, y la cookie viaja si SameSite lo permite. A la derecha, lo que no puede: leer la respuesta, leer la cookie, leer el token de la página ni poner cabeceras propias sin preflight. CSRF vive entera en la columna izquierda.</desc>
+<defs><marker id="f762a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-ok" x="14" y="14" width="360" height="34" rx="8"/>
+<text class="dg-label" x="194.0" y="35.0" text-anchor="middle">Puede (escribir a ciegas)</text>
+<rect class="dg-bad" x="396" y="14" width="360" height="34" rx="8"/>
+<text class="dg-label" x="576.0" y="35.0" text-anchor="middle">No puede (leer)</text>
+<rect class="dg-box" x="14" y="60" width="360" height="34" rx="8"/>
+<text class="dg-small" x="194.0" y="81.0" text-anchor="middle">Enviar un &lt;form&gt; con GET o POST</text>
+<rect class="dg-box" x="396" y="60" width="360" height="34" rx="8"/>
+<text class="dg-small" x="576.0" y="81.0" text-anchor="middle">Leer la respuesta (SOP, M74)</text>
+<rect class="dg-box" x="14" y="102" width="360" height="34" rx="8"/>
+<text class="dg-small" x="194.0" y="123.0" text-anchor="middle">Cargar &lt;img&gt;, &lt;script&gt;, &lt;iframe&gt; de tu API</text>
+<rect class="dg-box" x="396" y="102" width="360" height="34" rx="8"/>
+<text class="dg-small" x="576.0" y="123.0" text-anchor="middle">Leer la cookie de tu sitio</text>
+<rect class="dg-box" x="14" y="144" width="360" height="34" rx="8"/>
+<text class="dg-small" x="194.0" y="165.0" text-anchor="middle">fetch con mode no-cors y text/plain</text>
+<rect class="dg-box" x="396" y="144" width="360" height="34" rx="8"/>
+<text class="dg-small" x="576.0" y="165.0" text-anchor="middle">Leer el token CSRF de tu página</text>
+<rect class="dg-box" x="14" y="186" width="360" height="34" rx="8"/>
+<text class="dg-small" x="194.0" y="207.0" text-anchor="middle">Que viaje la cookie, si SameSite lo deja</text>
+<rect class="dg-box" x="396" y="186" width="360" height="34" rx="8"/>
+<text class="dg-small" x="576.0" y="207.0" text-anchor="middle">Poner X-CSRF-Token sin pasar un preflight</text>
+<text class="dg-tiny" x="385" y="230" text-anchor="middle">CSRF necesita solo la columna izquierda. Toda defensa exige algo de la derecha.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 76.2.</b> Todo lo que necesita un CSRF está en la columna verde. Las defensas funcionan porque piden algo de la roja: leer un token, poner una cabecera, venir de tu origen.</figcaption>
+</figure>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Definición</p>
+  <p><b>Request simple</b> (<a href="m75-cors.html#simple">75.2</a>): GET, HEAD o POST con cabeceras de la lista segura y un <code>Content-Type</code> de formulario o texto. Son las que un formulario HTML ya podía mandar antes de CORS, y por eso salen sin preflight.</p>
+</aside>
+
+
+
+<h2 id="formas"><span class="sec-num">76.3</span>Cuatro formas de disparar el ataque</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 200" role="img" aria-labelledby="f763t f763d">
+<title id="f763t">Cuatro formas de disparar un CSRF</title>
+<desc id="f763d">Cuatro cajas: un formulario POST que se envía solo, un GET con efecto escondido en una imagen o un enlace, un fetch sin cors con un cuerpo de texto que parece JSON, y un login CSRF que mete a la víctima en la cuenta del atacante. Debajo de cada una, qué request genera.</desc>
+<defs><marker id="f763a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="20" width="176" height="64" rx="8"/>
+<text class="dg-label" x="102.0" y="56.0" text-anchor="middle">Formulario POST</text>
+<rect class="dg-box" x="14" y="100" width="176" height="76" rx="8"/>
+<text class="dg-tiny dg-mono" x="102.0" y="134.5" text-anchor="middle">form.submit() al cargar</text>
+<text class="dg-tiny" x="102.0" y="149.5" text-anchor="middle">urlencoded, nivel superior</text>
+<path class="dg-edge" d="M102 84 L102 98" marker-end="url(#f763a)"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="202" y="20" width="176" height="64" rx="8"/>
+<text class="dg-label" x="290.0" y="56.0" text-anchor="middle">GET con efecto</text>
+<rect class="dg-box" x="202" y="100" width="176" height="76" rx="8"/>
+<text class="dg-tiny dg-mono" x="290.0" y="134.5" text-anchor="middle">&lt;img src="…?borrar=7"&gt;</text>
+<text class="dg-tiny" x="290.0" y="149.5" text-anchor="middle">o un enlace que se sigue</text>
+<path class="dg-edge" d="M290 84 L290 98" marker-end="url(#f763a)"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="390" y="20" width="176" height="64" rx="8"/>
+<text class="dg-label" x="478.0" y="56.0" text-anchor="middle">fetch no-cors</text>
+<rect class="dg-box" x="390" y="100" width="176" height="76" rx="8"/>
+<text class="dg-tiny dg-mono" x="478.0" y="134.5" text-anchor="middle">body '{"id":7}'</text>
+<text class="dg-tiny" x="478.0" y="149.5" text-anchor="middle">Content-Type: text/plain</text>
+<path class="dg-edge" d="M478 84 L478 98" marker-end="url(#f763a)"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="578" y="20" width="176" height="64" rx="8"/>
+<text class="dg-label" x="666.0" y="56.0" text-anchor="middle">Login CSRF</text>
+<rect class="dg-box" x="578" y="100" width="176" height="76" rx="8"/>
+<text class="dg-tiny dg-mono" x="666.0" y="134.5" text-anchor="middle">POST login.php</text>
+<text class="dg-tiny" x="666.0" y="149.5" text-anchor="middle">con las claves del atacante</text>
+<path class="dg-edge" d="M666 84 L666 98" marker-end="url(#f763a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 76.3.</b> Cada forma produce una request distinta, y por eso cada defensa frena unas y no otras.</figcaption>
+</figure>
+
+<ul>
+  <li><b>Formulario POST.</b> La forma clásica. Llega como navegación de nivel superior, con <code>application/x-www-form-urlencoded</code>. PHP llena <code>$_POST</code> igual que si lo mandara tu frontend.</li>
+  <li><b>GET con efecto.</b> Si un <code>GET</code> cambia algo (<code>?accion=borrar&amp;id=7</code>), alcanza con una etiqueta <code>&lt;img&gt;</code> o un enlace. HTTP define GET como un método seguro: no debe cambiar estado <span class="badge badge--doc">Documentado</span>. Tu <code>oportunidades.php</code> lo respeta: <code>GET</code> solo lee.</li>
+  <li><b>fetch sin cors.</b> Con <code>mode: "no-cors"</code> y <code>text/plain</code>, la request sigue siendo simple. El cuerpo puede ser un JSON; el atacante no lee la respuesta, pero no le hace falta.</li>
+  <li><b>Login CSRF.</b> No usa la sesión de la víctima: le inyecta la del atacante (76.8).</li>
+</ul>
+<pre data-lang="js"><code>// Desde otro sitio: el cuerpo parece JSON, pero el Content-Type es text/plain
+fetch('https://api.practicas.edu.gt/v1/postulaciones', {
+  method: 'POST', mode: 'no-cors', credentials: 'include',
+  headers: { 'Content-Type': 'text/plain' },   // sigue siendo una request simple
+  body: '{"oportunidad_id": 7}'
+});</code></pre>
+<p>Este último caso es la razón de la regla "aceptar solo <code>application/json</code>" (76.8): si tu API exige ese <code>Content-Type</code>, un formulario no puede mandarlo, y un <code>fetch</code> que lo use dispara un preflight que tu política de CORS rechaza (<a href="m75-cors.html#preflight">75.3</a>).</p>
+
+
+<h2 id="samesite"><span class="sec-num">76.4</span>SameSite: una capa con huecos conocidos</h2>
+
+<p>Con <code>SameSite=Lax</code>, la cookie no viaja en los formularios POST ni en las imágenes o fetch de otro sitio; sí viaja al seguir un enlace (GET de nivel superior). Con <code>Strict</code> tampoco viaja en el enlace. Chrome trata como <code>Lax</code> las cookies que no declaran el atributo desde 2020 <span class="badge badge--doc">Documentado</span>, con una excepción temporal: durante sus primeros dos minutos, una cookie sin atributo sí viaja en un POST de nivel superior ("Lax+POST") <span class="badge badge--doc">Documentado</span>. Por eso conviene declarar el atributo siempre.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 268" role="img" aria-labelledby="f764t f764d">
+<title id="f764t">Qué hace SameSite con cada forma</title>
+<desc id="f764d">Una tabla dibujada: filas con cinco requests (formulario POST de otro sitio, imagen o fetch de otro sitio, enlace GET de otro sitio, formulario desde un subdominio del mismo sitio, login CSRF) y columnas Strict, Lax y None. Strict frena las tres de otro sitio pero no la del subdominio ni el login; Lax deja pasar el enlace GET; None no frena nada de lo que viene de otro sitio.</desc>
+<defs><marker id="f764a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="20" y="30" text-anchor="start">Request que dispara el atacante</text>
+<text class="dg-label" x="420" y="30" text-anchor="middle">Strict</text>
+<text class="dg-label" x="540" y="30" text-anchor="middle">Lax</text>
+<text class="dg-label" x="660" y="30" text-anchor="middle">None</text>
+<text class="dg-small" x="20" y="68" text-anchor="start">Formulario POST desde otro sitio</text>
+<rect class="dg-ok" x="366" y="50" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="420.0" y="68.0" text-anchor="middle">no viaja</text>
+<rect class="dg-ok" x="486" y="50" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="540.0" y="68.0" text-anchor="middle">no viaja</text>
+<rect class="dg-bad" x="606" y="50" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="660.0" y="68.0" text-anchor="middle">viaja</text>
+<text class="dg-small" x="20" y="110" text-anchor="start">&lt;img&gt; o fetch desde otro sitio</text>
+<rect class="dg-ok" x="366" y="92" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="420.0" y="110.0" text-anchor="middle">no viaja</text>
+<rect class="dg-ok" x="486" y="92" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="540.0" y="110.0" text-anchor="middle">no viaja</text>
+<rect class="dg-bad" x="606" y="92" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="660.0" y="110.0" text-anchor="middle">viaja</text>
+<text class="dg-small" x="20" y="152" text-anchor="start">Enlace GET de nivel superior</text>
+<rect class="dg-ok" x="366" y="134" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="420.0" y="152.0" text-anchor="middle">no viaja</text>
+<rect class="dg-bad" x="486" y="134" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="540.0" y="152.0" text-anchor="middle">viaja</text>
+<rect class="dg-bad" x="606" y="134" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="660.0" y="152.0" text-anchor="middle">viaja</text>
+<text class="dg-small" x="20" y="194" text-anchor="start">Formulario desde blog. (mismo sitio)</text>
+<rect class="dg-bad" x="366" y="176" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="420.0" y="194.0" text-anchor="middle">viaja</text>
+<rect class="dg-bad" x="486" y="176" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="540.0" y="194.0" text-anchor="middle">viaja</text>
+<rect class="dg-bad" x="606" y="176" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="660.0" y="194.0" text-anchor="middle">viaja</text>
+<text class="dg-small" x="20" y="236" text-anchor="start">Login CSRF (no necesita cookie)</text>
+<rect class="dg-box" x="366" y="218" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="420.0" y="236.0" text-anchor="middle">no aplica</text>
+<rect class="dg-box" x="486" y="218" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="540.0" y="236.0" text-anchor="middle">no aplica</text>
+<rect class="dg-box" x="606" y="218" width="108" height="28" rx="8"/>
+<text class="dg-tiny" x="660.0" y="236.0" text-anchor="middle">no aplica</text>
+<text class="dg-tiny" x="385" y="262" text-anchor="middle">Verde: la cookie no viaja y el ataque falla. Rojo: viaja; hace falta otra capa.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 76.4.</b> SameSite frena mucho, pero no frena lo que viene del mismo sitio ni los GET de nivel superior, y no tiene nada que decir sobre el login CSRF.</figcaption>
+</figure>
+
+<p>Los huecos, en concreto:</p>
+<ul>
+  <li><b>Mismo sitio no es mismo origen.</b> <code>blog.practicas.edu.gt</code> y <code>api.practicas.edu.gt</code> son el mismo sitio (<a href="m74-origen-cookies.html#sitio">74.2</a>). Un XSS en el blog, o un subdominio olvidado que alguien tomó, manda formularios con la cookie incluida.</li>
+  <li><b>En el laboratorio, todo es el mismo sitio.</b> <code>localhost:5173</code> y <code>localhost</code> comparten sitio: SameSite no frena nada entre ellos. El sitio atacante de WEB00 usa otro host por eso.</li>
+  <li><b>GET con efecto.</b> Lax deja pasar la navegación. Si un GET cambia algo, el ataque funciona.</li>
+  <li><b>Method override.</b> Frameworks que aceptan <code>_method=DELETE</code> en un GET convierten la navegación en una escritura.</li>
+  <li><b>Navegadores y clientes que no lo aplican.</b> Es una protección del navegador; no la exige el servidor.</li>
+</ul>
+<p>SameSite es la primera capa, barata y amplia. No es la defensa principal: OWASP la recomienda como defensa en profundidad, junto a un token o a comprobar el origen <span class="badge badge--doc">Documentado</span>.</p>
+
+
+<h2 id="token"><span class="sec-num">76.5</span>El token: algo que el atacante no puede leer ni fabricar</h2>
+
+<p>Un <dfn data-term="token-anti-csrf">token anti-CSRF</dfn> es un valor impredecible que la página legítima manda en cada escritura, normalmente en una cabecera, y que el servidor comprueba. El sitio atacante no lo conoce (no puede leer tu página, por la SOP) y no puede ponerlo en una cabecera de un formulario. Rompe la tercera condición de 76.1.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f765t f765d">
+<title id="f765t">Tres formas de llevar el token</title>
+<desc id="f765d">Tres columnas. Token sincronizador: el servidor guarda un token por sesión y lo compara con el que llega en la cabecera. Double submit ingenuo: el mismo valor aleatorio en una cookie y en la cabecera, sin firma; un subdominio puede plantar la cookie y romperlo. Double submit firmado o derivado: el token es un HMAC de la sesión con una clave del servidor; nadie sin la clave puede fabricarlo, y es lo que hace csrf.php del sistema.</desc>
+<defs><marker id="f765a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="14" width="238" height="40" rx="8"/>
+<text class="dg-label" x="133.0" y="38.0" text-anchor="middle">Sincronizador</text>
+<rect class="dg-box" x="14" y="66" width="238" height="36" rx="8"/>
+<text class="dg-tiny" x="133.0" y="88.0" text-anchor="middle">token aleatorio en la sesión</text>
+<rect class="dg-box" x="14" y="112" width="238" height="36" rx="8"/>
+<text class="dg-tiny" x="133.0" y="134.0" text-anchor="middle">del servidor (BD o $_SESSION)</text>
+<path class="dg-edge" d="M133 102 L133 111" marker-end="url(#f765a)"/>
+<rect class="dg-box" x="14" y="158" width="238" height="36" rx="8"/>
+<text class="dg-tiny" x="133.0" y="180.0" text-anchor="middle">compara sesión contra cabecera</text>
+<path class="dg-edge" d="M133 148 L133 157" marker-end="url(#f765a)"/>
+<rect class="dg-ok" x="14" y="214" width="238" height="40" rx="8"/>
+<text class="dg-small" x="133.0" y="238.0" text-anchor="middle">Estado en el servidor</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="266" y="14" width="238" height="40" rx="8"/>
+<text class="dg-label" x="385.0" y="38.0" text-anchor="middle">Double submit ingenuo</text>
+<rect class="dg-box" x="266" y="66" width="238" height="36" rx="8"/>
+<text class="dg-tiny" x="385.0" y="88.0" text-anchor="middle">valor aleatorio en una cookie</text>
+<rect class="dg-box" x="266" y="112" width="238" height="36" rx="8"/>
+<text class="dg-tiny" x="385.0" y="134.0" text-anchor="middle">y el mismo en la cabecera</text>
+<path class="dg-edge" d="M385 102 L385 111" marker-end="url(#f765a)"/>
+<rect class="dg-box" x="266" y="158" width="238" height="36" rx="8"/>
+<text class="dg-tiny" x="385.0" y="180.0" text-anchor="middle">compara cookie contra cabecera</text>
+<path class="dg-edge" d="M385 148 L385 157" marker-end="url(#f765a)"/>
+<rect class="dg-bad" x="266" y="214" width="238" height="40" rx="8"/>
+<text class="dg-small" x="385.0" y="238.0" text-anchor="middle">Un subdominio planta la cookie</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="518" y="14" width="238" height="40" rx="8"/>
+<text class="dg-label" x="637.0" y="38.0" text-anchor="middle">Derivado con HMAC</text>
+<rect class="dg-box" x="518" y="66" width="238" height="36" rx="8"/>
+<text class="dg-tiny" x="637.0" y="88.0" text-anchor="middle">token = HMAC(clave, sesión)</text>
+<rect class="dg-box" x="518" y="112" width="238" height="36" rx="8"/>
+<text class="dg-tiny" x="637.0" y="134.0" text-anchor="middle">csrf.php del sistema</text>
+<path class="dg-edge" d="M637 102 L637 111" marker-end="url(#f765a)"/>
+<rect class="dg-box" x="518" y="158" width="238" height="36" rx="8"/>
+<text class="dg-tiny" x="637.0" y="180.0" text-anchor="middle">recalcula y compara</text>
+<path class="dg-edge" d="M637 148 L637 157" marker-end="url(#f765a)"/>
+<rect class="dg-ok" x="518" y="214" width="238" height="40" rx="8"/>
+<text class="dg-small" x="637.0" y="238.0" text-anchor="middle">Sin estado; atado a la sesión</text>
+<text class="dg-tiny" x="385" y="284" text-anchor="middle">Lo que importa: que el atacante no pueda ni leer ni fabricar el valor que viaja en la cabecera.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 76.5.</b> Tres patrones. El ingenuo falla porque un subdominio puede escribir cookies para todo el sitio (cookie tossing) y plantar el par que quiera.</figcaption>
+</figure>
+
+<h3 id="token-tuyo">El token de tu sistema</h3>
+<p>Tu <code>csrf.php</code> usa el tercer patrón: el token no se guarda, se deriva de la cookie de sesión.</p>
+<pre data-lang="php"><code>&lt;?php
+// api/core/csrf.php, tal como está en tu repositorio (leído el 2026-10-31)
+function csrfToken(): string
+{
+    $cookie = (string)($_COOKIE[COOKIE_NAME] ?? '');
+    return hash_hmac('sha256', 'csrf|' . $cookie, COOKIE_KEY);   // (1) (2)
+}
+
+function requireCsrfToken(): void
+{
+    $provided = (string)($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');     // (3)
+    if ($provided === '' || !hash_equals(csrfToken(), $provided)) { // (4)
+        header('Content-Type: application/json; charset=utf-8');
+        Response::json(-1, 'La solicitud de seguridad expiró. …', [], 403);
+    }
+}</code></pre>
+<ol>
+  <li><b>Atado a la sesión.</b> Cambia cuando cambia la cookie: un login nuevo da un token nuevo, y el token de otra persona no sirve con tu cookie.</li>
+  <li><b>Separación de usos.</b> El prefijo <code>'csrf|'</code> hace que este HMAC no coincida con la firma de la cookie, aunque usen la misma <code>COOKIE_KEY</code>. Mejor todavía, una clave propia (<code>CSRF_KEY</code>), así una filtración de una no compromete la otra (<a href="m36-criptografia.html#hmac">M36</a>).</li>
+  <li><b>En una cabecera.</b> Un formulario no puede poner cabeceras, y un <code>fetch</code> de otro origen con <code>X-CSRF-Token</code> dispara un preflight.</li>
+  <li><b>Tiempo constante.</b> <code>hash_equals</code> no corta en el primer byte distinto. El vacío se rechaza antes.</li>
+</ol>
+<p>Es un buen diseño <span class="badge badge--ref">Diseño de referencia</span>: no necesita estado en el servidor, y el atacante no puede fabricarlo sin la clave. Dos cosas a revisar. Primero, el token vive lo mismo que la cookie; si quieres que caduque antes, incluye una marca de tiempo en el HMAC. Segundo, <b>nadie lo entrega</b>: el comentario del <code>GET</code> de <code>login.php</code> dice que devuelve un <code>csrfToken</code>, pero la respuesta no lo trae, así que un frontend legítimo no tiene cómo mandarlo y todo POST con sesión responde 403.</p>
+<pre data-lang="php"><code>&lt;?php
+// endpoints/login.php, GET: el comentario promete el token, la respuesta no lo trae
+Response::success([
+    'id'        =&gt; $auth_data['id'],
+    'username'  =&gt; $auth_data['username'],
+    'name'      =&gt; $auth_data['name'],
+    'roles'     =&gt; $auth_data['roles'],
+    'isAdmin'   =&gt; $auth_data['isAdmin'],
+    'csrfToken' =&gt; csrfToken(),          // (5) lo que falta
+]);</code></pre>
+<pre data-lang="js"><code>// El frontend guarda el token en memoria (no en localStorage) y lo manda en cada escritura
+let csrf = null;
+async function sesion() {
+  const r = await fetch('/api/endpoints/login.php', { credentials: 'same-origin' });
+  const j = await r.json();
+  csrf = j.data?.csrfToken ?? null;
+}
+async function publicar(datos) {
+  return fetch('/api/endpoints/oportunidades.php', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'X-CSRF-Token': csrf },          // un formulario de otro sitio no puede poner esto
+    body: new URLSearchParams(datos)
+  });
+}</code></pre>
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un token en la URL (<code>?csrf=…</code>) se filtra en el historial, en los registros del servidor y en la cabecera <code>Referer</code>. Un token en <code>localStorage</code> lo lee cualquier XSS, igual que el que está en memoria: <b>un XSS se salta cualquier token</b>, porque corre en tu origen y puede leer tu página (<a href="m77-xss-dom.html#alcance">M77</a>). El token frena a otro sitio, no a código que ya corre en el tuyo.</p>
+</aside>
+
+
+<h2 id="origin"><span class="sec-num">76.6</span>Comprobar de dónde viene: Origin y Referer</h2>
+
+<p>El navegador agrega la cabecera <code>Origin</code> a todo POST, PUT, DELETE y a toda request CORS, y la página no la puede cambiar <span class="badge badge--doc">Documentado</span>. Para frenar un CSRF, alcanza con exigir que sea uno de tus orígenes, en una lista exacta (los mismos de la política de CORS de <a href="m75-cors.html#php">75.9</a>).</p>
+<pre data-lang="php"><code>&lt;?php
+// api/core/origen.php: rechaza lo que no viene de un origen propio
+const ORIGENES_PROPIOS = ['https://app.practicas.edu.gt', 'http://localhost:5173'];
+
+function requireOrigenPropio(): void
+{
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? null;
+    if ($origin === null) {                         // sin Origin: miramos Referer
+        $ref = $_SERVER['HTTP_REFERER'] ?? '';
+        $p = parse_url($ref);
+        $origin = isset($p['scheme'], $p['host'])
+            ? $p['scheme'] . '://' . $p['host'] . (isset($p['port']) ? ':' . $p['port'] : '')
+            : null;
+    }
+    if ($origin === null || !in_array($origin, ORIGENES_PROPIOS, true)) {
+        Response::json(-1, 'Origen no permitido', [], 403);   // "null" también cae aquí
+    }
+}</code></pre>
+<ul>
+  <li><b>Origin <code>null</code>.</b> Lo mandan los iframes con <code>sandbox</code>, las redirecciones entre orígenes y los documentos <code>data:</code>. Un atacante puede provocarlo a propósito: nunca va en la lista.</li>
+  <li><b>Sin Origin.</b> Algunos navegadores viejos no lo mandan en ciertos POST. El respaldo es <code>Referer</code>; si tampoco está (una <code>Referrer-Policy: no-referrer</code> lo quita), decides: rechazar es más seguro, aceptar es más compatible.</li>
+  <li><b>Detrás de un proxy.</b> Compara contra la lista, nunca contra <code>Host</code> o <code>X-Forwarded-Host</code>, que puede escribir el cliente.</li>
+</ul>
+
+
+<h2 id="fetch-metadata"><span class="sec-num">76.7</span>Fetch Metadata: el navegador dice la relación</h2>
+
+<p>Las cabeceras <dfn data-term="fetch-metadata">Fetch Metadata</dfn> (<code>Sec-Fetch-Site</code>, <code>Sec-Fetch-Mode</code>, <code>Sec-Fetch-Dest</code> y <code>Sec-Fetch-User</code>) le dicen al servidor qué relación hay entre la página que manda y el destino, y qué tipo de request es <span class="badge badge--doc">Documentado</span>. Las pone el navegador; ningún script las puede escribir, porque el prefijo <code>Sec-</code> está prohibido para <code>fetch</code>. Las mandan Chrome, Edge, Firefox y Safari <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 308" role="img" aria-labelledby="f766t f766d">
+<title id="f766t">Las cabeceras que delatan de dónde viene una request</title>
+<desc id="f766d">El navegador agrega a cada request cabeceras que el JavaScript de la página no puede cambiar: Origin con el origen que la manda, y Sec-Fetch-Site, Sec-Fetch-Mode y Sec-Fetch-Dest con la relación entre los dos sitios y el tipo de request. Un formulario de ofertas-gratis.example llega con Origin ofertas-gratis y Sec-Fetch-Site cross-site; la página propia, con same-origin. PHP las compara antes de tocar la base.</desc>
+<defs><marker id="f766-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f766-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f766-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f766-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Página de ofertas-gratis</text>
+<path class="dg-frame" d="M70.0 40 V298"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador</text>
+<path class="dg-frame" d="M385.0 40 V298"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">API (PHP)</text>
+<path class="dg-frame" d="M700.0 40 V298"/>
+<path class="dg-edge" d="M73.0 72 L380.0 72" marker-end="url(#f766-a)"/>
+<rect x="148.9" y="55" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="66" text-anchor="middle">form.submit() a la API</text>
+<rect x="395.0" y="92" width="314" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="405.0" y="108">agrega cabeceras que la página no controla</text>
+<path class="dg-edge" d="M388.0 140 L695.0 140" marker-end="url(#f766-a)"/>
+<rect x="411.1" y="123" width="262.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="134" text-anchor="middle">Origin: https://ofertas-gratis.example</text>
+<path class="dg-edge" d="M388.0 174 L695.0 174" marker-end="url(#f766-a)"/>
+<rect x="394.6" y="157" width="295.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="168" text-anchor="middle">Sec-Fetch-Site: cross-site · Mode: navigate</text>
+<rect x="397.0" y="194" width="293" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="407.0" y="210">POST y cross-site: 403 antes del modelo</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M697.0 242 L390.0 242" marker-end="url(#f766-f)"/>
+<rect x="493.6" y="225" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="236" text-anchor="middle">403 Forbidden</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 76.6.</b> Dos datos que el atacante no controla: el origen que manda y la relación entre los sitios. Con eso, PHP rechaza antes de abrir la conexión a la base.</figcaption>
+</figure>
+
+<p>Con ellas se arma una <i>política de aislamiento de recursos</i>: todo lo que viene de otro sitio se rechaza, salvo una navegación GET de nivel superior (alguien siguió un enlace a tu página).</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f767t f767d">
+<title id="f767t">Política de aislamiento de recursos con Fetch Metadata</title>
+<desc id="f767d">Un árbol de decisión. Si la request no trae Sec-Fetch-Site, es un navegador viejo o un cliente que no es navegador: se deja pasar y deciden las otras capas. Si es same-origin, same-site o none, pasa. Si es cross-site, solo pasa una navegación GET de nivel superior, como seguir un enlace; todo lo demás se rechaza con 403.</desc>
+<defs><marker id="f767a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="260" y="12" width="250" height="40" rx="8"/>
+<text class="dg-small" x="385.0" y="36.0" text-anchor="middle">¿Trae Sec-Fetch-Site?</text>
+<rect class="dg-box" x="560" y="12" width="196" height="40" rx="8"/>
+<text class="dg-small" x="658.0" y="28.5" text-anchor="middle">no: navegador viejo o curl</text>
+<text class="dg-tiny" x="658.0" y="43.5" text-anchor="middle">deciden token y Origin</text>
+<path class="dg-edge" d="M510 32 L558 32" marker-end="url(#f767a)"/>
+<text class="dg-tiny" x="534" y="25" text-anchor="middle">no</text>
+<rect class="dg-box" x="260" y="88" width="250" height="40" rx="8"/>
+<text class="dg-small" x="385.0" y="112.0" text-anchor="middle">¿same-origin, same-site o none?</text>
+<path class="dg-edge" d="M385 52 L385 86" marker-end="url(#f767a)"/>
+<text class="dg-tiny" x="398" y="74" text-anchor="start">sí</text>
+<rect class="dg-ok" x="560" y="88" width="196" height="40" rx="8"/>
+<text class="dg-small" x="658.0" y="112.0" text-anchor="middle">pasa</text>
+<path class="dg-edge" d="M510 108 L558 108" marker-end="url(#f767a)"/>
+<text class="dg-tiny" x="534" y="101" text-anchor="middle">sí</text>
+<rect class="dg-box" x="260" y="164" width="250" height="40" rx="8"/>
+<text class="dg-small" x="385.0" y="180.5" text-anchor="middle">cross-site: ¿navegación GET?</text>
+<text class="dg-tiny" x="385.0" y="195.5" text-anchor="middle">Mode navigate y Dest document</text>
+<path class="dg-edge" d="M385 128 L385 162" marker-end="url(#f767a)"/>
+<text class="dg-tiny" x="398" y="150" text-anchor="start">no</text>
+<rect class="dg-ok" x="560" y="164" width="196" height="40" rx="8"/>
+<text class="dg-small" x="658.0" y="180.5" text-anchor="middle">pasa (es seguir un enlace)</text>
+<text class="dg-tiny" x="658.0" y="195.5" text-anchor="middle">el GET no debe cambiar nada</text>
+<path class="dg-edge" d="M510 184 L558 184" marker-end="url(#f767a)"/>
+<text class="dg-tiny" x="534" y="177" text-anchor="middle">sí</text>
+<rect class="dg-bad" x="260" y="240" width="250" height="40" rx="8"/>
+<text class="dg-small" x="385.0" y="264.0" text-anchor="middle">403: se rechaza</text>
+<path class="dg-edge" d="M385 204 L385 238" marker-end="url(#f767a)"/>
+<text class="dg-tiny" x="398" y="226" text-anchor="start">no</text>
+<rect class="dg-box" x="14" y="88" width="210" height="192" rx="8"/>
+<text class="dg-small" x="119" y="112" text-anchor="middle">Valores de Sec-Fetch-Site</text>
+<text class="dg-tiny dg-mono" x="30" y="140" text-anchor="start">same-origin</text>
+<text class="dg-tiny" x="30" y="155" text-anchor="start">tu propia página</text>
+<text class="dg-tiny dg-mono" x="30" y="174" text-anchor="start">same-site</text>
+<text class="dg-tiny" x="30" y="189" text-anchor="start">otro subdominio</text>
+<text class="dg-tiny dg-mono" x="30" y="208" text-anchor="start">cross-site</text>
+<text class="dg-tiny" x="30" y="223" text-anchor="start">otro sitio</text>
+<text class="dg-tiny dg-mono" x="30" y="242" text-anchor="start">none</text>
+<text class="dg-tiny" x="30" y="257" text-anchor="start">el usuario escribió la URL</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 76.7.</b> La política recomendada por la documentación de web.dev <span class="badge badge--ref">Diseño de referencia</span>: cuatro preguntas y un 403. No reemplaza al token: lo acompaña, y protege también de ataques que no son CSRF, como XSSI y fugas por tiempos.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// api/core/fetch-metadata.php: política de aislamiento de recursos
+function requireFetchMetadata(): void
+{
+    $site = $_SERVER['HTTP_SEC_FETCH_SITE'] ?? null;
+    if ($site === null) return;                                     // navegador viejo o curl
+    if (in_array($site, ['same-origin', 'same-site', 'none'], true)) return;
+
+    $mode = $_SERVER['HTTP_SEC_FETCH_MODE'] ?? '';
+    $dest = $_SERVER['HTTP_SEC_FETCH_DEST'] ?? '';
+    $esNavegacion = $mode === 'navigate' &amp;&amp; $_SERVER['REQUEST_METHOD'] === 'GET'
+                    &amp;&amp; in_array($dest, ['document', 'empty'], true);
+    if ($esNavegacion) return;                                      // seguir un enlace
+
+    Response::json(-1, 'Request de otro sitio rechazada', [], 403);
+}</code></pre>
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>La política deja pasar <code>same-site</code>, así que no frena al subdominio comprometido de 76.4. Si ningún otro subdominio necesita llamar a tu API, exige <code>same-origin</code> en las escrituras. Si tu frontend y tu API son orígenes distintos del mismo sitio, <code>same-site</code> es justo lo que necesitas dejar pasar, y la diferencia la hace el <code>Origin</code> exacto.</p>
+</aside>
+
+
+<h2 id="capas"><span class="sec-num">76.8</span>Las capas juntas: qué frena cada una</h2>
+
+<p>Ninguna capa frena las cinco formas sola. Enciende y apaga las defensas, y mira qué ataques siguen pasando contra la API del sistema de prácticas.</p>
+<div data-sim="csrf"></div>
+<h3 id="login-csrf">Login CSRF</h3>
+<p>El <dfn data-term="login-csrf">login CSRF</dfn> invierte el ataque: el atacante no usa tu sesión, te da la suya. Un formulario manda su usuario y su contraseña a tu login, y el navegador de la víctima queda dentro de la cuenta del atacante. Lo que la víctima haga después (subir su CV, escribir su carta de presentación, guardar su teléfono) queda donde el atacante lo lee.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 308" role="img" aria-labelledby="f768t f768d">
+<title id="f768t">Login CSRF</title>
+<desc id="f768d">El atacante tiene una cuenta propia de estudiante. Su página envía un formulario al login del sistema con su usuario y su contraseña. El navegador de la víctima recibe la cookie de la cuenta del atacante. La víctima sigue usando el sistema sin notarlo y sube su CV y sus datos, que quedan en la cuenta del atacante.</desc>
+<defs><marker id="f768-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f768-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f768-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f768-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador de Ana</text>
+<path class="dg-frame" d="M70.0 40 V298"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Página del atacante</text>
+<path class="dg-frame" d="M385.0 40 V298"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">login.php</text>
+<path class="dg-frame" d="M700.0 40 V298"/>
+<path class="dg-edge" d="M73.0 72 L380.0 72" marker-end="url(#f768-a)"/>
+<rect x="165.4" y="55" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="66" text-anchor="middle">GET / (un enlace)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 106 L75.0 106" marker-end="url(#f768-r)"/>
+<rect x="92.80000000000001" y="89" width="269.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="100" text-anchor="middle">&lt;form&gt; con usuario y clave del atacante</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M73.0 140 L695.0 140" marker-end="url(#f768-f)"/>
+<rect x="266.8" y="123" width="236.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="134" text-anchor="middle">POST login.php (sin cookie previa)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 174 L75.0 174" marker-end="url(#f768-r)"/>
+<rect x="276.7" y="157" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="168" text-anchor="middle">Set-Cookie: sesión del atacante</text>
+<path d="M20 206 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="195" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="210" text-anchor="middle" style="fill:var(--fail)">Ana vuelve al sistema y no nota nada</text>
+<path class="dg-edge" d="M73.0 242 L695.0 242" marker-end="url(#f768-a)"/>
+<rect x="197.5" y="225" width="375.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="236" text-anchor="middle">sube su CV y su carta: quedan en la cuenta del atacante</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 76.8.</b> No hay cookie que proteger antes del login, así que SameSite y el token atado a la sesión no aplican. La defensa es comprobar el origen.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// endpoints/login.php, POST: antes de buscar al usuario
+requireFetchMetadata();      // un formulario de otro sitio llega cross-site
+requireOrigenPropio();       // y con un Origin ajeno: 403, sin tocar la base</code></pre>
+<p>Con un token sincronizador, la alternativa es una sesión previa al login con su propio token; al iniciar sesión se reemplaza la sesión entera, que además evita la fijación de sesión (<a href="m81-autenticacion-sesiones.html#fijacion">M81</a>).</p>
+<h3 id="json">JSON y el Content-Type</h3>
+<p>"Mi API recibe JSON, así que no hay CSRF" es cierto solo si el servidor <b>rechaza</b> cualquier otro <code>Content-Type</code>. PHP no lo hace por ti: <code>json_decode(file_get_contents('php://input'))</code> decodifica igual un cuerpo que llegó como <code>text/plain</code>. Exígelo:</p>
+<pre data-lang="php"><code>&lt;?php
+$ct = $_SERVER['CONTENT_TYPE'] ?? '';
+if (!str_starts_with(strtolower($ct), 'application/json')) {
+    Response::json(-1, 'Content-Type no soportado', [], 415);
+}</code></pre>
+<p>Tu API hoy recibe formularios (<code>$_POST</code> y <code>parse_str</code> para PUT y DELETE), así que esta regla no aplica: la defensa es el token.</p>
+
+
+<h2 id="php"><span class="sec-num">76.9</span>La defensa completa en PHP</h2>
+
+<p>El orden dentro del middleware, del control más barato al más caro <span class="badge badge--ref">Diseño de referencia</span>:</p>
+<pre data-lang="php"><code>&lt;?php
+// api/core/auth-middleware.php: el orden de las capas (referencia)
+function requireAuth(int|array $roles = [])
+{
+    $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
+    $cambia = !in_array($method, ['GET', 'HEAD', 'OPTIONS'], true);
+
+    requireFetchMetadata();              // 1. barato y sin estado: corta lo de otro sitio
+    if ($cambia) requireOrigenPropio();  // 2. Origin exacto en todo lo que escribe
+
+    $data = checkAuth();                 // 3. la sesión
+    if ($data === null) Response::json(-2, 'Usuario no autenticado', [], 401);
+
+    if ($cambia) requireCsrfToken();     // 4. el token, atado a esa sesión
+    // … después, el rol y el dueño del recurso (M80)
+    return $data;
+}</code></pre>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Capa</th><th>Frena</th><th>No frena</th><th>Dónde vive</th></tr></thead>
+    <tbody>
+<tr><td><code>SameSite=Lax</code></td><td>POST e imágenes de otro sitio</td><td>Mismo sitio, GET de nivel superior, login</td><td><code>setcookie</code> en <code>login.php</code></td></tr>
+<tr><td>GET sin efectos</td><td>El GET con efecto</td><td>Todo lo demás</td><td>El diseño de cada endpoint</td></tr>
+<tr><td>Fetch Metadata</td><td>Todo lo cross-site salvo enlaces</td><td>Mismo sitio, navegadores viejos</td><td><code>fetch-metadata.php</code></td></tr>
+<tr><td><code>Origin</code> exacto</td><td>Otros sitios y subdominios</td><td>Requests sin Origin ni Referer</td><td><code>origen.php</code></td></tr>
+<tr><td>Token derivado</td><td>Todo lo que no lee tu página</td><td>Un XSS en tu origen</td><td><code>csrf.php</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Y la respuesta de error: hoy <code>Response::error</code> responde con HTTP 200 y <code>code: -2</code>. Para un rechazo de seguridad conviene un 403 (o 401 sin sesión): los registros, el WAF y el frontend lo distinguen de un error de negocio. La guía WEB03 implementa las cuatro capas y las prueba desde el segundo origen del laboratorio.</p>
+
+
+<h2 id="fallas"><span class="sec-num">76.10</span>Fallas típicas y cómo reconocerlas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+<tr><td>Todo POST con sesión responde 403 "La solicitud de seguridad expiró"</td><td>El frontend no tiene el token: nadie lo entrega</td><td>Devolver <code>csrfToken()</code> en el <code>GET</code> de <code>login.php</code> y en el login</td></tr>
+<tr><td>Después de iniciar sesión otra vez, el frontend recibe 403</td><td>El token derivado cambió con la cookie y el frontend guarda el viejo</td><td>Pedir el token de nuevo tras cada login</td></tr>
+<tr><td>Un enlace en un correo borra una oportunidad</td><td>Un GET con efecto; Lax deja pasar la navegación</td><td>GET solo lee; borrar va por DELETE</td></tr>
+<tr><td>El blog del mismo dominio publica ofertas</td><td>Confiar en <code>same-site</code> o en SameSite</td><td><code>Origin</code> exacto y token</td></tr>
+<tr><td>Las pruebas desde <code>localhost:5173</code> no muestran el ataque</td><td>Mismo sitio: SameSite no aplica en el laboratorio</td><td>Un host distinto para el sitio atacante (WEB00)</td></tr>
+<tr><td>Una integración server a server recibe 403</td><td>No manda Origin ni Sec-Fetch-Site y la política los exige</td><td>Esas integraciones no usan cookies: autentícalas con un token propio y sácalas del middleware de navegador</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Prueba con DevTools, en la pestaña Network: dispara el formulario desde el segundo origen y mira las cabeceras de la request (<code>Origin</code>, <code>Sec-Fetch-Site</code>, <code>Cookie</code>) y el código de respuesta. Si el efecto ocurrió (la fila apareció en la base) con un código de error, el chequeo está después del modelo y no antes. Que el atacante no pueda leer tu página es lo que sostiene el token; si puede ejecutar código en ella, no queda defensa: es XSS (<a href="m77-xss-dom.html#tipos">M77</a>).</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m76"></div>
+<div data-exercise="m76-api"></div>
+<div data-checkpoint="m76"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m76.data.js"></script>
+<script src="../assets/js/data/exercises/m76.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>

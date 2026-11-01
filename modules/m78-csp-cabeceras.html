@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M78. CSP y cabeceras de seguridad</title>
+<meta name="description" content="Content Security Policy a fondo: directivas, por qué las listas de dominios no sirven, nonces con strict-dynamic, hashes para una SPA, despliegue en report-only; y las demás cabeceras de seguridad: HSTS, nosniff, Referrer-Policy, Permissions-Policy, frame-ancestors, COOP, COEP y CORP.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m78">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>CSP y cabeceras de seguridad</h1>
+        <p class="lead">El escape evita que el código del atacante entre. La CSP es la segunda línea: si entra, el navegador no lo ejecuta. Bien escrita es corta, se basa en nonces y no en dominios, y se despliega mirando los reportes antes de bloquear.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M78</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>100 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M77</dd></div>
+          <div><dt>Estado</dt><dd data-status="m78">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Explicar qué hace la Content Security Policy y por qué es la segunda línea contra el XSS, no la primera.</li>
+    <li>Leer y escribir directivas, y saber cuáles no tienen respaldo en <code>default-src</code>.</li>
+    <li>Explicar por qué una lista de dominios no frena el XSS y escribir una política estricta con nonce y <code>strict-dynamic</code>, o con hashes para una SPA.</li>
+    <li>Desplegar una CSP en modo report-only y recibir sus reportes.</li>
+    <li>Configurar HSTS, <code>nosniff</code>, Referrer-Policy, Permissions-Policy, <code>frame-ancestors</code>, COOP, COEP y CORP, y decir qué ataque corta cada una.</li>
+  </ul>
+</section>
+
+<p><a href="m77-xss-dom.html#alcance">M77</a> terminó en una lista de capas. La primera, el escape, depende de que nadie olvide un solo <code>e()</code> en miles de líneas. Esta es la segunda: una cabecera con la que el servidor le dice al navegador qué código puede correr en la página. Si el escape falló, el payload entra al DOM, pero no se ejecuta.</p>
+
+
+<h2 id="capa"><span class="sec-num">78.1</span>Qué es una CSP y qué no es</h2>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es la lista de invitados en la puerta de un evento. No impide que alguien se cuele por la cocina (el escape olvidado), pero adentro, el personal solo atiende a quien lleva la pulsera del día. Una pulsera que cambia cada noche es un nonce; una lista que dice "cualquiera que venga de la ciudad X" es una lista de dominios.</p>
+</aside>
+
+<p>Una <dfn data-term="csp">CSP</dfn> (Content Security Policy) es una cabecera de respuesta con directivas. Cada directiva dice de dónde puede venir un tipo de recurso, y el navegador bloquea y reporta lo que no cumple <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 200" role="img" aria-labelledby="f781t f781d">
+<title id="f781t">Dos líneas de defensa contra el XSS</title>
+<desc id="f781d">Un payload viaja de izquierda a derecha. La primera barrera es el escape por contexto en el servidor y el frontend: si funciona, el payload llega como texto. Si alguien olvidó un escape, el payload entra al DOM como elemento; la segunda barrera es la CSP en el navegador, que decide si ese script puede correr. Detrás, HttpOnly y la sesión revocable limitan el daño.</desc>
+<defs><marker id="f781a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-bad" x="14" y="70" width="130" height="56" rx="8"/>
+<text class="dg-small" x="79.0" y="94.5" text-anchor="middle">Payload</text>
+<text class="dg-tiny" x="79.0" y="109.5" text-anchor="middle">en un título</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="184" y="40" width="170" height="116" rx="8"/>
+<text class="dg-small" x="269.0" y="94.5" text-anchor="middle">Escape y Trusted Types</text>
+<text class="dg-tiny" x="269.0" y="109.5" text-anchor="middle">M77: no entra</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="394" y="40" width="170" height="116" rx="8"/>
+<text class="dg-small" x="479.0" y="94.5" text-anchor="middle">CSP</text>
+<text class="dg-tiny" x="479.0" y="109.5" text-anchor="middle">M78: si entra, no corre</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="594" y="40" width="162" height="116" rx="8"/>
+<text class="dg-small" x="675.0" y="94.5" text-anchor="middle">HttpOnly, sesión corta</text>
+<text class="dg-tiny" x="675.0" y="109.5" text-anchor="middle">M81: el daño dura poco</text>
+<path class="dg-edge" d="M144 98 L182 98" marker-end="url(#f781a)"/>
+<path class="dg-edge" d="M354 98 L392 98" marker-end="url(#f781a)"/>
+<text class="dg-tiny" x="373" y="32" text-anchor="middle">escape olvidado</text>
+<path class="dg-edge" d="M564 98 L592 98" marker-end="url(#f781a)"/>
+<text class="dg-tiny" x="578" y="32" text-anchor="middle">CSP floja</text>
+<text class="dg-tiny" x="385" y="186" text-anchor="middle">Cada capa cubre el error de la anterior; ninguna reemplaza a la de antes.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 78.1.</b> La CSP no arregla el escape: lo respalda. Una aplicación que confía solo en la CSP tiene un XSS esperando a que alguien la afloje.</figcaption>
+</figure>
+
+<ul>
+  <li><b>Qué hace:</b> bloquea scripts inline, manejadores <code>on*</code>, <code>eval</code> y scripts de orígenes no permitidos; limita a dónde se conecta, desde dónde se enmarca y a dónde envía formularios.</li>
+  <li><b>Qué no hace:</b> no frena la inyección de HTML sin script (un formulario falso, DOM clobbering, <a href="m77-xss-dom.html#clobbering">M77</a>), no frena CSRF y no protege de lo que haga tu propio JavaScript con datos que no escapó.</li>
+</ul>
+
+
+<h2 id="directivas"><span class="sec-num">78.2</span>Directivas: de dónde viene cada cosa</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f782t f782d">
+<title id="f782t">Directivas de CSP y su respaldo</title>
+<desc id="f782d">Arriba, default-src, el valor de respaldo. De ella cuelgan las directivas de recursos: script-src, style-src, img-src, connect-src, font-src, frame-src y object-src; si una falta, se usa default-src. Abajo, aparte, las directivas que no tienen respaldo y hay que escribir siempre: base-uri, form-action y frame-ancestors.</desc>
+<defs><marker id="f782a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="285" y="14" width="200" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="385.0" y="32.5" text-anchor="middle">default-src 'self'</text>
+<text class="dg-tiny" x="385.0" y="47.5" text-anchor="middle">respaldo de las de recursos</text>
+<rect class="dg-box" x="14" y="96" width="113" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="70.5" y="118.0" text-anchor="middle">script-src</text>
+<path class="dg-feedback" d="M385 58 L70 94"/>
+<rect class="dg-box" x="139" y="96" width="113" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="195.5" y="118.0" text-anchor="middle">style-src</text>
+<path class="dg-feedback" d="M385 58 L195 94"/>
+<rect class="dg-box" x="264" y="96" width="113" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="320.5" y="118.0" text-anchor="middle">img-src</text>
+<path class="dg-feedback" d="M385 58 L320 94"/>
+<rect class="dg-box" x="389" y="96" width="113" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="445.5" y="118.0" text-anchor="middle">connect-src</text>
+<path class="dg-feedback" d="M385 58 L445 94"/>
+<rect class="dg-box" x="514" y="96" width="113" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="570.5" y="118.0" text-anchor="middle">font-src</text>
+<path class="dg-feedback" d="M385 58 L570 94"/>
+<rect class="dg-box" x="639" y="96" width="113" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="695.5" y="118.0" text-anchor="middle">object-src</text>
+<path class="dg-feedback" d="M385 58 L695 94"/>
+<text class="dg-tiny" x="385" y="158" text-anchor="middle">Si una directiva de recursos falta, el navegador usa default-src.</text>
+<rect class="dg-warnbox" x="14" y="180" width="742" height="64" rx="8"/>
+<text class="dg-small dg-mono" x="385" y="202" text-anchor="middle">Sin respaldo: base-uri, form-action, frame-ancestors</text>
+<text class="dg-tiny" x="385" y="226" text-anchor="middle">default-src no las cubre. Si no las escribes, no tienen límite.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 78.2.</b> <code>default-src</code> respalda a las directivas de recursos. Las de navegación y documento no tienen respaldo: sin <code>base-uri</code>, un <code>&lt;base&gt;</code> inyectado cambia todas las URL relativas.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Directiva</th><th>Qué controla</th><th>Valor típico</th></tr></thead>
+    <tbody>
+<tr><td><code>script-src</code></td><td>Scripts: externos, inline, manejadores, <code>eval</code></td><td><code>'nonce-…' 'strict-dynamic'</code></td></tr>
+<tr><td><code>object-src</code></td><td class="no-autolink">Plugins: <code>&lt;object&gt;</code>, <code>&lt;embed&gt;</code></td><td><code>'none'</code></td></tr>
+<tr><td><code>base-uri</code></td><td>Qué <code>&lt;base href&gt;</code> se acepta</td><td><code>'none'</code> o <code>'self'</code></td></tr>
+<tr><td><code>connect-src</code></td><td>fetch, XHR, WebSocket, EventSource</td><td><code>'self' https://api.practicas.edu.gt</code></td></tr>
+<tr><td><code>form-action</code></td><td>A dónde se envían los formularios</td><td><code>'self'</code></td></tr>
+<tr><td><code>frame-ancestors</code></td><td>Quién puede enmarcar esta página</td><td><code>'none'</code></td></tr>
+<tr><td><code>img-src</code>, <code>style-src</code>, <code>font-src</code></td><td>Imágenes, estilos, fuentes</td><td><code>'self'</code> y lo que uses</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Los valores especiales van entre comillas simples: <code>'self'</code> (el mismo origen), <code>'none'</code>, <code>'nonce-…'</code>, <code>'sha256-…'</code>, <code>'strict-dynamic'</code>, <code>'unsafe-inline'</code> y <code>'unsafe-eval'</code>. Los dos últimos desactivan justo lo que la CSP protege.</p>
+
+
+<h2 id="listas"><span class="sec-num">78.3</span>Por qué una lista de dominios no sirve</h2>
+
+<p>La primera CSP que escribe todo el mundo es una lista: <code>script-src 'self' https://cdn.jsdelivr.net https://www.google-analytics.com</code>. Parece estricta y casi nunca lo es.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f783t f783d">
+<title id="f783t">Por qué una lista de dominios no frena el XSS</title>
+<desc id="f783d">La política permite script-src cdn.jsdelivr.net para cargar una librería. Ese CDN sirve millones de archivos de cualquier paquete de npm, incluidos endpoints JSONP y librerías viejas con gadgets que ejecutan código desde el HTML. El atacante inyecta un script cuyo src apunta a uno de esos archivos: el dominio está en la lista y el navegador lo ejecuta.</desc>
+<defs><marker id="f783a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="30" width="220" height="60" rx="8"/>
+<text class="dg-small dg-mono" x="124.0" y="56.5" text-anchor="middle">script-src 'self'</text>
+<text class="dg-tiny dg-mono" x="124.0" y="71.5" text-anchor="middle">https://cdn.jsdelivr.net</text>
+<rect class="dg-ok" x="275" y="14" width="220" height="40" rx="8"/>
+<text class="dg-tiny dg-mono" x="385.0" y="38.0" text-anchor="middle">/npm/chart.js (la tuya)</text>
+<rect class="dg-bad" x="275" y="64" width="220" height="40" rx="8"/>
+<text class="dg-tiny dg-mono" x="385.0" y="88.0" text-anchor="middle">/npm/angular@1.x (gadget)</text>
+<rect class="dg-bad" x="275" y="114" width="220" height="40" rx="8"/>
+<text class="dg-tiny" x="385.0" y="138.0" text-anchor="middle">…y cualquier otro paquete</text>
+<path class="dg-edge" d="M234 60 L273 34" marker-end="url(#f783a)"/>
+<path class="dg-edge" d="M234 60 L273 84" marker-end="url(#f783a)"/>
+<path class="dg-edge" d="M234 60 L273 134" marker-end="url(#f783a)"/>
+<rect class="dg-bad" x="536" y="56" width="220" height="56" rx="8"/>
+<text class="dg-small" x="646.0" y="80.5" text-anchor="middle">El navegador lo ejecuta</text>
+<text class="dg-tiny" x="646.0" y="95.5" text-anchor="middle">el dominio está en la lista</text>
+<path class="dg-edge" d="M495 84 L534 84" marker-end="url(#f783a)"/>
+<text class="dg-tiny" x="385" y="196" text-anchor="middle">La lista dice de dónde, no qué. Un dominio que sirve código de terceros es "cualquier script".</text>
+<text class="dg-tiny" x="385" y="216" text-anchor="middle">El estudio de Google de 2016 encontró que el 94.7 % de las políticas reales se podía eludir así.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 78.3.</b> Permitir un dominio permite todo lo que ese dominio sirve. Un CDN público sirve librerías viejas con gadgets y endpoints JSONP que ejecutan lo que se les pase.</figcaption>
+</figure>
+
+<p>En 2016, investigadores de Google analizaron unas 26 000 políticas únicas de la web y encontraron que el 94.72&#8239;% se podía eludir, casi siempre por un dominio permitido que servía JSONP o una librería con gadgets <span class="badge badge--doc">Documentado</span>. De ahí sale la recomendación actual: una <b>CSP estricta</b>, basada en nonces o hashes, sin listas de dominios para los scripts <span class="badge badge--doc">Documentado</span>.</p>
+<p>Un gadget de script es código legítimo de una librería que lee el DOM y ejecuta algo según lo que encuentra: por ejemplo, AngularJS 1.x evalúa las expresiones <code>{{ }}</code> del HTML. Si la librería está permitida, el atacante no inyecta un <code>&lt;script&gt;</code>: inyecta HTML que la librería convierte en código.</p>
+
+
+<h2 id="nonce"><span class="sec-num">78.4</span>La CSP estricta: nonce y strict-dynamic</h2>
+
+<p>Un nonce aquí es lo mismo que en <a href="m36-criptografia.html#simetrico">M36</a>: un número que se usa una sola vez. El servidor genera uno aleatorio por respuesta, lo pone en la cabecera y en cada <code>&lt;script&gt;</code> legítimo. El atacante no lo conoce cuando escribe su payload, porque se guardó antes, en la base.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 342" role="img" aria-labelledby="f784t f784d">
+<title id="f784t">Una CSP con nonce, request por request</title>
+<desc id="f784d">El navegador pide la página. PHP genera un nonce aleatorio de 128 bits para esta respuesta, lo pone en la cabecera CSP y en cada script legítimo. El navegador ejecuta el script con el nonce correcto. Un script inyectado no tiene el nonce, o tiene uno viejo, y se bloquea con un reporte. Con strict-dynamic, el script legítimo puede cargar otros y la confianza se hereda.</desc>
+<defs><marker id="f784-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f784-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f784-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f784-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador</text>
+<path class="dg-frame" d="M70.0 40 V332"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">PHP</text>
+<path class="dg-frame" d="M385.0 40 V332"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Endpoint de reportes</text>
+<path class="dg-frame" d="M700.0 40 V332"/>
+<path class="dg-edge" d="M73.0 72 L380.0 72" marker-end="url(#f784-a)"/>
+<rect x="162.1" y="55" width="130.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="66" text-anchor="middle">GET /oportunidades</text>
+<rect x="395.0" y="92" width="244" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="405.0" y="108">nonce = base64(random_bytes(16))</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 140 L75.0 140" marker-end="url(#f784-r)"/>
+<rect x="73.0" y="123" width="309.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="134" text-anchor="middle">CSP: script-src &#x27;nonce-Q2x…&#x27; &#x27;strict-dynamic&#x27;</text>
+<rect x="80.0" y="160" width="209" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="90.0" y="176">&lt;script nonce=&quot;Q2x…&quot;&gt; corre</text>
+<rect x="80.0" y="194" width="237" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="90.0" y="210">app.js crea graficos.js: hereda</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M70.0 234 h40 v14 h-38" marker-end="url(#f784-f)"/>
+<text class="dg-tiny" x="116.0" y="245">&lt;script&gt; inyectado sin nonce: bloqueado</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M73.0 276 L695.0 276" marker-end="url(#f784-q)"/>
+<rect x="273.4" y="259" width="223.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">reporte: script-src-elem, inline</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 78.4.</b> El nonce cambia en cada respuesta. <code>strict-dynamic</code> deja que un script con nonce cargue otros, y que la confianza se herede: no hace falta listar de dónde.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// core/headers.php: cabeceras de seguridad para las páginas HTML
+function cabecerasHtml(): string
+{
+    $nonce = base64_encode(random_bytes(16));            // 128 bits, uno por respuesta
+    $csp = implode('; ', [
+        "script-src 'nonce-$nonce' 'strict-dynamic' https: 'unsafe-inline'",   // (1)
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+        "require-trusted-types-for 'script'",              // M77, primero en Report-Only
+        "report-to csp",
+    ]);
+    header("Content-Security-Policy: $csp");
+    header('Reporting-Endpoints: csp="https://api.practicas.edu.gt/endpoints/csp-report.php"');
+    return $nonce;
+}</code></pre>
+<ol>
+  <li>La línea completa es para compatibilidad: un navegador con CSP 3 ve el nonce y <code>'strict-dynamic'</code>, e <b>ignora</b> <code>https:</code> y <code>'unsafe-inline'</code>. Un navegador viejo que no entiende <code>strict-dynamic</code> cae a <code>https:</code>, y uno que no entiende nonces, a <code>'unsafe-inline'</code>. La página funciona en todos y es estricta donde se puede <span class="badge badge--doc">Documentado</span>.</li>
+</ol>
+<pre data-lang="php"><code>&lt;?php $nonce = cabecerasHtml(); ?&gt;
+&lt;!doctype html&gt;
+&lt;script nonce="&lt;?= $nonce ?&gt;" src="/js/app.js"&gt;&lt;/script&gt;
+&lt;script nonce="&lt;?= $nonce ?&gt;"&gt;iniciarFeed(&lt;?= js($datosIniciales) ?&gt;);&lt;/script&gt;
+&lt;!-- Lo inyectado no tiene el nonce de esta respuesta: no corre --&gt;</code></pre>
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un nonce fijo, o uno que se guarda en una caché compartida con la página, se reutiliza: el atacante lo lee una vez y lo pone en su payload. El nonce se genera por respuesta con un CSPRNG (<code>random_bytes</code>), y una página con nonce no se cachea en un CDN para todos los usuarios.</p>
+</aside>
+<h3 id="spa">Una SPA estática: hashes</h3>
+<p>El frontend del sistema es una SPA de Vite: un <code>index.html</code> estático que sirve Apache, sin PHP que genere un nonce. Ahí se usan hashes: el SHA-256 del contenido de cada script inline permitido, que el navegador recalcula y compara.</p>
+<pre data-lang="shell"><code># La SPA del frontend (Vite) es un index.html estático: no hay PHP que genere un nonce.
+# Sin scripts inline, la política estricta usa hashes del único script de arranque, si lo hay.
+Content-Security-Policy: script-src 'sha256-3q2+7w…' 'strict-dynamic'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'
+# Si no hay ningún script inline, 'self' con strict-dynamic no sirve: strict-dynamic ignora 'self'.
+# En ese caso: script-src 'self'; y que en tu propio origen no haya archivos que suba un usuario ni JSONP.</code></pre>
+
+
+<h2 id="despliegue"><span class="sec-num">78.5</span>Desplegar sin romper: report-only y reportes</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 210" role="img" aria-labelledby="f785t f785d">
+<title id="f785t">Desplegar una CSP sin romper la aplicación</title>
+<desc id="f785d">Cuatro etapas en una línea de tiempo. Primero, la política en Content-Security-Policy-Report-Only: no bloquea nada y manda reportes. Segundo, se leen los reportes y se arregla el código: scripts inline sin nonce, manejadores onclick, eval. Tercero, la política pasa a Content-Security-Policy y bloquea. Cuarto, se deja una política más estricta en report-only al lado, para probar el próximo cambio.</desc>
+<defs><marker id="f785a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="40" width="176" height="64" rx="8"/>
+<text class="dg-small" x="102.0" y="68.5" text-anchor="middle">1. Report-Only</text>
+<text class="dg-tiny" x="102.0" y="83.5" text-anchor="middle">no bloquea, reporta</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="202" y="40" width="176" height="64" rx="8"/>
+<text class="dg-small" x="290.0" y="68.5" text-anchor="middle">2. Leer reportes</text>
+<text class="dg-tiny" x="290.0" y="83.5" text-anchor="middle">arreglar inline y eval</text>
+<path class="dg-edge" d="M190 72 L200 72" marker-end="url(#f785a)"/>
+<rect class="dg-ok" x="390" y="40" width="176" height="64" rx="8"/>
+<text class="dg-small" x="478.0" y="68.5" text-anchor="middle">3. Bloquear</text>
+<text class="dg-tiny" x="478.0" y="83.5" text-anchor="middle">Content-Security-Policy</text>
+<path class="dg-edge" d="M378 72 L388 72" marker-end="url(#f785a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="578" y="40" width="176" height="64" rx="8"/>
+<text class="dg-small" x="666.0" y="68.5" text-anchor="middle">4. La próxima</text>
+<text class="dg-tiny" x="666.0" y="83.5" text-anchor="middle">otra en Report-Only</text>
+<path class="dg-edge" d="M566 72 L576 72" marker-end="url(#f785a)"/>
+<text class="dg-small" x="385" y="140" text-anchor="middle">Las dos cabeceras pueden convivir: una aplica, la otra prueba.</text>
+<text class="dg-tiny" x="385" y="166" text-anchor="middle">Los reportes traen ruido de extensiones del navegador: filtra por el campo source-file o por blocked-uri.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 78.5.</b> Una CSP que se activa en bloqueo el primer día rompe la aplicación y se borra el segundo. El modo report-only existe para no llegar a eso.</figcaption>
+</figure>
+
+<p><code>Content-Security-Policy-Report-Only</code> evalúa la política y manda un reporte por cada violación, sin bloquear. Los reportes van al endpoint que nombra <code>report-to</code> (con la cabecera <code>Reporting-Endpoints</code>) o, en navegadores que todavía no la soportan, <code>report-uri</code>, que está obsoleta pero sigue funcionando <span class="badge badge--doc">Documentado</span>. Report-only y <code>frame-ancestors</code> no funcionan en una etiqueta <code>&lt;meta&gt;</code>: van en la cabecera.</p>
+<pre data-lang="php"><code>&lt;?php
+// endpoints/csp-report.php: recibe reportes; no confía en nada de lo que llega
+$cuerpo = file_get_contents('php://input', length: 64 * 1024);   // tope de tamaño
+$tipo = $_SERVER['CONTENT_TYPE'] ?? '';
+if (!str_starts_with($tipo, 'application/reports+json') &amp;&amp; !str_starts_with($tipo, 'application/csp-report')) {
+    http_response_code(415); exit;
+}
+error_log('csp ' . substr(preg_replace('/[\r\n]/', ' ', $cuerpo), 0, 2000));   // M79: sin saltos de línea
+http_response_code(204);</code></pre>
+<p>El endpoint de reportes recibe datos de cualquiera: tiene tope de tamaño, valida el tipo y limpia los saltos de línea antes de escribir el log (la inyección en logs está en <a href="m79-inyecciones.html#crlf">M79</a>). Prueba las cinco políticas contra cinco inyecciones y dos scripts tuyos:</p>
+<div data-sim="csp"></div>
+
+
+<h2 id="cabeceras"><span class="sec-num">78.6</span>Las demás cabeceras de seguridad</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f786t f786d">
+<title id="f786t">Qué ataque corta cada cabecera</title>
+<desc id="f786d">Una tabla dibujada. A la izquierda, cada cabecera; a la derecha, el ataque que corta. Strict-Transport-Security corta el downgrade a HTTP. X-Content-Type-Options nosniff corta que un archivo se interprete como otro tipo. Referrer-Policy corta la fuga de URLs con datos. Permissions-Policy corta el uso de cámara o micrófono por un script inyectado. frame-ancestors corta el clickjacking. Cross-Origin-Opener-Policy corta el acceso desde una ventana abierta. Cross-Origin-Resource-Policy corta que otro sitio cargue tus recursos.</desc>
+<defs><marker id="f786a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="14" width="300" height="32" rx="8"/>
+<text class="dg-tiny dg-mono" x="164.0" y="34.0" text-anchor="middle">Strict-Transport-Security</text>
+<rect class="dg-box" x="330" y="14" width="426" height="32" rx="8"/>
+<text class="dg-tiny" x="543.0" y="34.0" text-anchor="middle">downgrade a HTTP, cookie robada en el café</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="54" width="300" height="32" rx="8"/>
+<text class="dg-tiny dg-mono" x="164.0" y="74.0" text-anchor="middle">X-Content-Type-Options: nosniff</text>
+<rect class="dg-box" x="330" y="54" width="426" height="32" rx="8"/>
+<text class="dg-tiny" x="543.0" y="74.0" text-anchor="middle">un JSON o una imagen leídos como HTML o script</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="94" width="300" height="32" rx="8"/>
+<text class="dg-tiny dg-mono" x="164.0" y="114.0" text-anchor="middle">Referrer-Policy</text>
+<rect class="dg-box" x="330" y="94" width="426" height="32" rx="8"/>
+<text class="dg-tiny" x="543.0" y="114.0" text-anchor="middle">URL con un token que se filtra a otro sitio</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="134" width="300" height="32" rx="8"/>
+<text class="dg-tiny dg-mono" x="164.0" y="154.0" text-anchor="middle">Permissions-Policy</text>
+<rect class="dg-box" x="330" y="134" width="426" height="32" rx="8"/>
+<text class="dg-tiny" x="543.0" y="154.0" text-anchor="middle">un script inyectado que pide la cámara</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="174" width="300" height="32" rx="8"/>
+<text class="dg-tiny dg-mono" x="164.0" y="194.0" text-anchor="middle">CSP frame-ancestors 'none'</text>
+<rect class="dg-box" x="330" y="174" width="426" height="32" rx="8"/>
+<text class="dg-tiny" x="543.0" y="194.0" text-anchor="middle">clickjacking: tu página dentro de un iframe (M83)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="214" width="300" height="32" rx="8"/>
+<text class="dg-tiny dg-mono" x="164.0" y="234.0" text-anchor="middle">Cross-Origin-Opener-Policy</text>
+<rect class="dg-box" x="330" y="214" width="426" height="32" rx="8"/>
+<text class="dg-tiny" x="543.0" y="234.0" text-anchor="middle">una ventana abierta que conserva window.opener</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="254" width="300" height="32" rx="8"/>
+<text class="dg-tiny dg-mono" x="164.0" y="274.0" text-anchor="middle">Cross-Origin-Resource-Policy</text>
+<rect class="dg-box" x="330" y="254" width="426" height="32" rx="8"/>
+<text class="dg-tiny" x="543.0" y="274.0" text-anchor="middle">otro sitio que incluye tus recursos (Spectre)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 78.6.</b> Cada cabecera corta un ataque concreto. Ninguna reemplaza a la CSP, y la CSP no reemplaza a ninguna.</figcaption>
+</figure>
+
+<ul>
+  <li><b><code>Strict-Transport-Security</code></b> (HSTS, <a href="m01-viaje-request.html#hsts">M01</a>): el navegador solo usa HTTPS con el dominio durante <code>max-age</code> segundos. Para entrar en la lista de precarga de los navegadores hacen falta un año, <code>includeSubDomains</code> y <code>preload</code> <span class="badge badge--doc">Documentado</span>. Ojo con <code>includeSubDomains</code> si algún subdominio interno todavía usa HTTP.</li>
+  <li><b><code>X-Content-Type-Options: nosniff</code></b>: el navegador respeta el <code>Content-Type</code> y no adivina. Un script con tipo <code>text/plain</code> o un JSON no se ejecutan como script. Es la otra mitad del arreglo de <a href="m77-xss-dom.html#api">77.4</a>.</li>
+  <li><b><code>Referrer-Policy</code></b>: cuánto de la URL viaja en <code>Referer</code> a otros sitios. El valor por defecto de los navegadores actuales es <code>strict-origin-when-cross-origin</code>: a otro sitio solo va el origen <span class="badge badge--doc">Documentado</span>. Una API puede usar <code>no-referrer</code>.</li>
+  <li><b><code>Permissions-Policy</code></b>: qué APIs del navegador puede usar la página y sus iframes. Si no usas la cámara, <code>camera=()</code> impide que un script inyectado la pida.</li>
+  <li><b><code>frame-ancestors</code></b>: quién puede enmarcar la página. Reemplaza a <code>X-Frame-Options</code>, que se puede mandar también para navegadores viejos. Es la defensa contra el clickjacking (<a href="m83-otros-ataques.html#clickjacking">M83</a>).</li>
+  <li><b><code>X-XSS-Protection</code></b>: está obsoleta. El filtro que activaba se quitó de los navegadores, y en algunos casos se podía usar para borrar scripts legítimos. Se omite, o se manda en <code>0</code> <span class="badge badge--doc">Documentado</span>.</li>
+</ul>
+<pre data-lang="shell"><code># .htaccess o el VirtualHost del frontend en Apache (XAMPP): cabeceras para todo lo estático
+&lt;IfModule mod_headers.c&gt;
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+&lt;/IfModule&gt;</code></pre>
+
+
+<h2 id="aislamiento"><span class="sec-num">78.7</span>COOP, COEP y CORP: aislar el proceso</h2>
+
+<p>Spectre (2018) mostró que el código de una página puede leer memoria de su mismo proceso midiendo tiempos. Los navegadores respondieron separando sitios en procesos (<a href="m73-navegador.html#procesos">M73</a>), y con tres cabeceras con las que una página pide más aislamiento: <dfn data-term="coop-coep">COOP y COEP</dfn>, más CORP para los recursos.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f787t f787d">
+<title id="f787t">COOP y COEP</title>
+<desc id="f787d">A la izquierda, sin COOP: tu página abre un popup de otro sitio, o es abierta por uno, y las dos ventanas comparten un grupo de navegación: una puede cambiar la URL de la otra con window.opener y comparten proceso. A la derecha, con COOP same-origin y COEP require-corp: la ventana queda en su propio grupo, window.opener es null y el documento obtiene crossOriginIsolated, que habilita SharedArrayBuffer y relojes precisos.</desc>
+<defs><marker id="f787a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="14" width="360" height="200" rx="8"/>
+<text class="dg-label" x="194" y="38" text-anchor="middle">Sin COOP</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="34" y="60" width="150" height="50" rx="8"/>
+<text class="dg-small" x="109.0" y="89.0" text-anchor="middle">tu página</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="204" y="60" width="150" height="50" rx="8"/>
+<text class="dg-small" x="279.0" y="89.0" text-anchor="middle">popup de otro sitio</text>
+<path class="dg-edge" d="M184 85 L202 85" marker-end="url(#f787a)"/>
+<text class="dg-tiny" x="194" y="140" text-anchor="middle">mismo grupo de navegación</text>
+<text class="dg-tiny dg-mono" x="194" y="162" text-anchor="middle">window.opener.location = phishing</text>
+<text class="dg-tiny" x="194" y="184" text-anchor="middle">mismo proceso en algunos casos</text>
+<rect class="dg-box" x="396" y="14" width="360" height="200" rx="8"/>
+<text class="dg-label" x="576" y="38" text-anchor="middle">COOP same-origin + COEP require-corp</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="416" y="60" width="150" height="50" rx="8"/>
+<text class="dg-small" x="491.0" y="81.5" text-anchor="middle">tu página</text>
+<text class="dg-tiny" x="491.0" y="96.5" text-anchor="middle">grupo propio</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="586" y="60" width="150" height="50" rx="8"/>
+<text class="dg-small" x="661.0" y="81.5" text-anchor="middle">popup de otro sitio</text>
+<text class="dg-tiny" x="661.0" y="96.5" text-anchor="middle">otro grupo</text>
+<text class="dg-tiny dg-mono" x="576" y="140" text-anchor="middle">window.opener === null</text>
+<text class="dg-tiny dg-mono" x="576" y="162" text-anchor="middle">crossOriginIsolated === true</text>
+<text class="dg-tiny" x="576" y="184" text-anchor="middle">cada recurso de otro origen debe aceptar con CORP o CORS</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 78.7.</b> COOP corta la relación entre ventanas. COEP exige que cada recurso de otro origen acepte ser incluido. Juntas dan <code>crossOriginIsolated</code>.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Cabecera</th><th>Quién la manda</th><th>Qué hace</th></tr></thead>
+    <tbody>
+<tr><td><code>Cross-Origin-Opener-Policy: same-origin</code></td><td>Tu página</td><td>Otra ventana de otro origen no conserva <code>window.opener</code> ni comparte grupo de navegación</td></tr>
+<tr><td><code>Cross-Origin-Embedder-Policy: require-corp</code></td><td>Tu página</td><td>Solo carga recursos de otro origen que lo permitan con CORP o CORS</td></tr>
+<tr><td><code>Cross-Origin-Resource-Policy: same-site</code></td><td>Tus recursos (la API, imágenes)</td><td>Otro sitio no los puede incluir con <code>&lt;img&gt;</code> o <code>&lt;script&gt;</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Con COOP y COEP, la página obtiene <code>crossOriginIsolated</code> y puede usar <code>SharedArrayBuffer</code> y relojes de alta precisión <span class="badge badge--doc">Documentado</span>. Para una aplicación como la tuya, que no los necesita, alcanza con COOP <code>same-origin</code> en el frontend y CORP en la API. COEP rompe cualquier recurso de otro origen que no mande CORP: se activa solo si hace falta.</p>
+
+
+<h2 id="php"><span class="sec-num">78.8</span>En tu proyecto: la API y el frontend</h2>
+
+<p>La API no sirve HTML. Su política es la más simple de todas: nada se carga, nada se enmarca. Esa línea, más <code>nosniff</code>, cierra el hallazgo 5 de la auditoría aunque algún día alguien abra un JSON en el navegador <span class="badge badge--doc">Documentado</span>.</p>
+<pre data-lang="php"><code>&lt;?php
+// core/response.php: la API no sirve HTML, así que su política es "nada"
+header('Content-Type: application/json; charset=utf-8');
+header('X-Content-Type-Options: nosniff');
+header("Content-Security-Policy: default-src 'none'; frame-ancestors 'none'");
+header('Cross-Origin-Resource-Policy: same-site');
+header('Referrer-Policy: no-referrer');
+header('Cache-Control: no-store');              // respuestas con datos personales</code></pre>
+<p>El frontend lleva las cabeceras de Apache de 78.6 y una CSP con hashes o <code>'self'</code>, más <code>connect-src</code> con la URL de la API. En el laboratorio, <code>localhost:5173</code> (Vite) y <code>localhost</code> (Apache) son orígenes distintos: <code>connect-src</code> tiene que nombrar los dos mientras desarrollas, y solo el de producción después.</p>
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Vite en modo desarrollo inyecta estilos y scripts inline para el recargado en caliente. Una CSP estricta rompe el servidor de desarrollo. La política estricta se prueba contra el <code>build</code> (<code>vite build</code> y <code>vite preview</code>), no contra <code>vite dev</code>.</p>
+</aside>
+
+
+<h2 id="fallas"><span class="sec-num">78.9</span>Fallas típicas y cómo reconocerlas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+<tr><td>Consola: <i>Refused to execute inline script</i> en tu propio código</td><td>Script inline sin nonce, o un <code>onclick</code> en el HTML</td><td>Nonce, o <code>addEventListener</code> en un archivo</td></tr>
+<tr><td>La CSP no bloquea nada aunque está</td><td><code>'unsafe-inline'</code> sin nonce, o un dominio de CDN en la lista</td><td>Política estricta con nonce y <code>strict-dynamic</code></td></tr>
+<tr><td>Todo corre aunque hay nonce</td><td>Nonce fijo, o la página con nonce está en una caché compartida</td><td><code>random_bytes</code> por respuesta, sin caché pública</td></tr>
+<tr><td><code>frame-ancestors</code> no hace nada</td><td>Está en una etiqueta <code>&lt;meta&gt;</code></td><td>Cabecera HTTP</td></tr>
+<tr><td>Reportes llenos de <code>chrome-extension://</code></td><td>Extensiones del navegador del usuario</td><td>Filtrar por <code>source-file</code> antes de alertar</td></tr>
+<tr><td>La app dejó de cargar imágenes de otro dominio</td><td>COEP <code>require-corp</code> sin CORP en esas imágenes</td><td>Quitar COEP si no hace falta aislamiento</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Revisa la política con el CSP Evaluator de Google, que marca las listas de dominios eludibles y las directivas que faltan, y mira las cabeceras de cualquier respuesta con <code>curl -sI https://…</code>. La guía WEB06 agrega <code>headers.php</code> a la API, la política del frontend en report-only, el endpoint de reportes y una prueba que falla si una respuesta sale sin <code>nosniff</code>. Lo que sigue es el otro lado del servidor: lo que pasa cuando el dato no termina en el HTML sino en SQL, en una shell o en una plantilla (<a href="m79-inyecciones.html#raiz">M79</a>).</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m78"></div>
+<div data-exercise="m78-politica"></div>
+<div data-checkpoint="m78"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m78.data.js"></script>
+<script src="../assets/js/data/exercises/m78.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>

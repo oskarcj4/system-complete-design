@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M85. WebAssembly</title>
+<meta name="description" content="Qué es un módulo de WebAssembly, cómo es su memoria lineal, qué entra por los imports y qué sale por los exports, qué protege el sandbox y qué no, cómo corre PHP entero en el navegador, WASI en el servidor y las cabeceras que Wasm necesita.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m85">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>WebAssembly</h1>
+        <p class="lead">WebAssembly es una caja con paredes buenas y sin nada adentro que la proteja de sí misma. El navegador garantiza que el módulo no salga de su memoria; no garantiza que el módulo no se rompa por dentro, ni que lo que tú le das por la ranura de los imports sea poco.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M85</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>110 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M73, M78, M82</dd></div>
+          <div><dt>Estado</dt><dd data-status="m85">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Explicar qué es un módulo de WebAssembly y los cuatro pasos que da el navegador antes de correrlo.</li>
+    <li>Leer la memoria lineal de un módulo y mostrar por qué un desbordamiento dentro de ella sigue siendo posible.</li>
+    <li>Separar lo que garantiza el sandbox de lo que sigue siendo responsabilidad del código y de los imports.</li>
+    <li>Decidir para qué sirve correr PHP en el navegador y para qué no.</li>
+    <li>Usar WASI con capacidades mínimas en el servidor y ajustar la CSP y las cabeceras de M78 para Wasm.</li>
+  </ul>
+</section>
+
+<p>En <a href="m73-navegador.html#quien">M73</a> quedó una pestaña pendiente: WebAssembly, código compilado que corre en el mismo motor que tu JavaScript y con sus mismas reglas. Este módulo la abre. La conclusión adelantada: Wasm no agrega permisos a la página, así que no cambia lo que un atacante puede hacer desde el navegador; lo que cambia es que trae código escrito en C y otros lenguajes, con las fallas de memoria de esos lenguajes, a un lugar donde antes solo había JavaScript.</p>
+
+
+<h2 id="modulo"><span class="sec-num">85.1</span>Qué es un módulo</h2>
+
+<p><dfn data-term="webassembly">WebAssembly</dfn> (Wasm) es un formato binario de instrucciones para una máquina virtual de pila, pensado como destino de compiladores <span class="badge badge--doc">Documentado</span>. Un archivo <code>.wasm</code> es un <b>módulo</b>: funciones, una memoria, una tabla y la lista de lo que importa y exporta. El navegador lo descarga, lo valida, lo compila a código de máquina y crea una <b>instancia</b>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f851t f851d">
+<title id="f851t">Del código fuente a una instancia de Wasm</title>
+<desc id="f851d">De izquierda a derecha: código en C, Rust o el intérprete de PHP; un compilador como Emscripten o rustc; un archivo .wasm binario; y en el navegador, cuatro pasos: descargarlo, validarlo, compilarlo a código de máquina y crear una instancia con su memoria lineal, su tabla de funciones y sus exports. La validación rechaza el módulo antes de correr si los tipos no cierran o si salta a un lugar que no existe.</desc>
+<defs><marker id="f851a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="30" width="140" height="64" rx="8"/>
+<text class="dg-small" x="84.0" y="58.5" text-anchor="middle">C, Rust, Go</text>
+<text class="dg-tiny" x="84.0" y="73.5" text-anchor="middle">o el PHP entero</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="184" y="30" width="140" height="64" rx="8"/>
+<text class="dg-small" x="254.0" y="58.5" text-anchor="middle">Compilador</text>
+<text class="dg-tiny" x="254.0" y="73.5" text-anchor="middle">Emscripten, rustc</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="354" y="30" width="120" height="64" rx="8"/>
+<text class="dg-small dg-mono" x="414.0" y="58.5" text-anchor="middle">modulo.wasm</text>
+<text class="dg-tiny" x="414.0" y="73.5" text-anchor="middle">binario, portable</text>
+<path class="dg-edge" d="M154 62 L182 62" marker-end="url(#f851a)"/>
+<path class="dg-edge" d="M324 62 L352 62" marker-end="url(#f851a)"/>
+<rect class="dg-box" x="504" y="14" width="252" height="196" rx="8"/>
+<text class="dg-label" x="630" y="36" text-anchor="middle">En el navegador</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="520" y="48" width="220" height="32" rx="6"/>
+<text class="dg-tiny" x="630.0" y="68.0" text-anchor="middle">1. fetch: como cualquier recurso</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="520" y="88" width="220" height="32" rx="6"/>
+<text class="dg-tiny" x="630.0" y="108.0" text-anchor="middle">2. validar: tipos y saltos</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="520" y="128" width="220" height="32" rx="6"/>
+<text class="dg-tiny" x="630.0" y="148.0" text-anchor="middle">3. compilar: a código de máquina</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="520" y="168" width="220" height="32" rx="6"/>
+<text class="dg-tiny" x="630.0" y="188.0" text-anchor="middle">4. instanciar: memoria y exports</text>
+<path class="dg-edge" d="M474 62 L518 64" marker-end="url(#f851a)"/>
+<text class="dg-tiny" x="244" y="140" text-anchor="middle">Wasm no es un lenguaje para escribir a mano:</text>
+<text class="dg-tiny" x="244" y="158" text-anchor="middle">es el destino de un compilador, como el código de máquina,</text>
+<text class="dg-tiny" x="244" y="176" text-anchor="middle">pero con reglas que el navegador comprueba antes de correrlo.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 85.1.</b> La validación es la primera barrera: un módulo con tipos que no cierran o con saltos a lugares que no existen no llega a correr.</figcaption>
+</figure>
+
+<pre data-lang="shell"><code>;; El formato de texto de Wasm (WAT): un módulo con una página de memoria y una función
+(module
+  (memory (export "memory") 1)            ;; 1 página = 64 KiB = 65 536 bytes
+  (func (export "sumar") (param i32 i32) (result i32)
+    local.get 0
+    local.get 1
+    i32.add))</code></pre>
+<p>Wasm 3.0 se dio por terminado en septiembre de 2025, con memorias de 64 bits, recolección de basura y excepciones <span class="badge badge--doc">Documentado</span>. Para este módulo alcanza la parte que no cambió: una memoria, imports, exports y las reglas que el motor comprueba.</p>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un módulo de Wasm es un empleado nuevo en una oficina con una sola mesa. Puede hacer lo que quiera sobre su mesa, pero no tiene llave de ningún cajón: si necesita algo de afuera, lo pide por una ventanilla, y tú decides qué ventanillas abre. Si desordena su mesa, el desorden es suyo; si le das la llave de la caja fuerte por la ventanilla, el problema es tuyo.</p>
+</aside>
+
+
+
+<h2 id="memoria"><span class="sec-num">85.2</span>La memoria lineal</h2>
+
+<p>La <dfn data-term="memoria-lineal">memoria lineal</dfn> de un módulo es un único arreglo de bytes, numerado desde 0, que crece de a páginas de 64 KiB <span class="badge badge--doc">Documentado</span>. Todo lo que el programa en C guarda (cadenas, estructuras, la parte de la pila que usa el compilador) vive ahí. Cada acceso se comprueba contra el tamaño de ese arreglo: un acceso fuera produce un <b>trap</b>, un error que detiene la ejecución del módulo.</p>
+<pre data-lang="js"><code>// validar.c: el buffer y la bandera, uno detrás del otro en la memoria lineal
+#include &lt;string.h&gt;
+struct perfil { char nombre[16]; int es_admin; };
+
+int registrar(struct perfil *p, const char *entrada) {
+    strcpy(p-&gt;nombre, entrada);      // copia hasta el 0 final, mida lo que mida
+    return p-&gt;es_admin;              // con 17 letras o más, ya no vale 0
+}</code></pre>
+<p>La comprobación es contra el final de la memoria, no contra el final de cada variable. Un <code>strcpy</code> de 20 letras en un buffer de 16 no sale de la memoria: pisa la variable de al lado, que es del mismo módulo. Pruébalo:</p>
+<div data-sim="wasmmem"></div>
+<p>Es el desbordamiento clásico de C, con una diferencia que juega en contra: en un proceso nativo hay canarios en la pila, direcciones al azar (ASLR) y páginas de solo lectura que hacen más difícil aprovecharlo, y dentro de la memoria lineal de Wasm no los hay <span class="badge badge--doc">Documentado</span>. Un estudio de 2020 compiló programas vulnerables a Wasm y mostró que fallas que en nativo eran difíciles de explotar se volvían más fáciles dentro del módulo (Lehmann, Kinder y Pradel, USENIX Security) <span class="badge badge--doc">Documentado</span>.</p>
+<pre data-lang="js"><code>// La misma función, con el largo controlado
+#include &lt;stdio.h&gt;
+int registrar(struct perfil *p, const char *entrada) {
+    snprintf(p-&gt;nombre, sizeof p-&gt;nombre, "%s", entrada);   // nunca más de 15 letras y el 0
+    return p-&gt;es_admin;
+}
+// Y al compilar, las defensas que sí existen dentro de la memoria:
+// $ emcc validar.c -O2 -fsanitize=address -o validar.js     (en pruebas, no en producción)</code></pre>
+
+
+<h2 id="imports"><span class="sec-num">85.3</span>Imports y exports: la única puerta</h2>
+
+<p>Un módulo no tiene instrucciones para tocar el DOM, la red ni las cookies. Lo único que puede hacer afuera es llamar a las funciones que el host le pasa como <b>imports</b>, y lo único que el host ve de adentro son los <b>exports</b>. En el navegador, el host es tu JavaScript.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f852t f852d">
+<title id="f852t">Lo único que un módulo puede tocar</title>
+<desc id="f852d">Una caja grande, la instancia del módulo, con su memoria lineal y su tabla de funciones adentro. A la izquierda, la página en JavaScript, que es el host. El módulo solo llega afuera por los imports que el host le dio, como una función log o una función que lee un archivo, y el host solo llega adentro por los exports, como una función validar y la memoria exportada. El DOM, la red, las cookies y el sistema de archivos quedan fuera de la caja: el módulo no tiene instrucciones para tocarlos.</desc>
+<defs><marker id="f852a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="30" width="230" height="230" rx="8"/>
+<text class="dg-label" x="129" y="54" text-anchor="middle">Host: tu JavaScript</text>
+<rect class="dg-box" x="34" y="72" width="190" height="32" rx="8"/>
+<text class="dg-tiny" x="129.0" y="92.0" text-anchor="middle">DOM</text>
+<rect class="dg-box" x="34" y="116" width="190" height="32" rx="8"/>
+<text class="dg-tiny" x="129.0" y="136.0" text-anchor="middle">fetch y cookies</text>
+<rect class="dg-box" x="34" y="160" width="190" height="32" rx="8"/>
+<text class="dg-tiny" x="129.0" y="180.0" text-anchor="middle">localStorage</text>
+<rect class="dg-box" x="34" y="204" width="190" height="32" rx="8"/>
+<text class="dg-tiny" x="129.0" y="224.0" text-anchor="middle">archivos (WASI)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="330" y="30" width="260" height="230" rx="8"/>
+<text class="dg-label" x="460" y="54" text-anchor="middle">Instancia del módulo</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="350" y="72" width="220" height="56" rx="8"/>
+<text class="dg-small" x="460.0" y="96.5" text-anchor="middle">Memoria lineal</text>
+<text class="dg-tiny" x="460.0" y="111.5" text-anchor="middle">bytes 0 … N, nada más</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="350" y="140" width="220" height="44" rx="8"/>
+<text class="dg-tiny" x="460.0" y="158.5" text-anchor="middle">Tabla de funciones</text>
+<text class="dg-tiny" x="460.0" y="173.5" text-anchor="middle">llamadas indirectas con tipo</text>
+<rect class="dg-box" x="350" y="196" width="220" height="44" rx="8"/>
+<text class="dg-tiny" x="460.0" y="214.5" text-anchor="middle">Código</text>
+<text class="dg-tiny" x="460.0" y="229.5" text-anchor="middle">validado, sin saltos libres</text>
+<path class="dg-edge" d="M328 92 L246 92" marker-end="url(#f852a)"/>
+<text class="dg-tiny" x="287" y="84" text-anchor="middle">imports</text>
+<path class="dg-edge" d="M246 222 L328 222" marker-end="url(#f852a)"/>
+<text class="dg-tiny" x="287" y="214" text-anchor="middle">exports</text>
+<rect class="dg-ok" x="616" y="30" width="140" height="230" rx="8"/>
+<text class="dg-label" x="686" y="56" text-anchor="middle">La regla</text>
+<text class="dg-tiny" x="686" y="88" text-anchor="middle">el módulo solo</text>
+<text class="dg-tiny" x="686" y="110" text-anchor="middle">llega afuera por</text>
+<text class="dg-tiny" x="686" y="132" text-anchor="middle">lo que tú</text>
+<text class="dg-tiny" x="686" y="154" text-anchor="middle">importas:</text>
+<text class="dg-tiny" x="686" y="176" text-anchor="middle">imports chicos,</text>
+<text class="dg-tiny" x="686" y="198" text-anchor="middle">poder chico</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 85.2.</b> El sandbox es tan chico como la lista de imports. Un import que hace <code>eval</code> lo deja del tamaño de la página.</figcaption>
+</figure>
+
+<pre data-lang="js"><code>// Instanciar con imports mínimos y leer el resultado como datos, no como HTML
+const { instance } = await WebAssembly.instantiateStreaming(
+  fetch('/wasm/validar.wasm', { integrity: 'sha384-…' }),       // SRI también para el .wasm
+  { env: { log: (ptr, len) =&gt; console.log(leer(ptr, len)) } }   // lo único que puede hacer afuera
+);
+function leer(ptr, len) {
+  const bytes = new Uint8Array(instance.exports.memory.buffer, ptr, len);
+  return new TextDecoder().decode(bytes);
+}
+salida.textContent = leer(instance.exports.mensaje(), instance.exports.largo());   // nunca innerHTML</code></pre>
+<pre data-lang="js"><code>// Un import que convierte el sandbox en decoración
+const imports = { env: {
+  ejecutar: (ptr, len) =&gt; eval(leer(ptr, len)),                 // el módulo ahora corre JavaScript
+  pedir: (ptr, len) =&gt; fetch(leer(ptr, len), { credentials: 'include' }),   // y llama a tu API con la sesión
+} };</code></pre>
+<p>La regla es la de mínimo privilegio de <a href="m66-permisos-sandbox.html">M66</a> aplicada a funciones: cada import es un poder, y un módulo de terceros con un import que llama a tu API con la sesión puede hacer lo mismo que un XSS. Al revés también vale: lo que sale del módulo son datos que escribió código en C con la entrada del usuario. Se muestran con <code>textContent</code>, como cualquier dato (<a href="m77-xss-dom.html#dom">M77</a>).</p>
+
+
+<h2 id="sandbox"><span class="sec-num">85.4</span>Qué protege el sandbox y qué no</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f853t f853d">
+<title id="f853t">Qué protege el sandbox y qué no</title>
+<desc id="f853d">Dos columnas. Lo que protege: que el módulo no lea ni escriba fuera de su memoria lineal, que no salte a código que no existe, que no llame funciones con otro tipo, y que no haga llamadas al sistema. Lo que no protege: un desbordamiento dentro de la memoria lineal que pisa otras variables del mismo módulo, la falta de canarios, de ASLR y de páginas de solo lectura dentro de esa memoria, los canales laterales como Spectre, la lógica del programa, y lo que el host le pasa por los imports.</desc>
+<defs><marker id="f853a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-ok" x="14" y="20" width="365" height="230" rx="8"/>
+<text class="dg-label" x="196" y="44" text-anchor="middle">Lo garantiza el motor</text>
+<text class="dg-tiny" x="196" y="78" text-anchor="middle">no lee ni escribe fuera de su memoria</text>
+<text class="dg-tiny" x="196" y="110" text-anchor="middle">no salta a una dirección inventada</text>
+<text class="dg-tiny" x="196" y="142" text-anchor="middle">no llama una función con otro tipo</text>
+<text class="dg-tiny" x="196" y="174" text-anchor="middle">no hace llamadas al sistema</text>
+<text class="dg-tiny" x="196" y="206" text-anchor="middle">la pila de llamadas no está en su memoria</text>
+<rect class="dg-bad" x="391" y="20" width="365" height="230" rx="8"/>
+<text class="dg-label" x="573" y="44" text-anchor="middle">Sigue siendo tu problema</text>
+<text class="dg-tiny" x="573" y="78" text-anchor="middle">desbordar un buffer dentro de la memoria</text>
+<text class="dg-tiny" x="573" y="106" text-anchor="middle">sin canarios, ASLR ni datos de solo lectura</text>
+<text class="dg-tiny" x="573" y="134" text-anchor="middle">Spectre y otros canales laterales</text>
+<text class="dg-tiny" x="573" y="162" text-anchor="middle">errores de lógica (un if al revés)</text>
+<text class="dg-tiny" x="573" y="190" text-anchor="middle">imports que le dan demasiado poder</text>
+<text class="dg-tiny" x="573" y="218" text-anchor="middle">lo que el host hace con lo que devuelve</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 85.3.</b> El motor protege a la página del módulo. Nadie protege al módulo de sí mismo.</figcaption>
+</figure>
+
+<p>Lo que el motor garantiza viene de la especificación: la memoria comprobada, el control de flujo estructurado (no hay saltos a direcciones arbitrarias), las llamadas indirectas que comprueban el tipo de la función y la pila de llamadas fuera de la memoria lineal <span class="badge badge--doc">Documentado</span>. Lo que queda tiene tres fuentes:</p>
+<ul>
+  <li><b>El programa:</b> un buffer desbordado o un <code>if</code> al revés funcionan igual de mal compilados a Wasm. Se cuida con el mismo código seguro, sanitizadores en las pruebas y dependencias al día (<a href="m56-supply-chain.html">M56</a>).</li>
+  <li><b>Los canales laterales:</b> Wasm, como JavaScript, puede medir tiempos. Spectre no respeta el sandbox del lenguaje; lo que lo frena es el proceso por sitio de <a href="m73-navegador.html#procesos">M73</a> y el aislamiento con COOP y COEP de <a href="m78-csp-cabeceras.html#aislamiento">M78</a>.</li>
+  <li><b>El host:</b> los imports que le das y lo que haces con lo que devuelve.</li>
+</ul>
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Wasm también se usó para esconder: entre 2017 y 2019, Coinhive ofrecía un minero de criptomonedas en Wasm que muchos sitios comprometidos cargaban sin que sus dueños lo supieran, hasta que el servicio cerró en marzo de 2019 <span class="badge badge--doc">Documentado</span>. El binario era más difícil de leer que JavaScript, pero el problema de fondo era el de <a href="m83-otros-ataques.html#terceros">M83</a>: un script de terceros corriendo en tu origen.</p>
+</aside>
+
+
+
+<h2 id="php-wasm"><span class="sec-num">85.5</span>PHP en el navegador</h2>
+
+<p>El intérprete de PHP está escrito en C, así que se puede compilar a Wasm con Emscripten. Así funciona WordPress Playground: WordPress entero corriendo en una pestaña, con SQLite en lugar de MySQL y un sistema de archivos virtual, sin servidor <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f854t f854d">
+<title id="f854t">PHP entero dentro de una pestaña</title>
+<desc id="f854d">Una pestaña del navegador que contiene todo lo que antes era el servidor: el intérprete de PHP compilado a Wasm, la aplicación PHP, una base SQLite en memoria y un sistema de archivos virtual. Las requests no salen a la red: un service worker o el propio JavaScript se las pasa al PHP de la pestaña. Como todo está en el cliente, quien usa la pestaña puede leer y cambiar el código, la base y la sesión. Sirve para demos, cursos y laboratorios desechables; no sirve para guardar secretos ni autorizar nada.</desc>
+<defs><marker id="f854a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="20" width="742" height="180" rx="8"/>
+<text class="dg-small" x="30" y="42" text-anchor="start">Una pestaña: WordPress Playground o php-wasm</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="34" y="64" width="160" height="64" rx="8"/>
+<text class="dg-small" x="114.0" y="92.5" text-anchor="middle">fetch / service worker</text>
+<text class="dg-tiny" x="114.0" y="107.5" text-anchor="middle">las requests no salen</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="214" y="64" width="160" height="64" rx="8"/>
+<text class="dg-small" x="294.0" y="92.5" text-anchor="middle">php.wasm</text>
+<text class="dg-tiny" x="294.0" y="107.5" text-anchor="middle">el intérprete</text>
+<path class="dg-edge" d="M194 96 L212 96" marker-end="url(#f854a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="394" y="64" width="160" height="64" rx="8"/>
+<text class="dg-small" x="474.0" y="92.5" text-anchor="middle">Tu app PHP</text>
+<text class="dg-tiny" x="474.0" y="107.5" text-anchor="middle">en un FS virtual</text>
+<path class="dg-edge" d="M374 96 L392 96" marker-end="url(#f854a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="574" y="64" width="160" height="64" rx="8"/>
+<text class="dg-small" x="654.0" y="92.5" text-anchor="middle">SQLite</text>
+<text class="dg-tiny" x="654.0" y="107.5" text-anchor="middle">en memoria</text>
+<path class="dg-edge" d="M554 96 L572 96" marker-end="url(#f854a)"/>
+<text class="dg-tiny" x="385" y="160" text-anchor="middle">Quien usa la pestaña puede leer y cambiar el código, la base y la "sesión".</text>
+<text class="dg-tiny" x="385" y="180" text-anchor="middle">No hay servidor que autorice: todo lo que pasa aquí lo decide el usuario.</text>
+<rect class="dg-ok" x="14" y="212" width="365" height="36" rx="8"/>
+<text class="dg-tiny" x="196.5" y="234.0" text-anchor="middle">Sirve: demos, cursos, laboratorios desechables</text>
+<rect class="dg-bad" x="391" y="212" width="365" height="36" rx="8"/>
+<text class="dg-tiny" x="573.5" y="234.0" text-anchor="middle">No sirve: secretos, datos reales, autorizar</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 85.4.</b> Correr PHP en el cliente no es "PHP más seguro": es quitar el servidor. Todo lo que el servidor decidía, ahora lo decide quien tiene la pestaña.</figcaption>
+</figure>
+
+<p>Las cuatro preguntas de <a href="m73-navegador.html#quien">M73</a> tienen aquí una respuesta extrema: se ve todo, nada viaja al servidor, todo se ejecuta en el cliente y no hay nadie que autorice. Para el sistema de prácticas sirve como laboratorio desechable (un curso de PHP, una demo sin instalar XAMPP), con datos de ejemplo. No sirve para nada que necesite un secreto, como la <code>COOKIE_KEY</code>, ni para decidir quién puede hacer qué. <span class="badge badge--ref">Diseño de referencia</span></p>
+
+
+<h2 id="wasi"><span class="sec-num">85.6</span>Wasm en el servidor: WASI</h2>
+
+<p>Fuera del navegador, el host es un runtime como Wasmtime o Wasmer, y la interfaz con el sistema es <dfn data-term="wasi">WASI</dfn> (WebAssembly System Interface). WASI 0.2, publicado en enero de 2024, se basa en el modelo de componentes <span class="badge badge--doc">Documentado</span>. Su idea de seguridad es la de capacidades: el módulo no tiene acceso a nada salvo lo que el runtime le pasa al arrancar, como una carpeta concreta.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="f855t f855d">
+<title id="f855t">WASI: capacidades que se dan, no que se quitan</title>
+<desc id="f855d">A la izquierda, un programa normal en el servidor: corre con los permisos del usuario del sistema y puede abrir cualquier archivo que ese usuario pueda abrir, y conectarse a la red. A la derecha, el mismo programa compilado a Wasm con WASI y corrido con wasmtime con la opción dir, que le da solo la carpeta de subidas. El módulo ve esa carpeta como su raíz y no tiene forma de nombrar otra; la red no existe si no se la dan.</desc>
+<defs><marker id="f855a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-bad" x="14" y="20" width="360" height="200" rx="8"/>
+<text class="dg-label" x="194" y="44" text-anchor="middle">Proceso normal</text>
+<text class="dg-tiny" x="194" y="72" text-anchor="middle">lo que pueda el usuario del sistema:</text>
+<rect class="dg-box" x="44" y="86" width="300" height="24" rx="5"/>
+<text class="dg-tiny dg-mono" x="194.0" y="102.0" text-anchor="middle">/etc/passwd</text>
+<rect class="dg-box" x="44" y="116" width="300" height="24" rx="5"/>
+<text class="dg-tiny dg-mono" x="194.0" y="132.0" text-anchor="middle">/var/www/.env</text>
+<rect class="dg-box" x="44" y="146" width="300" height="24" rx="5"/>
+<text class="dg-tiny dg-mono" x="194.0" y="162.0" text-anchor="middle">/var/www/subidas</text>
+<rect class="dg-box" x="44" y="176" width="300" height="24" rx="5"/>
+<text class="dg-tiny dg-mono" x="194.0" y="192.0" text-anchor="middle">la red entera</text>
+<rect class="dg-ok" x="396" y="20" width="360" height="200" rx="8"/>
+<text class="dg-label" x="576" y="44" text-anchor="middle">Módulo WASI en wasmtime</text>
+<text class="dg-tiny" x="576" y="72" text-anchor="middle">solo lo que le diste con --dir:</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="426" y="86" width="300" height="24" rx="5"/>
+<text class="dg-tiny dg-mono" x="576.0" y="102.0" text-anchor="middle">/subidas  (→ ./subidas)</text>
+<text class="dg-tiny" x="576" y="140" text-anchor="middle">/etc/passwd: no existe para él</text>
+<text class="dg-tiny" x="576" y="164" text-anchor="middle">la red: no la tiene</text>
+<text class="dg-tiny" x="576" y="188" text-anchor="middle">variables de entorno: vacías</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 85.5.</b> Un proceso normal hereda todo lo que puede el usuario del sistema y hay que recortarlo (<a href="m33-hardening-linux.html">M33</a>). Un módulo WASI empieza sin nada y hay que darle cada cosa.</figcaption>
+</figure>
+
+<pre data-lang="shell"><code># Correr un validador de PDF compilado a WASI con solo la carpeta del archivo
+$ wasmtime run --dir=./subidas/tmp::/entrada validar-pdf.wasm /entrada/cv-8f3a.pdf
+# Sin --dir no ve ningún archivo; sin --env no ve COOKIE_KEY; sin permisos de red, no tiene sockets.</code></pre>
+<p>Es una forma barata de aislar el código que procesa archivos de terceros, como el validador de CVs de <a href="m82-archivos-ssrf.html#tipo-real">M82</a>: si la librería de PDF tiene una falla, quien la aproveche queda dentro de una carpeta temporal, sin red y sin variables de entorno. Proxies como Envoy y plataformas de borde también cargan extensiones en Wasm por la misma razón <span class="badge badge--doc">Documentado</span>.</p>
+
+
+<h2 id="cabeceras"><span class="sec-num">85.7</span>Las cabeceras que Wasm necesita</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f856t f856d">
+<title id="f856t">Wasm y las cabeceras de M78</title>
+<desc id="f856d">Tres cajas. La CSP: para compilar Wasm, una política estricta necesita la palabra wasm-unsafe-eval en script-src, que permite compilar Wasm sin permitir eval de JavaScript. La integridad: el .wasm se descarga con fetch con el atributo integrity, igual que un script con SRI. El aislamiento: los hilos de Wasm usan SharedArrayBuffer, que el navegador solo da a una página aislada con COOP y COEP.</desc>
+<defs><marker id="f856a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="30" width="238" height="150" rx="8"/>
+<text class="dg-label" x="133" y="58" text-anchor="middle">CSP</text>
+<text class="dg-tiny dg-mono" x="133" y="96" text-anchor="middle">script-src … 'wasm-unsafe-eval'</text>
+<text class="dg-tiny" x="133" y="130" text-anchor="middle">compila Wasm, no habilita eval()</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="266" y="30" width="238" height="150" rx="8"/>
+<text class="dg-label" x="385" y="58" text-anchor="middle">Integridad</text>
+<text class="dg-tiny dg-mono" x="385" y="96" text-anchor="middle">fetch(url, { integrity })</text>
+<text class="dg-tiny" x="385" y="130" text-anchor="middle">el .wasm de una CDN, con hash</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="518" y="30" width="238" height="150" rx="8"/>
+<text class="dg-label" x="637" y="58" text-anchor="middle">Aislamiento</text>
+<text class="dg-tiny dg-mono" x="637" y="96" text-anchor="middle">COOP + COEP</text>
+<text class="dg-tiny" x="637" y="130" text-anchor="middle">SharedArrayBuffer para hilos</text>
+<text class="dg-tiny" x="385" y="206" text-anchor="middle">Nunca 'unsafe-eval' para que cargue Wasm: abre eval() a cualquier XSS.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 85.6.</b> Wasm no pide relajar la seguridad de M78; pide tres ajustes concretos.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// core/cabeceras.php (M78): la CSP estricta con la palabra para compilar Wasm
+header("Content-Security-Policy: script-src 'nonce-$nonce' 'strict-dynamic' 'wasm-unsafe-eval'; "
+     . "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+// Si la página usa hilos de Wasm (SharedArrayBuffer), además:
+header('Cross-Origin-Opener-Policy: same-origin');
+header('Cross-Origin-Embedder-Policy: require-corp');</code></pre>
+<p>Con una CSP estricta, el navegador no compila Wasm salvo que <code>script-src</code> tenga <code>'wasm-unsafe-eval'</code> <span class="badge badge--doc">Documentado</span>. La palabra existe para no tener que usar <code>'unsafe-eval'</code>, que además habilita <code>eval()</code> de JavaScript a cualquier XSS. El <code>.wasm</code> se descarga con <code>fetch</code> y su opción <code>integrity</code> (el SRI de <a href="m83-otros-ataques.html#terceros">M83</a>), y los hilos de Wasm, que usan <code>SharedArrayBuffer</code>, solo están disponibles en una página aislada con COOP y COEP <span class="badge badge--doc">Documentado</span>.</p>
+
+
+<h2 id="fallas"><span class="sec-num">85.8</span>Fallas típicas y cómo reconocerlas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+<tr><td>Una bandera del módulo cambia sola con una entrada larga</td><td>Desbordamiento dentro de la memoria lineal</td><td>Largo controlado (<code>snprintf</code>), sanitizadores en pruebas</td></tr>
+<tr><td><code>RuntimeError: memory access out of bounds</code></td><td>Un acceso pasó el final de la memoria</td><td>El mismo: el trap es el síntoma, no la falla</td></tr>
+<tr><td>El módulo de un tercero hace requests con la sesión</td><td>Un import que da <code>fetch</code> con credenciales</td><td>Imports mínimos, sin <code>eval</code> ni red</td></tr>
+<tr><td>La salida del módulo ejecuta un script</td><td><code>innerHTML</code> con lo que devolvió</td><td><code>textContent</code></td></tr>
+<tr><td>El <code>.wasm</code> no compila con la CSP</td><td>Falta <code>'wasm-unsafe-eval'</code></td><td>Agregarla; nunca <code>'unsafe-eval'</code></td></tr>
+<tr><td>Un secreto aparece en el Playground</td><td>PHP corriendo en el cliente</td><td>Datos de ejemplo; el secreto, en un servidor</td></tr>
+<tr><td>Un validador en WASI lee <code>/etc/passwd</code></td><td><code>--dir=/</code></td><td>Solo la carpeta del archivo</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Validar un CV en el navegador con Wasm es comodidad para el usuario: le avisa antes de subir. La validación que cuenta sigue en el servidor (<a href="m82-archivos-ssrf.html#tipo-real">M82</a>), porque el navegador lo controla el usuario, corra JavaScript o Wasm. Con este módulo se cierra el recorrido de la Parte IX; el Checkpoint I junta todo en una auditoría completa del sistema de prácticas.</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m85"></div>
+<div data-exercise="m85-validador"></div>
+<div data-checkpoint="m85"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m85.data.js"></script>
+<script src="../assets/js/data/exercises/m85.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>
