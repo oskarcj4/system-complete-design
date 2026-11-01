@@ -707,3 +707,17 @@ enlazado** a su sección a fondo o al glosario (sin enlazar lo básico, como cac
 - **Diseño:** estilo Apple (HIG): tipografía del sistema, colores semánticos (`--label`, `--bg-2`, `--accent`…), claro y oscuro automáticos, vidrio solo en la barra superior y el sidebar. Paleta de capas fija (tokens `--l-*`, validada); no agregar tonos nuevos sin validarlos. Estados reservados: `--ok`, `--warn`, `--fail`, siempre con icono o texto. Nada de colores fijos en JS o SVG: siempre `var(--token)`.
 - **Términos:** marcar con `<dfn data-term="id">` la definición en contexto; el resto de las menciones se enlaza solo. Si una palabra es ambigua, `noauto: true` en el glosario o `class="no-autolink"` en el elemento.
 - **Pruebas:** la extensión de Chrome no estaba conectada; las pruebas usan Chrome headless por DevTools Protocol (`tools/test/cdp.mjs`, sin dependencias, con el WebSocket nativo de Node 22 o superior).
+
+## Traspaso 2026-10-31: Parte VIII completa (M70, M71, M72 y Checkpoint H)
+
+Pedido: "Termina las guias de la parte VIII". Hecho:
+
+- **M70 publicado** (`modules/m70-open-weights.html`): widget `data-calc="localfit"` en `widgets/sim-local.js`, quiz y ejercicio `m70-local`, glosario `gguf` y `parametros-activos`.
+- **M71 publicado** (`modules/m71-jailbreak-red-teaming.html`): widget `data-sim="asrfr"` en `widgets/sim-redteam.js` (CSS `.rt-chart`), quiz y ejercicio `m71-defensa`, glosario `tasa-exito-ataque`, `falso-rechazo`, `clasificador-seguridad` y `regla-de-dos` (se quitó el alias "regla de dos" de `trifecta-letal`); `jailbreak` y `red-teaming` tienen `deep` en M71. Solo conceptual y defensivo: ningún prompt que funcione.
+- **M72 publicado** (`modules/m72-evals-agentes.html`): widget `data-sim="trajcheck"` en `widgets/sim-evals.js` (CSS `.ev-*`), quiz y ejercicio `m72-evals`, glosario `eval-trayectoria`, `grader`, `swe-bench` y `contaminacion-benchmark`.
+- **Checkpoint H publicado** (`modules/checkpoint-h.html`, quiz `cph` de 20 preguntas): diseño de la plataforma de agentes de una empresa de 40 personas (tres repositorios, uno de salud que no puede salir de la red, revisor de PRs, agente nocturno, 4&#8239;000 USD por mes), figuras H.1 y H.2, solución de referencia y tabla de repaso por módulo.
+- **Promesas cerradas:** las menciones de M70, M71 y M72 en M62, M63, M64, M65, M66, M68, M70 y M71 son enlaces a la sección exacta.
+- **Documentación:** CLAUDE.md (publicados, widgets, ejercicios y árbol), PLAN.md y PLAN_AI_ENGINEERING.md (estados y fuentes verificadas).
+- **Pruebas:** test-page, links y quiz-bias en cero en cada página; figuras revisadas en claro y en oscuro.
+
+Pendiente de la Parte VIII: las guías IA07 e IA08 (propuestas en `PLAN_AI_ENGINEERING.md`). Queda en curso, en otras partes: M47 en adelante (Parte VI), Checkpoint G (Parte VII) y las guías WEB00–WEB10 (Parte IX).

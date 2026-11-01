@@ -213,13 +213,13 @@ window.SD.course = {
           summary: 'Qué entra en la ventana y en qué orden, búsqueda agéntica contra RAG, memoria entre sesiones, compactación y caché de prefijo.' },
         { id: 'm69', num: 'M69', title: 'Orquestadores: agentes que lanzan agentes', short: 'Orquestadores', mins: 130, href: 'modules/m69-orquestadores.html', status: 'ready',
           summary: 'Modo headless, Agent SDK, candidatos, fan-out, revalidación, cola y estado, presupuesto, aislamiento por tarea y DeepSec a fondo, con mapa.' },
-        { id: 'm70', num: 'M70', title: 'Modelos open weights y serving propio', short: 'Open weights', mins: 110, href: 'modules/m70-open-weights.html', status: 'soon',
+        { id: 'm70', num: 'M70', title: 'Modelos open weights y serving propio', short: 'Open weights', mins: 110, href: 'modules/m70-open-weights.html', status: 'ready',
           summary: 'Ollama, llama.cpp y vLLM, GGUF, MoE como Kimi y DeepSeek, cuánta VRAM hace falta, gateways y routing por costo.' },
-        { id: 'm71', num: 'M71', title: 'Jailbreak, injection y red teaming', short: 'Jailbreak y red teaming', mins: 120, href: 'modules/m71-jailbreak-red-teaming.html', status: 'soon',
+        { id: 'm71', num: 'M71', title: 'Jailbreak, injection y red teaming', short: 'Jailbreak y red teaming', mins: 120, href: 'modules/m71-jailbreak-red-teaming.html', status: 'ready',
           summary: 'Jailbreak contra prompt injection, las familias documentadas y por qué funcionan, defensas por capas, cómo se mide y el red teaming como proceso.' },
-        { id: 'm72', num: 'M72', title: 'Evals de agentes', short: 'Evals de agentes', mins: 100, href: 'modules/m72-evals-agentes.html', status: 'soon',
+        { id: 'm72', num: 'M72', title: 'Evals de agentes', short: 'Evals de agentes', mins: 100, href: 'modules/m72-evals-agentes.html', status: 'ready',
           summary: 'Trayectorias, SWE-bench Verified y Terminal-Bench, pass^k, separar harness de modelo y el set de tareas propio.' },
-        { id: 'cph', num: 'CP-H', kind: 'checkpoint', title: 'Checkpoint H: la plataforma de agentes de un equipo', short: 'Checkpoint H', mins: 90, href: 'modules/checkpoint-h.html', status: 'soon',
+        { id: 'cph', num: 'CP-H', kind: 'checkpoint', title: 'Checkpoint H: la plataforma de agentes de un equipo', short: 'Checkpoint H', mins: 90, href: 'modules/checkpoint-h.html', status: 'ready',
           summary: 'Examen de la Parte VIII y el diseño de la plataforma de agentes de un equipo: harness, modelos, permisos, extensiones, un orquestador de revisión, evals y presupuesto.' }
       ]
     },

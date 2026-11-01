@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M71. Jailbreak, injection y red teaming</title>
+<meta name="description" content="Ingeniería defensiva: jailbreak contra prompt injection, las familias de ataque documentadas y por qué funcionan, defensas por capas con clasificadores de entrada y salida, cómo se mide (tasa de éxito de ataque contra falsos rechazos), la regla de dos en agentes y el red teaming como proceso.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m71">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Jailbreak, injection y red teaming</h1>
+        <p class="lead">Ningún modelo resiste todos los ataques, y un sistema bien diseñado no depende de que resista. Este módulo explica, sin recetas, qué familias de ataque existen y por qué funcionan, y dedica el resto a lo que sí controlas: las capas que los frenan, cómo se mide si frenan y cómo se organiza el trabajo de buscar las grietas antes que otros.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M71</dd></div>
+          <div><dt>Parte</dt><dd>VIII. AI Engineering: modelos, harnesses y agentes</dd></div>
+          <div><dt>Duración</dt><dd>120 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M22, M25, M62, M66</dd></div>
+          <div><dt>Estado</dt><dd data-status="m71">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Distinguir un jailbreak de una prompt injection por quién ataca y quién es la víctima.</li>
+    <li>Reconocer las familias de ataque documentadas y la falla del entrenamiento que explota cada una.</li>
+    <li>Diseñar defensas por capas, con clasificadores de entrada y salida y un sistema que no depende de que el modelo resista.</li>
+    <li>Medir una defensa con tasa de éxito de ataque y falsos rechazos, y elegir un umbral.</li>
+    <li>Aplicar la regla de dos a un agente con herramientas.</li>
+    <li>Organizar un ejercicio de red teaming con alcance, registro, reporte y regresión.</li>
+  </ul>
+</section>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">Regla de este módulo</p>
+  <p>Todo lo que sigue es ingeniería defensiva. Las familias de ataque se explican por la idea y por qué funcionan, con las fuentes publicadas, y sin un solo prompt que funcione. Probar ataques se hace solo sobre sistemas propios o con autorización escrita, como cualquier prueba de seguridad (<a href="#red-team">71.8</a>).</p>
+</aside>
+
+
+<h2 id="dos-ataques"><span class="sec-num">71.1</span>Dos ataques distintos</h2>
+
+<p>En <a href="m22-operar-modelos.html#abuso">M22.11</a> separaste los dos por quién ataca a quién, y en <a href="m22-operar-modelos.html#injection">M22.10</a> viste por qué la prompt injection no tiene solución completa. Este módulo los toma desde el lado de quien construye: qué parte del problema es del proveedor del modelo, qué parte es tuya y cómo se mide cada una.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f711t f711d">
+<title id="f711t">Quién ataca a quién</title>
+<desc id="f711d">Dos escenas lado a lado. A la izquierda, el jailbreak: el usuario escribe al modelo para obtener algo que las reglas del modelo prohíben; la víctima son las reglas del proveedor y, a veces, terceros. A la derecha, la prompt injection: un tercero deja una instrucción escondida en un documento, una página o el resultado de una herramienta; el modelo la lee mientras trabaja para el usuario y actúa con los permisos del usuario, que es la víctima. Abajo, el caso de un agente: los dos se combinan, porque un agente lee contenido de terceros y además tiene herramientas.</desc>
+<defs><marker id="f711a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="20" width="360" height="200" rx="8"/>
+<text class="dg-label" x="194" y="44" text-anchor="middle">Jailbreak</text>
+<rect class="dg-bad" x="30" y="70" width="120" height="50" rx="8"/>
+<text class="dg-small" x="90.0" y="91.5" text-anchor="middle">Usuario</text>
+<text class="dg-tiny" x="90.0" y="106.5" text-anchor="middle">el que ataca</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="238" y="70" width="120" height="50" rx="8"/>
+<text class="dg-small" x="298.0" y="91.5" text-anchor="middle">Modelo</text>
+<text class="dg-tiny" x="298.0" y="106.5" text-anchor="middle">sus reglas</text>
+<path class="dg-edge" d="M150 95 L236 95" marker-end="url(#f711a)"/>
+<text class="dg-tiny" x="193.0" y="88.0" text-anchor="middle">pedido armado</text>
+<text class="dg-small" x="194" y="160" text-anchor="middle">Víctima: las reglas del modelo</text>
+<text class="dg-tiny" x="194" y="180" text-anchor="middle">y, a veces, terceros</text>
+<rect class="dg-box" x="396" y="20" width="360" height="200" rx="8"/>
+<text class="dg-label" x="576" y="44" text-anchor="middle">Prompt injection</text>
+<rect class="dg-ok" x="408" y="70" width="100" height="50" rx="8"/>
+<text class="dg-small" x="458.0" y="91.5" text-anchor="middle">Usuario</text>
+<text class="dg-tiny" x="458.0" y="106.5" text-anchor="middle">la víctima</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="530" y="70" width="100" height="50" rx="8"/>
+<text class="dg-small" x="580.0" y="91.5" text-anchor="middle">Modelo</text>
+<text class="dg-tiny" x="580.0" y="106.5" text-anchor="middle">con permisos</text>
+<rect class="dg-bad" x="652" y="70" width="96" height="50" rx="8"/>
+<text class="dg-small" x="700.0" y="91.5" text-anchor="middle">Documento</text>
+<text class="dg-tiny" x="700.0" y="106.5" text-anchor="middle">de un tercero</text>
+<path class="dg-edge" d="M508 95 L528 95" marker-end="url(#f711a)"/>
+<path class="dg-edge" d="M650 95 L632 95" marker-end="url(#f711a)"/>
+<text class="dg-small" x="576" y="160" text-anchor="middle">Víctima: el usuario y sus datos</text>
+<text class="dg-tiny" x="576" y="180" text-anchor="middle">el que ataca nunca habló con el modelo</text>
+<rect class="dg-warnbox" x="14" y="236" width="742" height="40" rx="8"/>
+<text class="dg-small" x="385.0" y="260.0" text-anchor="middle">En un agente se combinan: lee contenido de terceros y además tiene herramientas</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 71.1.</b> En el jailbreak, el usuario es el atacante; en la injection, la víctima. Un agente expone a los dos.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th></th><th>Jailbreak</th><th>Prompt injection</th></tr></thead>
+    <tbody>
+<tr><td>Quién ataca</td><td>El usuario</td><td>Un tercero, a través del contenido</td></tr>
+<tr><td>Qué busca</td><td>Algo que las reglas del modelo prohíben</td><td>Que el modelo use los permisos del usuario a favor del atacante</td></tr>
+<tr><td>Daño típico</td><td>Contenido prohibido, abuso de la plataforma</td><td>Datos robados, acciones no pedidas</td></tr>
+<tr><td>Quién lo frena sobre todo</td><td>El proveedor: entrenamiento y clasificadores</td><td>Tú: el diseño del sistema, permisos y la regla de dos</td></tr>
+<tr><td>Se mide con</td><td>Tasa de éxito de ataque y falsos rechazos</td><td>Tareas con ataques plantados (<a href="m72-evals-agentes.html#seguridad">M72</a>)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un banco con un cajero. El jailbreak es un cliente que intenta convencer al cajero de que le dé el dinero de la bóveda: se defiende con la formación del cajero y con un supervisor que revisa. La injection es una carta que llega al buzón y dice "el gerente autoriza transferir todo a esta cuenta": el cajero no es malo, solo creyó la carta. Se defiende con reglas que no dependen de lo que diga una carta: ninguna transferencia sin firma.</p>
+</aside>
+
+
+
+<h2 id="familias"><span class="sec-num">71.2</span>Las familias de ataque documentadas</h2>
+
+<p>Un <dfn data-term="jailbreak">jailbreak</dfn> no es un truco suelto sino un ejemplar de alguna familia. Conocer las familias sirve para dos cosas: saber qué capa frena cada una y armar un set de evaluación que las cubra todas. Ninguna explicación de esta sección alcanza para reproducir un ataque; es el nivel de detalle de los papers que las publicaron.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f712t f712d">
+<title id="f712t">Cinco familias de jailbreak y qué explota cada una</title>
+<desc id="f712d">Cinco tarjetas. Rol y persona: pide al modelo que actúe como un personaje sin reglas; explota que el entrenamiento premia seguir el marco de la conversación. Many-shot: llena un contexto largo con cientos de diálogos falsos en los que un asistente cede; explota el aprendizaje en contexto, que crece con la cantidad de ejemplos. Varios turnos o crescendo: empieza inocente y escala de a poco, apoyándose en lo que el modelo ya dijo; explota que cada mensaje suelto parece aceptable. Sufijo adversario: una cadena de símbolos sin sentido, optimizada con gradientes sobre un modelo abierto, que también funciona en otros; explota que el rechazo depende de pocos rasgos del texto. Codificación e idiomas con pocos datos: el pedido en base64, en un cifrado o en un idioma con poco entrenamiento de seguridad; explota que la seguridad generaliza peor que la capacidad.</desc>
+<defs><marker id="f712a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="20" width="140" height="290" rx="8"/>
+<text class="dg-small" x="84" y="46" text-anchor="middle">Rol y persona</text>
+<text class="dg-tiny" x="84" y="66" text-anchor="middle">un personaje "sin reglas"</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="22" y="104" width="124" height="88" rx="6"/>
+<text class="dg-tiny" x="84" y="126" text-anchor="middle">Qué explota</text>
+<text class="dg-tiny" x="84" y="148" text-anchor="middle">seguir el marco</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="22" y="206" width="124" height="88" rx="6"/>
+<text class="dg-tiny" x="84" y="228" text-anchor="middle">Fuente o raíz</text>
+<text class="dg-tiny" x="84" y="250" text-anchor="middle">objetivos en</text>
+<text class="dg-tiny" x="84" y="266" text-anchor="middle">competencia</text>
+<rect class="dg-box" x="164" y="20" width="140" height="290" rx="8"/>
+<text class="dg-small" x="234" y="46" text-anchor="middle">Many-shot</text>
+<text class="dg-tiny" x="234" y="66" text-anchor="middle">cientos de diálogos falsos</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="172" y="104" width="124" height="88" rx="6"/>
+<text class="dg-tiny" x="234" y="126" text-anchor="middle">Qué explota</text>
+<text class="dg-tiny" x="234" y="148" text-anchor="middle">aprender en</text>
+<text class="dg-tiny" x="234" y="164" text-anchor="middle">contexto</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="172" y="206" width="124" height="88" rx="6"/>
+<text class="dg-tiny" x="234" y="228" text-anchor="middle">Fuente o raíz</text>
+<text class="dg-tiny" x="234" y="250" text-anchor="middle">Anthropic, 2024</text>
+<rect class="dg-box" x="314" y="20" width="140" height="290" rx="8"/>
+<text class="dg-small" x="384" y="46" text-anchor="middle">Varios turnos</text>
+<text class="dg-tiny" x="384" y="66" text-anchor="middle">escala de a poco</text>
+<text class="dg-tiny" x="384" y="82" text-anchor="middle">(crescendo)</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="322" y="104" width="124" height="88" rx="6"/>
+<text class="dg-tiny" x="384" y="126" text-anchor="middle">Qué explota</text>
+<text class="dg-tiny" x="384" y="148" text-anchor="middle">cada mensaje</text>
+<text class="dg-tiny" x="384" y="164" text-anchor="middle">suelto pasa</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="322" y="206" width="124" height="88" rx="6"/>
+<text class="dg-tiny" x="384" y="228" text-anchor="middle">Fuente o raíz</text>
+<text class="dg-tiny" x="384" y="250" text-anchor="middle">Microsoft, 2024</text>
+<rect class="dg-box" x="464" y="20" width="140" height="290" rx="8"/>
+<text class="dg-small" x="534" y="46" text-anchor="middle">Sufijo adversario</text>
+<text class="dg-tiny" x="534" y="66" text-anchor="middle">símbolos optimizados</text>
+<text class="dg-tiny" x="534" y="82" text-anchor="middle">(GCG)</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="472" y="104" width="124" height="88" rx="6"/>
+<text class="dg-tiny" x="534" y="126" text-anchor="middle">Qué explota</text>
+<text class="dg-tiny" x="534" y="148" text-anchor="middle">el rechazo es</text>
+<text class="dg-tiny" x="534" y="164" text-anchor="middle">frágil</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="472" y="206" width="124" height="88" rx="6"/>
+<text class="dg-tiny" x="534" y="228" text-anchor="middle">Fuente o raíz</text>
+<text class="dg-tiny" x="534" y="250" text-anchor="middle">Zou y otros, 2023</text>
+<rect class="dg-box" x="614" y="20" width="140" height="290" rx="8"/>
+<text class="dg-small" x="684" y="46" text-anchor="middle">Codificación e idiomas</text>
+<text class="dg-tiny" x="684" y="66" text-anchor="middle">base64 (idiomas raros)</text>
+<text class="dg-tiny" x="684" y="82" text-anchor="middle">(idiomas raros)</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="622" y="104" width="124" height="88" rx="6"/>
+<text class="dg-tiny" x="684" y="126" text-anchor="middle">Qué explota</text>
+<text class="dg-tiny" x="684" y="148" text-anchor="middle">la seguridad</text>
+<text class="dg-tiny" x="684" y="164" text-anchor="middle">generaliza peor</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="622" y="206" width="124" height="88" rx="6"/>
+<text class="dg-tiny" x="684" y="228" text-anchor="middle">Fuente o raíz</text>
+<text class="dg-tiny" x="684" y="250" text-anchor="middle">generalización</text>
+<text class="dg-tiny" x="684" y="266" text-anchor="middle">incompleta</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 71.2.</b> Cinco familias, lo que explota cada una y su origen. Las tres del medio tienen papers con nombre propio.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Familia</th><th>La idea</th><th>Qué la frena mejor</th></tr></thead>
+    <tbody>
+<tr><td>Rol y persona</td><td>Pedir que el modelo actúe como un personaje al que "no le aplican" las reglas, o enmarcar el pedido como ficción</td><td>Entrenamiento; clasificador de salida, que mira lo que se escribe y no el marco</td></tr>
+<tr><td>Many-shot</td><td>Llenar un contexto largo con cientos de diálogos falsos en los que un asistente cede. La efectividad crece con la cantidad de ejemplos siguiendo una ley de potencia, la misma del aprendizaje en contexto normal; un ajuste fino específico bajó la tasa de éxito de 61&#8239;% a 2&#8239;% en un caso <span class="badge badge--doc">Documentado</span></td><td>Entrenamiento específico; clasificador de entrada sobre el contexto entero; límites de largo donde no hace falta</td></tr>
+<tr><td>Varios turnos (crescendo)</td><td>Empezar con preguntas inocentes y escalar de a poco, citando lo que el modelo ya respondió. Russinovich, Salem y Eldan (Microsoft, 2024) mostraron que funciona aunque cada mensaje suelto pase los filtros de un turno <span class="badge badge--doc">Documentado</span></td><td>Clasificadores que miran la conversación entera, no el último mensaje; clasificador de salida</td></tr>
+<tr><td>Sufijo adversario</td><td>Una cadena de símbolos sin sentido, optimizada con gradientes sobre un modelo abierto (GCG, de Zou y otros, 2023), que hace ceder al modelo y muchas veces se transfiere a otros modelos <span class="badge badge--doc">Documentado</span></td><td>Clasificadores de entrada (el texto es raro y se nota); filtros de perplejidad; entrenamiento adversario</td></tr>
+<tr><td>Codificación e idiomas</td><td>El pedido en base64, en un cifrado simple o en un idioma con poco entrenamiento de seguridad; el modelo lo entiende y la seguridad no se activa</td><td>Clasificador de salida, que mira la respuesta ya decodificada; entrenamiento en más idiomas</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Dos observaciones salen de la tabla. Primero, casi todas las familias se apoyan en algo que el modelo hace bien: seguir un marco, aprender de ejemplos, mantener la coherencia de una conversación, entender formatos. No son errores que se arreglan con un parche; son capacidades que se usan en contra. Segundo, el clasificador de salida aparece en casi todas las filas, porque mira lo que se escribe y no cómo se pidió.</p>
+<aside class="callout callout--def">
+  <p class="callout-label">Definición</p>
+  <p>Un <b>jailbreak universal</b> es uno que funciona para muchos pedidos prohibidos distintos con el mismo patrón, sin rearmarlo cada vez. Es lo que más preocupa a un proveedor: un universal publicado le da a cualquiera, sin esfuerzo, todo lo que el modelo sabe. Las defensas de 71.5 se midieron contra universales.</p>
+</aside>
+
+
+
+<h2 id="por-que"><span class="sec-num">71.3</span>Por qué funcionan</h2>
+
+<p>Wei, Haghtalab y Steinhardt (2023) propusieron dos explicaciones que siguen ordenando el tema <span class="badge badge--doc">Documentado</span>. La primera son los <b>objetivos en competencia</b>: el modelo se entrena para ser útil y seguir instrucciones y, a la vez, para negarse a lo dañino; un ataque arma un pedido en el que negarse parece el error. La segunda es la <b>generalización incompleta</b>: el preentrenamiento le enseña al modelo muchas más cosas (leer base64, decenas de idiomas, formatos raros) que las que cubre el entrenamiento de seguridad, y el ataque vive en esa franja.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f713t f713d">
+<title id="f713t">Por qué funcionan: dos fallas del entrenamiento de seguridad</title>
+<desc id="f713d">A la izquierda, objetivos en competencia: una balanza con "ser útil y seguir instrucciones" de un lado y "negarse a lo dañino" del otro; un ataque arma un pedido en el que negarse parece el error, por ejemplo dentro de un juego de rol o con muchos ejemplos de un asistente que cede. A la derecha, generalización incompleta: un círculo grande con lo que el modelo sabe hacer (leer base64, idiomas, formatos raros) y dentro un círculo más chico con lo que cubrió el entrenamiento de seguridad; el ataque vive en la franja que el modelo entiende pero donde nunca aprendió a negarse.</desc>
+<defs><marker id="f713a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="190" y="30" text-anchor="middle">Objetivos en competencia</text>
+<path class="dg-edge" d="M190 60 V200"/>
+<path class="dg-edge" d="M70 90 L310 110"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="30" y="100" width="130" height="56" rx="8"/>
+<text class="dg-small" x="95.0" y="124.5" text-anchor="middle">Ser útil</text>
+<text class="dg-tiny" x="95.0" y="139.5" text-anchor="middle">seguir el marco</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="220" y="120" width="130" height="56" rx="8"/>
+<text class="dg-small" x="285.0" y="144.5" text-anchor="middle">Negarse</text>
+<text class="dg-tiny" x="285.0" y="159.5" text-anchor="middle">a lo dañino</text>
+<path class="dg-edge" d="M150 200 H230"/>
+<text class="dg-tiny" x="190" y="236" text-anchor="middle">El ataque arma un pedido en el que</text>
+<text class="dg-tiny" x="190" y="252" text-anchor="middle">negarse parece lo incorrecto</text>
+<text class="dg-label" x="570" y="30" text-anchor="middle">Generalización incompleta</text>
+<ellipse class="dg-layer" style="--c: var(--l-service)" cx="570" cy="150" rx="180" ry="100"/>
+<ellipse class="dg-layer" style="--c: var(--l-edge)" cx="530" cy="155" rx="100" ry="58"/>
+<text class="dg-tiny" x="530" y="150" text-anchor="middle">cubierto por el</text>
+<text class="dg-tiny" x="530" y="166" text-anchor="middle">entrenamiento de seguridad</text>
+<text class="dg-tiny" x="570" y="74" text-anchor="middle">lo que el modelo sabe hacer</text>
+<text class="dg-small" x="690" y="150" text-anchor="middle">la franja</text>
+<text class="dg-small" x="690" y="168" text-anchor="middle">del ataque</text>
+<text class="dg-tiny" x="570" y="276" text-anchor="middle">base64, idiomas con pocos datos, formatos raros</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 71.3.</b> Las dos fallas. Rol, many-shot y crescendo tiran de la balanza; codificación, idiomas y sufijos viven en la franja sin cubrir.</figcaption>
+</figure>
+
+<p>La consecuencia de diseño es directa: si el rechazo depende de lo que el modelo aprendió, y lo que aprendió tiene huecos, ningún system prompt los tapa. "No reveles X bajo ninguna circunstancia" es un pedido más dentro del mismo canal, con la misma fragilidad. Es la frontera de <a href="m62-pila-agente.html#capas-modelo">M62.10</a>: las capas del modelo y del proveedor no las mueve ningún harness, ni para quitarlas ni para reforzarlas con texto.</p>
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Más entrenamiento de rechazo baja los jailbreaks y sube los rechazos de cosas legítimas: el modelo empieza a negarse a explicar cómo funciona un candado o a escribir una novela policial. Por eso ninguna defensa se mide solo con ataques; siempre va con su tasa de falsos rechazos (<a href="#medir">71.6</a>).</p>
+</aside>
+
+
+
+<h2 id="capas"><span class="sec-num">71.4</span>Defensas por capas</h2>
+
+<p>La idea es la de <a href="m22-operar-modelos.html#guardrails">M22.9</a> y <a href="m66-permisos-sandbox.html#capas">M66.1</a>: varias capas independientes, cada una imperfecta, que juntas obligan a un ataque a atravesar todas. Para un jailbreak, las capas son estas:</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f714t f714d">
+<title id="f714t">Las capas que frenan un jailbreak</title>
+<desc id="f714d">Un pedido viaja de izquierda a derecha por cinco capas. Primero, el clasificador de entrada, que mira el pedido y el contexto. Después, el modelo con su entrenamiento de seguridad. Después, el clasificador de salida, que mira lo que el modelo va escribiendo y puede cortar el stream. Después, el diseño del sistema: permisos, herramientas y la regla de dos limitan lo que un ataque exitoso puede hacer. Abajo de todo, el monitoreo por cuenta, que detecta patrones a lo largo de muchas conversaciones y actúa después. Cada capa deja pasar algo; el ataque tiene que atravesar todas.</desc>
+<defs><marker id="f714a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="120" y="50" width="140" height="150" rx="8"/>
+<text class="dg-small" x="190" y="92" text-anchor="middle">Clasificador</text>
+<text class="dg-tiny" x="190" y="110" text-anchor="middle">de entrada</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="280" y="50" width="140" height="150" rx="8"/>
+<text class="dg-small" x="350" y="92" text-anchor="middle">Modelo</text>
+<text class="dg-tiny" x="350" y="110" text-anchor="middle">entrenamiento</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="440" y="50" width="140" height="150" rx="8"/>
+<text class="dg-small" x="510" y="92" text-anchor="middle">Clasificador</text>
+<text class="dg-tiny" x="510" y="110" text-anchor="middle">de salida (stream)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="600" y="50" width="140" height="150" rx="8"/>
+<text class="dg-small" x="670" y="92" text-anchor="middle">Diseño</text>
+<text class="dg-tiny" x="670" y="110" text-anchor="middle">permisos, regla de dos</text>
+<rect class="dg-bad" x="14" y="140" width="84" height="50" rx="8"/>
+<text class="dg-small" x="56.0" y="169.0" text-anchor="middle">Pedido</text>
+<path class="dg-edge" d="M98 165 L118 165" marker-end="url(#f714a)"/>
+<path class="dg-edge" d="M118 165 H740" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="430" y="36" text-anchor="middle">cada capa deja pasar algo; el ataque tiene que atravesar todas</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="120" y="222" width="620" height="46" rx="8"/>
+<text class="dg-small" x="430.0" y="249.0" text-anchor="middle">Monitoreo por cuenta: patrones en muchas conversaciones, actúa después</text>
+<text class="dg-tiny" x="430" y="300" text-anchor="middle">Entrenamiento y clasificadores vienen del proveedor; el diseño es tuyo, y puedes sumar tus clasificadores.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 71.4.</b> Cinco capas. Tú controlas el diseño y el monitoreo de tu producto, y puedes sumar tus propios clasificadores delante y detrás del modelo de un proveedor.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Capa</th><th>Qué hace</th><th>De quién es</th><th>Su punto débil</th></tr></thead>
+    <tbody>
+<tr><td>Clasificador de entrada</td><td>Puntúa el pedido y el contexto antes de gastar GPU</td><td>Del proveedor; también puedes poner el tuyo</td><td>No ve lo que se pide en varios turnos o codificado</td></tr>
+<tr><td>Entrenamiento del modelo</td><td>Rechazos aprendidos (RLHF, IA constitucional; <a href="m26-entrenamiento.html#alinear">M26</a>)</td><td>Del proveedor</td><td>Generalización incompleta (71.3)</td></tr>
+<tr><td>Clasificador de salida</td><td>Puntúa lo que el modelo escribe, por tramos del stream, y puede cortar</td><td>Del proveedor; también el tuyo</td><td>Lo que ya salió antes del corte ya se vio</td></tr>
+<tr><td>Diseño del sistema</td><td>Permisos, herramientas mínimas, aprobación humana, regla de dos</td><td>Tuyo</td><td>Ninguno si está bien hecho: limita el daño, no el intento</td></tr>
+<tr><td>Monitoreo por cuenta</td><td>Patrones en muchas conversaciones; avisos y bloqueos</td><td>Del proveedor y tuyo</td><td>Actúa después del primer éxito</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Si construyes un producto sobre la API de un proveedor, las dos capas del medio ya vienen. Las tuyas son el diseño y, si el riesgo lo justifica, un clasificador propio de entrada y de salida con tus categorías (lo que es dañino en tu dominio no es lo mismo que lo que prohíbe el proveedor). La forma del código:</p>
+<pre data-lang="python"><code># Un clasificador de seguridad como capa propia, antes y después del modelo
+def responder(pedido, historial):
+    if clasificar(historial + [pedido], rol="entrada").inseguro:      # (1)
+        return RESPUESTA_SEGURA
+    texto = ""
+    for tramo in modelo.stream(historial + [pedido]):
+        texto += tramo
+        if len(texto) % 400 &lt; len(tramo):                           # (2) cada ~400 caracteres
+            if clasificar(historial + [pedido, texto], rol="salida").inseguro:
+                registrar_bloqueo(pedido, texto)                     # (3)
+                return CORTE_A_MITAD
+        yield tramo</code></pre>
+<ol class="code-key">
+  <li>La entrada se clasifica con el historial, no solo con el último mensaje: así se ven los ataques en varios turnos.</li>
+  <li>La salida se clasifica por tramos mientras se genera, como en <a href="m20-producto-chatgpt.html">M20</a>. Más seguido es más seguro y más caro.</li>
+  <li>Cada bloqueo se registra: es la materia prima del monitoreo por cuenta y de los falsos rechazos que vas a revisar.</li>
+</ol>
+
+
+<h2 id="clasificadores"><span class="sec-num">71.5</span>Clasificadores de seguridad</h2>
+
+<p>Un <dfn data-term="clasificador-seguridad">clasificador de seguridad</dfn> es un modelo, normalmente más chico que el principal, entrenado para decir si un texto cae en una categoría prohibida. Dos ejemplos públicos marcan los extremos.</p>
+<p><b>Llama Guard</b> es la familia de Meta: un modelo open weights afinado para clasificar pedidos y respuestas según una taxonomía de riesgos, que devuelve "seguro" o "inseguro" y la categoría <span class="badge badge--doc">Documentado</span>. Lo corres tú, como una capa más, y puedes darle tu propia lista de categorías en el prompt.</p>
+<p>Los <b>clasificadores constitucionales</b> de Anthropic (2025) se entrenan con datos sintéticos generados a partir de una constitución en lenguaje natural que dice qué está permitido y qué no <span class="badge badge--doc">Documentado</span>:</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f715t f715d">
+<title id="f715t">Cómo se entrena un clasificador constitucional</title>
+<desc id="f715d">Un flujo de izquierda a derecha. Una constitución en lenguaje natural dice qué contenido está permitido y cuál no. Un modelo genera con ella miles de ejemplos sintéticos de las dos clases, incluidas variantes con las técnicas de jailbreak conocidas (traducciones, codificaciones, estilos). Con esos datos se entrenan dos clasificadores: uno de entrada y uno de salida que puntúa el texto a medida que se genera y puede cortar el stream. Debajo, las cifras publicadas por Anthropic en 2025 sobre un set de 10 000 jailbreaks sintéticos: la tasa de éxito bajó de 86 a 4.4 por ciento, los rechazos en tráfico real subieron 0.38 puntos y el cómputo, 23.7 por ciento.</desc>
+<defs><marker id="f715a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="40" width="170" height="60" rx="8"/>
+<text class="dg-small" x="99.0" y="66.5" text-anchor="middle">Constitución</text>
+<text class="dg-tiny" x="99.0" y="81.5" text-anchor="middle">qué sí y qué no</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="204" y="40" width="170" height="60" rx="8"/>
+<text class="dg-small" x="289.0" y="66.5" text-anchor="middle">Datos sintéticos</text>
+<text class="dg-tiny" x="289.0" y="81.5" text-anchor="middle">con variantes de ataque</text>
+<path class="dg-edge" d="M184 70 L202 70" marker-end="url(#f715a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="394" y="40" width="170" height="60" rx="8"/>
+<text class="dg-small" x="479.0" y="66.5" text-anchor="middle">Entrenar</text>
+<text class="dg-tiny" x="479.0" y="81.5" text-anchor="middle">dos clasificadores</text>
+<path class="dg-edge" d="M374 70 L392 70" marker-end="url(#f715a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="584" y="40" width="170" height="60" rx="8"/>
+<text class="dg-small" x="669.0" y="66.5" text-anchor="middle">Servir</text>
+<text class="dg-tiny" x="669.0" y="81.5" text-anchor="middle">entrada y salida</text>
+<path class="dg-edge" d="M564 70 L582 70" marker-end="url(#f715a)"/>
+<rect class="dg-box" x="14" y="140" width="170" height="76" rx="8"/>
+<text class="dg-big" x="99" y="174" text-anchor="middle">86 %</text>
+<text class="dg-tiny" x="99" y="198" text-anchor="middle">jailbreaks exitosos sin la defensa</text>
+<rect class="dg-box" x="204" y="140" width="170" height="76" rx="8"/>
+<text class="dg-big" x="289" y="174" text-anchor="middle">4.4 %</text>
+<text class="dg-tiny" x="289" y="198" text-anchor="middle">con los clasificadores</text>
+<rect class="dg-box" x="394" y="140" width="170" height="76" rx="8"/>
+<text class="dg-big" x="479" y="174" text-anchor="middle">+0.38</text>
+<text class="dg-tiny" x="479" y="198" text-anchor="middle">puntos de rechazos en tráfico real</text>
+<rect class="dg-box" x="584" y="140" width="170" height="76" rx="8"/>
+<text class="dg-big" x="669" y="174" text-anchor="middle">+23.7 %</text>
+<text class="dg-tiny" x="669" y="198" text-anchor="middle">de cómputo</text>
+<text class="dg-tiny" x="385" y="252" text-anchor="middle">Anthropic, 2025: 10 000 jailbreaks sintéticos contra Claude 3.5 Sonnet</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 71.5.</b> De la constitución a los dos clasificadores, y las cifras publicadas. La reducción es grande; el costo en falsos rechazos y en cómputo también se publicó.</figcaption>
+</figure>
+
+<p>Las cifras vienen de una evaluación automática con 10&#8239;000 jailbreaks sintéticos contra Claude 3.5 Sonnet: la tasa de éxito bajó del 86&#8239;% al 4.4&#8239;%, los rechazos en tráfico real subieron 0.38 puntos y el cómputo, un 23.7&#8239;% <span class="badge badge--doc">Documentado</span>. Un prototipo anterior resistió miles de horas de red teaming humano en busca de un jailbreak universal, con más falsos rechazos. Lo importante para un ingeniero no son los números de un modelo concreto, sino que el resultado se publica con sus tres costados: ataques, falsos rechazos y cómputo. Una defensa que reporta solo el primero no está medida.</p>
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>El clasificador de salida corta a mitad del stream: el usuario vio las primeras líneas. Para contenido de riesgo muy alto se clasifica antes de mostrar (más latencia); para el resto, se acepta que un fragmento salga y se corta. Es la misma decisión de <a href="m22-operar-modelos.html#guardrails">M22.9</a>, con umbrales por categoría.</p>
+</aside>
+
+
+
+<h2 id="medir"><span class="sec-num">71.6</span>Cómo se mide: ataques exitosos contra falsos rechazos</h2>
+
+<p>La <dfn data-term="tasa-exito-ataque">tasa de éxito de ataque</dfn> (ASR, por attack success rate) es la fracción de intentos de un set que logran lo prohibido. Sola no sirve: un sistema que rechaza todo tiene ASR cero. Va siempre con la tasa de <dfn data-term="falso-rechazo">falsos rechazos</dfn>, la fracción de pedidos legítimos que el sistema bloquea.</p>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Set público</th><th>Qué mide</th><th>Tamaño</th></tr></thead>
+    <tbody>
+<tr><td>HarmBench (Mazeika y otros, ICML 2024)</td><td>Tasa de éxito de ataques automáticos y manuales, con un clasificador fijo que decide si la respuesta cumplió</td><td>510 comportamientos prohibidos <span class="badge badge--doc">Documentado</span></td></tr>
+<tr><td>XSTest (Röttger y otros, NAACL 2024)</td><td>Rechazos exagerados: pedidos seguros que se parecen a peligrosos ("cómo mato un proceso de Linux")</td><td>250 seguros y 200 inseguros de contraste <span class="badge badge--doc">Documentado</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Los dos se miden con el mismo cuidado que cualquier eval de <a href="m22-operar-modelos.html#evals">M22.3</a>: los parámetros de generación, el juez que decide si hubo daño y la cantidad de intentos por pedido cambian mucho el número, y por eso HarmBench los fija. Para tu producto, el set público es un punto de partida; el que decide es el tuyo, con los ataques que importan en tu dominio y con pedidos legítimos de tus usuarios reales.</p>
+<div data-sim="asrfr"></div>
+<p>Tres cosas para probar en el widget. Con solo el clasificador de entrada, la fila de varios turnos casi no baja: ningún mensaje suelto se ve mal. Al prender la salida, baja todo, porque mira lo que se escribe. Y al cambiar la fracción de ataques en el tráfico, el último indicador muestra el problema de la tasa base de <a href="m22-operar-modelos.html#guardrails">M22.9</a>: con un ataque cada mil pedidos, casi todo lo que bloqueas son usuarios legítimos, aunque el clasificador sea bueno.</p>
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>El umbral no se elige una vez. Se elige por categoría (no pesa igual un falso negativo en material de abuso infantil que en lenguaje ofensivo), se revisa con una muestra de bloqueos reales cada semana y se vuelve a medir con cada versión del modelo o del clasificador.</p>
+</aside>
+
+
+
+<h2 id="agentes"><span class="sec-num">71.7</span>Injection en agentes: la regla de dos</h2>
+
+<p>En un agente, la injection deja de ser un texto raro en una respuesta y pasa a ser una acción: un correo enviado, un archivo borrado, un secreto subido. En <a href="m25-agentes.html#injection">M25.11</a> viste la trifecta letal (datos privados, contenido no confiable y un canal hacia afuera en la misma sesión) y en <a href="m22-operar-modelos.html#injection">M22.10</a>, las defensas que la reducen. Meta la convirtió en 2025 en una regla operativa, la <dfn data-term="regla-de-dos">regla de dos</dfn> para agentes <span class="badge badge--doc">Documentado</span>:</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f716t f716d">
+<title id="f716t">La regla de dos para agentes</title>
+<desc id="f716d">Tres propiedades en los vértices de un triángulo: A, procesa entradas no confiables; B, accede a sistemas sensibles o datos privados; C, cambia estado o se comunica hacia afuera. Una sesión de agente puede tener como mucho dos de las tres. Tres ejemplos en los lados: A y B sin C, un agente que resume correos y no puede enviar nada; B y C sin A, un agente que actualiza el CRM solo con datos internos; A y C sin B, un agente que investiga en la web y escribe un borrador público sin acceso a nada privado. Si hacen falta las tres, una persona aprueba antes de actuar.</desc>
+<defs><marker id="f716a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-edge" d="M385 66 L180 230 M385 66 L590 230 M220 250 H550"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="265" y="18" width="240" height="50" rx="8"/>
+<text class="dg-small" x="385.0" y="39.5" text-anchor="middle">A: entradas no confiables</text>
+<text class="dg-tiny" x="385.0" y="54.5" text-anchor="middle">web, correo, PR de terceros</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="225" width="252" height="50" rx="8"/>
+<text class="dg-small" x="140.0" y="246.5" text-anchor="middle">B: datos o sistemas sensibles</text>
+<text class="dg-tiny" x="140.0" y="261.5" text-anchor="middle">privados, producción</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="504" y="225" width="252" height="50" rx="8"/>
+<text class="dg-small" x="630.0" y="246.5" text-anchor="middle">C: cambia estado o se comunica</text>
+<text class="dg-tiny" x="630.0" y="261.5" text-anchor="middle">enviar, escribir, red</text>
+<text class="dg-tiny" x="192" y="132" text-anchor="middle">A + B: resume correos,</text>
+<text class="dg-tiny" x="192" y="148" text-anchor="middle">no puede enviar</text>
+<text class="dg-tiny" x="580" y="132" text-anchor="middle">A + C: investiga en la web,</text>
+<text class="dg-tiny" x="580" y="148" text-anchor="middle">sin nada privado</text>
+<text class="dg-tiny" x="385" y="238" text-anchor="middle">B + C: actualiza el CRM con datos internos</text>
+<text class="dg-small" x="385" y="150" text-anchor="middle">Las tres juntas:</text>
+<text class="dg-small" x="385" y="168" text-anchor="middle">una persona aprueba</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 71.6.</b> Una sesión puede tener como mucho dos de las tres propiedades. Si hacen falta las tres, una persona aprueba antes de cada acción.</figcaption>
+</figure>
+
+<p>La regla no evita que la injection ocurra; acota lo que puede hacer cuando ocurre. Es la misma lógica de <a href="m66-permisos-sandbox.html#egress">M66.6</a> y <a href="m66-permisos-sandbox.html#credenciales">M66.7</a>: un agente que lee PRs de terceros (A) y tiene la credencial de producción (B) no debería poder hablar con internet (C); si quitas el egress, la instrucción escondida en el PR puede leer el secreto pero no tiene adónde mandarlo.</p>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Agente</th><th>A</th><th>B</th><th>C</th><th>Cómo cumple la regla</th></tr></thead>
+    <tbody>
+<tr><td>Revisor de PRs de forks</td><td>Sí</td><td>No</td><td>Comenta en el PR</td><td>Sin secretos en el job; el comentario es lo único que sale (<a href="m69-orquestadores.html#ci">M69</a>)</td></tr>
+<tr><td>Asistente de correo</td><td>Sí</td><td>Sí</td><td>No</td><td>Resume y propone; enviar lo aprueba la persona</td></tr>
+<tr><td>Agente de código local</td><td>A veces</td><td>Sí</td><td>Sí</td><td>Sandbox y egress con lista: C queda acotado a dominios conocidos (<a href="m66-permisos-sandbox.html#sandbox">M66.4</a>)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Las defensas basadas en el modelo (spotlighting, un segundo modelo que vigila) bajan la probabilidad; la regla de dos baja el daño. Se usan juntas, y se miden con tareas que llevan ataques plantados, que es lo que hace AgentDojo y lo que verás en <a href="m72-evals-agentes.html#seguridad">M72.9</a>.</p>
+
+
+<h2 id="red-team"><span class="sec-num">71.8</span>El red teaming como proceso</h2>
+
+<p>El <dfn data-term="red-teaming">red teaming</dfn> de <a href="m22-operar-modelos.html#abuso">M22.11</a> era una actividad; aquí es un proceso con entradas y salidas, como una prueba de penetración. Su producto no es una lista de trucos sino casos de evaluación que bloquean regresiones.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f717t f717d">
+<title id="f717t">El red teaming como proceso</title>
+<desc id="f717d">Seis pasos en un ciclo. Alcance y autorización por escrito: qué sistema, qué cuentas, qué está fuera. Modelo de amenaza: quién atacaría y qué querría. Ataques, manuales y automáticos, sobre el sistema propio en un entorno acordado. Registro de cada intento con su resultado. Reporte con severidad y la capa que falló. Regresión: cada ataque que funcionó entra al set de evaluación y bloquea las versiones que vuelvan a caer. Del último paso vuelve al primero en la siguiente versión.</desc>
+<defs><marker id="f717a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="50" width="112" height="64" rx="8"/>
+<text class="dg-small" x="70.0" y="78.5" text-anchor="middle">Alcance</text>
+<text class="dg-tiny" x="70.0" y="93.5" text-anchor="middle">por escrito</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="140" y="50" width="112" height="64" rx="8"/>
+<text class="dg-small" x="196.0" y="78.5" text-anchor="middle">Amenazas</text>
+<text class="dg-tiny" x="196.0" y="93.5" text-anchor="middle">quién y qué</text>
+<path class="dg-edge" d="M127 82 L138 82" marker-end="url(#f717a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="266" y="50" width="112" height="64" rx="8"/>
+<text class="dg-small" x="322.0" y="78.5" text-anchor="middle">Ataques</text>
+<text class="dg-tiny" x="322.0" y="93.5" text-anchor="middle">manual y scripts</text>
+<path class="dg-edge" d="M253 82 L264 82" marker-end="url(#f717a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="392" y="50" width="112" height="64" rx="8"/>
+<text class="dg-small" x="448.0" y="78.5" text-anchor="middle">Registro</text>
+<text class="dg-tiny" x="448.0" y="93.5" text-anchor="middle">cada intento</text>
+<path class="dg-edge" d="M379 82 L390 82" marker-end="url(#f717a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="518" y="50" width="112" height="64" rx="8"/>
+<text class="dg-small" x="574.0" y="78.5" text-anchor="middle">Reporte</text>
+<text class="dg-tiny" x="574.0" y="93.5" text-anchor="middle">severidad y capa</text>
+<path class="dg-edge" d="M505 82 L516 82" marker-end="url(#f717a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="644" y="50" width="112" height="64" rx="8"/>
+<text class="dg-small" x="700.0" y="78.5" text-anchor="middle">Regresión</text>
+<text class="dg-tiny" x="700.0" y="93.5" text-anchor="middle">al set de evals</text>
+<path class="dg-edge" d="M631 82 L642 82" marker-end="url(#f717a)"/>
+<path class="dg-edge" d="M684 116 L684 170 L70 170 L70 116" marker-end="url(#f717a)"/>
+<text class="dg-tiny" x="385" y="162" text-anchor="middle">la próxima versión del modelo, del prompt o de las herramientas vuelve a empezar</text>
+<text class="dg-small" x="385" y="214" text-anchor="middle">Solo sobre sistemas propios o con permiso escrito del dueño.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 71.7.</b> Seis pasos en ciclo. Sin alcance escrito no empieza; sin regresión no termina.</figcaption>
+</figure>
+
+<pre data-lang="shell"><code>Alcance del ejercicio de red teaming · asistente de soporte de Tienda Norte v2.3
+Autoriza: responsable de seguridad (firma y fecha)
+Sistema:  staging.soporte.tienda-norte.internal, cuentas de prueba qa-01 a qa-10
+Fuera:    producción, datos reales de clientes, proveedores externos (no se ataca su API)
+Objetivos:
+  1. Que el asistente revele datos de otro cliente
+  2. Que ejecute un reembolso sin la aprobación del agente humano
+  3. Que siga instrucciones escondidas en un ticket o en un adjunto
+Registro: cada intento con fecha, entrada, salida, capa que frenó o falló
+Entrega:  reporte con severidad, y cada intento exitoso como caso del set de evals</code></pre>
+<ul>
+  <li><b>Alcance y autorización.</b> Por escrito, firmado por quien puede autorizarlo, con lo que queda fuera. Atacar la API de un proveedor está fuera salvo que el proveedor tenga un programa que lo permita, y los grandes los tienen (con recompensas y reglas propias) <span class="badge badge--doc">Documentado</span>.</li>
+  <li><b>Modelo de amenaza.</b> Quién atacaría, qué querría y por dónde entra, con el método de <a href="m54-threat-modeling.html">M54</a>. Los objetivos del ejemplo salen de ahí.</li>
+  <li><b>Ataques manuales y automáticos.</b> Las personas encuentran lo nuevo; las herramientas (PyRIT de Microsoft, garak de NVIDIA, promptfoo) repiten familias conocidas a escala y con variantes <span class="badge badge--doc">Documentado</span>.</li>
+  <li><b>Registro y reporte.</b> Cada intento con su resultado y la capa que lo frenó o falló. La severidad se mide por el daño en tu sistema, no por lo ingenioso del ataque.</li>
+  <li><b>Regresión.</b> Cada ataque exitoso entra al set de evaluación de seguridad (<a href="m22-operar-modelos.html#evals">M22.3</a>) y se corre con cada versión del modelo, del prompt o de las herramientas.</li>
+</ul>
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>El registro de un red teaming contiene ataques que funcionaron contra tu sistema: se guarda con acceso restringido, como un reporte de vulnerabilidades. Publicarlo o pegarlo en un ticket abierto le regala el trabajo a quien no tenía permiso.</p>
+</aside>
+
+
+
+<h2 id="fallas"><span class="sec-num">71.9</span>Fallas típicas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa probable</th><th>Qué hacer</th></tr></thead>
+    <tbody>
+<tr><td>"Le pusimos al system prompt que nunca lo haga" y lo hizo</td><td>Una instrucción más en el mismo canal</td><td>Capas fuera del modelo: clasificador, permisos, regla de dos</td></tr>
+<tr><td>El clasificador de entrada no ve el ataque</td><td>Ataque en varios turnos o codificado</td><td>Clasificar la conversación entera; sumar el de salida</td></tr>
+<tr><td>Los usuarios se quejan de rechazos absurdos</td><td>Umbral bajo sin medir falsos rechazos</td><td>Medir con pedidos legítimos reales; umbrales por categoría</td></tr>
+<tr><td>Un agente envió datos a un dominio desconocido</td><td>Las tres propiedades de la regla en la misma sesión</td><td>Quitar una: sin egress, sin datos sensibles o con aprobación</td></tr>
+<tr><td>Un ataque arreglado volvió con la versión nueva</td><td>No pasó al set de regresión</td><td>Cada éxito del red team es un caso de eval que corre en CI</td></tr>
+<tr><td>La defensa reporta 0&#8239;% de ataques exitosos</td><td>Se midió solo con ataques conocidos, o sin falsos rechazos</td><td>Sets con familias nuevas, varios intentos por pedido y su tasa de falsos rechazos</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>La pregunta útil no es "¿se puede hacer un jailbreak a nuestro asistente?" (sí, a todos), sino "¿qué consigue alguien que lo logra?". Si la respuesta es "texto feo en su propia pantalla", el riesgo es de reputación y se trata con clasificadores. Si es "los datos de otro cliente" o "un reembolso", es un problema de diseño y se arregla con permisos, no con prompts.</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m71"></div>
+<div data-exercise="m71-defensa"></div>
+<div data-checkpoint="m71"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m71.data.js"></script>
+<script src="../assets/js/data/exercises/m71.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-redteam.js"></script>
+</body>
+</html>

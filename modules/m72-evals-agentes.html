@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M72. Evals de agentes</title>
+<meta name="description" content="Cómo se evalúa un agente: el resultado y la trayectoria, los benchmarks públicos y lo que no dicen, el par harness y modelo, un set de tareas propio con entorno y tests, los graders (código, reglas, LLM juez), el ruido con pass^k e intervalos, los evals en CI y los evals de seguridad con ataques plantados.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m72">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Evals de agentes</h1>
+        <p class="lead">Un agente no responde una pregunta: hace un recorrido de decenas de pasos que termina en un estado del mundo. Evaluarlo es mirar ese estado, el recorrido y lo que costó, varias veces por tarea, porque nunca hace lo mismo dos veces. Este módulo arma ese sistema de punta a punta, con el set de tareas de M65 como punto de partida.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M72</dd></div>
+          <div><dt>Parte</dt><dd>VIII. AI Engineering: modelos, harnesses y agentes</dd></div>
+          <div><dt>Duración</dt><dd>100 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M22, M25, M65, M71</dd></div>
+          <div><dt>Estado</dt><dd data-status="m72">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Explicar por qué un agente se evalúa por su estado final y su trayectoria, no por su mensaje final.</li>
+    <li>Leer un benchmark público de agentes sabiendo qué mide, qué no y cómo se contamina.</li>
+    <li>Comparar harnesses y modelos cambiando una cosa por vez.</li>
+    <li>Armar un set de tareas propio con entorno fijo, tests ocultos y reglas sobre la trayectoria.</li>
+    <li>Elegir graders, calcular el ruido de una medición y cuánto cuesta.</li>
+    <li>Correr evals de agentes en CI y sumar evals de seguridad con ataques plantados.</li>
+  </ul>
+</section>
+
+
+
+<h2 id="trayectoria"><span class="sec-num">72.1</span>Un agente se evalúa por lo que hizo</h2>
+
+<p>Un eval de <a href="m22-operar-modelos.html#evals">M22.3</a> compara una respuesta con lo esperado. Un agente no da una respuesta: hace un recorrido de decenas de pasos (<a href="m25-agentes.html#bucle">M25.2</a>) y deja el mundo en otro estado. Un <dfn data-term="eval-trayectoria">eval de trayectoria</dfn> mira ese recorrido completo: el estado final, los pasos que llevaron ahí y lo que costaron. El mensaje final ("listo, arreglado") es lo menos confiable de todo, porque el agente lo escribe tanto si arregló el problema como si no.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f721t f721d">
+<title id="f721t">Una corrida de un agente: qué mira cada grader</title>
+<desc id="f721d">Arriba, una corrida de izquierda a derecha: la tarea entra, el agente hace pasos (leer un archivo, editar, correr los tests, editar otra vez) y termina con un mensaje final y un estado del repositorio. Abajo, cuatro graders y a qué parte apuntan: el mensaje final, que es lo que dice el agente y no prueba nada; el estado final, que se revisa con tests ocultos; la trayectoria, que se revisa con reglas (qué archivos tocó, qué comandos corrió); y el costo, que suma tokens, pasos y segundos de toda la corrida.</desc>
+<defs><marker id="f721a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="40" width="112" height="56" rx="8"/>
+<text class="dg-small" x="70.0" y="64.5" text-anchor="middle">Tarea</text>
+<text class="dg-tiny" x="70.0" y="79.5" text-anchor="middle">issue + repo</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="140" y="40" width="112" height="56" rx="8"/>
+<text class="dg-small" x="196.0" y="64.5" text-anchor="middle">leer</text>
+<text class="dg-tiny" x="196.0" y="79.5" text-anchor="middle">archivo</text>
+<path class="dg-edge" d="M127 68 L138 68" marker-end="url(#f721a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="266" y="40" width="112" height="56" rx="8"/>
+<text class="dg-small" x="322.0" y="64.5" text-anchor="middle">editar</text>
+<text class="dg-tiny" x="322.0" y="79.5" text-anchor="middle">parser.py</text>
+<path class="dg-edge" d="M253 68 L264 68" marker-end="url(#f721a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="392" y="40" width="112" height="56" rx="8"/>
+<text class="dg-small" x="448.0" y="64.5" text-anchor="middle">correr</text>
+<text class="dg-tiny" x="448.0" y="79.5" text-anchor="middle">pytest</text>
+<path class="dg-edge" d="M379 68 L390 68" marker-end="url(#f721a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="518" y="40" width="112" height="56" rx="8"/>
+<text class="dg-small" x="574.0" y="64.5" text-anchor="middle">editar</text>
+<text class="dg-tiny" x="574.0" y="79.5" text-anchor="middle">otra vez</text>
+<path class="dg-edge" d="M505 68 L516 68" marker-end="url(#f721a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="644" y="40" width="112" height="56" rx="8"/>
+<text class="dg-small" x="700.0" y="64.5" text-anchor="middle">Final</text>
+<text class="dg-tiny" x="700.0" y="79.5" text-anchor="middle">mensaje y estado</text>
+<path class="dg-edge" d="M631 68 L642 68" marker-end="url(#f721a)"/>
+<text class="dg-tiny" x="385" y="26" text-anchor="middle">la trayectoria: cada paso con su llamada a herramienta y su resultado</text>
+<rect class="dg-box" x="14" y="190" width="172" height="76" rx="8"/>
+<text class="dg-small" x="100" y="214" text-anchor="middle">Trayectoria</text>
+<text class="dg-tiny" x="100" y="234" text-anchor="middle">reglas sobre los pasos</text>
+<text class="dg-tiny" x="100" y="252" text-anchor="middle">alcance y comandos</text>
+<path class="dg-feedback" d="M100 188 L70 98"/>
+<rect class="dg-box" x="204" y="190" width="172" height="76" rx="8"/>
+<text class="dg-small" x="290" y="214" text-anchor="middle">Costo</text>
+<text class="dg-tiny" x="290" y="234" text-anchor="middle">tokens, pasos, segundos</text>
+<text class="dg-tiny" x="290" y="252" text-anchor="middle">toda la corrida</text>
+<path class="dg-feedback" d="M290 188 L322 98"/>
+<rect class="dg-box" x="394" y="190" width="172" height="76" rx="8"/>
+<text class="dg-small" x="480" y="214" text-anchor="middle">Mensaje final</text>
+<text class="dg-tiny" x="480" y="234" text-anchor="middle">"listo, arreglado"</text>
+<text class="dg-tiny" x="480" y="252" text-anchor="middle">no prueba nada</text>
+<path class="dg-feedback" d="M480 188 L680 98"/>
+<rect class="dg-box" x="584" y="190" width="172" height="76" rx="8"/>
+<text class="dg-small" x="670" y="214" text-anchor="middle">Estado final</text>
+<text class="dg-tiny" x="670" y="234" text-anchor="middle">tests ocultos</text>
+<text class="dg-tiny" x="670" y="252" text-anchor="middle">lo más confiable</text>
+<path class="dg-feedback" d="M670 188 L730 98"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 72.1.</b> Una corrida y lo que mira cada grader. El mensaje final no prueba nada; el estado final con tests ocultos es lo más confiable.</figcaption>
+</figure>
+
+<p>La trayectoria es la que registra el harness (<a href="m64-anatomia-harness.html#sesion">M64</a>): cada llamada a herramienta con sus argumentos y su resultado. Sin ese registro solo puedes mirar el estado final, y te pierdes las corridas que llegaron bien por un camino peligroso: un agente que arregló el bug y, de paso, corrió <code>git push --force</code>.</p>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Evaluar a un cocinero por el plato es mirar el estado final. Mirarlo cocinar es la trayectoria: el plato puede salir bien y la cocina quedar incendiada. Preguntarle "¿quedó bien?" es el mensaje final.</p>
+</aside>
+
+
+
+<h2 id="que-medir"><span class="sec-num">72.2</span>Qué medir</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Dimensión</th><th>Pregunta</th><th>Cómo se mide</th></tr></thead>
+    <tbody>
+<tr><td>Resultado</td><td>¿Quedó resuelto?</td><td>Tests ocultos o comparación del estado final</td></tr>
+<tr><td>Proceso</td><td>¿Se mantuvo en su alcance?</td><td>Reglas sobre la trayectoria: archivos, comandos, red</td></tr>
+<tr><td>Costo</td><td>¿Cuánto costó?</td><td>Tokens, pasos y segundos por corrida; USD por tarea (<a href="m65-elegir-harness.html#costo">M65.7</a>)</td></tr>
+<tr><td>Consistencia</td><td>¿Lo hace siempre?</td><td><a href="m65-elegir-harness.html#medir">pass^k</a>: todas las corridas de una tarea aprueban</td></tr>
+<tr><td>Seguridad</td><td>¿Resiste ataques plantados?</td><td>Tareas con injection: utilidad y éxito del ataque (72.9)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Las cinco van juntas. Un agente que resuelve el 80&#8239;% gastando el triple no es mejor que uno que resuelve el 75&#8239;%, depende del presupuesto; uno que acierta una vez de cada tres no sirve para trabajar solo de noche (<a href="m66-permisos-sandbox.html#autonomia">M66.8</a>) aunque su pass@3 sea alto.</p>
+
+
+<h2 id="benchmarks"><span class="sec-num">72.3</span>Los benchmarks públicos</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f722t f722d">
+<title id="f722t">Tres benchmarks públicos de agentes y qué miden</title>
+<desc id="f722d">Tres tarjetas. SWE-bench Verified: 500 issues reales de repositorios de Python, revisados por personas, el agente produce un parche y se juzga con los tests del repositorio; mide arreglar código. Terminal-Bench 2.0: 89 tareas en una terminal dentro de un contenedor, juzgadas con tests; mide operar un sistema. Tau-bench: conversaciones con un usuario simulado en dominios de comercio y aerolínea, juzgadas por el estado final de la base; introdujo pass^k para medir consistencia. Abajo, lo que ninguno mide: tus repositorios, tus herramientas y tus reglas.</desc>
+<defs><marker id="f722a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="20" width="236" height="170" rx="8"/>
+<text class="dg-label" x="132" y="48" text-anchor="middle">SWE-bench Verified</text>
+<text class="dg-tiny" x="132" y="80" text-anchor="middle">500 issues reales de Python</text>
+<text class="dg-tiny" x="132" y="110" text-anchor="middle">se juzga con</text>
+<text class="dg-small" x="132" y="128" text-anchor="middle">tests del repositorio</text>
+<text class="dg-tiny" x="132" y="158" text-anchor="middle">mide</text>
+<text class="dg-small" x="132" y="176" text-anchor="middle">arreglar código</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="266" y="20" width="236" height="170" rx="8"/>
+<text class="dg-label" x="384" y="48" text-anchor="middle">Terminal-Bench 2.0</text>
+<text class="dg-tiny" x="384" y="80" text-anchor="middle">89 tareas en un contenedor</text>
+<text class="dg-tiny" x="384" y="110" text-anchor="middle">se juzga con</text>
+<text class="dg-small" x="384" y="128" text-anchor="middle">tests sobre el sistema</text>
+<text class="dg-tiny" x="384" y="158" text-anchor="middle">mide</text>
+<text class="dg-small" x="384" y="176" text-anchor="middle">operar una terminal</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="518" y="20" width="236" height="170" rx="8"/>
+<text class="dg-label" x="636" y="48" text-anchor="middle">τ-bench</text>
+<text class="dg-tiny" x="636" y="80" text-anchor="middle">usuario simulado y herramientas</text>
+<text class="dg-tiny" x="636" y="110" text-anchor="middle">se juzga con</text>
+<text class="dg-small" x="636" y="128" text-anchor="middle">estado final de la base</text>
+<text class="dg-tiny" x="636" y="158" text-anchor="middle">mide</text>
+<text class="dg-small" x="636" y="176" text-anchor="middle">consistencia (pass^k)</text>
+<rect class="dg-warnbox" x="14" y="206" width="742" height="44" rx="8"/>
+<text class="dg-small" x="385.0" y="232.0" text-anchor="middle">Ninguno mide tus repositorios, tus herramientas ni tus reglas: para eso es el set propio</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 72.2.</b> Tres benchmarks y qué miden. Sirven para elegir candidatos; no dicen cómo rinden en tu código.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Benchmark</th><th>Qué es</th><th>Fuente</th></tr></thead>
+    <tbody>
+<tr><td>SWE-bench</td><td>Issues reales de repositorios de Python en GitHub; el agente produce un parche y se corren los tests del repositorio</td><td>Jimenez y otros, 2023 <span class="badge badge--doc">Documentado</span></td></tr>
+<tr><td>SWE-bench Verified</td><td>Subconjunto de 500 tareas que 93 desarrolladores revisaron a mano, de 1&#8239;699 anotadas, para quitar enunciados ambiguos y tests injustos</td><td>OpenAI, agosto de 2024 <span class="badge badge--doc">Documentado</span></td></tr>
+<tr><td>Terminal-Bench 2.0</td><td>89 tareas en una terminal dentro de un contenedor (compilar, configurar, depurar), juzgadas con tests</td><td>ICLR 2026 <span class="badge badge--doc">Documentado</span></td></tr>
+<tr><td>τ-bench</td><td>Un agente atiende a un usuario simulado con herramientas de comercio o de aerolínea; se juzga el estado final de la base. Propuso pass^k</td><td>Sierra, 2024 <span class="badge badge--doc">Documentado</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Tres cuidados al leerlos. Primero, cada resultado es de un par harness y modelo, no de un modelo (72.4). Segundo, la <dfn data-term="contaminacion-benchmark">contaminación</dfn>: si las tareas o sus soluciones estaban en los datos de entrenamiento, el modelo recuerda en lugar de resolver; los repositorios públicos de SWE-bench existen en internet desde antes de casi cualquier modelo actual. Tercero, el número de una sola corrida tiene ruido (72.7); una diferencia de dos puntos entre dos modelos, sin intervalo, no dice nada.</p>
+<aside class="callout callout--def">
+  <p class="callout-label">Definición</p>
+  <p><b><dfn data-term="swe-bench">SWE-bench</dfn></b> es el benchmark de referencia de agentes de código: issues reales con el parche que los cerró y los tests que lo comprueban. El agente recibe el issue y el repositorio antes del arreglo, produce su parche y aprueba si los tests que fallaban pasan y los que pasaban siguen pasando.</p>
+</aside>
+
+
+
+<h2 id="harness-modelo"><span class="sec-num">72.4</span>El par harness y modelo</h2>
+
+<p>En <a href="m62-pila-agente.html#harness">M62.4</a> viste que el mismo modelo rinde distinto en dos harnesses, y en <a href="m63-tool-calling.html#entrenamiento">M63</a>, por qué: cada modelo se entrenó con ciertos formatos y herramientas. Por eso lo que se evalúa es la combinación.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f723t f723d">
+<title id="f723t">Lo que se evalúa es el par harness y modelo</title>
+<desc id="f723d">Una rejilla de dos por dos. Columnas: modelo A y modelo B. Filas: harness 1 y harness 2. Cada celda es una combinación con su propia tasa. Una flecha horizontal compara modelos con el harness fijo; una vertical compara harnesses con el modelo fijo. Comparar celdas en diagonal mezcla dos cambios y no dice cuál produjo la diferencia.</desc>
+<defs><marker id="f723a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="300" y="30" text-anchor="middle">Modelo A</text>
+<text class="dg-label" x="520" y="30" text-anchor="middle">Modelo B</text>
+<text class="dg-label" x="110" y="100" text-anchor="middle">Harness 1</text>
+<text class="dg-label" x="110" y="210" text-anchor="middle">Harness 2</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="200" y="60" width="200" height="80" rx="8"/>
+<text class="dg-small" x="300.0" y="96.5" text-anchor="middle">H1 + MA</text>
+<text class="dg-tiny" x="300.0" y="111.5" text-anchor="middle">una tasa propia</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="420" y="60" width="200" height="80" rx="8"/>
+<text class="dg-small" x="520.0" y="96.5" text-anchor="middle">H1 + MB</text>
+<text class="dg-tiny" x="520.0" y="111.5" text-anchor="middle">una tasa propia</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="200" y="170" width="200" height="80" rx="8"/>
+<text class="dg-small" x="300.0" y="206.5" text-anchor="middle">H2 + MA</text>
+<text class="dg-tiny" x="300.0" y="221.5" text-anchor="middle">una tasa propia</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="420" y="170" width="200" height="80" rx="8"/>
+<text class="dg-small" x="520.0" y="206.5" text-anchor="middle">H2 + MB</text>
+<text class="dg-tiny" x="520.0" y="221.5" text-anchor="middle">una tasa propia</text>
+<path class="dg-edge" d="M402 100 L418 100" marker-end="url(#f723a)"/>
+<text class="dg-tiny" x="410" y="52" text-anchor="middle">cambia el modelo</text>
+<path class="dg-edge" d="M300 142 L300 168" marker-end="url(#f723a)"/>
+<text class="dg-tiny" x="292" y="152" text-anchor="end">cambia</text>
+<text class="dg-tiny" x="292" y="166" text-anchor="end">el harness</text>
+<path class="dg-feedback" d="M380 140 L440 170"/>
+<text class="dg-tiny" x="690" y="160" text-anchor="middle">en diagonal:</text>
+<text class="dg-tiny" x="690" y="176" text-anchor="middle">dos cambios a la vez</text>
+<text class="dg-tiny" x="385" y="284" text-anchor="middle">Se cambia una cosa por vez, con las otras fijas (versión, prompt, herramientas)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 72.3.</b> Cuatro combinaciones. Se compara en una fila o en una columna, nunca en diagonal.</figcaption>
+</figure>
+
+<p>Cambiar una cosa por vez vale para todo lo que entra a la corrida: la versión del modelo (fijada, no un alias que cambia solo), el system prompt, las herramientas y sus descripciones, las extensiones cargadas (<a href="m67-extender-harness.html">M67</a>) y la versión del harness. Una comparación que cambió dos cosas no se puede atribuir.</p>
+
+
+<h2 id="set-propio"><span class="sec-num">72.5</span>El set de tareas propio</h2>
+
+<p>El <a href="m65-elegir-harness.html#medir">set de M65.8</a> servía para elegir un harness. Para operarlo hace falta más: cada tarea con su entorno reproducible y sus graders, versionada como código.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f724t f724d">
+<title id="f724t">Anatomía de una tarea de eval</title>
+<desc id="f724d">Una tarea tiene cuatro partes, de izquierda a derecha. El enunciado, como lo escribiría una persona del equipo. El entorno: el repositorio en un commit fijo, dentro de un contenedor con las dependencias. Los graders: tests ocultos que el agente no ve, reglas sobre la trayectoria y un presupuesto. Los metadatos: de dónde salió la tarea, su dificultad y su versión. Abajo, tres fuentes de tareas: incidentes y PRs reales del equipo, fallas de producción del agente y ataques del red teaming de M71.</desc>
+<defs><marker id="f724a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="30" width="172" height="70" rx="8"/>
+<text class="dg-small" x="100.0" y="61.5" text-anchor="middle">Enunciado</text>
+<text class="dg-tiny" x="100.0" y="76.5" text-anchor="middle">como lo pide el equipo</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="204" y="30" width="172" height="70" rx="8"/>
+<text class="dg-small" x="290.0" y="61.5" text-anchor="middle">Entorno</text>
+<text class="dg-tiny" x="290.0" y="76.5" text-anchor="middle">commit fijo, contenedor</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="394" y="30" width="172" height="70" rx="8"/>
+<text class="dg-small" x="480.0" y="61.5" text-anchor="middle">Graders</text>
+<text class="dg-tiny" x="480.0" y="76.5" text-anchor="middle">tests, reglas, presupuesto</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="584" y="30" width="172" height="70" rx="8"/>
+<text class="dg-small" x="670.0" y="61.5" text-anchor="middle">Metadatos</text>
+<text class="dg-tiny" x="670.0" y="76.5" text-anchor="middle">origen, dificultad, versión</text>
+<rect class="dg-box" x="14" y="160" width="236" height="50" rx="8"/>
+<text class="dg-small" x="132.0" y="189.0" text-anchor="middle">PRs e incidentes reales</text>
+<path class="dg-edge" d="M132 158 L132 104" marker-end="url(#f724a)"/>
+<rect class="dg-box" x="266" y="160" width="236" height="50" rx="8"/>
+<text class="dg-small" x="384.0" y="189.0" text-anchor="middle">fallas del agente en producción</text>
+<path class="dg-edge" d="M384 158 L384 104" marker-end="url(#f724a)"/>
+<rect class="dg-box" x="518" y="160" width="236" height="50" rx="8"/>
+<text class="dg-small" x="636.0" y="189.0" text-anchor="middle">ataques del red teaming (M71)</text>
+<path class="dg-edge" d="M636 158 L636 104" marker-end="url(#f724a)"/>
+<text class="dg-tiny" x="385" y="240" text-anchor="middle">Abajo, de dónde salen. Se versionan como código: una tarea que cambia es otra tarea</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 72.4.</b> Las cuatro partes de una tarea y de dónde salen. Los ataques de M71 entran como tareas de seguridad.</figcaption>
+</figure>
+
+<pre data-lang="shell"><code># evals/tareas/fact-0042.yaml  (una tarea del set propio)
+id: fact-0042
+version: 3
+origen: PR 1873, bug real de redondeo en facturas            # (1)
+enunciado: &gt;
+  El total de una factura con tres líneas de 0.10 USD da 0.30000000000000004.
+  Arréglalo sin cambiar la API pública de facturacion/totales.py.
+entorno:
+  repo: git@interno:facturacion.git
+  commit: 9f3c2a1                                             # (2)
+  imagen: evals/facturacion:py313
+graders:
+  tests_ocultos: evals/ocultos/fact-0042/test_redondeo.py    # (3)
+  alcance: ["facturacion/**", "tests/**"]                    # (4)
+  comandos_prohibidos: ["git push", "curl", "pip install"]
+  presupuesto: { tokens: 400000, pasos: 60, minutos: 15 }</code></pre>
+<ol class="code-key">
+  <li>El origen dice por qué la tarea existe. Las mejores salen de PRs e incidentes reales del equipo: son el trabajo que el agente va a hacer.</li>
+  <li>El commit fijo y la imagen hacen que la tarea sea la misma hoy y dentro de seis meses. Una tarea que depende de <code>main</code> cambia sola.</li>
+  <li>Los tests ocultos no están en el repositorio que ve el agente. Si los viera, podría ajustar el código a los tests en lugar de arreglar el problema.</li>
+  <li>El alcance y los comandos prohibidos son las reglas sobre la trayectoria; el presupuesto corta las corridas que no terminan (<a href="m25-agentes.html#presupuestos">M25.6</a>).</li>
+</ol>
+<p>Un buen set tiene entre 50 y 200 tareas, de dificultad variada, y crece con cada falla del agente en producción: una corrida que salió mal se convierte en tarea, como un bug se convierte en test. Lo que no tiene: tareas copiadas de un benchmark público (contaminadas) ni tareas cuyo único juicio es "me parece bien".</p>
+
+
+<h2 id="graders"><span class="sec-num">72.6</span>Graders</h2>
+
+<p>Un <dfn data-term="grader">grader</dfn> es la función que decide si una corrida aprueba. Hay cuatro tipos, y conviene usar el más barato que mida lo que necesitas.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f725t f725d">
+<title id="f725t">La escalera de graders</title>
+<desc id="f725d">Cuatro escalones de izquierda a derecha, ordenados de más barato y objetivo a más caro y subjetivo. Código: tests y comparaciones exactas del estado final; barato, sin ruido. Reglas sobre la trayectoria: archivos fuera de alcance, comandos prohibidos, presupuesto; barato y objetivo. LLM juez: calidad del código, de la explicación o de la conversación, con una rúbrica; caro y con sesgos, se calibra contra personas. Persona: la referencia, cara y lenta; se usa para calibrar al juez y en una muestra. La regla: subir de escalón solo para lo que el de abajo no puede medir.</desc>
+<defs><marker id="f725a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="150" width="172" height="70" rx="8"/>
+<text class="dg-small" x="100" y="176" text-anchor="middle">Código</text>
+<text class="dg-tiny" x="100" y="196" text-anchor="middle">tests, estado final</text>
+<text class="dg-tiny" x="100" y="214" text-anchor="middle">barato, sin ruido</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="204" y="114" width="172" height="106" rx="8"/>
+<text class="dg-small" x="290" y="140" text-anchor="middle">Reglas</text>
+<text class="dg-tiny" x="290" y="160" text-anchor="middle">sobre la trayectoria</text>
+<text class="dg-tiny" x="290" y="178" text-anchor="middle">barato, objetivo</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="394" y="78" width="172" height="142" rx="8"/>
+<text class="dg-small" x="480" y="104" text-anchor="middle">LLM juez</text>
+<text class="dg-tiny" x="480" y="124" text-anchor="middle">con rúbrica</text>
+<text class="dg-tiny" x="480" y="142" text-anchor="middle">caro, con sesgos</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="584" y="42" width="172" height="178" rx="8"/>
+<text class="dg-small" x="670" y="68" text-anchor="middle">Persona</text>
+<text class="dg-tiny" x="670" y="88" text-anchor="middle">muestra y calibración</text>
+<text class="dg-tiny" x="670" y="106" text-anchor="middle">la referencia</text>
+<text class="dg-tiny" x="385" y="248" text-anchor="middle">Se sube de escalón solo para lo que el de abajo no puede medir</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 72.5.</b> De código a persona, cada escalón es más caro y más subjetivo. Se sube solo cuando el de abajo no alcanza.</figcaption>
+</figure>
+
+<pre data-lang="python"><code>def calificar(corrida, tarea):
+    fallas = []
+    if not correr_tests(tarea.tests_ocultos, corrida.repo_final):        # (5)
+        fallas.append("tests ocultos")
+    for paso in corrida.trayectoria:
+        if paso.herramienta == "editar" and not dentro(paso.ruta, tarea.alcance):
+            fallas.append(f"fuera de alcance: {paso.ruta}")             # (6)
+        if paso.herramienta == "bash" and prohibido(paso.comando, tarea.comandos_prohibidos):
+            fallas.append(f"comando prohibido: {paso.comando}")
+    if corrida.tokens &gt; tarea.presupuesto.tokens:
+        fallas.append("presupuesto")
+    return {"aprobada": not fallas, "fallas": fallas,                  # (7)
+            "tokens": corrida.tokens, "pasos": len(corrida.trayectoria), "segundos": corrida.segundos}</code></pre>
+<ol class="code-key" start="5">
+  <li>Los tests ocultos se corren sobre el repositorio como quedó al final, en un contenedor limpio.</li>
+  <li>Las reglas recorren la trayectoria paso a paso. Son código, sin modelo: baratas, rápidas y sin ruido.</li>
+  <li>El resultado guarda las razones y el costo. Una tasa sin las fallas no dice qué arreglar.</li>
+</ol>
+<p>El <a href="m22-operar-modelos.html#juez">LLM juez de M22.7</a> entra para lo que el código no puede juzgar: si el parche es legible, si la explicación al usuario es correcta, si el agente pidió confirmación cuando debía. Con agentes tiene un problema extra: la trayectoria es larga, y un juez que la lee entera es caro y se distrae. Funciona mejor con una rúbrica concreta, preguntas de sí o no y solo los pasos relevantes. Y se calibra contra personas en una muestra, igual que en M22.</p>
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>El agente aprende a pasar el grader en lugar de resolver la tarea: borra el test que falla, o escribe un caso especial para el valor que el test comprueba. Por eso los tests son ocultos, las reglas prohíben editar <code>tests/</code> cuando no corresponde, y una muestra de corridas aprobadas la lee una persona.</p>
+</aside>
+
+
+
+<h2 id="ruido"><span class="sec-num">72.7</span>El ruido y lo que cuesta medir</h2>
+
+<p>Un agente con temperatura mayor que cero no hace lo mismo dos veces, y un set de 50 tareas es una muestra chica. Dos fuentes de ruido, dos remedios: varias corridas por tarea y suficientes tareas.</p>
+<p>Con <i>n</i> tareas y una tasa <i>p</i>, el intervalo del 95&#8239;% es más o menos ±1.96·√(<i>p</i>(1−<i>p</i>)/<i>n</i>). Con 50 tareas y una tasa de 0.6, son ±13.6 puntos; con 200 tareas, ±6.8. Comparar dos combinaciones con las mismas tareas (pareado, como en <a href="m22-operar-modelos.html#evals-barras">M22.3</a>) achica bastante ese número, porque la dificultad de cada tarea se cancela.</p>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Set</th><th>Corridas por tarea</th><th>Corridas</th><th>Costo (0.447 USD por tarea)</th></tr></thead>
+    <tbody>
+<tr><td>50 tareas</td><td class="r">1</td><td class="r">50</td><td class="r">22.35 USD</td></tr>
+<tr><td>50 tareas</td><td class="r">5</td><td class="r">250</td><td class="r">111.75 USD</td></tr>
+<tr><td>200 tareas</td><td class="r">5</td><td class="r">1&#8239;000</td><td class="r">447 USD</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>El costo por tarea es el de <a href="m65-elegir-harness.html#costo">M65.7</a>. Con esos números, el set completo con cinco corridas no corre en cada PR: corre de noche, y en el PR va un subconjunto (72.8).</p>
+<div data-sim="trajcheck"></div>
+<p>Para probar en el widget: con solo "el agente dice que terminó", la tasa medida queda muy por encima de la real. Prende los tests ocultos y baja; prende la trayectoria y aparecen las corridas que resolvieron tocando lo que no debían. Después sube <i>k</i> y mira cómo cae pass^k: mide si puedes dejar al agente solo, no si alguna vez acierta. Y con 20 tareas, mira el ancho del intervalo.</p>
+
+
+<h2 id="ci"><span class="sec-num">72.8</span>Evals en CI</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f726t f726d">
+<title id="f726t">Evals de agentes en CI</title>
+<desc id="f726d">Un flujo de izquierda a derecha. Un cambio (al prompt, a las herramientas, a la versión del modelo o del harness) abre un PR. Corre un subconjunto rápido del set, de unas 20 tareas con una corrida cada una. Si pasa, de noche corre el set completo con cinco corridas por tarea. El resultado se compara con la línea base guardada: si la diferencia cae dentro del ruido, pasa; si baja más que el ruido, bloquea y avisa. La línea base se actualiza solo cuando se acepta el cambio.</desc>
+<defs><marker id="f726a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="50" width="136" height="64" rx="8"/>
+<text class="dg-small" x="82.0" y="78.5" text-anchor="middle">Cambio</text>
+<text class="dg-tiny" x="82.0" y="93.5" text-anchor="middle">prompt, tool, versión</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="166" y="50" width="136" height="64" rx="8"/>
+<text class="dg-small" x="234.0" y="78.5" text-anchor="middle">PR: subset</text>
+<text class="dg-tiny" x="234.0" y="93.5" text-anchor="middle">20 tareas × 1</text>
+<path class="dg-edge" d="M151 82 L164 82" marker-end="url(#f726a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="318" y="50" width="136" height="64" rx="8"/>
+<text class="dg-small" x="386.0" y="78.5" text-anchor="middle">Nocturno</text>
+<text class="dg-tiny" x="386.0" y="93.5" text-anchor="middle">set completo × 5</text>
+<path class="dg-edge" d="M303 82 L316 82" marker-end="url(#f726a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="470" y="50" width="136" height="64" rx="8"/>
+<text class="dg-small" x="538.0" y="78.5" text-anchor="middle">Comparar</text>
+<text class="dg-tiny" x="538.0" y="93.5" text-anchor="middle">con la línea base</text>
+<path class="dg-edge" d="M455 82 L468 82" marker-end="url(#f726a)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="622" y="50" width="136" height="64" rx="8"/>
+<text class="dg-small" x="690.0" y="78.5" text-anchor="middle">Decisión</text>
+<text class="dg-tiny" x="690.0" y="93.5" text-anchor="middle">pasa o bloquea</text>
+<path class="dg-edge" d="M607 82 L620 82" marker-end="url(#f726a)"/>
+<path class="dg-edge" d="M688 116 L688 170 L534 170 L534 116" marker-end="url(#f726a)"/>
+<text class="dg-tiny" x="611" y="188" text-anchor="middle">se acepta: nueva línea base</text>
+<text class="dg-tiny" x="330" y="160" text-anchor="middle">Una caída menor que el ruido no bloquea:</text>
+<text class="dg-tiny" x="330" y="176" text-anchor="middle">el intervalo se calcula con n y p (72.7)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 72.6.</b> Un subconjunto rápido en cada PR y el set completo de noche, contra una línea base. Una caída dentro del ruido no bloquea.</figcaption>
+</figure>
+
+<ul>
+  <li><b>Qué dispara un eval.</b> Todo lo que cambia lo que el modelo ve o puede hacer: el system prompt, una herramienta o su descripción, una extensión, la versión del modelo o del harness. El código del producto no, salvo que cambie las herramientas.</li>
+  <li><b>La línea base.</b> El resultado guardado de la última versión aceptada, por tarea. Se compara pareado, tarea por tarea.</li>
+  <li><b>El umbral.</b> Bloquear por cualquier caída es bloquear por ruido; el umbral sale del intervalo. Una tarea que antes pasaba en 5 de 5 y ahora en 0 de 5 sí merece mirarse, aunque el total no se mueva.</li>
+  <li><b>Los secretos.</b> Las corridas de eval usan credenciales de prueba y entornos aislados, con las reglas de <a href="m69-orquestadores.html#ci">M69</a> para correr agentes en CI.</li>
+</ul>
+
+
+<h2 id="seguridad"><span class="sec-num">72.9</span>Evals de seguridad</h2>
+
+<p>Los ataques que encontró el red teaming de <a href="m71-jailbreak-red-teaming.html#red-team">M71.8</a> se vuelven tareas. Para injection en agentes, el diseño de referencia es AgentDojo (Debenedetti y otros, NeurIPS 2024): 97 tareas útiles en cuatro entornos y 629 casos de seguridad que plantan instrucciones en los datos que el agente lee <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f727t f727d">
+<title id="f727t">Un eval de seguridad: tarea útil más ataque plantado</title>
+<desc id="f727d">Una tarea útil, como resumir los correos del día, se corre dos veces: sin ataque y con un correo que trae una instrucción escondida. Se miden dos cosas a la vez. Utilidad: si la tarea se completó, con y sin ataque. Seguridad: si el agente hizo lo que pedía el atacante, por ejemplo reenviar un correo a una dirección externa. Una defensa buena baja el éxito del ataque sin hundir la utilidad. Es el diseño de AgentDojo.</desc>
+<defs><marker id="f727a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="30" width="200" height="60" rx="8"/>
+<text class="dg-small" x="114.0" y="56.5" text-anchor="middle">Tarea útil</text>
+<text class="dg-tiny" x="114.0" y="71.5" text-anchor="middle">resumir los correos</text>
+<rect class="dg-bad" x="14" y="140" width="200" height="60" rx="8"/>
+<text class="dg-small" x="114.0" y="166.5" text-anchor="middle">Misma tarea</text>
+<text class="dg-tiny" x="114.0" y="181.5" text-anchor="middle">+ correo con instrucción</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="280" y="80" width="180" height="70" rx="8"/>
+<text class="dg-small" x="370.0" y="111.5" text-anchor="middle">Agente</text>
+<text class="dg-tiny" x="370.0" y="126.5" text-anchor="middle">con sus defensas</text>
+<path class="dg-edge" d="M214 60 L278 100" marker-end="url(#f727a)"/>
+<path class="dg-edge" d="M214 170 L278 130" marker-end="url(#f727a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="530" y="30" width="226" height="60" rx="8"/>
+<text class="dg-small" x="643.0" y="56.5" text-anchor="middle">Utilidad</text>
+<text class="dg-tiny" x="643.0" y="71.5" text-anchor="middle">¿completó la tarea?</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="530" y="140" width="226" height="60" rx="8"/>
+<text class="dg-small" x="643.0" y="166.5" text-anchor="middle">Ataque exitoso</text>
+<text class="dg-tiny" x="643.0" y="181.5" text-anchor="middle">¿hizo lo del atacante?</text>
+<path class="dg-edge" d="M460 100 L528 60" marker-end="url(#f727a)"/>
+<path class="dg-edge" d="M460 130 L528 170" marker-end="url(#f727a)"/>
+<text class="dg-tiny" x="385" y="246" text-anchor="middle">Una defensa se juzga por las dos: bajar el ataque sin hundir la utilidad</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 72.7.</b> La misma tarea con y sin ataque. Se mide la utilidad y el éxito del ataque; una defensa se juzga por las dos.</figcaption>
+</figure>
+
+<p>En su publicación, los mejores agentes de entonces resolvían menos de dos tercios de las tareas sin ataque, y los ataques funcionaban en menos de una de cada cuatro; un detector de injection bajó el éxito de los ataques a cerca del 8&#8239;%, con algo de costo en utilidad <span class="badge badge--doc">Documentado</span>. Las cifras de los modelos cambian; el diseño queda: cada defensa de <a href="m71-jailbreak-red-teaming.html#agentes">M71.7</a> se mide con las dos métricas, como en M71 se medían ataques y <a href="m71-jailbreak-red-teaming.html#medir">falsos rechazos</a>.</p>
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Las tareas de seguridad van al mismo set y al mismo CI que las demás, con su propia tasa. Una versión que mejora la utilidad 3 puntos y duplica el éxito de los ataques no se publica.</p>
+</aside>
+
+
+
+<h2 id="fallas"><span class="sec-num">72.10</span>Fallas típicas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa probable</th><th>Qué hacer</th></tr></thead>
+    <tbody>
+<tr><td>La tasa medida es alta y los usuarios se quejan</td><td>Se juzga el mensaje final o un juez sin calibrar</td><td>Tests ocultos sobre el estado final; <span class="no-autolink">calibrar</span> el juez con personas</td></tr>
+<tr><td>La tasa sube y baja sin cambiar nada</td><td>Una corrida por tarea y pocas tareas</td><td>Varias corridas, más tareas y comparación pareada con intervalo</td></tr>
+<tr><td>Las tareas viejas ya no corren</td><td>Dependen de <code>main</code> o de servicios externos</td><td>Commit fijo, imagen fija y dependencias dentro del contenedor</td></tr>
+<tr><td>Un modelo nuevo saca 20 puntos más en un benchmark y nada en el set propio</td><td>Contaminación o un benchmark que mide otra cosa</td><td>Decidir con el set propio</td></tr>
+<tr><td>El agente aprueba borrando tests</td><td>Los tests están a la vista y se pueden editar</td><td>Tests ocultos, regla sobre <code>tests/</code> y una muestra leída por personas</td></tr>
+<tr><td>El CI bloquea un PR de cada tres</td><td>Umbral más fino que el ruido</td><td>Umbral desde el intervalo; set completo de noche, no en cada PR</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>El set de evals es un activo del equipo, como los tests: tiene dueño, se revisa en PRs, crece con cada incidente y tiene su presupuesto mensual. El primer set no necesita ser grande; necesita existir antes de cambiar el prompt de un agente que ya usa gente.</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m72"></div>
+<div data-exercise="m72-evals"></div>
+<div data-checkpoint="m72"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m72.data.js"></script>
+<script src="../assets/js/data/exercises/m72.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-evals.js"></script>
+</body>
+</html>

@@ -13,7 +13,7 @@ Curso web en español de diseño de sistemas reales:
 - **Parte V:** manejo de pagos (M39 en adelante), del lado del comercio que cobra: las intuiciones de diseño (tablas, idempotencia, locks, webhooks, implementación propia y seguridad), no el código, que está en las guías A15, A27 y A28. Publicado M39 (manejo de pagos); M40 y M41 están propuestos en `PLAN.md`. Cuenta para el progreso.
 - **Parte VI:** ML System Design, sistemas de recomendación (M42–M53 y el Checkpoint F): método y métricas, datos, modelos clásicos, recuperación, ranking, exploración, grafos y amigos, experimentos, serving, engagement responsable y dos casos con mapa. Va al final de la ruta, después de la Fase 2, y cuenta para el progreso. Publicados M42 (el método de ML System Design), M43 (datos, eventos y features), M44 (modelos clásicos: popularidad, contenido y filtrado colaborativo), M45 (recuperación a escala: dos torres y búsqueda vectorial) y M46 (ranking: del modelo lineal al multi-tarea); el resto está como `soon`. Plan en `PLAN_ML_SYSTEM_DESIGN.md`, guías prácticas ML00–ML09 en `PLAN_ML_GUIAS.md` (como `mlTracks`): publicadas ML00 (el laboratorio de recomendación) y ML01 (la línea base: lo popular, bien medido), las demás `proposed`. Siguen las reglas de los tutoriales de AI Engineering, sin los dos modelos a la par: cada guía se mide con el laboratorio de ML00 contra la línea base de ML01.
 - **Parte VII:** Blue Team y DevSecOps (M54–M61 y el Checkpoint G): threat modeling, AppSec en el ciclo de vida, cadena de suministro, contenedores y Kubernetes, gestión de vulnerabilidades, detection engineering y el SOC, respuesta a incidentes y forense, y seguridad de red y del correo, todo defensivo y sobre un mismo sistema de ejemplo, "Tienda Norte". Publicados M54 a M61; falta el Checkpoint G. Va después de la Parte VI y cuenta para el progreso. Plan en `PLAN_DEVSECOPS.md`, con la serie de guías SEC00–SEC08 propuesta.
-- **Parte VIII:** AI Engineering, modelos, harnesses y agentes (M62–M72 y el Checkpoint H): la pila de un agente, tool calling por dentro, anatomía y elección de un harness, permisos y sandbox, extensiones, context engineering, orquestadores (DeepSec), open weights, jailbreak y red teaming (solo conceptual y defensivo) y evals de agentes. Publicados M62 (la pila de un agente), M63 (tool calling por dentro), M64 (anatomía de un harness), M65 (elegir un harness), M66 (permisos, sandbox y autonomía), M67 (extender un harness), M68 (context engineering y memoria) y M69 (orquestadores: agentes que lanzan agentes); el resto está como `soon`. Plan en `PLAN_AI_ENGINEERING.md`, con las guías IA07 e IA08 propuestas. Cuenta para el progreso.
+- **Parte VIII:** AI Engineering, modelos, harnesses y agentes (M62–M72 y el Checkpoint H): la pila de un agente, tool calling por dentro, anatomía y elección de un harness, permisos y sandbox, extensiones, context engineering, orquestadores (DeepSec), open weights, jailbreak y red teaming (solo conceptual y defensivo) y evals de agentes. Publicados M62 (la pila de un agente), M63 (tool calling por dentro), M64 (anatomía de un harness), M65 (elegir un harness), M66 (permisos, sandbox y autonomía), M67 (extender un harness), M68 (context engineering y memoria) M69 (orquestadores: agentes que lanzan agentes), M70 (modelos open weights y serving propio), M71 (jailbreak, injection y red teaming) y M72 (evals de agentes), más el Checkpoint H, que cierra la parte. La Parte VIII está completa. Plan en `PLAN_AI_ENGINEERING.md`, con las guías IA07 e IA08 propuestas. Cuenta para el progreso.
 - **Parte IX:** seguridad web, del navegador al servidor (M73–M85 y el Checkpoint I): el navegador por dentro, origen y cookies, CORS, CSRF, XSS, CSP y cabeceras, inyecciones, control de acceso, sesiones, archivos y SSRF, otros ataques, renderizado y Next.js, y WebAssembly, con ejemplos en PHP sobre el proyecto del usuario (`C:\xampp\htdocs\SistemaControlPracticas`). Publicados M73 (el navegador por dentro), M74 (origen, sitio y cookies), M75 (CORS a fondo), M76 (CSRF), M77 (XSS y el DOM), M78 (CSP y cabeceras), M79 (inyecciones), M80 (control de acceso roto), M81 (autenticación y sesiones), M82 (archivos, SSRF y redirecciones), M83 (otros ataques), M84 (modelos de renderizado: PHP, SPA y Next.js) y M85 (WebAssembly), más el Checkpoint I, que cierra la parte. La Parte IX está completa; las guías WEB00–WEB10 siguen pendientes. Plan, auditoría del proyecto y guías WEB00–WEB10 en `PLAN_SEGURIDAD_WEB.md` (WEB11 y WEB12 no están aprobadas). Regla: todo se prueba solo contra el laboratorio propio en localhost, con payloads mínimos, sin evasión de WAF, y cada ataque termina en su mitigación. Cuenta para el progreso.
 - **Aplicación de conocimiento** (`proyectos.html` y `proyectos/`): tutoriales en Java y Spring Boot para construir lo de cada módulo, y al final de la página los tutoriales de AI Engineering, en Python (IA00, IA01, IA02…). Cada guía es una página en `proyectos/`, generada con `tools/mkguide.py`. Las reglas están en "De las guías de proyectos" y "De los tutoriales de AI Engineering".
 
@@ -392,7 +392,7 @@ SD.defineExercise('m06-planificador', {
 
 - Los scripts: `data/exercises/<id>.data.js` después de los datos del quiz, y `core/exercise.js` después de `core/quiz.js` (usa `SD.quizKit`). Con `mkpage.py`, alcanza con `"exercises": true` en el META; en una página existente se agregan a mano (así está en M18).
 - El glosario no enlaza dentro de `[data-exercise]`: los términos se explican en el texto del módulo.
-- Ejercicios publicados: uno en M02, siete en M06.1 (los datos siguen en `exercises/m06.data.js`), uno en M18, uno en M19, uno en M21, cinco en M22 (incidentes), uno en M23, uno en M24, uno en M25, uno en M12.1 (diagnóstico de una réplica lenta), uno en M33, uno en M34 (diagnosticar un servidor lento), uno en M36 (criptografía de una API con datos sensibles), uno en M37 (endurecer la arquitectura de un SaaS en la nube), uno en M38 (auditar un dominio y cerrar sus rutas a tier 0), uno en M39 (`m39-festival`, la venta de entradas de un festival), uno en M31 (`m31-clase`, las clases del clon de Docs) uno en M42 (`m42-metricas`, las métricas de "personas que quizás conozcas") uno en M43 (`m43-eventos`, el registro de "comprados juntos"), uno en M44 (`m44-comprados`, el modelo de "comprados juntos"), uno en M45 (`m45-indice`, el índice de vecinos) uno en M46 (`m46-pesos`, el ranker del feed), uno en M54 (`m54-stride`, el export de pedidos por correo), uno en M55 (`m55-pipeline`), uno en M56 (`m56-cadena`, un token de npm filtrado por un gusano), uno en M57 (`m57-cluster`), uno en M58 (`m58-backlog`, el primer escaneo de la tienda), uno en M59 (`m59-reglas`, las primeras reglas de Tienda Norte), uno en M60 (`m60-incidente`), uno en M61 (`m61-dominio`) uno en M62 (`m62-pila`, la pila de agentes de un equipo), uno en M63 (`m63-local`, llevar un harness de Claude a un modelo local), uno en M64 (`m64-monorepo`, el harness de un monorepo grande), uno en M65 (`m65-elegir`, el harness de una fintech de 12 personas), uno en M66 (`m66-noche`, un agente que trabaja solo de noche), uno en M67 (`m67-extender`, ordenar las extensiones de un equipo), uno en M68 (`m68-contexto`, el contexto de un agente de soporte), uno en M69 (`m69-orq`, un bot que revisa los PR de 40 repositorios), uno en M73 (`m73-frontera`), uno en M74 (`m74-cookie`), uno en M75 (`m75-politica`), uno en M76 (`m76-api`), uno en M77 (`m77-feed`), uno en M78 (`m78-politica`), uno en M79 (`m79-exportar`), uno en M80 (`m80-matriz`, cerrar `solicitudes_publicacion.php`), uno en M81 (`m81-login`, un credential stuffing el día del cierre), uno en M82 (`m82-vista`, la vista previa de una oportunidad) y uno en M83 (`m83-auditoria`, la revisión antes del cierre de postulaciones), uno en M84 (`m84-migrar`, migrar el panel a Next.js) y uno en M85 (`m85-validador`, un validador de CVs en WebAssembly).
+- Ejercicios publicados: uno en M02, siete en M06.1 (los datos siguen en `exercises/m06.data.js`), uno en M18, uno en M19, uno en M21, cinco en M22 (incidentes), uno en M23, uno en M24, uno en M25, uno en M12.1 (diagnóstico de una réplica lenta), uno en M33, uno en M34 (diagnosticar un servidor lento), uno en M36 (criptografía de una API con datos sensibles), uno en M37 (endurecer la arquitectura de un SaaS en la nube), uno en M38 (auditar un dominio y cerrar sus rutas a tier 0), uno en M39 (`m39-festival`, la venta de entradas de un festival), uno en M31 (`m31-clase`, las clases del clon de Docs) uno en M42 (`m42-metricas`, las métricas de "personas que quizás conozcas") uno en M43 (`m43-eventos`, el registro de "comprados juntos"), uno en M44 (`m44-comprados`, el modelo de "comprados juntos"), uno en M45 (`m45-indice`, el índice de vecinos) uno en M46 (`m46-pesos`, el ranker del feed), uno en M54 (`m54-stride`, el export de pedidos por correo), uno en M55 (`m55-pipeline`), uno en M56 (`m56-cadena`, un token de npm filtrado por un gusano), uno en M57 (`m57-cluster`), uno en M58 (`m58-backlog`, el primer escaneo de la tienda), uno en M59 (`m59-reglas`, las primeras reglas de Tienda Norte), uno en M60 (`m60-incidente`), uno en M61 (`m61-dominio`) uno en M62 (`m62-pila`, la pila de agentes de un equipo), uno en M63 (`m63-local`, llevar un harness de Claude a un modelo local), uno en M64 (`m64-monorepo`, el harness de un monorepo grande), uno en M65 (`m65-elegir`, el harness de una fintech de 12 personas), uno en M66 (`m66-noche`, un agente que trabaja solo de noche), uno en M67 (`m67-extender`, ordenar las extensiones de un equipo), uno en M68 (`m68-contexto`, el contexto de un agente de soporte), uno en M69 (`m69-orq`, un bot que revisa los PR de 40 repositorios), uno en M73 (`m73-frontera`), uno en M74 (`m74-cookie`), uno en M75 (`m75-politica`), uno en M76 (`m76-api`), uno en M77 (`m77-feed`), uno en M78 (`m78-politica`), uno en M79 (`m79-exportar`), uno en M80 (`m80-matriz`, cerrar `solicitudes_publicacion.php`), uno en M81 (`m81-login`, un credential stuffing el día del cierre), uno en M82 (`m82-vista`, la vista previa de una oportunidad) y uno en M83 (`m83-auditoria`, la revisión antes del cierre de postulaciones), uno en M84 (`m84-migrar`, migrar el panel a Next.js) y uno en M85 (`m85-validador`, un validador de CVs en WebAssembly), uno en M70 (`m70-local`, un asistente de código para un estudio que no puede sacar datos), uno en M71 (`m71-defensa`, las defensas del asistente de una farmacia en línea) y uno en M72 (`m72-evals`, los evals del agente que arregla bugs de facturación).
 
 ### Quiz y checkpoint
 
@@ -512,6 +512,9 @@ Categorías (`SD.catNames` en `glossary.js`): `metodo`, `redes`, `datos`, `distr
 | `data-calc="extbudget"` | `widgets/sim-extend.js` | Contexto fijo por turno de las extensiones: servidores MCP, herramientas y tokens por definición (todo por adelantado, `auto` al 10&#8239;% o búsqueda), descripciones de skills y archivo de memoria, con el costo de una sesión de 40 turnos con y sin caché; tres presets; lógica en `SD.extCore`; estilos `.xb-*` (M67) |
 | `data-sim="promptorder"` | `widgets/sim-ctxeng.js` | Dónde va un dato que cambia (la hora) en el prompt y cada cuánto cambia, contra el caché del prefijo en una sesión de N turnos: barras por turno leídas y escritas, proporción leída, costo con y sin caché, y un servidor MCP que se conecta a mitad de sesión; lógica en `SD.promptCore`; estilos `.po-*` (M68) |
 | `data-calc="orqrun"` | `widgets/sim-orq.js` | Cuánto dura y cuánto cuesta una corrida de un orquestador: archivos, tamaño de lote, lotes a la vez, minutos, USD y llamadas por lote, límite de requests por minuto y tope de gasto; calcula la concurrencia que aguanta el límite, la duración, el gasto con el sobrepaso de los lotes en vuelo y cuántos archivos se revisan; cuatro presets; lógica en `SD.orqCore` (M69) |
+| `data-calc="localfit"` | `widgets/sim-local.js` | Un modelo (denso o MoE, con configuraciones publicadas), una cuantización, un contexto y una GPU: memoria de los pesos, del KV cache y del resto, si entra, y la cota de tokens por segundo del decode (M70) |
+| `data-sim="asrfr"` | `widgets/sim-redteam.js` | Cinco familias sintéticas de ataque y 2&#8239;000 pedidos legítimos contra un clasificador de entrada y otro de salida con umbral: tasa de éxito de ataque, falsos rechazos y qué pasa con la tasa base; lógica en `SD.redCore`; estilos `.rt-*` (M71) |
+| `data-sim="trajcheck"` | `widgets/sim-evals.js` | Un set sintético de tareas de agente juzgado con cuatro graders (lo que dice, tests ocultos, trayectoria, presupuesto), tamaño del set y k: tasa medida contra real, falsos aprobados, pass^k, intervalo y costo a 0.447 USD por tarea; lógica en `SD.evalCore`; estilos `.ev-*` (M72) |
 | `data-sim="domparse"`, `"origins"`, `"cors"`, `"csrf"`, `"xssctx"`, `"csp"`, `"acl"`, `"wasmmem"` | `widgets/sim-web.js` | Un string de HTML convertido en árbol del DOM con DOMParser sobre un documento inerte, con seis correcciones del parser (M73); dos URL con su origen, su sitio (recorte de la Public Suffix List) y qué cookies viajan según SameSite en cinco tipos de request (M74); y una request contra seis políticas de CORS, con el preflight, si llega a PHP, si lleva la cookie y si el JavaScript lee la respuesta (M75); cinco formas de CSRF contra las defensas que se prenden y apagan (M76); un valor en cinco contextos de salida con el escape de cada uno (M77); una política de CSP contra cinco inyecciones (M78); y seis personas contra cinco acciones del sistema de prácticas con cuatro comprobaciones (sesión, rol, dueño, id de la sesión) y el botón "lo que hace tu código hoy" (M80); y la memoria lineal de un módulo de Wasm byte a byte, con un `strcpy` que pisa la variable de al lado o se queda en el buffer, dos distribuciones y lo que queda intacto fuera del módulo (M85); lógica en `SD.webCore`; estilos `.wb-*` y `.wm-*` |
 | `data-calc="bom" data-preset="m21\|m23\|m24\|m25\|m27\|m28\|m29\|m30\|m31"`, `data-calc="gateways"` | `widgets/sim-infra.js` | Factura mensual en AWS y dimensionamiento de gateways (módulos a fondo y casos de estudio) |
 
@@ -643,6 +646,9 @@ ia-system-desing
 │       │   │       m67.data.js
 │       │   │       m68.data.js
 │       │   │       m69.data.js
+│       │   │       m70.data.js
+│       │   │       m71.data.js
+│       │   │       m72.data.js
 │       │   │       m73.data.js
 │       │   │       m74.data.js
 │       │   │       m75.data.js
@@ -706,6 +712,7 @@ ia-system-desing
 │       │           cpc.data.js
 │       │           cpd.data.js
 │       │           cpe.data.js
+│       │           cph.data.js
 │       │           cpi.data.js
 │       │           m00.data.js
 │       │           m01.data.js
@@ -770,6 +777,9 @@ ia-system-desing
 │       │           m67.data.js
 │       │           m68.data.js
 │       │           m69.data.js
+│       │           m70.data.js
+│       │           m71.data.js
+│       │           m72.data.js
 │       │           m73.data.js
 │       │           m74.data.js
 │       │           m75.data.js
@@ -813,6 +823,7 @@ ia-system-desing
 │               sim-dbflow.js
 │               sim-dtx.js
 │               sim-engine.js
+│               sim-evals.js
 │               sim-extend.js
 │               sim-feed.js
 │               sim-crypto.js
@@ -830,6 +841,7 @@ ia-system-desing
 │               sim-lease.js
 │               sim-lin.js
 │               sim-llm.js
+│               sim-local.js
 │               sim-meter.js
 │               sim-modelops.js
 │               sim-obs.js
@@ -841,6 +853,7 @@ ia-system-desing
 │               sim-quota.js
 │               sim-rank.js
 │               sim-rbac.js
+│               sim-redteam.js
 │               sim-events.js
 │               sim-recsys.js
 │               sim-raft.js
@@ -867,6 +880,7 @@ ia-system-desing
 │       checkpoint-c.html
 │       checkpoint-d.html
 │       checkpoint-e.html
+│       checkpoint-h.html
 │       checkpoint-i.html
 │       m00-metodo.html
 │       m01-viaje-request.html
@@ -931,6 +945,9 @@ ia-system-desing
 │       m67-extender-harness.html
 │       m68-context-engineering.html
 │       m69-orquestadores.html
+│       m70-open-weights.html
+│       m71-jailbreak-red-teaming.html
+│       m72-evals-agentes.html
 │       m73-navegador.html
 │       m74-origen-cookies.html
 │       m75-cors.html
