@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M77. XSS y el DOM</title>
+<meta name="description" content="Cross-Site Scripting a fondo: reflejado, almacenado y basado en el DOM; el escape correcto en cada contexto de salida, fuentes y sumideros del DOM, mutation XSS y por qué sanitizar con regex falla, DOMPurify, Trusted Types, DOM clobbering y qué roba un XSS aunque la cookie sea HttpOnly.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m77">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>XSS y el DOM</h1>
+        <p class="lead">Un XSS es código del atacante corriendo en tu origen, con todos los permisos de tu página. No se arregla con un filtro: se arregla con la regla de que los datos nunca se vuelven código, aplicada en cada lugar donde un string entra al HTML.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M77</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>130 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M73, M74</dd></div>
+          <div><dt>Estado</dt><dd data-status="m77">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Distinguir XSS reflejado, almacenado y basado en el DOM, y reconocerlos en el sistema de prácticas.</li>
+    <li>Elegir el escape correcto para cada contexto de salida: cuerpo HTML, atributo, URL, JavaScript y CSS.</li>
+    <li>Reconocer las fuentes y los sumideros del DOM, y reemplazar <code>innerHTML</code> por <code>textContent</code> y <code>createElement</code>.</li>
+    <li>Explicar el mutation XSS y por qué no se sanitiza HTML con expresiones regulares.</li>
+    <li>Usar DOMPurify y Trusted Types, y explicar qué alcanza un XSS aunque la cookie sea <code>HttpOnly</code>.</li>
+  </ul>
+</section>
+
+<p><a href="m76-csrf.html#capas">M76</a> cerró con una advertencia: ningún token frena a código que ya corre en tu origen. Ese código es un <dfn data-term="xss">XSS</dfn> (Cross-Site Scripting): el atacante consigue que tu página ejecute su JavaScript, y desde ese momento tiene los mismos permisos que tu propio código. La Same-Origin Policy, SameSite y el token anti-CSRF quedan del lado equivocado de la frontera, porque el atacante ya está adentro. En <a href="m10-seguridad.html#xss-csrf-detalle">M10</a> viste la idea en dos párrafos; aquí va el mecanismo.</p>
+
+
+<h2 id="tipos"><span class="sec-num">77.1</span>Tres formas de llegar a la página</h2>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es un formulario en papel donde alguien escribe, en la casilla del nombre, "y además, entregue las llaves al portador". Si el empleado lee las casillas como instrucciones y no como datos, obedece. El XSS es eso: un dato leído como instrucción.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f771t f771d">
+<title id="f771t">Tres tipos de XSS</title>
+<desc id="f771d">Tres carriles. Reflejado: el payload viaja en la URL, el servidor lo copia en la respuesta y se ejecuta al abrir el enlace. Almacenado: el payload se guarda en la base y se ejecuta para cada persona que ve la página. Basado en el DOM: el servidor nunca lo ve; el JavaScript de la página lo toma de la URL y lo pone en el DOM.</desc>
+<defs><marker id="f771a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="14" width="150" height="62" rx="8"/>
+<text class="dg-label" x="89.0" y="49.0" text-anchor="middle">Reflejado</text>
+<rect class="dg-box" x="190" y="22" width="176" height="46" rx="8"/>
+<text class="dg-tiny" x="278.0" y="49.0" text-anchor="middle">enlace con ?q=…</text>
+<path class="dg-edge" d="M166 45 L188 45" marker-end="url(#f771a)"/>
+<rect class="dg-box" x="382" y="22" width="176" height="46" rx="8"/>
+<text class="dg-tiny" x="470.0" y="49.0" text-anchor="middle">PHP lo copia en el HTML</text>
+<path class="dg-edge" d="M366 45 L380 45" marker-end="url(#f771a)"/>
+<rect class="dg-box" x="574" y="22" width="176" height="46" rx="8"/>
+<text class="dg-tiny" x="662.0" y="49.0" text-anchor="middle">corre al abrir el enlace</text>
+<path class="dg-edge" d="M558 45 L572 45" marker-end="url(#f771a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="14" y="92" width="150" height="62" rx="8"/>
+<text class="dg-label" x="89.0" y="127.0" text-anchor="middle">Almacenado</text>
+<rect class="dg-box" x="190" y="100" width="176" height="46" rx="8"/>
+<text class="dg-tiny" x="278.0" y="127.0" text-anchor="middle">título de una oferta</text>
+<path class="dg-edge" d="M166 123 L188 123" marker-end="url(#f771a)"/>
+<rect class="dg-box" x="382" y="100" width="176" height="46" rx="8"/>
+<text class="dg-tiny" x="470.0" y="127.0" text-anchor="middle">se guarda en MariaDB</text>
+<path class="dg-edge" d="M366 123 L380 123" marker-end="url(#f771a)"/>
+<rect class="dg-box" x="574" y="100" width="176" height="46" rx="8"/>
+<text class="dg-tiny" x="662.0" y="127.0" text-anchor="middle">corre para cada estudiante</text>
+<path class="dg-edge" d="M558 123 L572 123" marker-end="url(#f771a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="170" width="150" height="62" rx="8"/>
+<text class="dg-label" x="89.0" y="205.0" text-anchor="middle">Basado en el DOM</text>
+<rect class="dg-box" x="190" y="178" width="176" height="46" rx="8"/>
+<text class="dg-tiny" x="278.0" y="205.0" text-anchor="middle">#hash o postMessage</text>
+<path class="dg-edge" d="M166 201 L188 201" marker-end="url(#f771a)"/>
+<rect class="dg-box" x="382" y="178" width="176" height="46" rx="8"/>
+<text class="dg-tiny" x="470.0" y="205.0" text-anchor="middle">el JS lo pone con innerHTML</text>
+<path class="dg-edge" d="M366 201 L380 201" marker-end="url(#f771a)"/>
+<rect class="dg-box" x="574" y="178" width="176" height="46" rx="8"/>
+<text class="dg-tiny" x="662.0" y="205.0" text-anchor="middle">el servidor nunca lo ve</text>
+<path class="dg-edge" d="M558 201 L572 201" marker-end="url(#f771a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 77.1.</b> Los tres tipos difieren en dónde vive el payload y en quién lo copia a la página. La defensa es la misma regla en un lugar distinto.</figcaption>
+</figure>
+
+<ul>
+  <li><b>Reflejado.</b> El valor llega en la request y vuelve en la respuesta. La víctima tiene que abrir un enlace preparado.</li>
+  <li><b>Almacenado.</b> El valor se guarda (un título, un comentario, un nombre) y se sirve a todos los que lo ven. No requiere enlace y alcanza a muchas víctimas, incluidos los administradores.</li>
+  <li><b>Basado en el DOM.</b> El JavaScript de la página toma el valor de una fuente del navegador y lo escribe en el DOM. El servidor nunca lo ve, así que ni los registros ni el WAF lo detectan.</li>
+</ul>
+<pre data-lang="php"><code>&lt;?php
+// buscar.php — MAL: el parámetro vuelve al HTML tal cual
+$q = $_GET['q'] ?? '';
+echo "&lt;h1&gt;Resultados para $q&lt;/h1&gt;";</code></pre>
+<p>El payload didáctico de todo este módulo es <code>alert(document.domain)</code>: muestra en qué origen corre el código, que es lo único que hay que demostrar.</p>
+
+
+<h2 id="contexto"><span class="sec-num">77.2</span>El contexto decide qué es código</h2>
+
+<p>En <a href="m73-navegador.html#parser">M73</a> viste que el parser HTML cambia de modo según dónde está: dentro de un <code>&lt;title&gt;</code> todo es texto; dentro de un atributo, el valor termina en la comilla; dentro de un <code>&lt;script&gt;</code>, el texto lo lee después otro parser, el de JavaScript. Cada lugar donde PHP imprime un dato es un <dfn data-term="escape-contexto">contexto de salida</dfn>, con sus propios caracteres peligrosos.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f773t f773d">
+<title id="f773t">Los contextos de una misma página</title>
+<desc id="f773d">Una plantilla HTML con cinco lugares marcados donde PHP imprime un dato: el cuerpo de un párrafo, el valor de un atributo, un href, un string dentro de un script y un valor dentro de un style. Al lado de cada uno, quién lo interpreta y qué escape le corresponde.</desc>
+<defs><marker id="f773a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="20" y="26" text-anchor="start">Dónde cae el dato</text>
+<text class="dg-label" x="370" y="26" text-anchor="start">Quién lo lee</text>
+<text class="dg-label" x="590" y="26" text-anchor="start">Escape</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="40" width="340" height="38" rx="8"/>
+<text class="dg-small dg-mono" x="184.0" y="63.0" text-anchor="middle">&lt;p&gt;  DATO  &lt;/p&gt;</text>
+<rect class="dg-box" x="364" y="40" width="212" height="38" rx="8"/>
+<text class="dg-tiny" x="470.0" y="63.0" text-anchor="middle">parser HTML, como texto</text>
+<rect class="dg-box--em" x="586" y="40" width="170" height="38" rx="8"/>
+<text class="dg-tiny" x="671.0" y="63.0" text-anchor="middle">htmlspecialchars</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="88" width="340" height="38" rx="8"/>
+<text class="dg-small dg-mono" x="184.0" y="111.0" text-anchor="middle">&lt;input value='  DATO  '&gt;</text>
+<rect class="dg-box" x="364" y="88" width="212" height="38" rx="8"/>
+<text class="dg-tiny" x="470.0" y="111.0" text-anchor="middle">parser HTML, dentro de comillas</text>
+<rect class="dg-box--em" x="586" y="88" width="170" height="38" rx="8"/>
+<text class="dg-tiny" x="671.0" y="111.0" text-anchor="middle">+ ENT_QUOTES</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="136" width="340" height="38" rx="8"/>
+<text class="dg-small dg-mono" x="184.0" y="159.0" text-anchor="middle">&lt;a href="  DATO  "&gt;</text>
+<rect class="dg-box" x="364" y="136" width="212" height="38" rx="8"/>
+<text class="dg-tiny" x="470.0" y="159.0" text-anchor="middle">parser HTML y después el de URL</text>
+<rect class="dg-box--em" x="586" y="136" width="170" height="38" rx="8"/>
+<text class="dg-tiny" x="671.0" y="159.0" text-anchor="middle">esquema + ENT_QUOTES</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="184" width="340" height="38" rx="8"/>
+<text class="dg-small dg-mono" x="184.0" y="207.0" text-anchor="middle">&lt;script&gt;var q = DATO;&lt;/script&gt;</text>
+<rect class="dg-box" x="364" y="184" width="212" height="38" rx="8"/>
+<text class="dg-tiny" x="470.0" y="207.0" text-anchor="middle">parser HTML y después JavaScript</text>
+<rect class="dg-box--em" x="586" y="184" width="170" height="38" rx="8"/>
+<text class="dg-tiny" x="671.0" y="207.0" text-anchor="middle">json_encode con JSON_HEX_*</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="232" width="340" height="38" rx="8"/>
+<text class="dg-small dg-mono" x="184.0" y="255.0" text-anchor="middle">&lt;p style="color:  DATO "&gt;</text>
+<rect class="dg-box" x="364" y="232" width="212" height="38" rx="8"/>
+<text class="dg-tiny" x="470.0" y="255.0" text-anchor="middle">parser HTML y después CSS</text>
+<rect class="dg-box--em" x="586" y="232" width="170" height="38" rx="8"/>
+<text class="dg-tiny" x="671.0" y="255.0" text-anchor="middle">valores permitidos</text>
+<text class="dg-tiny" x="385" y="284" text-anchor="middle">Un mismo string es texto en un lugar y código en otro: el escape depende de dónde cae, no de qué contiene.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 77.2.</b> Cinco contextos en la misma página. En los tres de abajo hay dos parsers en fila, y el escape tiene que servir para los dos.</figcaption>
+</figure>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Contexto</th><th>Caracteres que cambian la estructura</th><th>Escape</th></tr></thead>
+    <tbody>
+<tr><td>Cuerpo HTML</td><td><code>&lt;</code> y <code>&amp;</code></td><td><code>htmlspecialchars</code></td></tr>
+<tr><td>Atributo con comillas</td><td>La comilla que lo abre, <code>&amp;</code></td><td><code>htmlspecialchars</code> con <code>ENT_QUOTES</code>; siempre con comillas</td></tr>
+<tr><td>URL en <code>href</code> o <code>src</code></td><td>El esquema: <code>javascript:</code>, <code>data:</code></td><td>Lista de esquemas, después el escape de atributo</td></tr>
+<tr><td>String en <code>&lt;script&gt;</code></td><td>La comilla, <code>\</code>, el salto de línea y <code>&lt;/script</code></td><td><code>json_encode</code> con <code>JSON_HEX_TAG</code> y sus pares</td></tr>
+<tr><td>Valor CSS</td><td><code>;</code>, <code>:</code>, <code>(</code>, la comilla</td><td>Lista de valores permitidos</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Un atributo <b>sin comillas</b> no tiene un escape seguro: un espacio termina el valor y empieza otro atributo (lo viste en el widget de M73). La regla es simple: todo atributo con un dato va entre comillas.</p>
+
+
+<h2 id="escape"><span class="sec-num">77.3</span>El escape correcto en PHP</h2>
+
+<p><code>htmlspecialchars</code> convierte <code>&amp;</code>, <code>&lt;</code>, <code>&gt;</code>, <code>"</code> y, con <code>ENT_QUOTES</code>, también <code>'</code>. <code>ENT_SUBSTITUTE</code> reemplaza las secuencias UTF-8 inválidas en lugar de devolver un string vacío. Desde PHP 8.1, los flags por defecto son <code>ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML401</code>; antes eran <code>ENT_COMPAT</code>, que no escapa la comilla simple <span class="badge badge--doc">Documentado</span>. Tu XAMPP corre PHP 8.0: ahí, <code>htmlspecialchars($v)</code> sin flags deja abierto todo atributo con comillas simples. Pasa los flags siempre, y el código queda igual en cualquier versión.</p>
+<pre data-lang="php"><code>&lt;?php
+// core/escape.php: una función por contexto, con nombre corto para usarla en todas partes
+function e(?string $s): string            // cuerpo HTML y atributos con comillas
+{
+    return htmlspecialchars($s ?? '', ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8');
+}
+
+function js(mixed $v): string             // dentro de &lt;script&gt;: el valor ya trae sus comillas
+{
+    return json_encode($v, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP
+                         | JSON_THROW_ON_ERROR);
+}
+
+function url(?string $u): string          // un href o src que viene de un dato
+{
+    $u = trim($u ?? '');
+    $esquema = strtolower((string)parse_url($u, PHP_URL_SCHEME));
+    $ok = $esquema === '' ? str_starts_with($u, '/') &amp;&amp; !str_starts_with($u, '//')
+                          : in_array($esquema, ['http', 'https'], true);
+    return e($ok ? $u : '#');
+}</code></pre>
+<pre data-lang="php"><code>&lt;p&gt;&lt;?= e($o['titulo']) ?&gt;&lt;/p&gt;
+&lt;input name="ubicacion" value="&lt;?= e($o['ubicacion']) ?&gt;"&gt;
+&lt;a href="&lt;?= url($institucion['sitio_web']) ?&gt;" rel="noopener"&gt;Sitio de la institución&lt;/a&gt;
+&lt;script&gt;const oportunidad = &lt;?= js(['id' =&gt; $o['id'], 'titulo' =&gt; $o['titulo']]) ?&gt;;&lt;/script&gt;
+&lt;a href="buscar.php?q=&lt;?= e(rawurlencode($q)) ?&gt;"&gt;Buscar de nuevo&lt;/a&gt;</code></pre>
+<p>Prueba los cinco contextos con seis valores. Fíjate en dos cosas: el escape HTML no detiene un <code>javascript:</code>, y un escape del contexto equivocado a veces no ejecuta nada pero corrompe el texto.</p>
+<div data-sim="xssctx"></div>
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Escapar al <b>imprimir</b>, no al guardar. Si guardas el texto ya escapado, el dato queda atado a un contexto (sirve para HTML, se rompe en un PDF, en un correo o en el JSON de una app móvil) y tarde o temprano alguien lo escapa dos veces y la página muestra <code>&amp;amp;</code>. La base guarda lo que escribió la persona; cada salida aplica su escape.</p>
+</aside>
+
+
+<h2 id="api"><span class="sec-num">77.4</span>Tu API y el Content-Type que falta</h2>
+
+<p>Tu API responde JSON y no genera HTML, así que parece no tener XSS. Pero <code>Response::json</code> no envía <code>Content-Type</code>, y PHP responde con su valor por defecto, <code>text/html; charset=UTF-8</code> <span class="badge badge--doc">Documentado</span>. Si alguien abre la URL de la API en el navegador, el JSON se parsea como HTML.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 342" role="img" aria-labelledby="f772t f772d">
+<title id="f772t">XSS almacenado a través de la API</title>
+<desc id="f772d">Un reclutador guarda una oportunidad cuyo título trae una etiqueta img con un manejador onerror. La API la guarda con un INSERT con parámetros, que evita la inyección SQL pero no cambia el texto. Después, un estudiante abre la URL de la API en el navegador: como response.php no manda Content-Type, PHP responde text/html y el navegador interpreta el JSON como HTML y ejecuta el manejador en el origen del sistema.</desc>
+<defs><marker id="f772-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f772-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f772-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f772-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Reclutador</text>
+<path class="dg-frame" d="M70.0 40 V332"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">API PHP</text>
+<path class="dg-frame" d="M280.0 40 V332"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M490.0 40 V332"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador del estudiante</text>
+<path class="dg-frame" d="M700.0 40 V332"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#f772-a)"/>
+<rect x="60.10000000000001" y="55" width="229.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">POST titulo=&lt;img src=x onerror=…&gt;</text>
+<path class="dg-edge" d="M283.0 106 L485.0 106" marker-end="url(#f772-a)"/>
+<rect x="266.8" y="89" width="236.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">INSERT … VALUES (?, …): SQL seguro</text>
+<rect x="500.0" y="126" width="209" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="510.0" y="142">el texto se guarda tal cual</text>
+<path class="dg-edge" d="M697.0 174 L285.0 174" marker-end="url(#f772-a)"/>
+<rect x="352.0" y="157" width="276.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="168" text-anchor="middle">GET oportunidades.php?id=7 (abre la URL)</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M283.0 208 L695.0 208" marker-end="url(#f772-f)"/>
+<rect x="332.20000000000005" y="191" width="315.59999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="202" text-anchor="middle">200, Content-Type: text/html (falta el header)</text>
+<rect x="418.0" y="228" width="272" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="428.0" y="244">parsea el JSON como HTML: crea &lt;img&gt;</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M700.0 268 h40 v14 h-38" marker-end="url(#f772-f)"/>
+<text class="dg-tiny" x="746.0" y="279">onerror corre en el origen del sistema</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 77.3.</b> La consulta preparada evitó la inyección SQL y guardó el texto exacto. El XSS no está en la base: está en cómo se sirve. Es el hallazgo 5 de la auditoría.</figcaption>
+</figure>
+
+<p><code>json_encode</code> escapa la barra (<code>\/</code>) pero no <code>&lt;</code> ni <code>&gt;</code>, así que <code>&lt;img src=x onerror=…&gt;</code> llega intacto. El arreglo son dos cabeceras, y un flag de respaldo:</p>
+<pre data-lang="php"><code>&lt;?php
+// core/response.php: la respuesta se declara JSON y el navegador no adivina
+public static function json($code, $message = "", $data = [], $httpCode = 200)
+{
+    http_response_code($httpCode);
+    header('Content-Type: application/json; charset=utf-8');
+    header('X-Content-Type-Options: nosniff');       // M78
+    echo json_encode(['code' =&gt; $code, 'message' =&gt; $message, 'data' =&gt; $data],
+                     JSON_HEX_TAG | JSON_UNESCAPED_UNICODE);
+    exit;
+}</code></pre>
+<p>Con <code>application/json</code>, el navegador muestra el texto y no lo interpreta. <code>nosniff</code> impide que lo "adivine" como HTML (<a href="m78-csp-cabeceras.html#cabeceras">M78</a>). <code>JSON_HEX_TAG</code> escribe <code>\u003C</code> en lugar de <code>&lt;</code>: el JSON significa lo mismo, y aunque algo lo sirviera como HTML, no habría etiquetas. Y el frontend que consume ese JSON tiene que tratarlo como texto, que es 77.5.</p>
+
+
+<h2 id="dom"><span class="sec-num">77.5</span>XSS en el DOM: fuentes y sumideros</h2>
+
+<p>Un XSS basado en el DOM une una <b>fuente</b> que controla el atacante con un <dfn data-term="sink-dom">sumidero</dfn> (sink): una API del navegador que convierte un string en HTML o en código.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f774t f774d">
+<title id="f774t">Fuentes y sumideros del DOM</title>
+<desc id="f774d">A la izquierda, las fuentes que controla el atacante: location.hash, location.search, document.referrer, el mensaje de postMessage, localStorage y el JSON de una API. A la derecha, los sumideros que convierten un string en código o en HTML: innerHTML, outerHTML, insertAdjacentHTML, document.write, eval, setTimeout con string y un href con javascript:. En el medio, el JavaScript de la página que une los dos. Abajo, los sumideros seguros: textContent, setAttribute de atributos no ejecutables y createElement.</desc>
+<defs><marker id="f774a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="110" y="24" text-anchor="middle">Fuentes</text>
+<text class="dg-label" x="660" y="24" text-anchor="middle">Sumideros peligrosos</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="34" width="192" height="26" rx="8"/>
+<text class="dg-tiny dg-mono" x="110.0" y="51.0" text-anchor="middle">location.hash</text>
+<path class="dg-feedback" d="M206 47 L296 112"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="66" width="192" height="26" rx="8"/>
+<text class="dg-tiny dg-mono" x="110.0" y="83.0" text-anchor="middle">location.search</text>
+<path class="dg-feedback" d="M206 79 L296 112"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="98" width="192" height="26" rx="8"/>
+<text class="dg-tiny dg-mono" x="110.0" y="115.0" text-anchor="middle">document.referrer</text>
+<path class="dg-feedback" d="M206 111 L296 112"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="130" width="192" height="26" rx="8"/>
+<text class="dg-tiny dg-mono" x="110.0" y="147.0" text-anchor="middle">event.data (postMessage)</text>
+<path class="dg-feedback" d="M206 143 L296 112"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="162" width="192" height="26" rx="8"/>
+<text class="dg-tiny dg-mono" x="110.0" y="179.0" text-anchor="middle">localStorage</text>
+<path class="dg-feedback" d="M206 175 L296 112"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="194" width="192" height="26" rx="8"/>
+<text class="dg-tiny dg-mono" x="110.0" y="211.0" text-anchor="middle">JSON de la API</text>
+<path class="dg-feedback" d="M206 207 L296 112"/>
+<rect class="dg-bad" x="564" y="34" width="192" height="26" rx="8"/>
+<text class="dg-tiny dg-mono" x="660.0" y="51.0" text-anchor="middle">innerHTML, outerHTML</text>
+<path class="dg-edge" d="M474 112 L562 47" marker-end="url(#f774a)"/>
+<rect class="dg-bad" x="564" y="66" width="192" height="26" rx="8"/>
+<text class="dg-tiny dg-mono" x="660.0" y="83.0" text-anchor="middle">insertAdjacentHTML</text>
+<path class="dg-edge" d="M474 112 L562 79" marker-end="url(#f774a)"/>
+<rect class="dg-bad" x="564" y="98" width="192" height="26" rx="8"/>
+<text class="dg-tiny dg-mono" x="660.0" y="115.0" text-anchor="middle">document.write</text>
+<path class="dg-edge" d="M474 112 L562 111" marker-end="url(#f774a)"/>
+<rect class="dg-bad" x="564" y="130" width="192" height="26" rx="8"/>
+<text class="dg-tiny dg-mono" x="660.0" y="147.0" text-anchor="middle">eval, new Function</text>
+<path class="dg-edge" d="M474 112 L562 143" marker-end="url(#f774a)"/>
+<rect class="dg-bad" x="564" y="162" width="192" height="26" rx="8"/>
+<text class="dg-tiny dg-mono" x="660.0" y="179.0" text-anchor="middle">setTimeout("…")</text>
+<path class="dg-edge" d="M474 112 L562 175" marker-end="url(#f774a)"/>
+<rect class="dg-bad" x="564" y="194" width="192" height="26" rx="8"/>
+<text class="dg-tiny dg-mono" x="660.0" y="211.0" text-anchor="middle">a.href = "javascript:…"</text>
+<path class="dg-edge" d="M474 112 L562 207" marker-end="url(#f774a)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="298" y="84" width="176" height="56" rx="8"/>
+<text class="dg-small" x="386.0" y="108.5" text-anchor="middle">El JavaScript de tu página</text>
+<text class="dg-tiny" x="386.0" y="123.5" text-anchor="middle">une fuente y sumidero</text>
+<rect class="dg-ok" x="14" y="236" width="742" height="28" rx="8"/>
+<text class="dg-tiny dg-mono" x="385.0" y="254.0" text-anchor="middle">Sumideros seguros: textContent, innerText, setAttribute("data-…"), createElement + append, value</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 77.4.</b> Las fuentes no son peligrosas solas, ni los sumideros: el XSS es la línea que las une sin un escape o un sanitizador en el medio. El JSON de tu propia API también es una fuente, porque trae lo que escribieron otros usuarios.</figcaption>
+</figure>
+
+<pre data-lang="js"><code>// feed.js — MAL: el título viene del JSON de la API y entra como HTML
+for (const o of oportunidades) {
+  lista.innerHTML += `&lt;li&gt;&lt;b&gt;${o.titulo}&lt;/b&gt; · ${o.institucion}&lt;/li&gt;`;
+}
+// y un filtro tomado del hash, peor todavía: no pasa por el servidor
+document.querySelector('#filtro').innerHTML = 'Filtro: ' + decodeURIComponent(location.hash.slice(1));</code></pre>
+<pre data-lang="js"><code>// feed.js — los datos entran como texto, la estructura la crea el código
+for (const o of oportunidades) {
+  const li = document.createElement('li');
+  const b = document.createElement('b');
+  b.textContent = o.titulo;                         // texto, nunca HTML
+  li.append(b, ' · ', o.institucion);               // append con strings crea nodos de texto
+  lista.append(li);
+}
+document.querySelector('#filtro').textContent = 'Filtro: ' + decodeURIComponent(location.hash.slice(1));</code></pre>
+<p>La regla para el frontend: <code>textContent</code> para texto, <code>createElement</code> y <code>append</code> para estructura, <code>setAttribute</code> solo con atributos que no ejecutan (nunca <code>on*</code>, <code>href</code> o <code>src</code> sin validar el esquema). React, Vue y Angular escapan por defecto al interpolar; los huecos son las salidas de emergencia con nombres que avisan, como <code>dangerouslySetInnerHTML</code> y <code>v-html</code> (<a href="m84-renderizado-nextjs.html#escape-react">M84</a>).</p>
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p><code>lista.innerHTML += …</code> en un bucle no solo arriesga un XSS: re-parsea toda la lista en cada vuelta y borra los manejadores de eventos que ya tenían los elementos. El arreglo seguro es también el rápido.</p>
+</aside>
+
+
+<h2 id="mutation"><span class="sec-num">77.6</span>Mutation XSS: por qué no se sanitiza con regex</h2>
+
+<p>"Quito <code>&lt;script&gt;</code> y los <code>on…=</code> con una expresión regular" falla por la misma razón que M73 dedicó una sección entera al parser: el HTML que escribes no es el árbol que resulta. Hay mil formas de escribir lo mismo (<code>&lt;ScRiPt&gt;</code>, entidades, atributos sin comillas, <code>&lt;svg&gt;&lt;script&gt;</code>), y el parser corrige cosas que una regex no ve.</p>
+<p>El <dfn data-term="mutation-xss">mutation XSS</dfn> va un paso más allá: el string pasa un sanitizador correcto y aun así ejecuta, porque el sanitizador lo parsea, lo serializa de nuevo a string y el navegador lo vuelve a parsear en otro contexto, donde el árbol sale distinto.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f775t f775d">
+<title id="f775t">Mutation XSS</title>
+<desc id="f775d">Cuatro pasos. El sanitizador parsea el string y lo ve inofensivo. Lo serializa otra vez a un string. El navegador vuelve a parsear ese string, en otro contexto, y el árbol cambia: aparece un elemento con un manejador que antes era texto dentro de un atributo. Por eso un sanitizador tiene que devolver el árbol o usarse sin volver a parsear.</desc>
+<defs><marker id="f775a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="30" width="176" height="70" rx="8"/>
+<text class="dg-small" x="102.0" y="61.5" text-anchor="middle">1. Sanitizador parsea</text>
+<text class="dg-tiny" x="102.0" y="76.5" text-anchor="middle">ve texto en un atributo</text>
+<rect class="dg-box" x="202" y="30" width="176" height="70" rx="8"/>
+<text class="dg-small" x="290.0" y="61.5" text-anchor="middle">2. Serializa a string</text>
+<text class="dg-tiny" x="290.0" y="76.5" text-anchor="middle">innerHTML de su árbol</text>
+<path class="dg-edge" d="M190 65 L200 65" marker-end="url(#f775a)"/>
+<rect class="dg-box" x="390" y="30" width="176" height="70" rx="8"/>
+<text class="dg-small" x="478.0" y="61.5" text-anchor="middle">3. El navegador re-parsea</text>
+<text class="dg-tiny" x="478.0" y="76.5" text-anchor="middle">otro contexto (svg, tabla)</text>
+<path class="dg-edge" d="M378 65 L388 65" marker-end="url(#f775a)"/>
+<rect class="dg-bad" x="578" y="30" width="176" height="70" rx="8"/>
+<text class="dg-small" x="666.0" y="61.5" text-anchor="middle">4. El árbol cambia</text>
+<text class="dg-tiny" x="666.0" y="76.5" text-anchor="middle">aparece un &lt;img onerror&gt;</text>
+<path class="dg-edge" d="M566 65 L576 65" marker-end="url(#f775a)"/>
+<rect class="dg-box" x="14" y="130" width="742" height="70" rx="8"/>
+<text class="dg-small" x="385" y="156" text-anchor="middle">Por qué una regex no puede sanitizar HTML: no reproduce las correcciones del parser (M73).</text>
+<text class="dg-tiny" x="385" y="180" text-anchor="middle">La salida que "parece" limpia se interpreta distinto al insertarla. Sanitiza con el parser del navegador, y no re-parses.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 77.5.</b> Cuatro pasos y un cambio de contexto. El sanitizador no se equivocó al leer: el árbol cambió al leerse otra vez.</figcaption>
+</figure>
+
+<p>En 2019 se publicó un bypass de DOMPurify 2.0.0 basado en esto, con una confusión entre los espacios de nombres de SVG y HTML; se corrigió en la versión 2.0.1 <span class="badge badge--doc">Documentado</span>. Dos lecciones: mantén el sanitizador actualizado (es una dependencia de seguridad, M56), y no proceses su salida con nada más antes de insertarla.</p>
+
+
+<h2 id="sanitizar"><span class="sec-num">77.7</span>Cuando sí hace falta HTML: DOMPurify</h2>
+
+<p>Escapar convierte todo en texto. A veces la persona necesita formato: la descripción de una oportunidad con negritas y una lista. Ahí se sanitiza: se parsea el HTML con el parser real y se borra todo lo que no esté en una lista de etiquetas y atributos permitidos.</p>
+<pre data-lang="js"><code>// Cuando sí necesitas HTML del usuario (una descripción con negritas y listas)
+const limpio = DOMPurify.sanitize(o.descripcion, {
+  ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'ul', 'ol', 'li', 'p', 'br'],
+  ALLOWED_ATTR: [],                       // ni href, ni style, ni on*
+});
+detalle.innerHTML = limpio;               // sanitizar justo antes de insertar, sin pasos en el medio</code></pre>
+<ul>
+  <li><b>En el navegador, justo antes de insertar.</b> DOMPurify usa el parser del mismo navegador que va a mostrar el resultado, lo que cierra la mayoría de las diferencias de parseo.</li>
+  <li><b>Listas cortas.</b> Cada etiqueta y atributo permitido es superficie. Sin <code>style</code> ni <code>href</code> si no los necesitas; si permites enlaces, DOMPurify ya bloquea <code>javascript:</code>.</li>
+  <li><b>Alternativa más simple:</b> guardar Markdown, convertirlo con un renderizador que escape el HTML crudo, y sanitizar la salida igual.</li>
+</ul>
+<p>Los navegadores están incorporando un sanitizador propio, la Sanitizer API (<code>element.setHTML()</code>), que hace lo mismo sin dependencias <span class="badge badge--doc">Documentado</span>. Revisa su soporte en MDN antes de usarla sin respaldo.</p>
+
+
+<h2 id="trusted-types"><span class="sec-num">77.8</span>Trusted Types: que el navegador no acepte strings</h2>
+
+<p>Escapar y sanitizar dependen de que nadie olvide hacerlo en ninguno de los cientos de lugares donde se toca el DOM. <dfn data-term="trusted-types">Trusted Types</dfn> cambia la pregunta: con una directiva de CSP, los sumideros peligrosos dejan de aceptar strings y solo aceptan objetos creados por una política con nombre <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f776t f776d">
+<title id="f776t">Trusted Types</title>
+<desc id="f776d">Con la directiva require-trusted-types-for script, los sumideros peligrosos dejan de aceptar strings. Un string directo a innerHTML lanza un TypeError. Solo aceptan objetos TrustedHTML creados por una política con nombre, que pasa el string por DOMPurify. Así todos los caminos a un sumidero pasan por un punto que se puede revisar.</desc>
+<defs><marker id="f776a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="20" width="200" height="46" rx="8"/>
+<text class="dg-tiny dg-mono" x="114.0" y="39.5" text-anchor="middle">feed.innerHTML = titulo</text>
+<text class="dg-tiny" x="114.0" y="54.5" text-anchor="middle">string</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="282" y="20" width="200" height="46" rx="8"/>
+<text class="dg-small" x="382.0" y="39.5" text-anchor="middle">Navegador con Trusted Types</text>
+<text class="dg-tiny" x="382.0" y="54.5" text-anchor="middle">el sumidero exige un tipo</text>
+<rect class="dg-bad" x="550" y="20" width="206" height="46" rx="8"/>
+<text class="dg-small" x="653.0" y="47.0" text-anchor="middle">TypeError, y un reporte</text>
+<path class="dg-edge" d="M214 43 L280 43" marker-end="url(#f776a)"/>
+<path class="dg-edge" d="M482 43 L548 43" marker-end="url(#f776a)"/>
+<rect class="dg-box" x="14" y="120" width="200" height="46" rx="8"/>
+<text class="dg-tiny dg-mono" x="114.0" y="147.0" text-anchor="middle">politica.createHTML(t)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="282" y="120" width="200" height="46" rx="8"/>
+<text class="dg-small" x="382.0" y="139.5" text-anchor="middle">Política "feed"</text>
+<text class="dg-tiny dg-mono" x="382.0" y="154.5" text-anchor="middle">DOMPurify.sanitize(…)</text>
+<rect class="dg-ok" x="550" y="120" width="206" height="46" rx="8"/>
+<text class="dg-small" x="653.0" y="147.0" text-anchor="middle">TrustedHTML: se inserta</text>
+<path class="dg-edge" d="M214 143 L280 143" marker-end="url(#f776a)"/>
+<path class="dg-edge" d="M482 143 L548 143" marker-end="url(#f776a)"/>
+<text class="dg-tiny" x="385" y="206" text-anchor="middle">Cada camino a un sumidero pasa por una política con nombre: se revisan pocas funciones, no todo el código.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 77.6.</b> La revisión de seguridad pasa de buscar cada innerHTML a revisar las políticas: pocas funciones con nombre.</figcaption>
+</figure>
+
+<pre data-lang="js"><code>// Con la cabecera: Content-Security-Policy: require-trusted-types-for 'script'; trusted-types feed dompurify
+const politica = trustedTypes.createPolicy('feed', {
+  createHTML: (s) =&gt; DOMPurify.sanitize(s, { ALLOWED_TAGS: ['b', 'i', 'ul', 'li', 'p'], ALLOWED_ATTR: [] }),
+});
+detalle.innerHTML = politica.createHTML(o.descripcion);   // TrustedHTML: se acepta
+detalle.innerHTML = o.descripcion;                         // string: TypeError</code></pre>
+<p>Se despliega en modo report-only primero (<a href="m78-csp-cabeceras.html#despliegue">M78</a>): la consola y los reportes muestran cada sumidero que recibe un string, sin romper nada, hasta que no queda ninguno. Está en Chromium desde 2020 <span class="badge badge--doc">Documentado</span>; en los navegadores que no lo implementan, la directiva se ignora y la página sigue funcionando con sus otras defensas.</p>
+
+
+<h2 id="clobbering"><span class="sec-num">77.9</span>DOM clobbering: HTML sin script que cambia tu código</h2>
+
+<p>Un sanitizador que deja pasar <code>id</code> y <code>name</code> todavía permite un ataque. El navegador expone los elementos con <code>id</code> como propiedades de <code>window</code> (y los formularios con <code>name</code>, en <code>document</code>). Si tu código lee un global opcional, el HTML inyectado lo define. Eso es <dfn data-term="dom-clobbering">DOM clobbering</dfn>.</p>
+<pre data-lang="html"><code>&lt;!-- Un comentario con HTML permitido por el sanitizador (solo &lt;a&gt; con id y href) --&gt;
+&lt;a id="config"&gt;&lt;/a&gt;&lt;a id="config" name="urlApi" href="https://ofertas-gratis.example/"&gt;
+
+&lt;script&gt;
+  // El código de la página espera un objeto global opcional
+  const base = (window.config &amp;&amp; window.config.urlApi) || '/api';
+  fetch(base + '/endpoints/login.php', { credentials: 'include' });   // ahora va a otro sitio
+&lt;/script&gt;</code></pre>
+<p>Las defensas: no leer configuración de globales que pueden no existir (declara <code>const config = …</code> en tu script), validar el tipo (<code>config instanceof Object</code> no basta: compara con lo que esperas), y en DOMPurify dejar activas <code>SANITIZE_DOM</code> (por defecto) y <code>SANITIZE_NAMED_PROPS</code>, que agrega un prefijo a <code>id</code> y <code>name</code> <span class="badge badge--doc">Documentado</span>.</p>
+
+
+<h2 id="alcance"><span class="sec-num">77.10</span>Qué roba un XSS, aunque la cookie sea HttpOnly</h2>
+
+<p><code>HttpOnly</code> impide que <code>document.cookie</code> lea la sesión (<a href="m74-origen-cookies.html#almacen">74.9</a>). Es útil: el atacante no se lleva la cookie para usarla después desde su máquina. Pero mientras la víctima tenga la página abierta, el atacante no necesita la cookie: su código hace <code>fetch</code> a tu API, y el navegador la agrega.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f777t f777d">
+<title id="f777t">Qué alcanza un XSS</title>
+<desc id="f777d">En el centro, el código del atacante corriendo en el origen del sistema. Alrededor, lo que puede hacer: llamar a la API con la sesión de la víctima, leer el token CSRF y lo que muestra la página, leer localStorage y sessionStorage, capturar lo que la víctima escribe en un formulario, y cambiar la página para pedirle la contraseña. Lo único que no lee directamente es una cookie HttpOnly, pero la usa en cada fetch.</desc>
+<defs><marker id="f777a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-bad" x="285" y="88" width="200" height="56" rx="8"/>
+<text class="dg-label" x="385.0" y="112.5" text-anchor="middle">Código del atacante</text>
+<text class="dg-tiny" x="385.0" y="127.5" text-anchor="middle">en tu origen</text>
+<rect class="dg-warnbox" x="14" y="14" width="200" height="50" rx="8"/>
+<text class="dg-small" x="114.0" y="35.5" text-anchor="middle">fetch a la API con la cookie</text>
+<text class="dg-tiny" x="114.0" y="50.5" text-anchor="middle">actúa como la víctima</text>
+<rect class="dg-warnbox" x="556" y="14" width="200" height="50" rx="8"/>
+<text class="dg-small" x="656.0" y="35.5" text-anchor="middle">Lee el token CSRF</text>
+<text class="dg-tiny" x="656.0" y="50.5" text-anchor="middle">y todo lo que muestra la página</text>
+<rect class="dg-warnbox" x="14" y="160" width="200" height="50" rx="8"/>
+<text class="dg-small" x="114.0" y="181.5" text-anchor="middle">Lee localStorage</text>
+<text class="dg-tiny" x="114.0" y="196.5" text-anchor="middle">tokens guardados ahí</text>
+<rect class="dg-warnbox" x="556" y="160" width="200" height="50" rx="8"/>
+<text class="dg-small" x="656.0" y="181.5" text-anchor="middle">Captura formularios</text>
+<text class="dg-tiny" x="656.0" y="196.5" text-anchor="middle">y cambia la página</text>
+<rect class="dg-box" x="285" y="172" width="200" height="50" rx="8"/>
+<text class="dg-small" x="385.0" y="193.5" text-anchor="middle">Cookie HttpOnly</text>
+<text class="dg-tiny" x="385.0" y="208.5" text-anchor="middle">no la lee; viaja en su fetch</text>
+<path class="dg-edge" d="M285 104 L216 52" marker-end="url(#f777a)"/>
+<path class="dg-edge" d="M485 104 L554 52" marker-end="url(#f777a)"/>
+<path class="dg-edge" d="M285 130 L216 176" marker-end="url(#f777a)"/>
+<path class="dg-edge" d="M485 130 L554 176" marker-end="url(#f777a)"/>
+<path class="dg-feedback" d="M385 144 L385 170" marker-end="url(#f777a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 77.7.</b> Todo lo que la página puede hacer, lo puede hacer el XSS. HttpOnly le quita una cosa (llevarse la cookie) y deja el resto.</figcaption>
+</figure>
+
+<ul>
+  <li>Llamar a la API como la víctima: publicar, postular, cambiar el correo de la cuenta.</li>
+  <li>Leer el token CSRF y todo lo que la página muestra: datos personales, CV, otras postulaciones.</li>
+  <li>Leer <code>localStorage</code>: si guardas un JWT ahí, se lo lleva y lo usa desde cualquier lado. Una razón más para la cookie <code>HttpOnly</code>.</li>
+  <li>Cambiar la página: un formulario falso de "tu sesión expiró, escribe tu contraseña" en tu dominio, con tu candado.</li>
+</ul>
+<p>Por eso un XSS se mitiga en capas: escape por contexto (no entra), Trusted Types (no llega al sumidero), CSP estricta (si llega, no ejecuta, <a href="m78-csp-cabeceras.html#nonce">M78</a>), <code>HttpOnly</code> y sesión revocable (si ejecuta, el daño dura poco, <a href="m81-autenticacion-sesiones.html#revocacion">M81</a>).</p>
+
+
+<h2 id="fallas"><span class="sec-num">77.11</span>Fallas típicas y cómo reconocerlas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+<tr><td>Abrir la URL de la API ejecuta HTML de un título</td><td>Sin <code>Content-Type: application/json</code>; PHP responde <code>text/html</code></td><td>Cabecera, <code>nosniff</code> y <code>JSON_HEX_TAG</code></td></tr>
+<tr><td>Un título con una comilla simple rompe un formulario de edición</td><td>Atributo con comillas simples y <code>htmlspecialchars</code> sin <code>ENT_QUOTES</code> en PHP 8.0</td><td><code>e()</code> con los flags explícitos</td></tr>
+<tr><td>El sitio web de una institución ejecuta código al hacer clic</td><td><code>href</code> con <code>javascript:</code>; el escape HTML no lo cambia</td><td><code>url()</code> con lista de esquemas</td></tr>
+<tr><td>La página muestra <code>&amp;amp;</code> o <code>&amp;#039;</code></td><td>Doble escape, o escape HTML dentro de un <code>&lt;script&gt;</code></td><td>Escapar una vez, al imprimir, con el escape del contexto</td></tr>
+<tr><td>El WAF no ve el ataque, pero ocurre</td><td>XSS en el DOM: el payload va en <code>#hash</code>, que no viaja al servidor</td><td><code>textContent</code> y Trusted Types</td></tr>
+<tr><td>Un sanitizador casero deja pasar <code>&lt;svg onload&gt;</code></td><td>Regex en lugar de parser</td><td>DOMPurify actualizado</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Busca los sumideros antes que los payloads: <code>grep -rn "innerHTML\|insertAdjacentHTML\|document.write\|eval(" frontend/</code> y, en PHP, cada <code>echo</code> o <code>&lt;?=</code> que imprime una variable sin <code>e()</code>. Las herramientas SAST de M55 hacen exactamente eso. La guía WEB05 arregla el feed de oportunidades y prueba cada contexto con el payload mínimo. El siguiente paso es que, si algo se escapa, el navegador igual no lo ejecute: CSP (<a href="m78-csp-cabeceras.html#capa">M78</a>).</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m77"></div>
+<div data-exercise="m77-feed"></div>
+<div data-checkpoint="m77"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m77.data.js"></script>
+<script src="../assets/js/data/exercises/m77.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>

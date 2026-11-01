@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M79. Inyecciones en el servidor</title>
+<meta name="description" content="La misma falla en siete intérpretes: SQL (y lo que una consulta preparada no cubre), comandos del sistema, inclusión de archivos, plantillas del servidor, cabeceras y logs con saltos de línea, XML con entidades externas y deserialización. La regla común y su versión en PHP para cada caso.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m79">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Inyecciones en el servidor</h1>
+        <p class="lead">Toda inyección es un dato que cruza a otro intérprete sin que nadie le diga que es un dato. El XSS fue el caso del navegador; aquí están los del servidor, y la defensa es siempre la misma: mandar el código y el dato por canales separados.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M79</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>120 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M35, M77</dd></div>
+          <div><dt>Estado</dt><dd data-status="m79">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Reconocer la causa común de toda inyección: un dato que llega a un intérprete mezclado con el código.</li>
+    <li>Usar consultas preparadas, y resolver lo que no cubren: identificadores, <code>ORDER BY</code>, <code>LIMIT</code>, <code>IN</code> y <code>LIKE</code>.</li>
+    <li>Ejecutar programas externos sin shell, e incluir archivos sin que el usuario elija la ruta.</li>
+    <li>Distinguir un dato dentro de una plantilla de una plantilla hecha de datos (SSTI).</li>
+    <li>Cerrar la inyección de saltos de línea en cabeceras y logs, las entidades externas de XML y la deserialización de objetos.</li>
+  </ul>
+</section>
+
+<p>En <a href="m77-xss-dom.html#contexto">M77</a> viste que un string es texto en un lugar y código en otro, según quién lo lea. En el servidor hay más lectores que en el navegador: el motor SQL, la shell, el <code>include</code> de PHP, el motor de plantillas, las cabeceras HTTP, el archivo de log y el parser XML. Cada uno tiene su sintaxis y sus caracteres especiales, y cada uno tiene su inyección.</p>
+
+
+<h2 id="raiz"><span class="sec-num">79.1</span>La raíz común: código y dato en el mismo canal</h2>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es dictar una carta a alguien que escribe todo lo que oye. Si dices "escribe: el monto es cien; y después firma el cheque", ¿la segunda parte es parte del texto o una orden? Para no depender de cómo suena, el dato se entrega en un sobre aparte. Una consulta preparada es ese sobre.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f791t f791d">
+<title id="f791t">Un dato, siete intérpretes</title>
+<desc id="f791d">En el centro, un string que llega en una request. Alrededor, los siete intérpretes a los que puede llegar desde PHP: el motor SQL, la shell del sistema, el include de PHP, el motor de plantillas, las cabeceras HTTP, el archivo de log y el parser XML. Cada flecha lleva el carácter que cambia la estructura en ese intérprete.</desc>
+<defs><marker id="f791a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-bad" x="300" y="104" width="170" height="56" rx="8"/>
+<text class="dg-label" x="385.0" y="128.5" text-anchor="middle">Un string</text>
+<text class="dg-tiny" x="385.0" y="143.5" text-anchor="middle">de la request</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="14" width="170" height="56" rx="8"/>
+<text class="dg-small" x="99.0" y="38.5" text-anchor="middle">MariaDB</text>
+<text class="dg-tiny dg-mono" x="99.0" y="53.5" text-anchor="middle">' y --</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="104" width="170" height="56" rx="8"/>
+<text class="dg-small" x="99.0" y="128.5" text-anchor="middle">Shell</text>
+<text class="dg-tiny dg-mono" x="99.0" y="143.5" text-anchor="middle">; | $( )</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="14" y="194" width="170" height="56" rx="8"/>
+<text class="dg-small" x="99.0" y="218.5" text-anchor="middle">include de PHP</text>
+<text class="dg-tiny dg-mono" x="99.0" y="233.5" text-anchor="middle">../ y php://</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="300" y="14" width="170" height="56" rx="8"/>
+<text class="dg-small" x="385.0" y="38.5" text-anchor="middle">Plantilla (Twig)</text>
+<text class="dg-tiny dg-mono" x="385.0" y="53.5" text-anchor="middle">{{ }}</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="586" y="14" width="170" height="56" rx="8"/>
+<text class="dg-small" x="671.0" y="38.5" text-anchor="middle">Cabeceras HTTP</text>
+<text class="dg-tiny dg-mono" x="671.0" y="53.5" text-anchor="middle">\r\n</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="586" y="104" width="170" height="56" rx="8"/>
+<text class="dg-small" x="671.0" y="128.5" text-anchor="middle">Log</text>
+<text class="dg-tiny dg-mono" x="671.0" y="143.5" text-anchor="middle">\n</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="586" y="194" width="170" height="56" rx="8"/>
+<text class="dg-small" x="671.0" y="218.5" text-anchor="middle">Parser XML</text>
+<text class="dg-tiny dg-mono" x="671.0" y="233.5" text-anchor="middle">&lt;!ENTITY</text>
+<path class="dg-edge" d="M300 124 L186 46" marker-end="url(#f791a)"/>
+<path class="dg-edge" d="M300 132 L186 132" marker-end="url(#f791a)"/>
+<path class="dg-edge" d="M300 140 L186 218" marker-end="url(#f791a)"/>
+<path class="dg-edge" d="M385 104 L385 72" marker-end="url(#f791a)"/>
+<path class="dg-edge" d="M470 124 L584 46" marker-end="url(#f791a)"/>
+<path class="dg-edge" d="M470 132 L584 132" marker-end="url(#f791a)"/>
+<path class="dg-edge" d="M470 140 L584 218" marker-end="url(#f791a)"/>
+<rect class="dg-ok" x="300" y="200" width="170" height="56" rx="8"/>
+<text class="dg-small" x="385.0" y="224.5" text-anchor="middle">Defensa común</text>
+<text class="dg-tiny" x="385.0" y="239.5" text-anchor="middle">código y dato separados</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 79.1.</b> Siete intérpretes, siete conjuntos de caracteres especiales. La defensa no es conocer todos los caracteres: es no mezclar el dato con el código.</figcaption>
+</figure>
+
+<p>Las defensas, en orden de preferencia, se repiten en todos los casos:</p>
+<ol>
+  <li><b>Canales separados.</b> La API del intérprete recibe el código y los datos por separado: parámetros en SQL, un arreglo de argumentos sin shell, variables en una plantilla.</li>
+  <li><b>Lista de valores permitidos.</b> Donde el dato tiene que ser parte del código (un nombre de columna, un archivo), el usuario elige una clave y el código pone el valor.</li>
+  <li><b>Escape del contexto.</b> El último recurso, cuando no hay otro canal. Funciona si se aplica bien en cada lugar.</li>
+</ol>
+
+
+<h2 id="sql"><span class="sec-num">79.2</span>SQL: lo que hace una consulta preparada</h2>
+
+<p>La <dfn data-term="sql-injection">inyección SQL</dfn> la viste desde la base en <a href="m35-seguridad-bd.html#modelo">M35</a> y en dos párrafos en <a href="m10-seguridad.html#sqli-detalle">M10</a>. El mecanismo: si la consulta se arma pegando strings, el motor recibe uno solo y no sabe dónde termina tu SQL y empieza el valor.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f792t f792d">
+<title id="f792t">Lo que ve el parser de SQL</title>
+<desc id="f792d">Arriba, la consulta armada con concatenación y el valor de la request: el parser recibe un solo string y lo divide en tokens; la comilla del valor cierra el literal y lo que sigue se vuelve SQL. Abajo, la consulta preparada: el parser recibe la plantilla con un signo de pregunta, la compila, y el valor llega después como dato, sin pasar por el parser.</desc>
+<defs><marker id="f792a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="20" y="26" text-anchor="start">Concatenado: un solo string</text>
+<rect class="dg-box" x="14" y="38" width="211.60000000000002" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="119.8" y="60.0" text-anchor="middle">SELECT … WHERE email = '</text>
+<rect class="dg-bad" x="231.60000000000002" y="38" width="110.80000000000001" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="287.0" y="60.0" text-anchor="middle">x' OR '1'='1</text>
+<rect class="dg-box" x="348.40000000000003" y="38" width="18.4" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="357.6" y="60.0" text-anchor="middle">'</text>
+<text class="dg-tiny dg-mono" x="20" y="98" text-anchor="start">El parser lee: email = 'x' OR '1'='1' → todas las filas</text>
+<text class="dg-label" x="20" y="136" text-anchor="start">Preparada: dos canales</text>
+<rect class="dg-ok" x="14" y="148" width="330" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="179.0" y="170.0" text-anchor="middle">SELECT … WHERE email = ?</text>
+<rect class="dg-box" x="390" y="148" width="200" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="490.0" y="170.0" text-anchor="middle">x' OR '1'='1</text>
+<text class="dg-tiny" x="180" y="206" text-anchor="middle">1. se compila sin datos</text>
+<text class="dg-tiny" x="490" y="206" text-anchor="middle">2. llega como valor, nunca como SQL</text>
+<path class="dg-feedback" d="M344 166 L388 166"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 79.2.</b> La comilla del valor cierra el literal. En la preparada, el valor ni siquiera pasa por el parser: no hay literal que cerrar.</figcaption>
+</figure>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 342" role="img" aria-labelledby="f793t f793d">
+<title id="f793t">Una consulta preparada en el protocolo de MariaDB</title>
+<desc id="f793d">PHP manda la plantilla con signos de pregunta y el servidor la compila. Después PHP manda los valores en un paquete aparte, con su tipo, y el servidor los usa como datos. Con emulación de PDO, que es el valor por defecto en MySQL, PDO arma el string escapando cada valor con el charset de la conexión, y por eso el charset tiene que ir en el DSN.</desc>
+<defs><marker id="f793-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f793-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f793-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f793-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">PDO (PHP)</text>
+<path class="dg-frame" d="M70.0 40 V332"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M700.0 40 V332"/>
+<path class="dg-edge" d="M73.0 72 L695.0 72" marker-end="url(#f793-a)"/>
+<rect x="270.1" y="55" width="229.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="66" text-anchor="middle">PREPARE: SELECT … WHERE email = ?</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 106 L75.0 106" marker-end="url(#f793-r)"/>
+<rect x="289.9" y="89" width="190.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">statement id 7, 1 parámetro</text>
+<path class="dg-edge" d="M73.0 140 L695.0 140" marker-end="url(#f793-a)"/>
+<rect x="273.4" y="123" width="223.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="134" text-anchor="middle">EXECUTE 7: [&#x27;x&#x27;&#x27; OR …&#x27;] (string)</text>
+<rect x="439.0" y="160" width="251" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="449.0" y="176">el valor nunca pasa por el parser</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 208 L75.0 208" marker-end="url(#f793-r)"/>
+<rect x="355.9" y="191" width="58.199999999999996" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="202" text-anchor="middle">0 filas</text>
+<path d="M20 240 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="229" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="244" text-anchor="middle" style="fill:var(--fail)">con ATTR_EMULATE_PREPARES = true (defecto en pdo_mysql)</text>
+<path class="dg-edge" d="M73.0 276 L695.0 276" marker-end="url(#f793-a)"/>
+<rect x="227.20000000000002" y="259" width="315.59999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">QUERY: … email = &#x27;x\&#x27; OR …&#x27; (escapado por PDO)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 79.3.</b> Con preparadas reales, la plantilla y los valores viajan en paquetes distintos. Con emulación, PDO escapa cada valor; es seguro si el charset está en el DSN.</figcaption>
+</figure>
+
+<p>Tu proyecto ya lo hace bien: todos los modelos usan <code>prepare</code> y <code>execute</code>, y los filtros opcionales se arman con fragmentos fijos y una lista de parámetros aparte <span class="badge badge--ref">Diseño de referencia</span>.</p>
+<pre data-lang="php"><code>&lt;?php
+// models/oportunidades.php (tu código actual): filtros opcionales sin concatenar datos
+$query = "SELECT … FROM oportunidades o … WHERE o.estado = 1 AND o.estado_oportunidad = 'activa'";
+$params = [];
+if ($carrera_id &gt; 0) {
+    $query .= " AND (o.carrera_id = ? OR o.carrera_id IS NULL)";   // fragmento fijo
+    $params[] = $carrera_id;                                        // el dato va aparte
+}
+if ($modalidad !== '') {                                            // ya validada contra MODALIDADES
+    $query .= " AND o.modalidad = ?";
+    $params[] = $modalidad;
+}
+$stmt = $this-&gt;connection-&gt;prepare($query);
+$stmt-&gt;execute($params);</code></pre>
+<p>Dos ajustes a la conexión: <code>ATTR_EMULATE_PREPARES</code> en <code>false</code>, para que la plantilla y los datos viajen separados de verdad (el valor por defecto de <code>pdo_mysql</code> es emular <span class="badge badge--doc">Documentado</span>), y el charset en el DSN, que tu <code>connection.php</code> ya tiene. Sin charset en el DSN, la emulación escapa con un charset distinto al de la conexión, y con algunos charsets multibyte (GBK) eso permitió saltarse el escape <span class="badge badge--doc">Documentado</span>.</p>
+<pre data-lang="php"><code>&lt;?php
+// core/connection.php: el charset en el DSN y preparadas reales
+$dsn = "mysql:host=" . HOST_DB . ";dbname=" . DATABASE . ";charset=utf8mb4";
+parent::__construct($dsn, USER_DB, PASSWORD_DB, [
+    PDO::ATTR_ERRMODE            =&gt; PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_EMULATE_PREPARES   =&gt; false,     // la plantilla y el dato viajan separados
+    PDO::ATTR_DEFAULT_FETCH_MODE =&gt; PDO::FETCH_ASSOC,
+]);</code></pre>
+
+
+<h2 id="sql-limites"><span class="sec-num">79.3</span>Lo que un parámetro no puede ser</h2>
+
+<p>Un parámetro reemplaza un <b>valor</b>. No puede ser un nombre de columna, de tabla, una palabra clave (<code>ASC</code>, <code>DESC</code>) ni una lista. Ahí es donde aparecen las inyecciones en código que "ya usa preparadas".</p>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Caso</th><th>Por qué el parámetro no sirve</th><th>Solución</th></tr></thead>
+    <tbody>
+<tr><td><code>ORDER BY</code> elegido por el usuario</td><td>Es un identificador, no un valor</td><td>Lista: la clave la ve el usuario, el SQL es fijo</td></tr>
+<tr><td><code>LIMIT ?</code> con emulación</td><td>PDO lo manda como <code>'20'</code> y MySQL lo rechaza</td><td><code>bindValue</code> con <code>PDO::PARAM_INT</code></td></tr>
+<tr><td><code>IN (?)</code> con una lista</td><td>Un parámetro es un solo valor</td><td>Un <code>?</code> por elemento, generado por el código</td></tr>
+<tr><td><code>LIKE ?</code></td><td>No hay inyección, pero <code>%</code> y <code>_</code> son comodines</td><td>Escaparlos con <code>addcslashes</code></td></tr>
+<tr><td>Nombre de tabla por tenant</td><td>Es un identificador</td><td>Lista, o mejor una columna <code>tenant_id</code> (M35)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<pre data-lang="php"><code>&lt;?php
+// Un ORDER BY elegido por el usuario: los identificadores no pueden ser parámetros
+const ORDEN = [                                  // lista de valores permitidos: clave pública, SQL privado
+    'recientes' =&gt; 'o.fecha_publicacion DESC, o.id DESC',
+    'cierre'    =&gt; 'o.fecha_cierre ASC, o.id ASC',
+    'titulo'    =&gt; 'o.titulo ASC, o.id ASC',
+];
+$orden = ORDEN[$_GET['orden'] ?? 'recientes'] ?? ORDEN['recientes'];
+$query .= " ORDER BY $orden LIMIT ? OFFSET ?";   // $orden nunca viene de la request
+
+$stmt = $this-&gt;connection-&gt;prepare($query);
+$i = 1;
+foreach ($params as $p) { $stmt-&gt;bindValue($i++, $p); }
+$stmt-&gt;bindValue($i++, min(100, max(1, (int)($_GET['limite'] ?? 20))), PDO::PARAM_INT);  // con emulación,
+$stmt-&gt;bindValue($i++, max(0, (int)($_GET['desde'] ?? 0)), PDO::PARAM_INT);               // LIMIT '20' falla
+$stmt-&gt;execute();</code></pre>
+<pre data-lang="php"><code>&lt;?php
+// IN con una lista: un ? por elemento, generado por el código
+$ids = array_map('intval', $ids);
+$marcas = implode(',', array_fill(0, count($ids), '?'));
+$stmt = $pdo-&gt;prepare("SELECT … FROM carreras WHERE id IN ($marcas)");
+$stmt-&gt;execute($ids);
+
+// LIKE: el parámetro evita la inyección, pero % y _ siguen siendo comodines
+$busqueda = addcslashes($_GET['q'] ?? '', '%_\\');
+$stmt = $pdo-&gt;prepare("SELECT … FROM oportunidades WHERE titulo LIKE ?");
+$stmt-&gt;execute(['%' . $busqueda . '%']);</code></pre>
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p><b>Inyección de segundo orden.</b> Un dato se guarda bien, con parámetros, y más tarde otro proceso lo lee de la base y lo concatena en otra consulta, porque "viene de la base, es de confianza". Un dato de la base es tan del usuario como el de la request: el canal separado se usa en cada consulta, no solo en la que recibe el formulario.</p>
+</aside>
+
+
+<h2 id="comandos"><span class="sec-num">79.4</span>Comandos del sistema</h2>
+
+<p>La <dfn data-term="command-injection">inyección de comandos</dfn> pasa cuando PHP arma una línea de comando con un dato y se la da a la shell (<code>exec</code>, <code>system</code>, <code>shell_exec</code>, <code>passthru</code> y las comillas invertidas). La shell interpreta <code>;</code>, <code>|</code>, <code>&amp;&amp;</code>, <code>$( )</code> y las redirecciones.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f794t f794d">
+<title id="f794t">Cómo lee la shell un comando</title>
+<desc id="f794d">Arriba, exec con un string: PHP se lo pasa a /bin/sh, que interpreta punto y coma, barras, sustituciones y redirecciones; un nombre de archivo con punto y coma ejecuta un segundo comando. Abajo, proc_open con un arreglo: PHP llama al programa directamente con cada argumento por separado, sin shell, y el punto y coma es parte del nombre del archivo.</desc>
+<defs><marker id="f794a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="20" width="250" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="139.0" y="46.0" text-anchor="middle">exec("pdftotext $archivo")</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="300" y="20" width="150" height="44" rx="8"/>
+<text class="dg-small" x="375.0" y="38.5" text-anchor="middle">/bin/sh -c</text>
+<text class="dg-tiny dg-mono" x="375.0" y="53.5" text-anchor="middle">parsea ; | $( ) &gt;</text>
+<rect class="dg-bad" x="486" y="20" width="270" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="621.0" y="38.5" text-anchor="middle">pdftotext cv.pdf; curl …</text>
+<text class="dg-tiny" x="621.0" y="53.5" text-anchor="middle">dos comandos</text>
+<path class="dg-edge" d="M264 42 L298 42" marker-end="url(#f794a)"/>
+<path class="dg-edge" d="M450 42 L484 42" marker-end="url(#f794a)"/>
+<rect class="dg-box" x="14" y="120" width="250" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="139.0" y="146.0" text-anchor="middle">proc_open(['pdftotext', $f], …)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="300" y="120" width="150" height="44" rx="8"/>
+<text class="dg-small" x="375.0" y="138.5" text-anchor="middle">execve()</text>
+<text class="dg-tiny" x="375.0" y="153.5" text-anchor="middle">sin shell</text>
+<rect class="dg-ok" x="486" y="120" width="270" height="44" rx="8"/>
+<text class="dg-tiny dg-mono" x="621.0" y="138.5" text-anchor="middle">argv[1] = "cv.pdf; curl …"</text>
+<text class="dg-tiny" x="621.0" y="153.5" text-anchor="middle">un nombre de archivo raro</text>
+<path class="dg-edge" d="M264 142 L298 142" marker-end="url(#f794a)"/>
+<path class="dg-edge" d="M450 142 L484 142" marker-end="url(#f794a)"/>
+<text class="dg-tiny" x="385" y="200" text-anchor="middle">Sin shell no hay metacaracteres: cada argumento llega entero al programa.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 79.4.</b> Con un arreglo no hay shell que parsee: el programa recibe cada argumento tal cual. El punto y coma deja de ser especial.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// MAL: un string completo a la shell
+exec("pdftotext " . $rutaCv . " -", $salida);
+
+// Menos mal: escapar cada argumento (una comilla de más o un -- olvidado y vuelve el problema)
+exec('pdftotext ' . escapeshellarg($rutaCv) . ' -', $salida);
+
+// Bien: sin shell. Con un arreglo, proc_open llama al programa directamente (PHP 7.4+)
+$proc = proc_open(['pdftotext', '--', $rutaCv, '-'], [1 =&gt; ['pipe', 'w'], 2 =&gt; ['pipe', 'w']], $pipes);
+$texto = stream_get_contents($pipes[1]);
+proc_close($proc);</code></pre>
+<ul>
+  <li><b>Sin shell</b> es la regla. <code>proc_open</code> con un arreglo existe desde PHP 7.4 <span class="badge badge--doc">Documentado</span>.</li>
+  <li><b><code>--</code></b> antes de los argumentos que vienen de datos: un nombre de archivo que empieza con <code>-</code> no se puede leer como opción del programa (inyección de argumentos).</li>
+  <li><b>Mejor todavía:</b> una librería de PHP en lugar del programa externo, o un worker aparte (M07) que procesa el archivo con un usuario sin permisos (M33).</li>
+</ul>
+
+
+<h2 id="inclusion"><span class="sec-num">79.5</span>Inclusión de archivos</h2>
+
+<p>La <dfn data-term="inclusion-archivos">inclusión de archivos</dfn> (LFI, Local File Inclusion) aparece cuando la ruta de un <code>include</code> o <code>require</code> sale de la request. <code>include</code> no lee un archivo: lo ejecuta como PHP. Si el atacante logra escribir algo en un archivo del servidor (un log de Apache con su User-Agent, un archivo subido, una sesión) y después lo incluye, ejecuta su código.</p>
+<pre data-lang="php"><code>&lt;?php
+// MAL: index.php?pagina=../../../../xampp/apache/logs/access.log
+include __DIR__ . '/paginas/' . $_GET['pagina'] . '.php';
+
+// Bien: el usuario elige una clave; el código decide el archivo
+const PAGINAS = ['inicio' =&gt; 'inicio.php', 'ofertas' =&gt; 'ofertas.php', 'perfil' =&gt; 'perfil.php'];
+$archivo = PAGINAS[$_GET['pagina'] ?? 'inicio'] ?? 'inicio.php';
+include __DIR__ . '/paginas/' . $archivo;</code></pre>
+<p>La inclusión remota (RFI, un <code>include</code> de una URL) necesita <code>allow_url_include</code>, que está apagado por defecto y obsoleto desde PHP 7.4 <span class="badge badge--doc">Documentado</span>. Los wrappers como <code>php://filter</code> siguen funcionando con <code>allow_url_include</code> apagado, y sirven para leer el código fuente de tus archivos: la lista de valores permitidos los cierra igual que a <code>../</code>. Leer archivos fuera de la carpeta, sin ejecutarlos, es el path traversal, que vuelve en <a href="m80-control-acceso.html#traversal">M80</a> y en <a href="m82-archivos-ssrf.html#guardar">M82</a>.</p>
+
+
+<h2 id="plantillas"><span class="sec-num">79.6</span>Plantillas del servidor (SSTI)</h2>
+
+<p>Un motor de plantillas (Twig, Blade, Smarty) compila un texto con expresiones a código. Si el dato del usuario es una variable de la plantilla, el motor lo escapa. Si el dato del usuario <b>es</b> la plantilla, el motor evalúa lo que escribió: eso es <dfn data-term="ssti">SSTI</dfn> (Server-Side Template Injection).</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f795t f795d">
+<title id="f795t">Dato en la plantilla contra plantilla hecha de datos</title>
+<desc id="f795d">A la izquierda, la plantilla la escribe el programador y el dato del usuario entra como variable: el motor escapa la variable y la muestra. A la derecha, el texto del usuario se convierte en plantilla: el motor evalúa las expresiones que escribió, con acceso a los objetos que el programador le pasó.</desc>
+<defs><marker id="f795a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="14" width="360" height="190" rx="8"/>
+<text class="dg-label" x="194" y="38" text-anchor="middle">Bien: el dato es una variable</text>
+<rect class="dg-ok" x="34" y="56" width="320" height="36" rx="8"/>
+<text class="dg-tiny dg-mono" x="194.0" y="78.0" text-anchor="middle">render('correo.twig', ['nombre' =&gt; $n])</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="34" y="108" width="320" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="194.0" y="122.5" text-anchor="middle">Hola {{ nombre }}</text>
+<text class="dg-tiny" x="194.0" y="137.5" text-anchor="middle">la plantilla es tuya</text>
+<text class="dg-tiny dg-mono" x="194" y="176" text-anchor="middle">Si $n = "{{ 7*7 }}", muestra {{ 7*7 }}</text>
+<rect class="dg-box" x="396" y="14" width="360" height="190" rx="8"/>
+<text class="dg-label" x="576" y="38" text-anchor="middle">Mal: el dato es la plantilla</text>
+<rect class="dg-bad" x="416" y="56" width="320" height="36" rx="8"/>
+<text class="dg-tiny dg-mono" x="576.0" y="78.0" text-anchor="middle">createTemplate($textoDelReclutador)</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="416" y="108" width="320" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="576.0" y="122.5" text-anchor="middle">Hola {{ 7*7 }}</text>
+<text class="dg-tiny" x="576.0" y="137.5" text-anchor="middle">la escribió el usuario</text>
+<text class="dg-tiny dg-mono" x="576" y="176" text-anchor="middle">muestra 49: el motor evaluó la expresión</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 79.5.</b> El payload de prueba es una cuenta: si <code>{{{{ 7*7 }}}}</code> se muestra como 49, el texto se está evaluando. Desde ahí, el alcance depende de qué objetos tiene la plantilla, y en muchos motores llega a ejecutar código.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// Correos con texto personalizable por cada institución
+// MAL: el texto que escribió la institución se compila como plantilla
+$tpl = $twig-&gt;createTemplate($institucion['plantilla_correo']);
+echo $tpl-&gt;render(['estudiante' =&gt; $estudiante, 'app' =&gt; $app]);
+
+// Bien: el texto es texto, con marcadores fijos que reemplaza el código
+$cuerpo = strtr($institucion['plantilla_correo'], [
+    '[nombre]'      =&gt; $estudiante['nombre'],
+    '[oportunidad]' =&gt; $oportunidad['titulo'],
+]);</code></pre>
+<p>Si el negocio de verdad necesita plantillas que escriben los usuarios, Twig tiene un modo sandbox con una lista de etiquetas, filtros, métodos y propiedades permitidos <span class="badge badge--doc">Documentado</span>. Es una superficie grande y con historia de bypasses: marcadores fijos con <code>strtr</code> cubren casi todos los casos.</p>
+
+
+<h2 id="crlf"><span class="sec-num">79.7</span>Saltos de línea: cabeceras, logs y correo</h2>
+
+<p>HTTP, los logs de texto y los correos separan sus partes con saltos de línea. Un <code>\r\n</code> dentro de un dato crea una parte nueva: es la <dfn data-term="crlf-injection">inyección CRLF</dfn>.</p>
+<ul>
+  <li><b>Cabeceras HTTP.</b> <code>header("Location: " . $_GET['volver'])</code> con un salto de línea podía agregar cabeceras o un cuerpo. La función <code>header()</code> de PHP rechaza un valor con más de una cabecera desde la versión 5.1.2 <span class="badge badge--doc">Documentado</span>. Sigue quedando la redirección abierta, que es <a href="m82-archivos-ssrf.html#redireccion">M82</a>.</li>
+  <li><b>Correo.</b> El cuarto parámetro de <code>mail()</code>, las cabeceras adicionales, con un dato del usuario permite agregar <code>Bcc:</code> y mandar spam desde tu servidor. Usa una librería (PHPMailer, Symfony Mailer) que valida cada dirección.</li>
+  <li><b>Logs.</b> Un salto de línea en un dato escrito con <code>error_log</code> crea una entrada falsa.</li>
+</ul>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 210" role="img" aria-labelledby="f796t f796d">
+<title id="f796t">Un salto de línea en un log</title>
+<desc id="f796d">Un intento de login fallido escribe en el log una línea con el nombre de usuario. El nombre trae un salto de línea seguido de un texto con forma de entrada legítima. El archivo queda con dos líneas: la verdadera y una falsa que dice que el administrador entró bien. Quien lee el log, o la regla de detección de M59, ve la falsa.</desc>
+<defs><marker id="f796a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-bad" x="14" y="24" width="300" height="50" rx="8"/>
+<text class="dg-tiny dg-mono" x="164.0" y="53.0" text-anchor="middle">"ana\n2026-10-31 09:14 OK admin"</text>
+<path class="dg-edge" d="M314 49 L356 49" marker-end="url(#f796a)"/>
+<text class="dg-tiny" x="335" y="16" text-anchor="middle">error_log("FALLO $usuario")</text>
+<rect class="dg-box" x="358" y="14" width="398" height="100" rx="8"/>
+<text class="dg-small dg-mono" x="372" y="40" text-anchor="start">2026-10-31 09:14 FALLO ana</text>
+<text class="dg-small dg-mono" x="372" y="68" text-anchor="start">2026-10-31 09:14 OK admin</text>
+<text class="dg-tiny" x="372" y="96" text-anchor="start">la segunda línea no la escribió el sistema</text>
+<rect class="dg-ok" x="14" y="140" width="742" height="54" rx="8"/>
+<text class="dg-tiny dg-mono" x="385" y="162" text-anchor="middle">Log estructurado: json_encode([... "usuario" =&gt; $u]) escribe \n como texto escapado.</text>
+<text class="dg-tiny" x="385" y="182" text-anchor="middle">Un registro por línea, y el campo nunca puede crear otro registro.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 79.6.</b> Una entrada falsa en el log engaña a quien lo lee y a las reglas de detección de <a href="m59-deteccion.html">M59</a>. Con JSON por línea, el salto de línea queda escrito como <code>\n</code>.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// Un registro por línea, en JSON: los saltos de línea del dato quedan escapados
+function registrar(string $evento, array $datos): void
+{
+    $linea = json_encode(['t' =&gt; date(DATE_ATOM), 'evento' =&gt; $evento] + $datos,
+                         JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    error_log($linea);
+}
+registrar('login_fallido', ['usuario' =&gt; $usuario, 'ip' =&gt; $_SERVER['REMOTE_ADDR']]);</code></pre>
+
+
+<h2 id="xml"><span class="sec-num">79.8</span>XML y las entidades externas (XXE)</h2>
+
+<p>XML permite declarar entidades en una DTD, y una entidad externa toma su valor de un archivo o una URL. Un parser que las resuelve lee <code>file:///etc/passwd</code> o hace una request a la red interna por ti: es <dfn data-term="xxe">XXE</dfn>, que apareció con SOAP en <a href="m02-apis.html#soap-seguridad">M02</a>.</p>
+<p>En PHP 8, con libxml 2.9 o posterior, las entidades externas no se cargan salvo que pidas <code>LIBXML_NOENT</code> o <code>LIBXML_DTDLOAD</code>, y la función <code>libxml_disable_entity_loader</code> quedó obsoleta <span class="badge badge--doc">Documentado</span>. El riesgo hoy está en copiar esos flags de un ejemplo viejo, y en las bombas de expansión de entidades internas.</p>
+<pre data-lang="php"><code>&lt;?php
+// Importar oportunidades desde un XML que sube una institución
+$doc = new DOMDocument();
+$doc-&gt;loadXML($xml, LIBXML_NONET);           // sin red; y NUNCA LIBXML_NOENT ni LIBXML_DTDLOAD
+if ($doc-&gt;doctype !== null) {                // un XML de datos no necesita DTD
+    throw new InvalidArgumentException('DTD no permitida');
+}</code></pre>
+
+
+<h2 id="deserializacion"><span class="sec-num">79.9</span>Deserialización: crear objetos desde un string</h2>
+
+<p><code>unserialize</code> crea objetos de cualquier clase cargada, con las propiedades que diga el string, y PHP llama después a sus métodos mágicos (<code>__wakeup</code>, <code>__destruct</code>, <code>__toString</code>). Si el string viene del usuario, el atacante elige qué objetos se crean: la <dfn data-term="deserializacion-insegura">deserialización insegura</dfn> que viste en <a href="m55-appsec.html#casos-deser">M55</a>, en su versión de PHP.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 210" role="img" aria-labelledby="f797t f797d">
+<title id="f797t">Deserializar es ejecutar</title>
+<desc id="f797d">Un string serializado de PHP llega en una cookie. unserialize crea un objeto de la clase que el string nombra, con las propiedades que el string trae. Al terminar la request, PHP llama a __destruct de ese objeto, y ese método, escrito para otra cosa, borra el archivo cuya ruta vino en la propiedad. json_decode, en cambio, solo crea arreglos y valores.</desc>
+<defs><marker id="f797a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-bad" x="14" y="30" width="220" height="56" rx="8"/>
+<text class="dg-tiny dg-mono" x="124.0" y="54.5" text-anchor="middle">O:9:"CacheFile":1:{…}</text>
+<text class="dg-tiny" x="124.0" y="69.5" text-anchor="middle">en una cookie</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="274" y="30" width="200" height="56" rx="8"/>
+<text class="dg-small" x="374.0" y="54.5" text-anchor="middle">unserialize()</text>
+<text class="dg-tiny" x="374.0" y="69.5" text-anchor="middle">crea un CacheFile</text>
+<rect class="dg-bad" x="514" y="30" width="242" height="56" rx="8"/>
+<text class="dg-tiny dg-mono" x="635.0" y="54.5" text-anchor="middle">__destruct(): unlink($ruta)</text>
+<text class="dg-tiny" x="635.0" y="69.5" text-anchor="middle">código tuyo, datos del atacante</text>
+<path class="dg-edge" d="M234 58 L272 58" marker-end="url(#f797a)"/>
+<path class="dg-edge" d="M474 58 L512 58" marker-end="url(#f797a)"/>
+<rect class="dg-box" x="14" y="128" width="220" height="56" rx="8"/>
+<text class="dg-tiny dg-mono" x="124.0" y="152.5" text-anchor="middle">{"ruta": "…"}</text>
+<text class="dg-tiny" x="124.0" y="167.5" text-anchor="middle">en una cookie</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="274" y="128" width="200" height="56" rx="8"/>
+<text class="dg-small dg-mono" x="374.0" y="152.5" text-anchor="middle">json_decode(…, true)</text>
+<text class="dg-tiny" x="374.0" y="167.5" text-anchor="middle">crea un arreglo</text>
+<rect class="dg-ok" x="514" y="128" width="242" height="56" rx="8"/>
+<text class="dg-small" x="635.0" y="152.5" text-anchor="middle">Ningún método se ejecuta</text>
+<text class="dg-tiny" x="635.0" y="167.5" text-anchor="middle">los datos son datos</text>
+<path class="dg-edge" d="M234 156 L272 156" marker-end="url(#f797a)"/>
+<path class="dg-edge" d="M474 156 L512 156" marker-end="url(#f797a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 79.7.</b> El atacante no inyecta código: encadena métodos que ya existen en tu proyecto o en tus dependencias (una cadena de gadgets). JSON no tiene clases, así que no hay métodos que encadenar.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// MAL: preferencias del usuario en una cookie, serializadas con PHP
+$prefs = unserialize($_COOKIE['prefs']);
+
+// Bien: JSON, que solo produce arreglos y valores
+$prefs = json_decode($_COOKIE['prefs'] ?? '{}', true, 4, JSON_THROW_ON_ERROR);
+
+// Si heredas código con unserialize y no puedes cambiarlo todavía
+$prefs = unserialize($dato, ['allowed_classes' =&gt; false]);   // objetos como __PHP_Incomplete_Class</code></pre>
+<p>La opción <code>allowed_classes</code> existe desde PHP 7.0 <span class="badge badge--doc">Documentado</span>. Ojo con lo que no es <code>unserialize</code>: los archivos <code>phar://</code> también deserializan sus metadatos al abrirse con funciones de archivos en versiones anteriores a PHP 8.0 <span class="badge badge--doc">Documentado</span>; en tu XAMPP con PHP 8.0 eso ya no pasa, pero es otra razón para no abrir rutas que elige el usuario.</p>
+
+
+<h2 id="fallas"><span class="sec-num">79.10</span>Fallas típicas y cómo reconocerlas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+<tr><td>Un <code>?orden=</code> raro devuelve un error de SQL</td><td>Identificador concatenado en <code>ORDER BY</code></td><td>Lista de valores permitidos</td></tr>
+<tr><td><code>LIMIT ?</code> da error de sintaxis</td><td>Emulación: PDO manda <code>'20'</code></td><td><code>PARAM_INT</code>, o <code>EMULATE_PREPARES</code> en <code>false</code></td></tr>
+<tr><td>Buscar <code>%</code> devuelve todo</td><td>Comodines de <code>LIKE</code> sin escapar</td><td><code>addcslashes($q, '%_\\')</code></td></tr>
+<tr><td>Un nombre de archivo con <code>;</code> rompe la conversión</td><td>Comando por shell</td><td><code>proc_open</code> con arreglo y <code>--</code></td></tr>
+<tr><td>Un correo personalizado muestra 49 donde se escribió <code>{{{{7*7}}}}</code></td><td>Texto del usuario compilado como plantilla</td><td>Marcadores con <code>strtr</code></td></tr>
+<tr><td>El log tiene entradas que nadie escribió</td><td>Saltos de línea del dato</td><td>Un JSON por línea</td></tr>
+<tr><td><code>unserialize</code> en una cookie o un campo oculto</td><td>Objetos elegidos por el usuario</td><td><code>json_decode</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Busca los intérpretes, no los payloads: <code>grep -rnE "exec\(|system\(|shell_exec|passthru|`|include .*\$|unserialize|createTemplate|LIBXML_NOENT" api/</code>, y en SQL cada <code>-&gt;query(</code> o cada <code>prepare(</code> cuyo string tenga una variable que no sea un fragmento fijo. Las herramientas SAST de <a href="m55-appsec.html">M55</a> hacen lo mismo con reglas para PHP. La guía WEB07 agrega <code>ORDER BY</code> con lista a la búsqueda de oportunidades, apaga la emulación y cambia los logs a JSON. Con los datos a salvo de los intérpretes, la pregunta siguiente es quién puede tocar cada dato: el control de acceso (<a href="m80-control-acceso.html#preguntas">M80</a>).</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m79"></div>
+<div data-exercise="m79-exportar"></div>
+<div data-checkpoint="m79"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m79.data.js"></script>
+<script src="../assets/js/data/exercises/m79.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>

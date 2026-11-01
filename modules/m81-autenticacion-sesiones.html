@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M81. Autenticación y sesiones</title>
+<meta name="description" content="La primera pregunta del control de acceso a fondo: la cookie firmada del sistema de prácticas pieza por pieza, revocar una sesión sin estado, fijación de sesión, contraseñas según NIST, enumeración de usuarios por tiempos, fuerza bruta y credential stuffing, MFA y passkeys, y la recuperación de contraseña.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m81">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Autenticación y sesiones</h1>
+        <p class="lead">Una sesión es una promesa del servidor: "esta request viene de quien demostró ser Ana". Se rompe de cuatro formas: alguien obtiene la promesa (robo de sesión), alguien la fabrica (firma débil), la promesa no se puede retirar (sin revocación) o la demostración era débil (contraseñas, sin MFA).</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M81</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>110 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M36, M74, M80</dd></div>
+          <div><dt>Estado</dt><dd data-status="m81">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Comparar la sesión con estado y la sesión firmada, y leer la cookie del sistema de prácticas pieza por pieza.</li>
+    <li>Revocar una sesión firmada con una versión de sesión, y evitar la fijación de sesión.</li>
+    <li>Aplicar la política de contraseñas de NIST y guardar contraseñas con <code>password_hash</code>.</li>
+    <li>Cerrar la enumeración de usuarios por mensajes y por tiempos, y frenar la fuerza bruta y el credential stuffing.</li>
+    <li>Explicar por qué una passkey resiste el phishing y diseñar una recuperación de contraseña segura.</li>
+  </ul>
+</section>
+
+<p>En <a href="m80-control-acceso.html#preguntas">M80</a> la primera pregunta, quién eres, se dio por respondida: <code>requireAuth()</code> devuelve la sesión y el resto del código confía en ella. Este módulo abre esa caja. En <a href="m10-seguridad.html#tokens">M10</a> viste tokens y JWT desde la arquitectura; aquí va la sesión de una aplicación web concreta, la tuya, y los ataques contra el login.</p>
+
+
+<h2 id="modelos"><span class="sec-num">81.1</span>Dos formas de recordar quién eres</h2>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una sesión con estado es la pulsera de un hotel con un número: en recepción hay un libro que dice de quién es cada número, y si la pierdes, tachan la línea. Una sesión firmada es una credencial plastificada con tu nombre y un sello difícil de falsificar: nadie consulta el libro, pero si te la roban, sirve hasta la fecha impresa.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="f811t f811d">
+<title id="f811t">Sesión con estado y sesión firmada</title>
+<desc id="f811d">Dos columnas. A la izquierda, la sesión con estado: la cookie lleva un id aleatorio y el servidor busca la sesión en una tabla o en Redis en cada request; revocar es borrar la fila. A la derecha, la sesión firmada, como la del sistema de prácticas: la cookie lleva los datos y una firma HMAC; el servidor solo verifica la firma y no guarda nada, pero no puede retirar una cookie antes de que venza.</desc>
+<defs><marker id="f811a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="14" width="360" height="210" rx="8"/>
+<text class="dg-label" x="194" y="38" text-anchor="middle">Con estado (id opaco)</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="34" y="56" width="140" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="104.0" y="74.5" text-anchor="middle">cookie: 9f3a…</text>
+<text class="dg-tiny" x="104.0" y="89.5" text-anchor="middle">solo un id</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="214" y="56" width="140" height="44" rx="8"/>
+<text class="dg-small" x="284.0" y="74.5" text-anchor="middle">tabla sesiones</text>
+<text class="dg-tiny" x="284.0" y="89.5" text-anchor="middle">usuario, rol, vence</text>
+<path class="dg-edge" d="M174 78 L212 78" marker-end="url(#f811a)"/>
+<text class="dg-tiny" x="193" y="50" text-anchor="middle">busca</text>
+<text class="dg-tiny" x="194" y="136" text-anchor="middle">+ revocar es borrar la fila</text>
+<text class="dg-tiny" x="194" y="158" text-anchor="middle">+ el rol se lee en cada request</text>
+<text class="dg-tiny" x="194" y="180" text-anchor="middle">− una lectura por request</text>
+<rect class="dg-box" x="396" y="14" width="360" height="210" rx="8"/>
+<text class="dg-label" x="576" y="38" text-anchor="middle">Firmada (la del sistema)</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="416" y="56" width="320" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="576.0" y="74.5" text-anchor="middle">cookie: base64(json) | hmac</text>
+<text class="dg-tiny" x="576.0" y="89.5" text-anchor="middle">id, roles, isAdmin, exp, ip</text>
+<text class="dg-tiny" x="576" y="136" text-anchor="middle">+ sin lecturas: solo verificar la firma</text>
+<text class="dg-tiny" x="576" y="158" text-anchor="middle">− no se puede retirar antes de exp</text>
+<text class="dg-tiny" x="576" y="180" text-anchor="middle">− los roles quedan fijos hasta exp</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 81.1.</b> Las dos funcionan. La firmada ahorra una lectura y paga con la revocación; en <a href="m10-seguridad.html#jwt-stateful">M10</a> viste el mismo intercambio con JWT.</figcaption>
+</figure>
+
+
+
+<h2 id="tu-cookie"><span class="sec-num">81.2</span>La cookie del sistema, pieza por pieza</h2>
+
+<p>El sistema usa una sesión firmada propia: un JSON en base64, una barra y un HMAC-SHA256 del JSON con <code>COOKIE_KEY</code>. Es, en la práctica, un JWT casero con un solo algoritmo, lo que evita la familia de errores de <code>alg</code> que viste en M10.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f812t f812d">
+<title id="f812t">La cookie del sistema, pieza por pieza</title>
+<desc id="f812d">La cookie partida en sus piezas: el JSON en base64 con id, username, name, roles, isAdmin, exp e ip, una barra vertical y el HMAC-SHA256 en hexadecimal con COOKIE_KEY. Debajo, lo que checkAuth comprueba bien: el formato exacto, base64 estricto, la firma con hash_equals y exp obligatorio. Y lo que falta: revocación, roles leídos de la base, la comprobación de IP que usa un prefijo y la misma clave que el token CSRF.</desc>
+<defs><marker id="f812a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="14" width="470" height="48" rx="8"/>
+<text class="dg-tiny dg-mono" x="249.0" y="42.0" text-anchor="middle">base64({"id":12,"roles":"1","isAdmin":false,"exp":…,"ip":…})</text>
+<rect class="dg-box" x="494" y="14" width="26" height="48" rx="8"/>
+<text class="dg-small dg-mono" x="507.0" y="42.0" text-anchor="middle">|</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="530" y="14" width="226" height="48" rx="8"/>
+<text class="dg-small" x="643.0" y="34.5" text-anchor="middle">HMAC-SHA256 en hex</text>
+<text class="dg-tiny dg-mono" x="643.0" y="49.5" text-anchor="middle">con COOKIE_KEY</text>
+<rect class="dg-ok" x="14" y="86" width="360" height="160" rx="8"/>
+<text class="dg-label" x="194" y="108" text-anchor="middle">Lo que checkAuth() hace bien</text>
+<text class="dg-tiny" x="194" y="134" text-anchor="middle">formato exacto y base64 estricto</text>
+<text class="dg-tiny" x="194" y="160" text-anchor="middle">firma con hash_equals (M36)</text>
+<text class="dg-tiny" x="194" y="186" text-anchor="middle">exp obligatorio y entero</text>
+<text class="dg-tiny" x="194" y="212" text-anchor="middle">payload firmado, no cifrado: no lleva secretos</text>
+<rect class="dg-warnbox" x="396" y="86" width="360" height="160" rx="8"/>
+<text class="dg-label" x="576" y="108" text-anchor="middle">Lo que falta</text>
+<text class="dg-tiny" x="576" y="134" text-anchor="middle">revocar: logout no invalida la cookie</text>
+<text class="dg-tiny" x="576" y="160" text-anchor="middle">roles fijos hasta exp, aunque cambien</text>
+<text class="dg-tiny" x="576" y="186" text-anchor="middle">IP con strpos: '10.0.0.1' acepta '10.0.0.12'</text>
+<text class="dg-tiny" x="576" y="212" text-anchor="middle">la misma clave firma la sesión y el CSRF</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 81.2.</b> La verificación está bien escrita. Lo que falta no es criptografía: es poder retirar la sesión y leer los permisos actuales.</figcaption>
+</figure>
+
+<p>El payload está <b>firmado, no cifrado</b>: cualquiera que tenga la cookie lee su contenido decodificando el base64. Por eso no lleva nada secreto. Y una corrección concreta, la de la IP:</p>
+<pre data-lang="php"><code>&lt;?php
+// Hoy: strpos(REMOTE_ADDR, $data['ip']) === 0 acepta cualquier IP que EMPIECE igual
+// '10.0.0.1' firmada deja pasar '10.0.0.12', '10.0.0.100'…
+if (isset($data['ip']) &amp;&amp; !hash_equals($data['ip'], $_SERVER['REMOTE_ADDR'] ?? '')) {
+    return null;
+}
+// Y aun exacta, la IP cambia en el celular y detrás de un proxy (M03): no es un control fuerte.</code></pre>
+<p>La misma <code>COOKIE_KEY</code> firma la sesión y deriva el token CSRF de <a href="m76-csrf.html#token-tuyo">76.5</a>. Las dos firmas usan prefijos distintos, así que no se pueden intercambiar, pero una clave por propósito (<code>SESSION_KEY</code>, <code>CSRF_KEY</code>) permite rotarlas por separado (M36).</p>
+
+
+<h2 id="revocacion"><span class="sec-num">81.3</span>Cerrar sesión de verdad</h2>
+
+<p>Hoy, <code>DELETE login.php</code> borra la cookie del navegador de Ana. Si alguien la copió antes (un XSS de <a href="m77-xss-dom.html#tipos">M77</a>, un equipo compartido, un log que la guardó), la copia sigue sirviendo hasta <code>exp</code>. Lo mismo con los roles: si la coordinación le quita a alguien el rol de reclutador, la cookie dice lo contrario hasta que vence.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 410" role="img" aria-labelledby="f813t f813d">
+<title id="f813t">Logout con una cookie firmada, sin y con versión de sesión</title>
+<desc id="f813d">Ana cierra sesión: el servidor borra la cookie en su navegador. Pero si alguien copió la cookie antes, esa copia sigue siendo válida hasta exp. Con una columna version_sesion en usuarios, el logout la incrementa y checkAuth compara la versión de la cookie con la de la base: la copia vieja se rechaza.</desc>
+<defs><marker id="f813-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f813-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f813-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f813-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador de Ana</text>
+<path class="dg-frame" d="M70.0 40 V400"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Copia robada</text>
+<path class="dg-frame" d="M280.0 40 V400"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">API</text>
+<path class="dg-frame" d="M490.0 40 V400"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M700.0 40 V400"/>
+<path class="dg-edge" d="M73.0 72 L485.0 72" marker-end="url(#f813-a)"/>
+<rect x="221.2" y="55" width="117.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="66" text-anchor="middle">DELETE login.php</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 106 L75.0 106" marker-end="url(#f813-r)"/>
+<rect x="175.0" y="89" width="210.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="100" text-anchor="middle">Set-Cookie: sesion=; Max-Age=0</text>
+<path class="dg-edge" d="M283.0 140 L485.0 140" marker-end="url(#f813-a)"/>
+<rect x="263.5" y="123" width="243.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="134" text-anchor="middle">GET … Cookie: la copia (exp en 8 h)</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M487.0 174 L285.0 174" marker-end="url(#f813-f)"/>
+<rect x="289.9" y="157" width="190.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="168" text-anchor="middle">200: firma válida, no vence</text>
+<path d="M20 206 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="195" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="210" text-anchor="middle" style="fill:var(--fail)">con version_sesion en la cookie y en la base</text>
+<path class="dg-edge" d="M493.0 242 L695.0 242" marker-end="url(#f813-a)"/>
+<rect x="447.1" y="225" width="295.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="236" text-anchor="middle">logout: version_sesion = version_sesion + 1</text>
+<path class="dg-edge" d="M283.0 276 L485.0 276" marker-end="url(#f813-a)"/>
+<rect x="286.6" y="259" width="196.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">GET … Cookie: la copia (v=4)</text>
+<path class="dg-edge" d="M493.0 310 L695.0 310" marker-end="url(#f813-a)"/>
+<rect x="486.7" y="293" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="304" text-anchor="middle">SELECT version_sesion, rol_id …</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 344 L285.0 344" marker-end="url(#f813-r)"/>
+<rect x="309.7" y="327" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="338" text-anchor="middle">401: la base dice v=5</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 81.3.</b> Una columna y una lectura por request devuelven lo que la sesión firmada había perdido: revocar y leer los roles actuales.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// core/auth.php: la cookie firmada, más una lectura barata para poder revocar
+function checkAuth(PDO $db): ?array
+{
+    $data = verificarCookie();                       // lo que hoy hace checkAuth(): formato, HMAC, exp
+    if ($data === null) {
+        return null;
+    }
+    $stmt = $db-&gt;prepare('SELECT version_sesion, rol_id, estado_cuenta FROM usuarios WHERE id = ?');
+    $stmt-&gt;execute([$data['id']]);
+    $u = $stmt-&gt;fetch(PDO::FETCH_ASSOC);
+    if (!$u || $u['estado_cuenta'] !== 'activo' || (int)$u['version_sesion'] !== $data['v']) {
+        return null;                                 // logout, cambio de contraseña o cuenta bloqueada
+    }
+    $data['roles'] = rolesActuales($db, $data['id']);   // los roles de hoy, no los del login
+    return $data;
+}
+// logout, cambio de contraseña y "cerrar todas las sesiones":
+// UPDATE usuarios SET version_sesion = version_sesion + 1 WHERE id = ?</code></pre>
+<p>Es un híbrido: la firma evita buscar una sesión por id, y la lectura de una fila por clave primaria agrega revocación. Para la carga de este sistema, una lectura por request es despreciable. Junto con eso, una vida corta: <code>COOKIE_LIFETIME</code> de horas, no de semanas, y "recordarme" como una cookie aparte, más larga, que solo sirve para emitir una sesión nueva.</p>
+
+
+<h2 id="fijacion"><span class="sec-num">81.4</span>Fijación de sesión</h2>
+
+<p>La <dfn data-term="session-fixation">fijación de sesión</dfn> es el ataque inverso al robo: en lugar de robar el id de la víctima, el atacante le hace usar uno que él ya conoce, y espera a que inicie sesión.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 410" role="img" aria-labelledby="f814t f814d">
+<title id="f814t">Fijación de sesión con sesiones de PHP</title>
+<desc id="f814d">El atacante abre el sitio y obtiene un id de sesión. Consigue que la víctima use ese mismo id, por ejemplo con un subdominio que escribe la cookie. La víctima inicia sesión y, si el servidor no cambia el id, la sesión autenticada queda con el id que el atacante conoce. session_regenerate_id(true) en el login entrega un id nuevo y borra el viejo.</desc>
+<defs><marker id="f814-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f814-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f814-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f814-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Atacante</text>
+<path class="dg-frame" d="M70.0 40 V400"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Víctima</text>
+<path class="dg-frame" d="M385.0 40 V400"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">PHP (session_start)</text>
+<path class="dg-frame" d="M700.0 40 V400"/>
+<path class="dg-edge" d="M73.0 72 L695.0 72" marker-end="url(#f814-a)"/>
+<rect x="359.2" y="55" width="51.599999999999994" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="66" text-anchor="middle">GET / </text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 106 L75.0 106" marker-end="url(#f814-r)"/>
+<rect x="296.5" y="89" width="177.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">Set-Cookie: PHPSESSID=abc</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M73.0 140 L380.0 140" marker-end="url(#f814-q)"/>
+<rect x="96.10000000000002" y="123" width="262.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="134" text-anchor="middle">planta PHPSESSID=abc (subdominio, M74)</text>
+<path class="dg-edge" d="M388.0 174 L695.0 174" marker-end="url(#f814-a)"/>
+<rect x="427.6" y="157" width="229.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="168" text-anchor="middle">POST login, Cookie: PHPSESSID=abc</text>
+<rect x="453.0" y="194" width="237" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="463.0" y="210">sin regenerar: abc ahora es Ana</text>
+<path class="dg-edge" d="M73.0 242 L695.0 242" marker-end="url(#f814-a)"/>
+<rect x="266.8" y="225" width="236.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="236" text-anchor="middle">GET /perfil, Cookie: PHPSESSID=abc</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M697.0 276 L75.0 276" marker-end="url(#f814-f)"/>
+<rect x="319.6" y="259" width="130.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">200: perfil de Ana</text>
+<path d="M20 308 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="297" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="312" text-anchor="middle" style="fill:var(--fail)">con session_regenerate_id(true) en el login</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 344 L390.0 344" marker-end="url(#f814-r)"/>
+<rect x="407.8" y="327" width="269.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="338" text-anchor="middle">Set-Cookie: PHPSESSID=x9q (abc borrada)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 81.4.</b> La sesión se vuelve valiosa en el login. Por eso el id cambia justo ahí.</figcaption>
+</figure>
+
+<p>Tu cookie firmada no tiene este problema: el login emite una cookie nueva, con su firma, y la que hubiera antes no significa nada. Pero <code>configuration.php</code> también llama a <code>session_start()</code>: si algún día guardas algo en <code>$_SESSION</code>, aplica esto.</p>
+<pre data-lang="php"><code>&lt;?php
+// Si usas las sesiones de PHP ($_SESSION), además de la cookie firmada
+ini_set('session.use_strict_mode', '1');     // rechaza ids que el servidor no creó
+ini_set('session.use_only_cookies', '1');    // nunca el id en la URL
+session_start();
+// … después de verificar la contraseña:
+session_regenerate_id(true);                  // id nuevo; el viejo se borra
+$_SESSION['usuario_id'] = $id;</code></pre>
+<p>El prefijo <code>__Host-</code> de <a href="m74-origen-cookies.html#prefijos">74.6</a> impide que un subdominio plante la cookie, que es como el atacante suele fijarla.</p>
+
+
+<h2 id="contrasenas"><span class="sec-num">81.5</span>Contraseñas: qué pedir y cómo guardarlas</h2>
+
+<p>Cómo se guardan ya lo viste en <a href="m36-criptografia.html#contrasenas">M36</a>: <code>password_hash</code> con Argon2id o bcrypt, nunca un hash rápido. Tu proyecto ya usa <code>password_verify</code>. Lo que cambia es qué pedir. La guía de NIST, SP 800-63B, dice <span class="badge badge--doc">Documentado</span>:</p>
+<ul>
+  <li><b>Largo, no complejidad.</b> La revisión 4 (2025) pide al menos 15 caracteres cuando la contraseña es el único factor, y 8 cuando hay MFA, y admitir al menos 64. Nada de "una mayúscula, un número y un símbolo": producen <code>Practicas2026!</code>.</li>
+  <li><b>Comparar contra contraseñas filtradas</b> y rechazar las que aparecen.</li>
+  <li><b>Sin rotación periódica</b>: se cambia cuando hay evidencia de que se filtró.</li>
+  <li><b>Permitir pegar</b>, para que funcionen los gestores de contraseñas.</li>
+</ul>
+<pre data-lang="php"><code>&lt;?php
+// Registro y cambio de contraseña
+if (mb_strlen($nueva) &lt; 15 &amp;&amp; !$tieneMfa) {                      // NIST 800-63B-4: 15 sin MFA
+    Response::json(-1, 'Usa una frase de al menos 15 caracteres', [], 400);
+}
+if (mb_strlen($nueva) &gt; 64 &amp;&amp; PASSWORD_DEFAULT === PASSWORD_BCRYPT &amp;&amp; strlen($nueva) &gt; 72) {
+    Response::json(-1, 'Máximo 72 bytes', [], 400);              // bcrypt corta en 72 bytes
+}
+if (estaFiltrada($nueva)) {                                       // lista de contraseñas filtradas
+    Response::json(-1, 'Esa contraseña apareció en una filtración', [], 400);
+}
+$hash = password_hash($nueva, PASSWORD_ARGON2ID);                 // M36
+
+// En cada login correcto: subir el costo de los hashes viejos sin pedir nada al usuario
+if (password_needs_rehash($fila['password_hash'], PASSWORD_ARGON2ID)) {
+    $nuevoHash = password_hash($contrasena, PASSWORD_ARGON2ID);   // UPDATE usuarios SET password_hash = ?
+}</code></pre>
+<p>Para la lista de filtradas, el servicio Pwned Passwords permite consultar por <b>k-anonimato</b>: mandas los primeros 5 caracteres del SHA-1 de la contraseña y recibes todos los sufijos que empiezan así; la comparación la haces tú, y la contraseña no sale de tu servidor <span class="badge badge--doc">Documentado</span>.</p>
+
+
+<h2 id="enumeracion"><span class="sec-num">81.6</span>Enumeración de usuarios</h2>
+
+<p>La <dfn data-term="enumeracion-usuarios">enumeración de usuarios</dfn> es averiguar qué cuentas existen. Sirve para el siguiente ataque: probar contraseñas solo contra cuentas reales, o mandar phishing dirigido a quien sí usa el sistema. Se filtra por tres lados:</p>
+<ul>
+  <li><b>Mensajes distintos.</b> "El usuario no existe" contra "contraseña incorrecta". Tu login ya responde lo mismo en los dos casos.</li>
+  <li><b>Tiempos distintos.</b> Tu login hace <code>password_verify</code> solo si el usuario existe. Esa función es lenta a propósito (M36), así que la diferencia se mide desde afuera.</li>
+  <li><b>Otros formularios.</b> El registro ("ese correo ya está en uso") y la recuperación ("te mandamos un correo").</li>
+</ul>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f815t f815d">
+<title id="f815t">Enumeración de usuarios por tiempo de respuesta</title>
+<desc id="f815d">Dos barras de tiempo. Para un usuario que no existe, el login hace solo la consulta y responde rápido. Para uno que existe, hace además password_verify, que con bcrypt tarda decenas de milisegundos por diseño. La diferencia se mide desde afuera y revela qué usuarios existen. Abajo, el arreglo: verificar contra un hash de relleno cuando el usuario no existe, para que los dos caminos tarden lo mismo.</desc>
+<defs><marker id="f815a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="20" y="34" text-anchor="start">usuario no existe</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="170" y="20" width="60" height="24" rx="8"/>
+<text class="dg-tiny" x="200.0" y="36.0" text-anchor="middle">SELECT</text>
+<text class="dg-tiny" x="244" y="37" text-anchor="start">responde</text>
+<text class="dg-small" x="20" y="82" text-anchor="start">usuario existe</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="170" y="68" width="60" height="24" rx="8"/>
+<text class="dg-tiny" x="200.0" y="84.0" text-anchor="middle">SELECT</text>
+<rect class="dg-warnbox" x="234" y="68" width="380" height="24" rx="8"/>
+<text class="dg-tiny" x="424.0" y="84.0" text-anchor="middle">password_verify (bcrypt, cost 10)</text>
+<text class="dg-tiny" x="624" y="85" text-anchor="start">responde</text>
+<path class="dg-edge" d="M234 112 L614 112" marker-end="url(#f815a)" style="stroke-dasharray:5 4"/>
+<text class="dg-tiny" x="424" y="130" text-anchor="middle">la diferencia se mide desde afuera</text>
+<rect class="dg-ok" x="14" y="156" width="742" height="48" rx="8"/>
+<text class="dg-tiny dg-mono" x="385" y="176" text-anchor="middle">Arreglo: si no existe, password_verify($contrasena, HASH_RELLENO).</text>
+<text class="dg-tiny" x="385" y="194" text-anchor="middle">Los dos caminos hacen el mismo trabajo y responden con el mismo mensaje y el mismo código.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 81.5.</b> El mensaje es el mismo, pero el tiempo no. Un hash de relleno iguala el trabajo de los dos caminos.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// models/login.php: los dos caminos hacen el mismo trabajo
+const HASH_RELLENO = '$argon2id$v=19$m=65536,t=4,p=1$…';   // password_hash('relleno', …), generado una vez
+
+$fila = $stmt-&gt;fetch(PDO::FETCH_ASSOC);
+$ok = password_verify($contrasena, $fila['password_hash'] ?? HASH_RELLENO);
+if (!$fila || !$ok) {
+    Response::json(-1, 'Usuario o contraseña incorrectos', [], 401);    // mismo mensaje, mismo código
+}</code></pre>
+<p>El registro es más difícil: si el correo ya existe, hay que decirlo de alguna forma. La salida es mandar un correo en los dos casos ("si no tenías cuenta, confirma aquí"; "ya tienes una cuenta, ¿olvidaste tu contraseña?") y mostrar siempre el mismo mensaje en pantalla.</p>
+
+
+<h2 id="fuerza-bruta"><span class="sec-num">81.7</span>Fuerza bruta y credential stuffing</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f816t f816d">
+<title id="f816t">Tres formas de probar contraseñas</title>
+<desc id="f816d">Tres rejillas de cuentas por contraseñas probadas. Fuerza bruta: una cuenta, muchas contraseñas; la frena un límite por cuenta. Password spraying: muchas cuentas, pocas contraseñas comunes cada una; la frena una lista de contraseñas filtradas y un límite por IP. Credential stuffing: pares de usuario y contraseña filtrados de otro sitio, un intento por cuenta desde muchas IPs; lo frena MFA y la detección de contraseñas filtradas.</desc>
+<defs><marker id="f816a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-external)" x="14" y="14" width="230" height="40" rx="8"/>
+<text class="dg-label" x="129.0" y="38.0" text-anchor="middle">Fuerza bruta</text>
+<rect x="32" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="57" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="82" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="107" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="132" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="157" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="182" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="207" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="32" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="57" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="82" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="107" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="132" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="157" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="182" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="207" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="32" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="57" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="82" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="107" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="132" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="157" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="182" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="207" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="32" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="57" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="82" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="107" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="132" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="157" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="182" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="207" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<text class="dg-tiny" x="129" y="172" text-anchor="middle">1 cuenta × 10 000 contraseñas</text>
+<rect class="dg-ok" x="14" y="186" width="230" height="48" rx="8"/>
+<text class="dg-tiny" x="129.0" y="206.5" text-anchor="middle">Lo frena</text>
+<text class="dg-tiny" x="129.0" y="221.5" text-anchor="middle">límite por cuenta, retardo</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="270" y="14" width="230" height="40" rx="8"/>
+<text class="dg-label" x="385.0" y="38.0" text-anchor="middle">Password spraying</text>
+<rect x="288" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="313" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="338" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="363" y="66" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="388" y="66" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="413" y="66" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="438" y="66" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="463" y="66" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="288" y="88" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="313" y="88" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="338" y="88" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="363" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="388" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="413" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="438" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="463" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="288" y="110" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="313" y="110" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="338" y="110" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="363" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="388" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="413" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="438" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="463" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="288" y="132" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="313" y="132" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="338" y="132" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="363" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="388" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="413" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="438" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="463" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<text class="dg-tiny" x="385" y="172" text-anchor="middle">5 000 cuentas × 3 comunes</text>
+<rect class="dg-ok" x="270" y="186" width="230" height="48" rx="8"/>
+<text class="dg-tiny" x="385.0" y="206.5" text-anchor="middle">Lo frena</text>
+<text class="dg-tiny" x="385.0" y="221.5" text-anchor="middle">lista de filtradas, límite por IP</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="526" y="14" width="230" height="40" rx="8"/>
+<text class="dg-label" x="641.0" y="38.0" text-anchor="middle">Credential stuffing</text>
+<rect x="544" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="569" y="66" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="594" y="66" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="619" y="66" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="644" y="66" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="669" y="66" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="694" y="66" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="719" y="66" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="544" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="569" y="88" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="594" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="619" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="644" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="669" y="88" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="694" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="719" y="88" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="544" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="569" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="594" y="110" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="619" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="644" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="669" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="694" y="110" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="719" y="110" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="544" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="569" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="594" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="619" y="132" width="18" height="16" rx="3" class="dg-bad"/>
+<rect x="644" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="669" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="694" y="132" width="18" height="16" rx="3" class="dg-box"/>
+<rect x="719" y="132" width="18" height="16" rx="3" class="dg-bad"/>
+<text class="dg-tiny" x="641" y="172" text-anchor="middle">pares filtrados, 1 por cuenta</text>
+<rect class="dg-ok" x="526" y="186" width="230" height="48" rx="8"/>
+<text class="dg-tiny" x="641.0" y="206.5" text-anchor="middle">Lo frena</text>
+<text class="dg-tiny" x="641.0" y="221.5" text-anchor="middle">MFA, detección, muchas IPs</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 81.6.</b> Tres formas de recorrer la rejilla de cuentas por contraseñas. Un límite por cuenta frena la primera y no ve las otras dos.</figcaption>
+</figure>
+
+<p>El <dfn data-term="credential-stuffing">credential stuffing</dfn> es el más común hoy: el atacante tiene millones de pares de usuario y contraseña de filtraciones de otros sitios, y los prueba uno por cuenta, desde muchas IPs. Funciona porque la gente reutiliza contraseñas. No hay patrón por cuenta ni por IP que lo delate fácil; lo frenan MFA, la lista de filtradas al registrarse y la detección de inicios de sesión raros (<a href="m59-deteccion.html#sigma">M59</a> escribió una regla para el password spraying).</p>
+<pre data-lang="php"><code>&lt;?php
+// core/limite.php: contador por clave en una ventana fija, en la base (o en Redis, M08)
+function excedeLimite(PDO $db, string $clave, int $max, int $ventanaSeg): bool
+{
+    $db-&gt;prepare('INSERT INTO intentos (clave, ventana, n) VALUES (?, ?, 1)
+                  ON DUPLICATE KEY UPDATE n = n + 1')
+       -&gt;execute([$clave, intdiv(time(), $ventanaSeg)]);
+    $stmt = $db-&gt;prepare('SELECT n FROM intentos WHERE clave = ? AND ventana = ?');
+    $stmt-&gt;execute([$clave, intdiv(time(), $ventanaSeg)]);
+    return (int)$stmt-&gt;fetchColumn() &gt; $max;
+}
+// En el login, antes de buscar al usuario:
+if (excedeLimite($db, 'ip:' . $_SERVER['REMOTE_ADDR'], 30, 300)
+ || excedeLimite($db, 'cuenta:' . mb_strtolower($identificador), 10, 900)) {
+    header('Retry-After: 300');
+    Response::json(-1, 'Demasiados intentos, espera unos minutos', [], 429);
+}</code></pre>
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p><b>Bloquear la cuenta</b> tras N fallos frena la fuerza bruta y regala una denegación de servicio: cualquiera bloquea la cuenta de la coordinadora el día del cierre de postulaciones escribiendo mal su contraseña diez veces. Mejor un retardo creciente y un 429 temporal por cuenta, que expira solo, más el límite por IP del <a href="m08-resiliencia.html#rate-limiting">rate limiting</a> de M08.</p>
+</aside>
+
+
+<h2 id="mfa"><span class="sec-num">81.8</span>MFA y passkeys</h2>
+
+<p>El <dfn data-term="mfa">MFA</dfn> pide algo más que la contraseña. No todos los segundos factores valen lo mismo:</p>
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Factor</th><th>Cómo funciona</th><th>Resiste el phishing</th></tr></thead>
+    <tbody>
+<tr><td>SMS</td><td>Un código por mensaje</td><td>No; además, SIM swapping</td></tr>
+<tr><td>TOTP (RFC 6238)</td><td>Un código de 6 dígitos que cambia cada 30 s, de un secreto compartido</td><td>No: la víctima escribe el código en el sitio falso</td></tr>
+<tr><td><span class="no-autolink">Notificación push</span></td><td>Aprobar en el teléfono</td><td>No del todo: fatiga de MFA, aprobar sin mirar</td></tr>
+<tr><td>Passkey (WebAuthn)</td><td>Firma un desafío con una clave privada del dispositivo, atada al origen</td><td>Sí: el origen va dentro de la firma</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Una <dfn data-term="passkey">passkey</dfn> es una credencial de WebAuthn: un par de claves por cuenta y por sitio. La privada vive en el dispositivo o en el gestor de contraseñas y firma, como en <a href="m36-criptografia.html#firmas">M36</a>; el servidor guarda solo la pública <span class="badge badge--doc">Documentado</span>.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="f817t f817d">
+<title id="f817t">Una passkey resiste el phishing</title>
+<desc id="f817d">El servidor manda un desafío aleatorio. El navegador se lo pasa al autenticador junto con el origen real de la página. El autenticador firma el desafío y el origen con la clave privada de esa cuenta, que nunca sale del dispositivo. El servidor verifica la firma con la clave pública guardada y comprueba que el origen sea el suyo. En un sitio de phishing, el origen firmado es otro y la firma no sirve.</desc>
+<defs><marker id="f817-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f817-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f817-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f817-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">API</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador</text>
+<path class="dg-frame" d="M385.0 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Autenticador</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M73.0 72 L380.0 72" marker-end="url(#f817-r)"/>
+<rect x="119.2" y="55" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="66" text-anchor="middle">challenge = 32 bytes aleatorios</text>
+<path class="dg-edge" d="M388.0 106 L695.0 106" marker-end="url(#f817-a)"/>
+<rect x="417.7" y="89" width="249.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="100" text-anchor="middle">challenge + origen real de la página</text>
+<rect x="446.0" y="126" width="244" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="456.0" y="142">la clave privada no sale de aquí</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 174 L390.0 174" marker-end="url(#f817-r)"/>
+<rect x="424.3" y="157" width="236.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="168" text-anchor="middle">firma(challenge, origen, contador)</text>
+<path class="dg-edge" d="M382.0 208 L75.0 208" marker-end="url(#f817-a)"/>
+<rect x="139.0" y="191" width="177.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="202" text-anchor="middle">firma + datos del cliente</text>
+<rect x="80.0" y="228" width="307" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="90.0" y="244">verifica con la clave pública y el origen</text>
+<path d="M20 274 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="263" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="278" text-anchor="middle" style="fill:var(--fail)">en practicas-edu.example (phishing)</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M73.0 310 L380.0 310" marker-end="url(#f817-f)"/>
+<rect x="69.70000000000002" y="293" width="315.59999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="304" text-anchor="middle">origen firmado ≠ app.practicas.edu.gt: rechazo</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 81.7.</b> En TOTP, la persona decide a qué sitio le da el código, y se puede equivocar. En una passkey decide el navegador, que firma el origen real.</figcaption>
+</figure>
+
+<p>No hay secreto compartido que robar de tu base: una filtración de la tabla de passkeys no sirve para entrar. Para un sistema universitario, un camino razonable es TOTP opcional para todos y obligatorio (o passkeys) para administradores, que son quienes pueden asignar roles.</p>
+
+
+<h2 id="recuperacion"><span class="sec-num">81.9</span>Recuperar la contraseña</h2>
+
+<p>El flujo de "olvidé mi contraseña" es un login alternativo: quien controla el enlace controla la cuenta. Las reglas:</p>
+<pre data-lang="php"><code>&lt;?php
+// Pedir el restablecimiento: misma respuesta exista o no la cuenta
+$token = bin2hex(random_bytes(32));                              // 256 bits (M36)
+$db-&gt;prepare('INSERT INTO restablecimientos (usuario_id, token_hash, vence) VALUES (?, ?, ?)')
+   -&gt;execute([$usuarioId, hash('sha256', $token), time() + 30 * 60]);   // se guarda el hash, 30 min
+$enlace = URL_APP . '/restablecer?t=' . $token;                  // URL fija: nunca $_SERVER['HTTP_HOST']
+// Usarlo: buscar por hash('sha256', $t), vigente y sin usar; marcarlo usado en la misma transacción;
+// cambiar la contraseña y subir version_sesion: se cierran todas las sesiones abiertas.</code></pre>
+<ul>
+  <li><b>Token aleatorio de 256 bits</b>, guardado como hash: si se filtra la tabla, los enlaces no sirven.</li>
+  <li><b>Corto y de un solo uso</b>: 30 minutos, marcado como usado en la misma transacción que cambia la contraseña.</li>
+  <li><b>URL fija.</b> Armar el enlace con la cabecera <code>Host</code> de la request permite que un atacante pida el restablecimiento de Ana con <code>Host: ofertas-gratis.example</code> y reciba el token cuando ella haga clic (password reset poisoning).</li>
+  <li><b>Cerrar todas las sesiones</b> al cambiar la contraseña, con la versión de sesión de 81.3.</li>
+  <li><b>Misma respuesta</b> exista o no la cuenta (81.6).</li>
+</ul>
+
+
+<h2 id="fallas"><span class="sec-num">81.10</span>Fallas típicas y cómo reconocerlas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+<tr><td>Después de cerrar sesión, una cookie copiada sigue entrando</td><td>Sesión firmada sin revocación</td><td><code>version_sesion</code> en la cookie y en la base</td></tr>
+<tr><td>A alguien le quitaron un rol y lo sigue usando</td><td>Roles fijos en la cookie hasta <code>exp</code></td><td>Leer los roles actuales en <code>checkAuth</code></td></tr>
+<tr><td>Una IP parecida pasa la comprobación</td><td><code>strpos</code> en lugar de comparación exacta</td><td><code>hash_equals</code>, o quitar la atadura a IP</td></tr>
+<tr><td>El login tarda distinto según el usuario</td><td><code>password_verify</code> solo si existe</td><td>Hash de relleno</td></tr>
+<tr><td>Miles de intentos a una cuenta, sin freno</td><td>Sin límite por cuenta ni por IP</td><td>Contador con ventana y 429</td></tr>
+<tr><td>La cuenta de la coordinadora queda bloqueada</td><td>Bloqueo duro tras N fallos</td><td>Retardo creciente que expira</td></tr>
+<tr><td>El enlace de restablecimiento apunta a otro dominio</td><td>URL armada con <code>Host</code></td><td>URL fija de configuración</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Mide antes de cambiar: cuántos logins fallidos por hora, cuántos por IP, cuántos por cuenta. Con eso eliges los límites, y la regla de detección de M59 alerta cuando se pasan. La guía WEB02 agrega <code>version_sesion</code>, el hash de relleno, la tabla <code>intentos</code> con su límite y TOTP para administradores, y prueba cada uno con una falla provocada. Con quién eres y qué puedes hacer resueltos, quedan los archivos y las URLs que el servidor visita por ti: <a href="m82-archivos-ssrf.html">M82</a>.</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m81"></div>
+<div data-exercise="m81-login"></div>
+<div data-checkpoint="m81"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m81.data.js"></script>
+<script src="../assets/js/data/exercises/m81.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>

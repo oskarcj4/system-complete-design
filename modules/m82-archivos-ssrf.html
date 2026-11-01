@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M82. Archivos, SSRF y redirecciones</title>
+<meta name="description" content="Tres lugares donde el usuario le da al servidor algo que no es texto: un archivo para guardar, una URL para visitar y una URL a donde mandar al navegador. Subidas seguras (tipo real, nombre propio, fuera del webroot), SSRF y el servicio de metadatos de la nube, DNS rebinding, redirecciones abiertas y las URLs guardadas del sistema de prácticas.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m82">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Archivos, SSRF y redirecciones</h1>
+        <p class="lead">Un archivo subido termina en tu disco, una URL que tu servidor visita sale desde dentro de tu red y una URL de redirección se lleva al usuario con tu dominio en la barra. En los tres casos, el servidor presta su posición a un dato que no escribió.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M82</dd></div>
+          <div><dt>Parte</dt><dd>IX. Seguridad web: del navegador al servidor</dd></div>
+          <div><dt>Duración</dt><dd>100 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M37, M77, M80</dd></div>
+          <div><dt>Estado</dt><dd data-status="m82">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Recibir un archivo con cinco controles: tamaño, tipo real, nombre propio, lugar fuera del webroot y un script que lo sirve.</li>
+    <li>Explicar SSRF y por qué el servicio de metadatos de la nube es su blanco favorito.</li>
+    <li>Validar una URL externa: esquema, puerto, rangos de IP, la IP fija contra el DNS rebinding y sin seguir redirecciones.</li>
+    <li>Cerrar una redirección abierta con una lista de destinos.</li>
+    <li>Validar las URLs que el sistema guarda (<code>cv_url</code>, <code>sitio_web</code>) al entrar y al pintarse.</li>
+  </ul>
+</section>
+
+<p>En <a href="m79-inyecciones.html#raiz">M79</a> el dato del usuario terminaba dentro de un lenguaje. Aquí termina como algo que el servidor hace: un archivo que guarda, una URL que visita o una URL a la que manda al navegador. El sistema de prácticas no tiene ninguna de las tres funciones todavía, pero tiene dos URLs guardadas (<code>cv_url</code> y <code>sitio_web</code>), y la guía WEB08 convierte los CVs en archivos subidos.</p>
+
+
+<h2 id="subidas"><span class="sec-num">82.1</span>Subir un archivo</h2>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una oficina de correos que recibe paquetes. Pesa el paquete (tamaño), lo pasa por rayos X en lugar de creer la etiqueta (tipo real), le pone su propio número de guía (nombre propio), lo guarda en la bodega y no en el mostrador (fuera del webroot) y solo se lo entrega al destinatario con identificación (el script con el dueño).</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f821t f821d">
+<title id="f821t">El camino de un archivo subido</title>
+<desc id="f821d">Cinco controles en fila sobre un archivo que llega en un POST multipart. Tamaño, con los límites de PHP y uno propio. Tipo real, leído de los primeros bytes con finfo y no de la extensión ni del Content-Type. Nombre propio, aleatorio, sin usar el que mandó el usuario. Lugar, fuera de la carpeta pública, para que nunca se ejecute. Y servirlo con un script que comprueba el dueño y manda Content-Disposition attachment y nosniff.</desc>
+<defs><marker id="f821a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="20" width="742" height="30" rx="8"/>
+<text class="dg-tiny dg-mono" x="385" y="40" text-anchor="middle">POST multipart/form-data: cv.pdf (lo que diga el usuario)</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="14" y="80" width="140" height="60" rx="8"/>
+<text class="dg-small" x="84.0" y="106.5" text-anchor="middle">1. Tamaño</text>
+<text class="dg-tiny" x="84.0" y="121.5" text-anchor="middle">límite propio</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="164" y="80" width="140" height="60" rx="8"/>
+<text class="dg-small" x="234.0" y="106.5" text-anchor="middle">2. Tipo real</text>
+<text class="dg-tiny" x="234.0" y="121.5" text-anchor="middle">finfo, no extensión</text>
+<path class="dg-edge" d="M154 110 L163 110" marker-end="url(#f821a)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="314" y="80" width="140" height="60" rx="8"/>
+<text class="dg-small" x="384.0" y="106.5" text-anchor="middle">3. Nombre propio</text>
+<text class="dg-tiny" x="384.0" y="121.5" text-anchor="middle">random_bytes</text>
+<path class="dg-edge" d="M304 110 L313 110" marker-end="url(#f821a)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="464" y="80" width="140" height="60" rx="8"/>
+<text class="dg-small" x="534.0" y="106.5" text-anchor="middle">4. Fuera del webroot</text>
+<text class="dg-tiny" x="534.0" y="121.5" text-anchor="middle">storage/cvs/</text>
+<path class="dg-edge" d="M454 110 L463 110" marker-end="url(#f821a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="614" y="80" width="140" height="60" rx="8"/>
+<text class="dg-small" x="684.0" y="106.5" text-anchor="middle">5. Servir con script</text>
+<text class="dg-tiny" x="684.0" y="121.5" text-anchor="middle">dueño + attachment</text>
+<path class="dg-edge" d="M604 110 L613 110" marker-end="url(#f821a)"/>
+<rect class="dg-warnbox" x="14" y="166" width="742" height="48" rx="8"/>
+<text class="dg-tiny" x="385" y="186" text-anchor="middle">Ninguno solo alcanza: un PDF real puede llevar JavaScript, y un nombre propio en la carpeta pública</text>
+<text class="dg-tiny" x="385" y="204" text-anchor="middle">se sigue sirviendo. Juntos, el archivo se guarda, no se ejecuta y solo lo baja quien debe.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 82.1.</b> Los cinco controles se apoyan entre sí. El cuarto es el que evita lo peor: un archivo que el servidor ejecuta.</figcaption>
+</figure>
+
+<p>Lo peor que puede pasar con una subida en PHP es una <b>web shell</b>: un <code>.php</code> que termina en una carpeta que Apache sirve, y que el atacante abre en el navegador para ejecutar comandos con los permisos del servidor. Todo lo demás (llenar el disco, un PDF con malware para la reclutadora, un SVG con un script) es menos grave, y también tiene su control.</p>
+
+
+<h2 id="tipo-real"><span class="sec-num">82.2</span>El tipo real del archivo</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f822t f822d">
+<title id="f822t">Tres formas de saber el tipo de un archivo</title>
+<desc id="f822d">Tres columnas para un archivo llamado cv.pdf.php. La extensión la elige el usuario y dice pdf o php según cómo se lea. El Content-Type del multipart también lo elige el cliente y puede decir application/pdf. Los primeros bytes del contenido, que lee finfo, dicen lo que el archivo es de verdad: %PDF- para un PDF, &lt;?php para un script. Solo la última columna sale del archivo y no de la request.</desc>
+<defs><marker id="f822a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="20" width="238" height="40" rx="8"/>
+<text class="dg-label" x="133.0" y="44.0" text-anchor="middle">Extensión</text>
+<rect class="dg-bad" x="14" y="72" width="238" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="133.0" y="98.0" text-anchor="middle">cv.pdf.php</text>
+<text class="dg-tiny" x="133" y="138" text-anchor="middle">la elige el usuario</text>
+<rect class="dg-box" x="266" y="20" width="238" height="40" rx="8"/>
+<text class="dg-label" x="385.0" y="44.0" text-anchor="middle">Content-Type</text>
+<rect class="dg-bad" x="266" y="72" width="238" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="385.0" y="98.0" text-anchor="middle">application/pdf</text>
+<text class="dg-tiny" x="385" y="138" text-anchor="middle">lo manda el cliente</text>
+<rect class="dg-box" x="518" y="20" width="238" height="40" rx="8"/>
+<text class="dg-label" x="637.0" y="44.0" text-anchor="middle">Primeros bytes (finfo)</text>
+<rect class="dg-ok" x="518" y="72" width="238" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="637.0" y="98.0" text-anchor="middle">%PDF-1.7 …  o  &lt;?php …</text>
+<text class="dg-tiny" x="637" y="138" text-anchor="middle">sale del contenido</text>
+<rect class="dg-warnbox" x="14" y="160" width="742" height="44" rx="8"/>
+<text class="dg-tiny" x="385" y="187" text-anchor="middle">finfo dice qué es; no dice que sea inofensivo. Una lista de tipos permitidos, y nunca ejecutar lo subido.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 82.2.</b> La extensión y el <code>Content-Type</code> vienen en la request y los escribe el cliente. Los primeros bytes vienen del archivo.</figcaption>
+</figure>
+
+<ul>
+  <li><b>Lista de permitidos, no de prohibidos.</b> Prohibir <code>.php</code> deja pasar <code>.phtml</code>, <code>.phar</code>, <code>.PhP</code> y <code>cv.php.</code> en Windows. Permitir solo <code>application/pdf</code> no deja pasar nada más.</li>
+  <li><b>Un archivo puede ser dos cosas.</b> Un <b>políglota</b> es válido como dos formatos a la vez: un GIF cuyos primeros bytes son <code>GIF89a</code> y que más adelante contiene <code>&lt;?php</code>. finfo dice "image/gif" y es verdad. Por eso el tipo real no reemplaza al control 4: si nunca se ejecuta, no importa qué más contenga.</li>
+  <li><b>Las imágenes se vuelven a codificar.</b> Abrir la imagen con GD o Imagick y guardarla de nuevo descarta todo lo que no son píxeles, incluidos los metadatos EXIF con la ubicación de la foto.</li>
+  <li><b>SVG es un documento, no una imagen.</b> Lleva <code>&lt;script&gt;</code> y se ejecuta si se abre en tu origen (<a href="m77-xss-dom.html#tipos">M77</a>). Si se aceptan, se sirven como descarga o desde otro dominio.</li>
+</ul>
+
+
+<h2 id="guardar"><span class="sec-num">82.3</span>Guardarlo y servirlo</h2>
+
+<pre data-lang="php"><code>&lt;?php
+// endpoints/cv.php POST: subir el CV de una postulación propia
+const CV_MAX_BYTES = 2 * 1024 * 1024;
+const CV_TIPOS = ['application/pdf' =&gt; 'pdf'];                     // lista, no "lo que no sea .php"
+
+$sesion = autorizar('cv');
+$postulacion = $postulaciones-&gt;propiaPendiente((int)($_POST['postulacion'] ?? 0), $sesion); // M80
+$f = $_FILES['cv'] ?? null;
+if (!$f || $f['error'] !== UPLOAD_ERR_OK || $f['size'] &gt; CV_MAX_BYTES) {
+    Response::json(-1, 'Archivo ausente o mayor a 2 MB', [], 400);
+}
+$tipo = (new finfo(FILEINFO_MIME_TYPE))-&gt;file($f['tmp_name']);    // del contenido, no de la request
+if (!isset(CV_TIPOS[$tipo])) {
+    Response::json(-1, 'Solo PDF', [], 415);
+}
+$nombre = bin2hex(random_bytes(16)) . '.' . CV_TIPOS[$tipo];       // el nombre del usuario no se usa
+$destino = __DIR__ . '/../../storage/cvs/' . $nombre;               // fuera de public_html
+if (!move_uploaded_file($f['tmp_name'], $destino)) {
+    Response::json(-1, 'No se pudo guardar', [], 500);
+}
+$postulaciones-&gt;guardarCv($postulacion['id'], $nombre, $f['name']); // el nombre original, solo como dato</code></pre>
+<p>PHP tiene sus propios límites antes de tu código: <code>upload_max_filesize</code> (2 MB por defecto) y <code>post_max_size</code> (8 MB) en <code>php.ini</code> <span class="badge badge--doc">Documentado</span>. Son el piso; el límite propio dice cuánto acepta esta función. Servirlo es el script de <a href="m80-control-acceso.html#traversal">80.8</a>: el dueño en la consulta, el nombre desde la base, <code>Content-Disposition: attachment</code> para que el navegador lo descargue en lugar de abrirlo en tu origen, y <code>nosniff</code> de <a href="m78-csp-cabeceras.html#cabeceras">M78</a> para que no adivine el tipo.</p>
+<p>Si por cualquier razón queda una carpeta pública de subidas, Apache puede negarse a interpretar PHP en ella. Es una red de seguridad, no el control principal:</p>
+<pre data-lang="shell"><code># Si por error algo termina en una carpeta pública de subidas (Apache de XAMPP)
+&lt;Directory "C:/xampp/htdocs/SistemaControlPracticas/uploads"&gt;
+    php_admin_flag engine off            # mod_php no interpreta nada aquí
+    Options -Indexes -ExecCGI
+    &lt;FilesMatch "\.(php|phtml|phar|pht)$"&gt;
+        Require all denied
+    &lt;/FilesMatch&gt;
+&lt;/Directory&gt;</code></pre>
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Un almacén de objetos (S3 o compatible, <a href="m09-objetos.html">M09</a>) resuelve casi todo esto de una vez: no ejecuta nada, se sirve desde otro dominio y la descarga va con una URL firmada que dura minutos. Cuesta otra pieza que operar. Para los CVs de un sistema universitario, una carpeta fuera del webroot y el script de 80.8 alcanzan; si el sistema crece o pasa a varias máquinas, el almacén de objetos es el paso siguiente.</p>
+</aside>
+<p>Los archivos comprimidos tienen su propia trampa: un ZIP cuyas entradas se llaman <code>../../public/shell.php</code> escribe fuera de la carpeta al extraerse (<b>zip slip</b>), y uno de 40 KB que se expande a gigas llena el disco (<b>bomba de descompresión</b>). Si hay que extraer, cada nombre pasa por el <code>realpath</code> de 80.8 y se cuenta el tamaño mientras se extrae.</p>
+
+
+<h2 id="ssrf"><span class="sec-num">82.4</span>SSRF: el servidor visita una URL por ti</h2>
+
+<p><dfn data-term="ssrf">SSRF</dfn> (Server-Side Request Forgery) pasa cuando el servidor hace una request a una URL que eligió el usuario. Es el CSRF de <a href="m76-csrf.html#ataque">M76</a> movido al servidor: en lugar de usar el navegador de la víctima, el atacante usa tu servidor, que está dentro de tu red y ve lo que internet no ve. Funciones que la provocan: vista previa de enlaces, importar desde una URL, webhooks configurables, generar un PDF desde HTML, descargar una imagen de perfil desde un enlace.</p>
+<p>Suponte que se agrega una vista previa del sitio web de cada institución:</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 436" role="img" aria-labelledby="f823t f823d">
+<title id="f823t">SSRF: la vista previa del sitio web de una institución</title>
+<desc id="f823d">Una función nueva muestra una vista previa de sitio_web. La administradora de una institución guarda como sitio web la dirección del servicio de metadatos de la nube. El servidor la visita desde dentro de la red y devuelve, como vista previa, las credenciales temporales del rol de la máquina.</desc>
+<defs><marker id="f823-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f823-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f823-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f823-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Atacante</text>
+<path class="dg-frame" d="M70.0 40 V378"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">API (vista previa)</text>
+<path class="dg-frame" d="M280.0 40 V378"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">169.254.169.254</text>
+<path class="dg-frame" d="M490.0 40 V378"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Red interna</text>
+<path class="dg-frame" d="M700.0 40 V378"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#f823-a)"/>
+<rect x="-5.899999999999977" y="55" width="361.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">sitio_web = http://169.254.169.254/latest/meta-data/…</text>
+<path class="dg-edge" d="M283.0 106 L485.0 106" marker-end="url(#f823-a)"/>
+<rect x="286.6" y="89" width="196.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">GET (desde dentro de la VPC)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 140 L285.0 140" marker-end="url(#f823-r)"/>
+<rect x="263.5" y="123" width="243.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="134" text-anchor="middle">AccessKeyId, SecretAccessKey, Token</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M277.0 174 L75.0 174" marker-end="url(#f823-f)"/>
+<rect x="43.60000000000002" y="157" width="262.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="168" text-anchor="middle">vista previa: las credenciales del rol</text>
+<path d="M20 206 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="195" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="210" text-anchor="middle" style="fill:var(--fail)">la misma función contra la red interna</text>
+<path class="dg-edge" d="M73.0 242 L275.0 242" marker-end="url(#f823-a)"/>
+<rect x="56.80000000000001" y="225" width="236.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="236" text-anchor="middle">sitio_web = http://10.0.2.15:6379/</text>
+<path class="dg-edge" d="M283.0 276 L695.0 276" marker-end="url(#f823-a)"/>
+<rect x="411.4" y="259" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="270" text-anchor="middle">GET a un Redis interno</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M277.0 310 L75.0 310" marker-end="url(#f823-f)"/>
+<rect x="43.60000000000002" y="293" width="262.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="304" text-anchor="middle">error distinto: el puerto está abierto</text>
+<rect class="dg-box dg-box--em" x="428.0" y="390" width="124" height="38" rx="4"/>
+<text class="dg-small" x="490.0" y="406" text-anchor="middle" style="font-weight:700">IMDS</text>
+<text class="dg-tiny" x="490.0" y="421" text-anchor="middle">metadatos de la nube</text>
+<rect class="dg-box dg-box--em" x="638.0" y="390" width="124" height="38" rx="4"/>
+<text class="dg-small" x="700.0" y="406" text-anchor="middle" style="font-weight:700">10.0.0.0/8</text>
+<text class="dg-tiny" x="700.0" y="421" text-anchor="middle">sin internet</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 82.3.</b> Para internet, 169.254.169.254 no existe. Para tu servidor en la nube, es la ventanilla que entrega las credenciales de la máquina.</figcaption>
+</figure>
+
+<p>Aunque la respuesta no se muestre (<b>SSRF ciega</b>), el atacante aprende por los tiempos y los errores qué puertos están abiertos en la red interna, y puede disparar acciones con un <code>GET</code> contra servicios internos que no piden autenticación porque "solo se llaman desde dentro".</p>
+
+
+<h2 id="imds"><span class="sec-num">82.5</span>El servicio de metadatos de la nube</h2>
+
+<p>Cada máquina virtual en AWS, Google Cloud o Azure puede preguntar por HTTP, sin autenticación, quién es, y obtener las <b>credenciales temporales del rol</b> que tiene asignado. Es el <dfn data-term="imds">IMDS</dfn> (Instance Metadata Service) en <code>169.254.169.254</code>. En <a href="m37-nube.html#incidentes">M37</a> viste el caso de Capital One en 2019: una request no prevista llegó a IMDSv1 y las credenciales del rol bastaron para leer el almacén de objetos <span class="badge badge--doc">Documentado</span>.</p>
+<p>Las defensas de la nube contra SSRF son pedirle al cliente algo que una URL sola no da:</p>
+<ul>
+  <li><b>AWS IMDSv2</b> exige primero un token pedido con <code>PUT</code> y una cabecera propia, y el token vuelve con un límite de saltos de red <span class="badge badge--doc">Documentado</span>. Una SSRF típica solo controla la URL de un <code>GET</code>.</li>
+  <li><b>Google Cloud</b> exige la cabecera <code>Metadata-Flavor: Google</code> <span class="badge badge--doc">Documentado</span>, y <b>Azure</b>, <code>Metadata: true</code> <span class="badge badge--doc">Documentado</span>.</li>
+</ul>
+<pre data-lang="shell"><code># IMDSv2 (AWS): primero un token con PUT, después la lectura con el token
+$ TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+$ curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/
+# Exigir v2 y un salto de red: un contenedor detrás de un puente ya no llega
+$ aws ec2 modify-instance-metadata-options --instance-id i-0abc… \
+    --http-tokens required --http-put-response-hop-limit 1</code></pre>
+<p>Y la de siempre: el rol de la máquina con lo mínimo (<a href="m37-nube.html#iam">M37</a>). Si una SSRF llega a las credenciales, que no alcancen para mucho.</p>
+
+
+<h2 id="ssrf-defensa"><span class="sec-num">82.6</span>Validar una URL que vas a visitar</h2>
+
+<p>La mejor defensa es no tener la función, o que la URL no sea libre: una lista de dominios permitidos (los webhooks a un proveedor de pagos van a sus dominios, nada más). Cuando la URL tiene que ser libre, como la vista previa, la validación tiene varias reglas y todas importan:</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f825t f825d">
+<title id="f825t">Adónde no puede ir una URL que manda el usuario</title>
+<desc id="f825d">Una rejilla de rangos de IP que la función de vista previa rechaza: loopback 127.0.0.0/8, privadas 10/8, 172.16/12 y 192.168/16, link-local 169.254/16 con el servicio de metadatos, 0.0.0.0/8, compartida 100.64/10, y sus equivalentes IPv6 ::1, fc00::/7 y fe80::/10, más las IPv4 escritas como IPv6. A la derecha, las otras reglas: solo http y https, solo los puertos 80 y 443, sin seguir redirecciones, timeout y tamaño máximo.</desc>
+<defs><marker id="f825a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="200" y="22" text-anchor="middle">Rangos rechazados</text>
+<rect class="dg-bad" x="14" y="32" width="200" height="19" rx="5"/>
+<text class="dg-tiny dg-mono" x="114.0" y="45.5" text-anchor="middle">127.0.0.0/8</text>
+<text class="dg-tiny" x="226" y="46" text-anchor="start">loopback</text>
+<rect class="dg-bad" x="14" y="55" width="200" height="19" rx="5"/>
+<text class="dg-tiny dg-mono" x="114.0" y="68.5" text-anchor="middle">10.0.0.0/8</text>
+<text class="dg-tiny" x="226" y="69" text-anchor="start">privada</text>
+<rect class="dg-bad" x="14" y="78" width="200" height="19" rx="5"/>
+<text class="dg-tiny dg-mono" x="114.0" y="91.5" text-anchor="middle">172.16.0.0/12</text>
+<text class="dg-tiny" x="226" y="92" text-anchor="start">privada</text>
+<rect class="dg-bad" x="14" y="101" width="200" height="19" rx="5"/>
+<text class="dg-tiny dg-mono" x="114.0" y="114.5" text-anchor="middle">192.168.0.0/16</text>
+<text class="dg-tiny" x="226" y="115" text-anchor="start">privada</text>
+<rect class="dg-bad" x="14" y="124" width="200" height="19" rx="5"/>
+<text class="dg-tiny dg-mono" x="114.0" y="137.5" text-anchor="middle">169.254.0.0/16</text>
+<text class="dg-tiny" x="226" y="138" text-anchor="start">link-local, IMDS</text>
+<rect class="dg-bad" x="14" y="147" width="200" height="19" rx="5"/>
+<text class="dg-tiny dg-mono" x="114.0" y="160.5" text-anchor="middle">100.64.0.0/10</text>
+<text class="dg-tiny" x="226" y="161" text-anchor="start">compartida (CGNAT)</text>
+<rect class="dg-bad" x="14" y="170" width="200" height="19" rx="5"/>
+<text class="dg-tiny dg-mono" x="114.0" y="183.5" text-anchor="middle">0.0.0.0/8</text>
+<text class="dg-tiny" x="226" y="184" text-anchor="start">"esta red"</text>
+<rect class="dg-bad" x="14" y="193" width="200" height="19" rx="5"/>
+<text class="dg-tiny dg-mono" x="114.0" y="206.5" text-anchor="middle">::1, fc00::/7, fe80::/10</text>
+<text class="dg-tiny" x="226" y="207" text-anchor="start">IPv6 locales</text>
+<rect class="dg-bad" x="14" y="216" width="200" height="19" rx="5"/>
+<text class="dg-tiny dg-mono" x="114.0" y="229.5" text-anchor="middle">::ffff:127.0.0.1</text>
+<text class="dg-tiny" x="226" y="230" text-anchor="start">IPv4 dentro de IPv6</text>
+<text class="dg-label" x="590" y="22" text-anchor="middle">Y además</text>
+<rect class="dg-ok" x="430" y="32" width="326" height="28" rx="8"/>
+<text class="dg-tiny" x="593.0" y="50.0" text-anchor="middle">esquema: solo http y https</text>
+<rect class="dg-ok" x="430" y="66" width="326" height="28" rx="8"/>
+<text class="dg-tiny" x="593.0" y="84.0" text-anchor="middle">puertos: solo 80 y 443</text>
+<rect class="dg-ok" x="430" y="100" width="326" height="28" rx="8"/>
+<text class="dg-tiny" x="593.0" y="118.0" text-anchor="middle">redirecciones: no seguirlas</text>
+<rect class="dg-ok" x="430" y="134" width="326" height="28" rx="8"/>
+<text class="dg-tiny" x="593.0" y="152.0" text-anchor="middle">conectar a la IP validada</text>
+<rect class="dg-ok" x="430" y="168" width="326" height="28" rx="8"/>
+<text class="dg-tiny" x="593.0" y="186.0" text-anchor="middle">timeout de 3 s y 1 MB máximo</text>
+<rect class="dg-ok" x="430" y="202" width="326" height="28" rx="8"/>
+<text class="dg-tiny" x="593.0" y="220.0" text-anchor="middle">salida por un proxy con lista (M32)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 82.4.</b> Comprobar que el host "no sea localhost" no alcanza: hay nueve formas de escribir una dirección interna, y las redirecciones y el DNS agregan más.</figcaption>
+</figure>
+
+<p>Dos trampas se llevan casi todas las validaciones caseras. La primera son las <b>redirecciones</b>: la URL válida apunta a un sitio público que responde <code>302 Location: http://169.254.169.254/</code>, y curl la sigue si se lo permites. La segunda es el <dfn data-term="dns-rebinding">DNS rebinding</dfn>:</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="f824t f824d">
+<title id="f824t">DNS rebinding: la IP cambia entre la validación y la request</title>
+<desc id="f824d">El código resuelve el nombre del atacante y obtiene una IP pública: la validación pasa. Un instante después, la librería HTTP vuelve a resolver el mismo nombre; el DNS del atacante, con TTL cero, ahora responde 169.254.169.254, y la request va al servicio de metadatos. La defensa es conectar a la IP que se validó.</desc>
+<defs><marker id="f824-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f824-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f824-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f824-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">API</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">DNS del atacante</text>
+<path class="dg-frame" d="M385.0 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Destino</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<path class="dg-edge" d="M73.0 72 L380.0 72" marker-end="url(#f824-a)"/>
+<rect x="119.2" y="55" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="66" text-anchor="middle">resolver vista.atacante.example</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 106 L75.0 106" marker-end="url(#f824-r)"/>
+<rect x="152.2" y="89" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="100" text-anchor="middle">93.184.216.34 (TTL 0)</text>
+<rect x="80.0" y="126" width="195" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="90.0" y="142">IP pública: validación OK</text>
+<path class="dg-edge" d="M73.0 174 L380.0 174" marker-end="url(#f824-a)"/>
+<rect x="148.9" y="157" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="168" text-anchor="middle">curl vuelve a resolver</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M382.0 208 L75.0 208" marker-end="url(#f824-f)"/>
+<rect x="172.0" y="191" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="202" text-anchor="middle">169.254.169.254</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M73.0 242 L695.0 242" marker-end="url(#f824-f)"/>
+<rect x="316.3" y="225" width="137.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="236" text-anchor="middle">GET a los metadatos</text>
+<path d="M20 274 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="263" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="278" text-anchor="middle" style="fill:var(--fail)">con CURLOPT_RESOLVE: conectar a la IP validada</text>
+<path class="dg-edge" d="M73.0 310 L695.0 310" marker-end="url(#f824-a)"/>
+<rect x="217.3" y="293" width="335.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="304" text-anchor="middle">GET a 93.184.216.34, Host: vista.atacante.example</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 82.5.</b> Validar el nombre y después dejar que la librería lo resuelva otra vez son dos preguntas distintas al DNS, y el atacante contesta las dos.</figcaption>
+</figure>
+
+<pre data-lang="php"><code>&lt;?php
+// core/url_externa.php: visitar una URL que mandó un usuario
+function obtenerExterna(string $url): string
+{
+    $p = parse_url($url);
+    if (!$p || !in_array($p['scheme'] ?? '', ['http', 'https'], true) || empty($p['host'])
+        || isset($p['user']) || !in_array($p['port'] ?? null, [null, 80, 443], true)) {
+        throw new DomainException('URL no permitida');
+    }
+    $ips = gethostbynamel($p['host']) ?: [];                         // IPv4; IPv6 se descarta abajo
+    $ip = $ips[0] ?? '';
+    if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_GLOBAL_RANGE)) {
+        throw new DomainException('Destino no permitido');           // privadas, loopback, link-local…
+    }
+    $puerto = $p['port'] ?? ($p['scheme'] === 'https' ? 443 : 80);
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RESOLVE        =&gt; ["{$p['host']}:$puerto:$ip"],    // conecta a la IP validada
+        CURLOPT_IPRESOLVE      =&gt; CURL_IPRESOLVE_V4,
+        CURLOPT_PROTOCOLS_STR  =&gt; 'http,https',
+        CURLOPT_FOLLOWLOCATION =&gt; false,                             // una redirección se valida de nuevo
+        CURLOPT_CONNECTTIMEOUT =&gt; 2,
+        CURLOPT_TIMEOUT        =&gt; 3,
+        CURLOPT_RETURNTRANSFER =&gt; true,
+        CURLOPT_MAXFILESIZE    =&gt; 1024 * 1024,
+    ]);
+    $cuerpo = curl_exec($ch);
+    curl_close($ch);
+    return $cuerpo === false ? '' : $cuerpo;
+}</code></pre>
+<p><code>FILTER_FLAG_GLOBAL_RANGE</code> existe desde PHP 8.2 y rechaza las direcciones privadas, reservadas y locales en una sola bandera <span class="badge badge--doc">Documentado</span>. La función devuelve solo IPv4 y fuerza IPv4 en curl, lo que evita las formas IPv6 de la figura 82.4 a cambio de no visitar sitios que solo tienen IPv6. Debajo de todo, la red: si el servidor solo puede salir por un proxy con lista de destinos (el <a href="m32-firewalls.html#entrada-salida">filtrado de salida</a> de M32), una validación que falla no llega lejos.</p>
+
+
+<h2 id="redireccion"><span class="sec-num">82.7</span>Redirecciones abiertas</h2>
+
+<p>Una <dfn data-term="open-redirect">redirección abierta</dfn> es un endpoint de tu dominio que manda al navegador a cualquier URL que venga en un parámetro. No compromete tu servidor; presta tu dominio. El usuario ve <code>practicas.edu.gt</code> en el enlace, confía, y termina en otro sitio.</p>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f826t f826d">
+<title id="f826t">Redirección abierta en el login</title>
+<desc id="f826d">Arriba, el enlace que manda el atacante: la URL empieza con el dominio real del sistema, en la ruta de login, y lleva un parámetro next con un dominio parecido. La víctima ve el dominio real, inicia sesión de verdad y el sistema la redirige al sitio falso, que le pide la contraseña otra vez. Abajo, tres valores de next que parecen relativos y no lo son: //evil, /\evil y https:evil. La defensa: aceptar solo rutas de una lista o un nombre de pantalla.</desc>
+<defs><marker id="f826a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="20" width="742" height="40" rx="8"/>
+<text class="dg-tiny dg-mono" x="385.0" y="44.0" text-anchor="middle">https://practicas.edu.gt/login?next=https://practicas-edu.example/sesion-expirada</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="14" y="80" width="176" height="50" rx="8"/>
+<text class="dg-small" x="102.0" y="101.5" text-anchor="middle">Ve el dominio real</text>
+<text class="dg-tiny" x="102.0" y="116.5" text-anchor="middle">confía en el enlace</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="202" y="80" width="176" height="50" rx="8"/>
+<text class="dg-small" x="290.0" y="101.5" text-anchor="middle">Inicia sesión</text>
+<text class="dg-tiny" x="290.0" y="116.5" text-anchor="middle">en el sistema real</text>
+<path class="dg-edge" d="M190 105 L201 105" marker-end="url(#f826a)"/>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="390" y="80" width="176" height="50" rx="8"/>
+<text class="dg-small" x="478.0" y="101.5" text-anchor="middle">302 a next</text>
+<text class="dg-tiny" x="478.0" y="116.5" text-anchor="middle">Location: el sitio falso</text>
+<path class="dg-edge" d="M378 105 L389 105" marker-end="url(#f826a)"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="578" y="80" width="176" height="50" rx="8"/>
+<text class="dg-small" x="666.0" y="101.5" text-anchor="middle">"Sesión expirada"</text>
+<text class="dg-tiny" x="666.0" y="116.5" text-anchor="middle">pide la contraseña</text>
+<path class="dg-edge" d="M566 105 L577 105" marker-end="url(#f826a)"/>
+<text class="dg-small" x="20" y="160" text-anchor="start">Parecen rutas y no lo son:</text>
+<rect class="dg-bad" x="14" y="172" width="238" height="26" rx="5"/>
+<text class="dg-tiny dg-mono" x="133.0" y="189.0" text-anchor="middle">//practicas-edu.example</text>
+<rect class="dg-bad" x="264" y="172" width="238" height="26" rx="5"/>
+<text class="dg-tiny dg-mono" x="383.0" y="189.0" text-anchor="middle">/\practicas-edu.example</text>
+<rect class="dg-bad" x="514" y="172" width="238" height="26" rx="5"/>
+<text class="dg-tiny dg-mono" x="633.0" y="189.0" text-anchor="middle">https:practicas-edu.example</text>
+<text class="dg-tiny" x="385" y="222" text-anchor="middle">Arreglo: next es el nombre de una pantalla de una lista, o una ruta que empieza con una sola /</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 82.6.</b> La víctima hizo todo bien: revisó el dominio e inició sesión en el sitio real. La redirección hizo el resto.</figcaption>
+</figure>
+
+<p>Además del phishing, una redirección abierta en el dominio de una aplicación OAuth permite robar el código de autorización si el proveedor compara el <code>redirect_uri</code> por prefijo (<a href="m10-seguridad.html#oauth">M10</a>), y con <code>javascript:</code> en un <code>location.href</code> del frontend es un XSS de DOM (<a href="m77-xss-dom.html#dom">M77</a>).</p>
+<pre data-lang="php"><code>&lt;?php
+// Después del login: next es el nombre de una pantalla, no una URL
+const DESTINOS = ['inicio' =&gt; '/', 'postulaciones' =&gt; '/mis-postulaciones', 'perfil' =&gt; '/perfil'];
+$destino = DESTINOS[$_GET['next'] ?? ''] ?? '/';
+header('Location: ' . $destino, true, 303);
+
+// Si de verdad hace falta una ruta libre: una sola / al inicio, sin // ni \ ni esquema
+function rutaLocal(string $r): string
+{
+    return preg_match('#^/(?![/\\\\])[^\\\\\r\n]*$#', $r) ? $r : '/';
+}</code></pre>
+
+
+<h2 id="urls-guardadas"><span class="sec-num">82.8</span>Las URLs que el sistema guarda</h2>
+
+<p>Hoy, <code>cv_url</code> y <code>sitio_web</code> se guardan con <code>trim</code> y nada más, y el frontend las pinta como enlaces. Nadie las visita desde el servidor, así que no hay SSRF; el riesgo está en el navegador: <code>javascript:fetch('…'+document.cookie)</code> como sitio web de una institución es un XSS almacenado que se dispara cuando alguien hace clic (<a href="m77-xss-dom.html#contexto">77.2</a>), y una URL a un sitio de phishing con aspecto de CV es una redirección abierta con más pasos.</p>
+<pre data-lang="php"><code>&lt;?php
+// endpoints/instituciones.php y postulaciones.php: validar al guardar
+function urlWebValida(string $u): bool
+{
+    return strlen($u) &lt;= 500
+        &amp;&amp; filter_var($u, FILTER_VALIDATE_URL) !== false
+        &amp;&amp; in_array(strtolower(parse_url($u, PHP_URL_SCHEME)), ['http', 'https'], true);
+}
+// Y al pintar, en el frontend: el esquema se vuelve a comprobar (M77)
+//   const u = new URL(inst.sitio_web);  if (u.protocol === 'https:' || u.protocol === 'http:') a.href = u.href;</code></pre>
+<p>Las dos validaciones hacen falta: la del servidor evita guardar basura, y la del frontend protege también los datos que ya estaban guardados antes de la regla. Y si algún día el servidor visita esas URLs (para comprobar que el CV existe, por ejemplo), pasan por <code>obtenerExterna()</code> de 82.6.</p>
+
+
+<h2 id="fallas"><span class="sec-num">82.9</span>Fallas típicas y cómo reconocerlas</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Síntoma</th><th>Causa</th><th>Arreglo</th></tr></thead>
+    <tbody>
+<tr><td>Un <code>.php</code> subido se ejecuta al abrirlo</td><td>Subidas dentro del webroot</td><td>Fuera del webroot y servir con script</td></tr>
+<tr><td><code>cv.phtml</code> pasa el filtro</td><td>Lista de extensiones prohibidas</td><td>Lista de tipos permitidos con finfo</td></tr>
+<tr><td>Un SVG subido ejecuta JavaScript en tu origen</td><td>Se sirve <code>inline</code> desde tu dominio</td><td><code>attachment</code>, otro dominio o no aceptarlos</td></tr>
+<tr><td>La vista previa muestra credenciales</td><td>SSRF al IMDS</td><td>Validar IP, IMDSv2, rol mínimo</td></tr>
+<tr><td>La validación pasa y la request va a una IP interna</td><td>Redirección seguida o DNS rebinding</td><td>Sin <code>FOLLOWLOCATION</code>, <code>CURLOPT_RESOLVE</code></td></tr>
+<tr><td>El login lleva a un sitio parecido</td><td><code>next</code> sin validar</td><td>Lista de destinos</td></tr>
+<tr><td>Un clic en "sitio web" ejecuta código</td><td><code>javascript:</code> guardado</td><td>Esquema http/https al guardar y al pintar</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Las tres fallas comparten una pregunta para la revisión de código: ¿dónde un dato del usuario se vuelve una ruta en disco, una URL que el servidor visita o un <code>Location</code>? Con <code>grep -rn "move_uploaded_file\|curl_init\|file_get_contents(\$\|header(.Location" api/</code> sale la lista. La guía WEB08 convierte los CVs en archivos subidos con los cinco controles y prueba la validación de URLs con las nueve formas de la figura 82.4. Lo que queda de la Parte IX son los ataques que no caben en una familia: <a href="m83-otros-ataques.html">M83</a>.</p>
+</aside>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+<div data-quiz="m82"></div>
+<div data-exercise="m82-vista"></div>
+<div data-checkpoint="m82"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m82.data.js"></script>
+<script src="../assets/js/data/exercises/m82.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-web.js"></script>
+</body>
+</html>
