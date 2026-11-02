@@ -1,5 +1,5 @@
 /* Widgets de las secciones "Impleméntalo tú mismo" de los casos de estudio:
-   <div data-calc="bom" data-preset="m21|m23|m24|m25|m27|m28|m29|m30|m31">  factura mensual estimada de un clon en AWS, en tres escalas
+   <div data-calc="bom" data-preset="m21|m23|m24|m25|m27|m28|m29|m30|m31|m50">  factura mensual estimada de un clon en AWS, en tres escalas
    <div data-calc="gateways">                     cuántos gateways de conexión necesita un clon de WhatsApp
    Precios: lista on-demand aproximada de us-east-1 (septiembre de 2026). Son editables porque cambian. */
 (function () {
@@ -254,6 +254,74 @@
         { c: 'Logs y métricas', s: 'CloudWatch Logs, GB ingerido', u: 'GB', p: 0.5, q: [10, 500, 4000] }
       ],
       foot: 'No incluye imágenes dentro de los documentos (S3 y CloudFront, como en el M09), la exportación a PDF ni el correo de los avisos (SES cobra 0.10 USD por cada mil). El log frío crece para siempre: es el historial completo. Con tráfico estable, una instancia reservada de Aurora y de EC2 baja esas líneas cerca de un tercio.'
+    },
+    m50: {
+      title: 'Factura mensual del recomendador del feed',
+      scales: ['MVP', 'Producción', 'Gran escala'],
+      scaleNote: [
+        '200 000 usuarios activos al día: un recomendador entero en unas pocas máquinas, con el ranking pesado en dos GPUs.',
+        'Mercado Barrio: 20 millones de usuarios activos, 13 889 requests por segundo en el pico y 6.9 millones de puntuaciones por segundo en el ranking pesado (50.5).',
+        'Diez veces Mercado Barrio: 200 millones de usuarios activos al día y todo lo demás por diez.'
+      ],
+      rows: [
+        { c: 'Ranking pesado', s: 'EC2 g6.xlarge (una NVIDIA L4); 14 GPUs en el pico más 40 % de holgura', u: 'h', p: 0.8048, q: [2, 20, 200] },
+        { c: 'Ranking liviano y re-ranking', s: 'EC2 c7g.4xlarge (16 vCPU)', u: 'h', p: 0.578, q: [2, 32, 320] },
+        { c: 'Índices de recuperación', s: 'EC2 r7g.4xlarge (128 GB): réplicas del índice vectorial y del ítem a ítem', u: 'h', p: 0.8568, q: [2, 12, 60] },
+        { c: 'API del feed y orquestación', s: 'Fargate ARM, tarea de 2 vCPU y 4 GB', u: 'h', p: 0.079, q: [3, 60, 500] },
+        { c: 'Feature store en línea', s: 'ElastiCache (Valkey) cache.r7g.xlarge; con réplica', u: 'h', p: 0.35, q: [2, 12, 100] },
+        { c: 'Log de eventos', s: 'MSK kafka.m7g.large, un broker', u: 'h', p: 0.204, q: [3, 6, 30] },
+        { c: 'Features en streaming', s: 'Managed Service for Apache Flink, KPU-hora', u: 'h', p: 0.11, q: [2, 40, 300] },
+        { c: 'Log de impresiones', s: 'S3 Standard, GB al mes (200 bytes por impresión, un año acumulado)', u: 'GB', p: 0.023, q: [500, 290000, 2900000] },
+        { c: 'Entrenamiento', s: 'EC2 g6.12xlarge (4 L4): instancias promedio en el mes', u: 'h', p: 4.6016, q: [0.2, 2, 16] },
+        { c: 'Entrada HTTPS', s: 'Application Load Balancer', u: 'h', p: 0.0225, q: [1, 2, 6] },
+        { c: 'Capacidad del ALB', s: 'LCU-hora (promedio)', u: 'h', p: 0.008, q: [2, 100, 1000] },
+        { c: 'Logs y métricas', s: 'CloudWatch Logs, GB ingerido', u: 'GB', p: 0.5, q: [20, 2000, 15000] }
+      ],
+      foot: 'No incluye los videos ni la CDN, que son de otro servicio, ni el data warehouse donde se entrenan los modelos. El log de impresiones crece unos 24 TB por mes en producción (4 000 millones de impresiones por día × 200 bytes × 30): pasarlo a S3 Glacier después de 90 días baja esa línea a menos de la mitad. Los GPUs y los FLOPs efectivos son supuestos de diseño (50.5).'
+    },
+    m52: {
+      title: 'Factura mensual de Clip, el feed de video corto',
+      scales: ['MVP', 'Producción', 'Gran escala'],
+      scaleNote: [
+        '100 000 usuarios activos al día: un feed que entra en unas pocas máquinas, con el ranking y la moderación en tres GPUs.',
+        'Clip: 50 millones de usuarios activos, 2 000 millones de vistas por día, 8 681 requests del feed por segundo en el pico y 500 000 videos nuevos por día (52.1).',
+        'Diez veces Clip: 500 millones de usuarios activos al día y todo lo demás por diez.'
+      ],
+      rows: [
+        { c: 'Entrega de video (CDN)', s: 'CloudFront, GB transferido; precio de lista del último tramo público (más de 5 PB), que a esta escala se negocia', u: 'GB', p: [0.05, 0.02, 0.02], q: [450000, 225000000, 2250000000] },
+        { c: 'Videos guardados', s: 'S3 Standard, GB al mes: un año de videos en cuatro calidades, unos 20 MB por video', u: 'GB', p: 0.023, q: [2000, 3650000, 36500000] },
+        { c: 'Ranking pesado', s: 'EC2 g6.xlarge (una NVIDIA L4); 8.7 GPUs en el pico más 40 % de holgura', u: 'h', p: 0.8048, q: [1, 13, 130] },
+        { c: 'Moderación', s: 'EC2 g6.xlarge: clasificadores de video, audio y texto, 2 s de GPU por video', u: 'h', p: 0.8048, q: [1, 12, 120] },
+        { c: 'Ranking liviano y re-ranking', s: 'EC2 c7g.4xlarge (16 vCPU)', u: 'h', p: 0.578, q: [2, 12, 112] },
+        { c: 'Índices de recuperación', s: 'EC2 r7g.4xlarge (128 GB): réplicas del índice vectorial y del grafo', u: 'h', p: 0.8568, q: [2, 8, 40] },
+        { c: 'API del feed, ingesta y subida', s: 'Fargate ARM, tarea de 2 vCPU y 4 GB', u: 'h', p: 0.079, q: [3, 40, 400] },
+        { c: 'Feature store en línea', s: 'ElastiCache (Valkey) cache.r7g.xlarge; con réplica', u: 'h', p: 0.35, q: [2, 12, 100] },
+        { c: 'Log de eventos', s: 'MSK kafka.m7g.large, un broker', u: 'h', p: 0.204, q: [3, 9, 60] },
+        { c: 'Features en streaming', s: 'Managed Service for Apache Flink, KPU-hora', u: 'h', p: 0.11, q: [2, 60, 500] },
+        { c: 'Data lake de eventos', s: 'S3 Standard, GB al mes (200 bytes por evento, un año acumulado)', u: 'GB', p: 0.023, q: [1000, 438000, 4380000] },
+        { c: 'Entrenamiento', s: 'EC2 g6.12xlarge (4 L4): instancias promedio en el mes', u: 'h', p: 4.6016, q: [0.2, 4, 30] }
+      ],
+      foot: 'La CDN es casi toda la factura: con 2 000 millones de vistas de unos 3.75 MB, salen unos 7.5 PB por día. Por eso los servicios de video negocian su CDN o tienen la propia, y por eso el recomendador, aunque sea lo más difícil de construir, es una parte chica del costo. No incluye la transcodificación ni la revisión humana.'
+    },
+    m53: {
+      title: 'Factura mensual de las recomendaciones de Almacén Sur',
+      scales: ['MVP', 'Producción', 'Gran escala'],
+      scaleNote: [
+        '100 000 personas activas por día y 50 000 productos: tablas y ranker en dos o tres máquinas.',
+        'Almacén Sur: 3 millones de personas activas por día, 2 millones de productos, 833 requests por segundo en páginas de producto y 208 en el inicio en el pico (53.1).',
+        'Diez veces Almacén Sur: 30 millones de personas activas por día y 20 millones de productos.'
+      ],
+      rows: [
+        { c: 'API de recomendaciones e ingesta', s: 'Fargate ARM, tarea de 2 vCPU y 4 GB', u: 'h', p: 0.079, q: [2, 12, 100] },
+        { c: 'Ranker de árboles y re-ranking', s: 'EC2 c7g.4xlarge (16 vCPU): 104 000 puntuaciones por segundo en el pico', u: 'h', p: 0.578, q: [1, 4, 32] },
+        { c: 'Tablas, stock y feature store', s: 'ElastiCache (Valkey) cache.r7g.xlarge; con réplica', u: 'h', p: 0.35, q: [2, 4, 24] },
+        { c: 'Índice vectorial', s: 'EC2 r7g.xlarge (4 vCPU, 32 GB): réplicas del HNSW de los productos', u: 'h', p: 0.2142, q: [1, 2, 12] },
+        { c: 'Catálogo', s: 'Aurora PostgreSQL db.r7g.xlarge, escritor y réplica', u: 'h', p: 0.552, q: [1, 2, 8] },
+        { c: 'Log de eventos', s: 'MSK kafka.m7g.large, un broker', u: 'h', p: 0.204, q: [2, 3, 9] },
+        { c: 'Lote nocturno', s: 'EC2 r7g.4xlarge: 4 máquinas 2 horas por noche, en instancias promedio', u: 'h', p: 0.8568, q: [0.05, 0.34, 3.4] },
+        { c: 'Data lake', s: 'S3 Standard, GB al mes (200 bytes por evento, un año acumulado)', u: 'GB', p: 0.023, q: [150, 4400, 44000] }
+      ],
+      foot: 'Unas tablas que se leen con una clave y un ranker de árboles en CPU: el recomendador de una tienda grande cuesta lo que un par de ingenieros por mes, no un centro de datos. Lo caro de una tienda es otra cosa (el catálogo, las imágenes, los pagos y la logística), que esta factura no incluye.'
     }
   };
 

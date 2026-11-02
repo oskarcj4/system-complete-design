@@ -1,0 +1,990 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M47. Re-ranking, exploración y bucles de retroalimentación</title>
+<meta name="description" content="De ítems a una lista: diversidad con MMR, reglas de negocio versionadas, frescura, explorar o explotar con epsilon-greedy, UCB y Thompson sampling, bandits contextuales, el bucle de retroalimentación, la corrección del sesgo de posición y la exposición justa entre vendedores.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m47">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Re-ranking, exploración y bucles de retroalimentación</h1>
+        <p class="lead">El mejor orden ítem por ítem casi nunca es la mejor lista: diversidad, reglas, frescura, exploración con bandits y el bucle que hace que un recomendador aprenda solo de lo que ya mostraba.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M47</dd></div>
+          <div><dt>Parte</dt><dd>VI. ML System Design</dd></div>
+          <div><dt>Duración</dt><dd>120 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M46</dd></div>
+          <div><dt>Estado</dt><dd data-status="m47">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Explicar por qué el mejor orden ítem por ítem no es la mejor lista, y diversificarla con MMR calculado a mano.</li>
+    <li>Ubicar las reglas de negocio y de política en una capa propia, versionada y fuera del modelo.</li>
+    <li>Darle una oportunidad a lo nuevo con un impulso de frescura y con lugares de exploración.</li>
+    <li>Comparar epsilon-greedy, UCB y Thompson sampling, y leer una distribución Beta.</li>
+    <li>Reconocer el bucle de retroalimentación, medirlo y cortarlo con exploración y con corrección por posición.</li>
+    <li>Decidir cuánta exposición reciben los vendedores nuevos y con qué presupuesto de impresiones.</li>
+  </ul>
+</section>
+
+<p>El ranking de <a href="m46-ranking.html">M46</a> dejó 50 ítems ordenados por puntaje, y cada puntaje se calculó mirando un par (persona, ítem) sin saber qué otros ítems iban a estar al lado. Este módulo mira la lista entera. Primero, por qué diez ítems buenos pueden formar una lista mala y cómo se arregla con diversidad, reglas y frescura. Después, el problema más interesante de la parte: cómo se aprende de lo que todavía no se mostró, con bandits. Y al final, el bucle que hace que un recomendador se alimente de sus propias decisiones, y cómo se corta.</p>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f47at f47ad">
+<title id="f47at">Las piezas del re-ranking</title>
+<desc id="f47ad">De izquierda a derecha: los 50 ítems que deja el ranking pesado, ordenados por puntaje, pasan por la capa de reglas (filtros duros, topes por vendedor, lugares fijos), por la diversidad con MMR, por el impulso de frescura y por los lugares de exploración, que elige un bandit. Salen 10 ítems en pantalla. Cada impresión se registra con su posición y su propensión, y vuelve al log que entrena al ranker; ese camino de vuelta es el bucle de retroalimentación.</desc>
+<defs><marker id="f47aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="120" width="110" height="70" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="75.0" y="143.0" text-anchor="middle">50 ítems</text>
+<text class="dg-tiny" x="75.0" y="159.0" text-anchor="middle">ordenados por</text>
+<text class="dg-tiny" x="75.0" y="175.0" text-anchor="middle">el ranker</text>
+<text class="dg-group" x="150" y="46" text-anchor="start">Re-ranking (5 ms)</text>
+<rect class="dg-frame" x="146" y="54" width="470" height="166" rx="10"/>
+<rect class="dg-layer" x="160" y="92" width="100" height="78" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="210.0" y="119.0" text-anchor="middle">Reglas</text>
+<text class="dg-tiny" x="210.0" y="135.0" text-anchor="middle">filtros, topes,</text>
+<text class="dg-tiny" x="210.0" y="151.0" text-anchor="middle">lugares fijos</text>
+<rect class="dg-layer" x="274" y="92" width="100" height="78" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="324.0" y="119.0" text-anchor="middle">Diversidad</text>
+<text class="dg-tiny" x="324.0" y="135.0" text-anchor="middle">MMR: puntaje</text>
+<text class="dg-tiny" x="324.0" y="151.0" text-anchor="middle">menos parecido</text>
+<rect class="dg-layer" x="388" y="92" width="100" height="78" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="438.0" y="119.0" text-anchor="middle">Frescura</text>
+<text class="dg-tiny" x="438.0" y="135.0" text-anchor="middle">impulso a</text>
+<text class="dg-tiny" x="438.0" y="151.0" text-anchor="middle">lo reciente</text>
+<rect class="dg-layer" x="502" y="92" width="100" height="78" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="552.0" y="119.0" text-anchor="middle">Exploración</text>
+<text class="dg-tiny" x="552.0" y="135.0" text-anchor="middle">lugares para</text>
+<text class="dg-tiny" x="552.0" y="151.0" text-anchor="middle">lo dudoso</text>
+<path class="dg-edge" d="M262 131 H270" marker-end="url(#f47aa)"/>
+<path class="dg-edge" d="M376 131 H384" marker-end="url(#f47aa)"/>
+<path class="dg-edge" d="M490 131 H498" marker-end="url(#f47aa)"/>
+<path class="dg-edge" d="M132 155 H156" marker-end="url(#f47aa)"/>
+<rect class="dg-box dg-box--em" x="640" y="108" width="110" height="54" rx="8"/>
+<text class="dg-small" x="695.0" y="131.0" text-anchor="middle">10 en</text>
+<text class="dg-tiny" x="695.0" y="147.0" text-anchor="middle">pantalla</text>
+<path class="dg-edge" d="M604 131 H636" marker-end="url(#f47aa)"/>
+<rect class="dg-box" x="388" y="186" width="214" height="26" rx="8"/>
+<text class="dg-tiny" x="495.0" y="203.0" text-anchor="middle">bandit: Thompson o UCB</text>
+<path class="dg-feedback" d="M552 172 V184"/>
+<rect class="dg-layer" x="560" y="262" width="190" height="44" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="655.0" y="280.0" text-anchor="middle">Registro con posición</text>
+<text class="dg-tiny" x="655.0" y="296.0" text-anchor="middle">y propensión</text>
+<path class="dg-edge" d="M695 164 V258" marker-end="url(#f47aa)"/>
+<rect class="dg-layer" x="300" y="262" width="200" height="44" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="400.0" y="280.0" text-anchor="middle">Log de impresiones</text>
+<text class="dg-tiny" x="400.0" y="296.0" text-anchor="middle">y clics</text>
+<path class="dg-edge" d="M558 284 H504" marker-end="url(#f47aa)"/>
+<rect class="dg-box" x="40" y="262" width="180" height="44" rx="8"/>
+<text class="dg-small" x="130.0" y="280.0" text-anchor="middle">Entrenamiento</text>
+<text class="dg-tiny" x="130.0" y="296.0" text-anchor="middle">del ranker</text>
+<path class="dg-edge" d="M298 284 H224" marker-end="url(#f47aa)"/>
+<path class="dg-feedback" d="M75 260 V194" marker-end="url(#f47aa)"/>
+<text class="dg-tiny" x="84" y="236" text-anchor="start">lo que mostraste es lo que aprendes</text>
+<g class="pl-pin"><circle cx="130" cy="120" r="11"/><text x="130" y="124" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="260" cy="92" r="11"/><text x="260" y="96" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="374" cy="92" r="11"/><text x="374" y="96" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="488" cy="92" r="11"/><text x="488" y="96" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="602" cy="92" r="11"/><text x="602" y="96" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="602" cy="186" r="11"/><text x="602" y="190" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="750" cy="108" r="11"/><text x="750" y="112" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="750" cy="262" r="11"/><text x="750" y="266" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="40" cy="262" r="11"/><text x="40" y="266" text-anchor="middle">9</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 47.A.</b> El re-ranking mira la lista entera, no cada ítem. Entra un orden por puntaje y sale una lista: sin repetidos, con variedad, con algo nuevo y con lugares reservados para aprender. El registro de lo que se mostró cierra un bucle que, sin cuidado, se alimenta solo.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Lista del ranker</b><span>Los 50 ítems del ranking pesado de M46, cada uno con su puntaje calculado sin mirar a los demás. <a href="#lista">47.1</a></span></li>
+  <li><b>Capa de reglas</b><span>Lo que no se negocia y no aprende: bloqueados, ya comprados, no más de dos por vendedor, el lugar 3 para un video. <a href="#reglas">47.3</a></span></li>
+  <li><b>Diversidad</b><span>MMR elige uno por vez y descuenta lo que el candidato se parece a lo ya elegido. <a href="#diversidad">47.2</a></span></li>
+  <li><b>Frescura</b><span>Un multiplicador que decae con la edad del ítem, para que lo nuevo compita con lo que ya tiene historia. <a href="#frescura">47.4</a></span></li>
+  <li><b>Exploración</b><span>Lugares que se le dan a ítems con poca información para aprender de ellos. <a href="#exploracion">47.5</a></span></li>
+  <li><b>Bandit</b><span>El algoritmo que decide a quién explorar: epsilon-greedy, UCB o Thompson; con contexto, LinUCB. <a href="#contextual">47.6</a></span></li>
+  <li><b>Lista final</b><span>Los 10 que se ven; el orden final ya no es el del puntaje. <a href="#lista">47.1</a></span></li>
+  <li><b>Registro con propensión</b><span>Cada impresión guarda en qué posición estuvo y con qué probabilidad se eligió, para corregir el sesgo después. <a href="#sesgo-posicion">47.8</a></span></li>
+  <li><b>Bucle de retroalimentación</b><span>El log entrena al ranker siguiente: lo que no se mostró no tiene datos, y lo popular se vuelve más popular. <a href="#bucle">47.7</a></span></li>
+</ol>
+
+
+<p>El caso sigue siendo el feed de Mercado Barrio, con los números de <a href="m42-ml-system-design.html#numeros">M42</a>: el re-ranking tiene 5 ms del presupuesto y trabaja sobre 50 ítems por request, 13 889 veces por segundo en el pico. Es la etapa más barata del embudo en cómputo y la que más decide qué ve la persona.</p>
+
+<p class="more-link"><b>Cómo leer este módulo:</b> el núcleo son 47.1, 47.2, 47.3, 47.5 y 47.7 (unos 60 minutos). 47.4, 47.6, 47.8 y 47.9 son a fondo.</p>
+
+<h2 id="lista"><span class="sec-num">47.1</span>De ítems a una lista</h2>
+
+<p>¿Por qué un feed que acierta cada recomendación puede aburrir? Porque el ranker puntúa de a un ítem. Si Ana miró zapatillas de running ayer, cada zapatilla de running del catálogo recibe un puntaje alto, y las cinco mejores son cinco zapatillas, dos de ellas el mismo modelo en otro color. Cada una, sola, es una buena recomendación. Juntas, ocupan la pantalla con un solo interés, y lo que más le podía servir a Ana (un reloj, un video que la ayude a elegir) quedó en el lugar 12.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una vidriera que exhibe diez veces el mismo zapato en distintos colores. Cada zapato es lindo; la vidriera no invita a entrar. El vidrierista no elige "los diez mejores productos": arma una composición, y piensa cada pieza en relación con las otras.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f471t f471d">
+<title id="f471t">Diez buenos ítems, una mala lista</title>
+<desc id="f471d">Dos columnas. A la izquierda, los primeros seis del orden del ranker: cuatro zapatillas de running casi iguales, dos de ellas el mismo modelo en otro color, cada una con puntaje entre 0.83 y 0.90. A la derecha, la lista después del re-ranking: una zapatilla, un video de reseña, un reloj, una mochila y dos zapatillas de otras marcas. El puntaje promedio de los cinco primeros baja de 0.86 a 0.73 y cubre cuatro subcategorías en lugar de una.</desc>
+<defs><marker id="f471a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="26" text-anchor="start">Orden del ranker (cada ítem solo)</text>
+<text class="dg-group" x="420" y="26" text-anchor="start">Después del re-ranking (la lista entera)</text>
+<rect class="dg-warnbox" x="20" y="40" width="340" height="32" rx="6"/>
+<text class="dg-small" x="34" y="61" text-anchor="start">1.  A  Zapatilla, marca 1</text>
+<text class="dg-small dg-mono" x="346" y="61" text-anchor="end" style="white-space:pre">0.90</text>
+<rect class="dg-layer" x="420" y="40" width="330" height="32" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="434" y="61" text-anchor="start">1.  A  Zapatilla, marca 1</text>
+<text class="dg-small dg-mono" x="736" y="61" text-anchor="end" style="white-space:pre">0.90</text>
+<rect class="dg-warnbox" x="20" y="80" width="340" height="32" rx="6"/>
+<text class="dg-small" x="34" y="101" text-anchor="start">2.  B  La misma, otro color</text>
+<text class="dg-small dg-mono" x="346" y="101" text-anchor="end" style="white-space:pre">0.88</text>
+<rect class="dg-layer" x="420" y="80" width="330" height="32" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="434" y="101" text-anchor="start">2.  H  Video: cómo elegir zapatillas</text>
+<text class="dg-small dg-mono" x="736" y="101" text-anchor="end" style="white-space:pre">0.62</text>
+<rect class="dg-warnbox" x="20" y="120" width="340" height="32" rx="6"/>
+<text class="dg-small" x="34" y="141" text-anchor="start">3.  C  Zapatilla, marca 2</text>
+<text class="dg-small dg-mono" x="346" y="141" text-anchor="end" style="white-space:pre">0.85</text>
+<rect class="dg-layer" x="420" y="120" width="330" height="32" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="434" y="141" text-anchor="start">3.  E  Reloj con GPS</text>
+<text class="dg-small dg-mono" x="736" y="141" text-anchor="end" style="white-space:pre">0.60</text>
+<rect class="dg-warnbox" x="20" y="160" width="340" height="32" rx="6"/>
+<text class="dg-small" x="34" y="181" text-anchor="start">4.  F  Zapatilla, marca 3</text>
+<text class="dg-small dg-mono" x="346" y="181" text-anchor="end" style="white-space:pre">0.84</text>
+<rect class="dg-layer" x="420" y="160" width="330" height="32" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="434" y="181" text-anchor="start">4.  D  Mochila de hidratación</text>
+<text class="dg-small dg-mono" x="736" y="181" text-anchor="end" style="white-space:pre">0.70</text>
+<rect class="dg-warnbox" x="20" y="200" width="340" height="32" rx="6"/>
+<text class="dg-small" x="34" y="221" text-anchor="start">5.  J  La de marca 2, otro color</text>
+<text class="dg-small dg-mono" x="346" y="221" text-anchor="end" style="white-space:pre">0.83</text>
+<rect class="dg-layer" x="420" y="200" width="330" height="32" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="434" y="221" text-anchor="start">5.  C  Zapatilla, marca 2</text>
+<text class="dg-small dg-mono" x="736" y="221" text-anchor="end" style="white-space:pre">0.85</text>
+<rect class="dg-box" x="20" y="240" width="340" height="32" rx="6"/>
+<text class="dg-small" x="34" y="261" text-anchor="start">6.  D  Mochila de hidratación</text>
+<text class="dg-small dg-mono" x="346" y="261" text-anchor="end" style="white-space:pre">0.70</text>
+<rect class="dg-layer" x="420" y="240" width="330" height="32" rx="6" style="--c: var(--l-service)"/>
+<text class="dg-small" x="434" y="261" text-anchor="start">6.  F  Zapatilla, marca 3</text>
+<text class="dg-small dg-mono" x="736" y="261" text-anchor="end" style="white-space:pre">0.84</text>
+<text class="dg-tiny" x="20" y="290" text-anchor="start">Promedio de los cinco primeros: 0.86 · una sola subcategoría</text>
+<text class="dg-tiny" x="420" y="290" text-anchor="start">Promedio de los cinco primeros: 0.73 · cuatro subcategorías</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.1.</b> Cada zapatilla es una buena recomendación; cinco zapatillas juntas son una mala lista. En la columna de la izquierda, las cajas marcadas son variantes del mismo interés. Los puntajes y la lista de la derecha salen de MMR con λ = 0.6, el ejemplo de 47.2. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>El <dfn data-term="reranking">re-ranking</dfn> es la etapa que convierte el orden por puntaje en una lista: toma los 50 del ranker y decide cuáles 10 se muestran y en qué orden, mirando a todos juntos. Hace cuatro cosas, que son las secciones que siguen: diversificar (47.2), aplicar reglas (47.3), darle una oportunidad a lo reciente (47.4) y reservar lugares para aprender (47.5). Ninguna se puede hacer en el ranker, porque el ranker no ve la lista.</p>
+
+<p>El costo de la lista diversa es medible: en la Figura 47.1, el puntaje promedio de los cinco primeros baja de 0.86 a 0.73. Si los puntajes estuvieran bien <span class="no-autolink">calibrados</span> y las personas eligieran un solo ítem sin aburrirse, la lista de la izquierda tendría más clics esperados. No pasa así por dos razones: la utilidad de la quinta zapatilla, si ya viste cuatro, es mucho menor que la de la primera (lo que el ranker no puede saber), y una lista de un solo interés acorta las sesiones. Por eso el re-ranking se evalúa con métricas de lista y de sesión en un experimento (<a href="m49-experimentos.html#ab-rec">M49</a>), no con la suma de los puntajes.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el ranker puntúa ítems; la persona ve una lista. Lo que vale el quinto ítem depende de los cuatro anteriores, y eso solo se puede decidir en una etapa que mire todo junto.</p>
+
+<h2 id="diversidad"><span class="sec-num">47.2</span>Diversidad con MMR</h2>
+
+<p>La forma más usada de diversificar es la <dfn data-term="mmr">MMR</dfn> (<i>Maximal Marginal Relevance</i>), que Carbonell y Goldstein propusieron en 1998 para resúmenes de documentos <span class="badge badge--doc">Documentado</span>. Arma la lista de a un ítem. En cada paso, a cada candidato le calcula su puntaje menos lo que se parece al más parecido de los ya elegidos, y toma el mejor. El primero es siempre el de mayor puntaje; desde el segundo, un ítem que repite lo ya elegido tiene que ser mucho mejor para entrar.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: la fórmula de MMR</p>
+  <p>Con <i>S</i> los ítems ya elegidos, el siguiente es el candidato <i>i</i> que maximiza</p>
+  <p><b>MMR(<i>i</i>) = λ · puntaje(<i>i</i>) − (1 − λ) · max<sub><i>j</i> ∈ <i>S</i></sub> similitud(<i>i</i>, <i>j</i>)</b></p>
+  <p>En palabras: cuánto vale el ítem, menos cuánto repite lo que ya está. λ, entre 0 y 1, es una perilla: con λ = 1 es el orden del ranker; con λ = 0, solo importa no parecerse. La similitud suele ser el coseno entre los embeddings de los dos ítems (<a href="m44-modelos-clasicos.html#coseno">M44</a>), un número entre 0 y 1.</p>
+  <p>Ejemplo con λ = 0.6, después de elegir A (puntaje 0.90). Para C, una zapatilla de otra marca (puntaje 0.85, similitud con A 0.6): 0.6 × 0.85 − 0.4 × 0.6 = 0.51 − 0.24 = 0.270. Para H, el video (0.62, similitud 0.1): 0.372 − 0.04 = 0.332. Gana H.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 362" role="img" aria-labelledby="f472t f472d">
+<title id="f472t">MMR (Maximal Marginal Relevance)</title>
+<desc id="f472d">Ficha de MMR (Maximal Marginal Relevance). Qué entra: Los 50 candidatos del ranker con su puntaje y una forma de medir cuánto se parecen dos ítems (el coseno de sus embeddings). Qué hace: Elige de a uno. En cada paso, a cada candidato le resta lo que se parece al más parecido de los ya elegidos, y toma el mejor. Qué sale: Una lista de k ítems que resigna algo de puntaje a cambio de no repetir el mismo interés. Ejemplo: λ = 0.6.  Paso 1: A (0.6 × 0.90 = 0.540). Paso 2: H = 0.6 × 0.62 − 0.4 × 0.1 = 0.332     C = 0.6 × 0.85 − 0.4 × 0.6 = 0.270         B = 0.6 × 0.88 − 0.4 × 0.9 = 0.168 (el mismo modelo que A, en otro color) Gana H, el video, aunque su puntaje (0.62) es mucho menor que el de C (0.85). Qué falla sin él: El orden por puntaje llena la pantalla con variantes del mismo ítem: la persona ve un solo interés y se va. Dónde vive: Re-ranking (Lámina 42.A, marca 6), sobre los 50 que deja el ranking pesado. Con k = 10 y 50 candidatos son 500 similitudes: menos de 1 ms.</desc>
+<defs><marker id="f472a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="114" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Los 50 candidatos del ranker</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">con su puntaje y una forma de</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">medir cuánto se parecen dos</text>
+<text class="dg-tiny" x="32" y="104" text-anchor="start">ítems (el coseno de sus</text>
+<text class="dg-tiny" x="32" y="120" text-anchor="start">embeddings).</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="114" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Elige de a uno. En cada paso, a</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">cada candidato le resta lo que</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">se parece al más parecido de</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">los ya elegidos, y toma el</text>
+<text class="dg-tiny" x="291" y="120" text-anchor="start">mejor.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="114" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Una lista de k ítems que</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">resigna algo de puntaje a</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">cambio de no repetir el mismo</text>
+<text class="dg-tiny" x="550" y="104" text-anchor="start">interés.</text>
+<path class="dg-edge" d="M234 73.0 H275" marker-end="url(#f472a)"/>
+<path class="dg-edge" d="M493 73.0 H534" marker-end="url(#f472a)"/>
+<rect class="dg-box" x="20" y="144" width="730" height="102" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="164" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="184" text-anchor="start" style="white-space:pre">λ = 0.6.  Paso 1: A (0.6 × 0.90 = 0.540).</text>
+<text class="dg-tiny dg-mono" x="32" y="200" text-anchor="start" style="white-space:pre">Paso 2: H = 0.6 × 0.62 − 0.4 × 0.1 = 0.332     C = 0.6 × 0.85 − 0.4 × 0.6 = 0.270</text>
+<text class="dg-tiny dg-mono" x="32" y="216" text-anchor="start" style="white-space:pre">        B = 0.6 × 0.88 − 0.4 × 0.9 = 0.168 (el mismo modelo que A, en otro color)</text>
+<text class="dg-tiny dg-mono" x="32" y="232" text-anchor="start" style="white-space:pre">Gana H, el video, aunque su puntaje (0.62) es mucho menor que el de C (0.85).</text>
+<rect class="dg-warnbox" x="20" y="260" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="280" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="300" text-anchor="start">El orden por puntaje llena la pantalla con variantes</text>
+<text class="dg-tiny" x="32" y="316" text-anchor="start">del mismo ítem: la persona ve un solo interés y se va.</text>
+<rect class="dg-box" x="393" y="260" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="280" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="300" text-anchor="start">Re-ranking (Lámina 42.A, marca 6), sobre los 50 que</text>
+<text class="dg-tiny" x="405" y="316" text-anchor="start">deja el ranking pesado. Con k = 10 y 50 candidatos son</text>
+<text class="dg-tiny" x="405" y="332" text-anchor="start">500 similitudes: menos de 1 ms.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.2.</b> La ficha de MMR con el ejemplo de la sección. λ decide cuánto pesa el puntaje y 1 − λ, cuánto pesa no repetir. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>Las similitudes del ejemplo son de juguete (la misma variante 0.9, la misma subcategoría 0.6, la misma categoría 0.3, otra 0.1) para que las cuentas se sigan a mano. Con esos valores, MMR arma la lista paso a paso así:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f473t f473d">
+<title id="f473t">MMR paso a paso</title>
+<desc id="f473d">Cinco pasos de MMR con λ = 0.6 sobre los diez candidatos. En cada paso, una barra por candidato con su valor λ · puntaje − (1 − λ) · similitud. Paso 1: gana A con 0.540. Paso 2: gana H, el video, con 0.332. Paso 3: E, el reloj, con 0.320. Paso 4: D, la mochila, con 0.300. Paso 5: C, la zapatilla de la marca 2, con 0.270. La zapatilla B, el mismo modelo que A en otro color, nunca entra: su parecido con A es 0.9.</desc>
+<defs><marker id="f473a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="20" y="42" text-anchor="start">Paso 1</text>
+<rect class="dg-layer" x="100" y="24" width="300.0" height="26" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-small dg-mono" x="408.0" y="42" text-anchor="start" style="white-space:pre">A  0.540</text>
+<text class="dg-tiny" x="480" y="42" text-anchor="start">nada con qué comparar</text>
+<text class="dg-small" x="20" y="84" text-anchor="start">Paso 2</text>
+<rect class="dg-layer" x="100" y="66" width="184.4" height="26" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-small dg-mono" x="292.4" y="84" text-anchor="start" style="white-space:pre">H  0.332</text>
+<text class="dg-tiny" x="480" y="84" text-anchor="start">el video: se parece poco a A (0.1)</text>
+<text class="dg-small" x="20" y="126" text-anchor="start">Paso 3</text>
+<rect class="dg-layer" x="100" y="108" width="177.8" height="26" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-small dg-mono" x="285.8" y="126" text-anchor="start" style="white-space:pre">E  0.320</text>
+<text class="dg-tiny" x="480" y="126" text-anchor="start">el reloj: otra categoría</text>
+<text class="dg-small" x="20" y="168" text-anchor="start">Paso 4</text>
+<rect class="dg-layer" x="100" y="150" width="166.7" height="26" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-small dg-mono" x="274.7" y="168" text-anchor="start" style="white-space:pre">D  0.300</text>
+<text class="dg-tiny" x="480" y="168" text-anchor="start">la mochila: misma categoría que A (0.3)</text>
+<text class="dg-small" x="20" y="210" text-anchor="start">Paso 5</text>
+<rect class="dg-layer" x="100" y="192" width="150.0" height="26" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-small dg-mono" x="258.0" y="210" text-anchor="start" style="white-space:pre">C  0.270</text>
+<text class="dg-tiny" x="480" y="210" text-anchor="start">otra zapatilla, ahora sí</text>
+<text class="dg-tiny" x="20" y="236" text-anchor="start">B (0.88, el mismo modelo que A en otro color): 0.6 × 0.88 − 0.4 × 0.9 = 0.168 en el paso 2. No entra en los cinco.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.3.</b> El ganador de cada paso con su valor de MMR. Las barras bajan porque cada paso agrega un ítem más contra el que compararse. Calculado con el widget de abajo.</figcaption>
+</figure>
+
+
+<pre data-lang="python"><code>import numpy as np
+
+def mmr(puntajes, emb, k, lam=0.6):
+    # puntajes: (n,), emb: (n, d) normalizados. Devuelve los índices elegidos.
+    sim = emb @ emb.T                         # coseno entre todos los pares
+    elegidos, libres = [], list(range(len(puntajes)))
+    while libres and len(elegidos) &lt; k:
+        if elegidos:
+            repite = sim[np.ix_(libres, elegidos)].max(axis=1)
+        else:
+            repite = np.zeros(len(libres))
+        valor = lam * puntajes[libres] - (1 - lam) * repite
+        mejor = libres[int(np.argmax(valor))]
+        elegidos.append(mejor)
+        libres.remove(mejor)
+    return elegidos
+</code></pre>
+
+<p>El costo es chico: con 50 candidatos y k = 10, son unas 500 similitudes, y la matriz de 50 × 50 sale de un producto de matrices con los embeddings que ya trajo la recuperación. Cabe holgado en los 5 ms.</p>
+
+<div data-sim="mmr"></div>
+
+<p>Mueve λ y mira dos números: las subcategorías distintas y el puntaje promedio. Con λ = 1, una subcategoría y 0.860 de promedio; con λ = 0.6, cuatro y 0.734. No hay un λ correcto: se elige con un experimento que mida sesiones y compras, no clics del primer ítem.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>MMR es golosa: elige el mejor en cada paso sin volver atrás, y solo mira la similitud con el más parecido. Las DPP (<i>determinantal point processes</i>) miran la lista como conjunto y premian que todos los ítems estén lejos entre sí; YouTube publicó en 2018 que las usaba en su feed de inicio <span class="badge badge--doc">Documentado</span>. Son más caras y más difíciles de depurar. Para empezar, MMR con un λ bien medido alcanza casi siempre.</p>
+</aside>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Si los embeddings de similitud son los mismos que usó la recuperación, dos ítems que la persona ve como distintos (unas zapatillas y unas medias de la misma marca) pueden quedar muy cerca, y MMR los separa sin motivo. La similitud para diversificar tiene que medir lo que la persona percibe como repetido: categoría, vendedor, el mismo video recortado. Se revisa mirando listas, no métricas.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> MMR elige de a uno restándole a cada candidato lo que repite de lo ya elegido; λ es la perilla entre puntaje y variedad, y se ajusta con un experimento.</p>
+
+<h2 id="reglas"><span class="sec-num">47.3</span>Reglas de negocio y de política</h2>
+
+<p>Hay decisiones que no tiene que aprender ningún modelo: no mostrarle a Ana un vendedor que bloqueó, no recomendarle la heladera que compró la semana pasada, no llenar el feed con un solo vendedor aunque tenga los mejores puntajes, no mostrar un video que está en revisión de moderación. Son <b>reglas</b>, y van en una capa propia del re-ranking, en un orden fijo.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f474t f474d">
+<title id="f474t">La capa de reglas por dentro</title>
+<desc id="f474d">Cuatro tipos de reglas en el orden en que se aplican. Primero, los filtros duros, que sacan ítems: bloqueado, ya comprado, sin stock en la zona, contenido en revisión. Después, los topes: no más de dos ítems del mismo vendedor en los primeros diez y no más de tres videos seguidos. Después, los lugares fijos: el lugar 3 para un video y un lugar de cada diez para un ítem nuevo. Al final, la diversidad y la frescura. A la derecha, un archivo de reglas versionado, con su versión registrada en cada impresión.</desc>
+<defs><marker id="f474a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-warnbox" x="20" y="20" width="440" height="50" rx="8"/>
+<text class="dg-small" x="36" y="42" text-anchor="start">Filtros duros</text>
+<text class="dg-tiny" x="36" y="60" text-anchor="start">sacan ítems: bloqueado, ya comprado, sin stock, en revisión</text>
+<path class="dg-edge" d="M240 72 V80" marker-end="url(#f474a)"/>
+<rect class="dg-layer" x="20" y="82" width="440" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="36" y="104" text-anchor="start">Topes</text>
+<text class="dg-tiny" x="36" y="122" text-anchor="start">no más de 2 del mismo vendedor en los 10; no más de 3 videos seguidos</text>
+<path class="dg-edge" d="M240 134 V142" marker-end="url(#f474a)"/>
+<rect class="dg-layer" x="20" y="144" width="440" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="36" y="166" text-anchor="start">Lugares fijos</text>
+<text class="dg-tiny" x="36" y="184" text-anchor="start">el lugar 3 es un video; 1 de cada 10 es un ítem nuevo</text>
+<path class="dg-edge" d="M240 196 V204" marker-end="url(#f474a)"/>
+<rect class="dg-layer" x="20" y="206" width="440" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="36" y="228" text-anchor="start">Diversidad y frescura</text>
+<text class="dg-tiny" x="36" y="246" text-anchor="start">MMR y el impulso por edad, sobre lo que quedó</text>
+<rect class="dg-box" x="500" y="20" width="250" height="234" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-tiny dg-mono" x="514" y="42" text-anchor="start" style="white-space:pre">reglas: v37  (2026-10-28)</text>
+<text class="dg-tiny dg-mono" x="514" y="58" text-anchor="start" style="white-space:pre">filtros:</text>
+<text class="dg-tiny dg-mono" x="514" y="74" text-anchor="start" style="white-space:pre">  - bloqueado_por_usuario</text>
+<text class="dg-tiny dg-mono" x="514" y="90" text-anchor="start" style="white-space:pre">  - ya_comprado: 90 días</text>
+<text class="dg-tiny dg-mono" x="514" y="106" text-anchor="start" style="white-space:pre">  - sin_stock_en_zona</text>
+<text class="dg-tiny dg-mono" x="514" y="122" text-anchor="start" style="white-space:pre">topes:</text>
+<text class="dg-tiny dg-mono" x="514" y="138" text-anchor="start" style="white-space:pre">  vendedor: 2 en 10</text>
+<text class="dg-tiny dg-mono" x="514" y="154" text-anchor="start" style="white-space:pre">  videos_seguidos: 3</text>
+<text class="dg-tiny dg-mono" x="514" y="170" text-anchor="start" style="white-space:pre">lugares:</text>
+<text class="dg-tiny dg-mono" x="514" y="186" text-anchor="start" style="white-space:pre">  3: video</text>
+<text class="dg-tiny dg-mono" x="514" y="202" text-anchor="start" style="white-space:pre">  cada_10: nuevo &lt; 7 días</text>
+<text class="dg-tiny dg-mono" x="514" y="218" text-anchor="start" style="white-space:pre">registro: versión en cada</text>
+<text class="dg-tiny dg-mono" x="514" y="234" text-anchor="start" style="white-space:pre">  impresión</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.4.</b> Las reglas van en una capa propia, en orden, con un archivo versionado. Si el CTR cae un martes, la primera pregunta es qué versión de las reglas salió ese día. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<ol class="steps">
+  <li><span class="step-title">Filtros duros</span>Sacan ítems de la lista. Muchos ya se aplicaron antes del ranking (los filtros de <a href="m45-recuperacion.html#filtros">M45</a>), pero algunos solo se pueden saber al final: el stock que cambió hace un minuto, un bloqueo recién hecho.</li>
+  <li><span class="step-title">Topes</span>Limitan cuántos ítems de un tipo entran: no más de dos del mismo vendedor en los primeros diez, no más de tres videos seguidos. Un tope no saca el ítem: lo baja hasta donde el tope se cumple.</li>
+  <li><span class="step-title">Lugares fijos</span>Reservan posiciones: el lugar 3 es siempre un video, uno de cada diez es un ítem nuevo. Son decisiones de producto que se miden con experimentos como cualquier otra.</li>
+  <li><span class="step-title">Diversidad y frescura</span>Sobre lo que quedó, MMR (47.2) y el impulso por edad (47.4).</li>
+</ol>
+
+<p>¿Por qué no en el modelo? Por tres razones. Una regla tiene que cumplirse siempre, y un modelo solo la cumple en promedio: un ranker que aprendió que los ítems bloqueados tienen pocos clics los pone abajo, pero no los saca. Una regla cambia en minutos (un vendedor sancionado hoy), y un modelo, con el próximo entrenamiento. Y una regla se explica: "no te mostramos esto porque lo bloqueaste" es una frase; "el modelo le dio 0.02" no lo es.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>El archivo de reglas lleva una versión, como el modelo, y esa versión se guarda en cada impresión junto con la del modelo (el registro de <a href="m43-datos-recomendacion.html#log">M43</a>). Cuando una métrica cae, la primera pregunta es qué cambió ese día, y la respuesta tiene que estar en el log: "salió el modelo 212 y las reglas v37". Sin esa versión, un cambio de reglas parece una regresión del modelo y se pierde un día buscándola donde no está.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> lo que tiene que cumplirse siempre va en una capa de reglas ordenada (filtros, topes, lugares fijos), versionada y registrada con cada impresión, no en el modelo.</p>
+
+<h2 id="frescura"><span class="sec-num">47.4</span>Frescura</h2>
+
+<p>Un producto publicado hace una hora no tiene clics, ni compras, ni co-ocurrencias: casi todas las features del ranker valen cero o un valor por defecto, y su puntaje sale bajo aunque sea justo lo que Ana busca. Es el arranque en frío del ítem (<a href="m44-modelos-clasicos.html#frio">M44</a>) visto desde el final del embudo. La recuperación puede traerlo por contenido; el ranker, sin historia, lo hunde.</p>
+
+<p>El arreglo más simple es un multiplicador que depende de la edad: el ítem nuevo recibe un impulso que decae con las horas. Con un impulso inicial de 0.5 y una vida media de 6 horas:</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: un impulso que decae</p>
+  <p><b>impulso(edad) = 1 + 0.5 · 2<sup>−edad / 6 h</sup></b>. En palabras: un 50&#8239;% más al nacer, y ese extra se reduce a la mitad cada 6 horas.</p>
+  <p>A las 0 horas: 1 + 0.5 × 1 = 1.5. A las 6: 1 + 0.5 × 0.5 = 1.25. A las 12: 1.125. A las 24: 1 + 0.5 × 0.0625 = 1.031. El puntaje final es el del ranker multiplicado por el impulso.</p>
+  <p>En Python: <code>impulso = 1 + 0.5 * 2 ** (-edad_h / 6)</code>.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f475t f475d">
+<title id="f475t">El impulso de frescura</title>
+<desc id="f475d">Una curva que empieza en 1.5 cuando el ítem tiene 0 horas, baja a 1.25 a las 6 horas, a 1.125 a las 12 horas y a 1.03 a las 24 horas, y se acerca a 1 después. La fórmula es 1 + 0.5 · 2 elevado a menos la edad dividida por 6 horas.</desc>
+<defs><marker id="f475a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="sim-axis" d="M70 210 H710 M70 210 V30"/>
+<path d="M70.0 50.0 L83.3 59.0 L96.7 67.5 L110.0 75.5 L123.3 83.0 L136.7 90.1 L150.0 96.9 L163.3 103.2 L176.7 109.2 L190.0 114.9 L203.3 120.2 L216.7 125.2 L230.0 130.0 L243.3 134.5 L256.7 138.7 L270.0 142.7 L283.3 146.5 L296.7 150.1 L310.0 153.4 L323.3 156.6 L336.7 159.6 L350.0 162.4 L363.3 165.1 L376.7 167.6 L390.0 170.0 L403.3 172.2 L416.7 174.4 L430.0 176.4 L443.3 178.3 L456.7 180.0 L470.0 181.7 L483.3 183.3 L496.7 184.8 L510.0 186.2 L523.3 187.6 L536.7 188.8 L550.0 190.0 L563.3 191.1 L576.7 192.2 L590.0 193.2 L603.3 194.1 L616.7 195.0 L630.0 195.9 L643.3 196.7 L656.7 197.4 L670.0 198.1 L683.3 198.8 L696.7 199.4 L710.0 200.0" fill="none" stroke="var(--l-service)" stroke-width="2.5"/>
+<circle cx="70.0" cy="50.0" r="5" fill="var(--l-service)"/>
+<text class="dg-tiny" x="78.0" y="40.0" text-anchor="start">0 h: × 1.5</text>
+<circle cx="230.0" cy="130.0" r="5" fill="var(--l-service)"/>
+<text class="dg-tiny" x="238.0" y="120.0" text-anchor="start">6 h: × 1.25</text>
+<circle cx="390.0" cy="170.0" r="5" fill="var(--l-service)"/>
+<text class="dg-tiny" x="398.0" y="160.0" text-anchor="start">12 h: × 1.125</text>
+<circle cx="710.0" cy="200.1" r="5" fill="var(--l-service)"/>
+<text class="dg-tiny" x="702.0" y="190.1" text-anchor="end">24 h: × 1.031</text>
+<text class="dg-tiny" x="70.0" y="228" text-anchor="middle">0 h</text>
+<text class="dg-tiny" x="230.0" y="228" text-anchor="middle">6 h</text>
+<text class="dg-tiny" x="390.0" y="228" text-anchor="middle">12 h</text>
+<text class="dg-tiny" x="550.0" y="228" text-anchor="middle">18 h</text>
+<text class="dg-tiny" x="710.0" y="228" text-anchor="middle">24 h</text>
+<text class="dg-tiny" x="62" y="214" text-anchor="end">× 1</text>
+<text class="dg-tiny" x="62" y="54" text-anchor="end">× 1.5</text>
+<text class="dg-tiny" x="390.0" y="248" text-anchor="middle">Edad del ítem</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.5.</b> El multiplicador de frescura con un impulso inicial de 0.5 y una vida media de 6 horas. A las 24 horas ya no ayuda casi nada; para entonces el ítem tiene que haber juntado sus propias señales. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>Es la misma forma que el decaimiento de la popularidad de <a href="m44-modelos-clasicos.html#popularidad">M44</a>, usada al revés: allí lo viejo pesaba menos; aquí lo nuevo pesa más. El impulso es una apuesta: supone que lo nuevo merece una oportunidad mientras junta datos. Si el impulso es muy grande, el feed se llena de ítems nuevos mediocres; si es chico, nunca salen del fondo. Por eso conviene acotarlo con un lugar fijo (uno de cada diez es nuevo) en lugar de dejarlo solo a la multiplicación, y por eso la forma más fina de resolver lo nuevo es la exploración, que es la sección siguiente.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> lo nuevo no tiene features y el ranker lo hunde; un impulso que decae con la edad y un cupo de lugares le dan tiempo para juntar sus propias señales.</p>
+
+<h2 id="exploracion"><span class="sec-num">47.5</span>Explorar o explotar</h2>
+
+<p>Un video de reseña tiene tres miniaturas posibles. ¿Cuál mostrar? Si se muestra siempre la que hoy tiene mejor CTR, nunca se sabe si otra era mejor; si se prueban todas por igual, se pierden clics mientras se prueba. Ese es el dilema de <dfn data-term="explorar-explotar">explorar o explotar</dfn>: usar lo que ya se sabe o gastar una oportunidad en aprender algo nuevo.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Vas a tu restaurante favorito. Pides el plato de siempre (explotar) o pruebas uno nuevo de la carta (explorar). Si nunca pruebas, no descubres el plato que te habría gustado más; si pruebas siempre, comes mal la mitad de las veces. La respuesta razonable depende de cuántas veces más vas a volver: si es la última visita, pide lo de siempre.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f476t f476d">
+<title id="f476t">El dilema de explorar o explotar</title>
+<desc id="f476d">Tres máquinas tragamonedas, que son tres miniaturas de un mismo video, con lo que se sabe de cada una: la 1 tiene 2 clics en 50 impresiones, la 2 tiene 30 clics en 600 y la 3 no se mostró nunca. Explotar es jugar la 2, que tiene la mejor estimación con datos. Explorar es jugar la 3, de la que no se sabe nada y que podría ser mejor. Abajo, el costo de cada error: explorar de más gasta impresiones en brazos malos; explorar de menos deja para siempre un brazo mejor sin descubrir.</desc>
+<defs><marker id="f476a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="40" y="24" width="200" height="130" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="140" y="50" text-anchor="middle">Miniatura 1</text>
+<rect x="80" y="62" width="120" height="40" rx="6" fill="none" stroke="var(--label-3)" stroke-width="1.5"/>
+<text class="dg-small dg-mono" x="140" y="88" text-anchor="middle" style="white-space:pre">2 clics / 50</text>
+<text class="dg-tiny" x="140" y="128" text-anchor="middle">4 %, poca certeza</text>
+<rect class="dg-layer" x="280" y="24" width="200" height="130" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="380" y="50" text-anchor="middle">Miniatura 2</text>
+<rect x="320" y="62" width="120" height="40" rx="6" fill="none" stroke="var(--label-3)" stroke-width="1.5"/>
+<text class="dg-small dg-mono" x="380" y="88" text-anchor="middle" style="white-space:pre">30 clics / 600</text>
+<text class="dg-tiny" x="380" y="128" text-anchor="middle">5 %, bastante certeza</text>
+<rect class="dg-layer" x="520" y="24" width="200" height="130" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="620" y="50" text-anchor="middle">Miniatura 3</text>
+<rect x="560" y="62" width="120" height="40" rx="6" fill="none" stroke="var(--label-3)" stroke-width="1.5"/>
+<text class="dg-small dg-mono" x="620" y="88" text-anchor="middle" style="white-space:pre">nunca se mostró</text>
+<text class="dg-tiny" x="620" y="128" text-anchor="middle">¿? sin datos</text>
+<rect class="dg-layer" x="40" y="178" width="330" height="92" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="56" y="200" text-anchor="start">Explotar</text>
+<text class="dg-tiny" x="56" y="220" text-anchor="start">Jugar lo que hoy parece mejor (la 2).</text>
+<text class="dg-tiny" x="56" y="238" text-anchor="start">Riesgo: no descubrir nunca que la 3 era mejor.</text>
+<text class="dg-tiny" x="56" y="256" text-anchor="start">Costo: un brazo mejor perdido para siempre.</text>
+<rect class="dg-layer" x="400" y="178" width="330" height="92" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="416" y="200" text-anchor="start">Explorar</text>
+<text class="dg-tiny" x="416" y="220" text-anchor="start">Jugar lo que todavía no se conoce (la 3).</text>
+<text class="dg-tiny" x="416" y="238" text-anchor="start">Riesgo: gastar impresiones en algo peor.</text>
+<text class="dg-tiny" x="416" y="256" text-anchor="start">Costo: clics perdidos mientras se aprende.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.6.</b> La analogía es literal: en inglés, el problema se llama <i>multi-armed bandit</i>, el bandido de varios brazos, por las tragamonedas. Cada impresión es una tirada, y no se puede aprender de un brazo sin jugarlo.</figcaption>
+</figure>
+
+
+<p>El problema tiene nombre y teoría: el <dfn data-term="bandit">bandit</dfn> de varios brazos. Cada brazo es una opción (una miniatura, un ítem, un horario de notificación) con una recompensa promedio desconocida; cada vez que juegas un brazo, recibes una recompensa al azar de ese brazo; quieres juntar la mayor recompensa total. Lo que se pierde por no jugar siempre el mejor brazo se llama <b>arrepentimiento</b> (<i>regret</i>): con tres miniaturas de CTR 4, 5 y 6.5&#8239;%, cada impresión de la de 4&#8239;% cuesta 0.025 clics esperados.</p>
+
+<h3 id="exploracion-politicas">Tres políticas</h3>
+
+<p>El <dfn data-term="epsilon-greedy">epsilon-greedy</dfn> es la más simple: con probabilidad 1 − ε juega el brazo con mejor estimación; con probabilidad ε, uno al azar. Con ε = 0.1 y tres brazos, el mejor estimado sale el 0.9 + 0.1 / 3 = 93&#8239;% de las veces. Nunca se clava, pero explora lo mismo el primer día que el día 300, cuando ya sabe todo.</p>
+
+<p>La <dfn data-term="ucb">UCB</dfn> (<i>Upper Confidence Bound</i>) es optimista ante la duda: juega el brazo con el techo más alto, que es su estimación más un bono que crece cuando el brazo tiene pocas pruebas. En la variante UCB1, el bono es √(2 ln <i>t</i> / <i>n</i>), con <i>t</i> el total de impresiones y <i>n</i> las del brazo. Con <i>t</i> = 1 000: un brazo con 100 impresiones lleva un bono de √(2 × 6.908 / 100) = 0.37; uno con 800, de 0.13.</p>
+
+<p>El <dfn data-term="thompson-sampling">Thompson sampling</dfn> sortea. Lleva, para cada brazo, una distribución de lo que podría ser su CTR; en cada impresión saca un número al azar de cada distribución y juega el brazo que sacó el mayor. Un brazo con pocos datos tiene una distribución ancha y a veces saca números altos, así que recibe pruebas; uno con muchos datos y CTR bajo tiene una distribución angosta cerca de su valor y deja de ganar. La distribución que usa para un CTR es la Beta.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: la distribución Beta</p>
+  <p>La <b>Beta(<i>a</i>, <i>b</i>)</b> describe lo que se cree de una probabilidad (un CTR) después de ver datos. Para un ítem con <i>c</i> clics en <i>n</i> impresiones se usa <b>Beta(1 + <i>c</i>, 1 + <i>n</i> − <i>c</i>)</b>: el 1 de cada lado es el punto de partida "sin datos, todo vale igual".</p>
+  <ul>
+    <li>Sin datos: Beta(1, 1), una línea plana. Cualquier CTR entre 0 y 1 es igual de creíble.</li>
+    <li>2 clics en 10: Beta(3, 9). Promedio 3 / 12 = 0.25, curva ancha.</li>
+    <li>20 clics en 100: Beta(21, 81). Promedio 21 / 102 = 0.206, curva angosta.</li>
+  </ul>
+  <p>El promedio de Beta(<i>a</i>, <i>b</i>) es <i>a</i> / (<i>a</i> + <i>b</i>). Lo que la hace útil no es el promedio sino el ancho: dice cuánto se sabe. Es la misma idea del promedio bayesiano de <a href="m44-modelos-clasicos.html#popularidad">M44</a>, con la curva entera en lugar de un solo número.</p>
+  <p>En Python: <code>np.random.default_rng().beta(1 + clics, 1 + impresiones - clics)</code> saca un número de la curva.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f477t f477d">
+<title id="f477t">Tres distribuciones Beta</title>
+<desc id="f477d">Tres curvas sobre el eje del CTR, de 0 a 0.6. La plana es Beta(1, 1), un ítem sin datos: cualquier CTR es igual de probable. La ancha, con pico en 0.2, es Beta(3, 9): 2 clics en 10 impresiones. La angosta y alta, con pico en 0.2, es Beta(21, 81): 20 clics en 100. Las dos últimas tienen casi el mismo promedio (0.25 y 0.206), pero la de 100 impresiones está mucho más segura.</desc>
+<defs><marker id="f477a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="sim-axis" d="M70 220 H710 M70 220 V24"/>
+<path d="M71.1 202.1 L74.3 202.1 L77.5 202.1 L80.7 202.1 L83.9 202.1 L87.1 202.1 L90.3 202.1 L93.5 202.1 L96.7 202.1 L99.9 202.1 L103.1 202.1 L106.3 202.1 L109.5 202.1 L112.7 202.1 L115.9 202.1 L119.1 202.1 L122.3 202.1 L125.5 202.1 L128.7 202.1 L131.9 202.1 L135.1 202.1 L138.3 202.1 L141.5 202.1 L144.7 202.1 L147.9 202.1 L151.1 202.1 L154.3 202.1 L157.5 202.1 L160.7 202.1 L163.9 202.1 L167.1 202.1 L170.3 202.1 L173.5 202.1 L176.7 202.1 L179.9 202.1 L183.1 202.1 L186.3 202.1 L189.5 202.1 L192.7 202.1 L195.9 202.1 L199.1 202.1 L202.3 202.1 L205.5 202.1 L208.7 202.1 L211.9 202.1 L215.1 202.1 L218.3 202.1 L221.5 202.1 L224.7 202.1 L227.9 202.1 L231.1 202.1 L234.3 202.1 L237.5 202.1 L240.7 202.1 L243.9 202.1 L247.1 202.1 L250.3 202.1 L253.5 202.1 L256.7 202.1 L259.9 202.1 L263.1 202.1 L266.3 202.1 L269.5 202.1 L272.7 202.1 L275.9 202.1 L279.1 202.1 L282.3 202.1 L285.5 202.1 L288.7 202.1 L291.9 202.1 L295.1 202.1 L298.3 202.1 L301.5 202.1 L304.7 202.1 L307.9 202.1 L311.1 202.1 L314.3 202.1 L317.5 202.1 L320.7 202.1 L323.9 202.1 L327.1 202.1 L330.3 202.1 L333.5 202.1 L336.7 202.1 L339.9 202.1 L343.1 202.1 L346.3 202.1 L349.5 202.1 L352.7 202.1 L355.9 202.1 L359.1 202.1 L362.3 202.1 L365.5 202.1 L368.7 202.1 L371.9 202.1 L375.1 202.1 L378.3 202.1 L381.5 202.1 L384.7 202.1 L387.9 202.1 L391.1 202.1 L394.3 202.1 L397.5 202.1 L400.7 202.1 L403.9 202.1 L407.1 202.1 L410.3 202.1 L413.5 202.1 L416.7 202.1 L419.9 202.1 L423.1 202.1 L426.3 202.1 L429.5 202.1 L432.7 202.1 L435.9 202.1 L439.1 202.1 L442.3 202.1 L445.5 202.1 L448.7 202.1 L451.9 202.1 L455.1 202.1 L458.3 202.1 L461.5 202.1 L464.7 202.1 L467.9 202.1 L471.1 202.1 L474.3 202.1 L477.5 202.1 L480.7 202.1 L483.9 202.1 L487.1 202.1 L490.3 202.1 L493.5 202.1 L496.7 202.1 L499.9 202.1 L503.1 202.1 L506.3 202.1 L509.5 202.1 L512.7 202.1 L515.9 202.1 L519.1 202.1 L522.3 202.1 L525.5 202.1 L528.7 202.1 L531.9 202.1 L535.1 202.1 L538.3 202.1 L541.5 202.1 L544.7 202.1 L547.9 202.1 L551.1 202.1 L554.3 202.1 L557.5 202.1 L560.7 202.1 L563.9 202.1 L567.1 202.1 L570.3 202.1 L573.5 202.1 L576.7 202.1 L579.9 202.1 L583.1 202.1 L586.3 202.1 L589.5 202.1 L592.7 202.1 L595.9 202.1 L599.1 202.1 L602.3 202.1 L605.5 202.1 L608.7 202.1 L611.9 202.1 L615.1 202.1 L618.3 202.1 L621.5 202.1 L624.7 202.1 L627.9 202.1 L631.1 202.1 L634.3 202.1 L637.5 202.1 L640.7 202.1 L643.9 202.1 L647.1 202.1 L650.3 202.1 L653.5 202.1 L656.7 202.1 L659.9 202.1 L663.1 202.1 L666.3 202.1 L669.5 202.1 L672.7 202.1 L675.9 202.1 L679.1 202.1 L682.3 202.1 L685.5 202.1 L688.7 202.1 L691.9 202.1 L695.1 202.1 L698.3 202.1 L701.5 202.1 L704.7 202.1 L707.9 202.1" fill="none" stroke="var(--label-3)" stroke-width="2.4"/>
+<path d="M71.1 220.0 L74.3 219.9 L77.5 219.6 L80.7 219.2 L83.9 218.6 L87.1 218.0 L90.3 217.2 L93.5 216.4 L96.7 215.5 L99.9 214.5 L103.1 213.4 L106.3 212.2 L109.5 211.0 L112.7 209.7 L115.9 208.4 L119.1 207.1 L122.3 205.7 L125.5 204.3 L128.7 202.9 L131.9 201.5 L135.1 200.0 L138.3 198.6 L141.5 197.1 L144.7 195.6 L147.9 194.2 L151.1 192.7 L154.3 191.3 L157.5 189.9 L160.7 188.5 L163.9 187.1 L167.1 185.7 L170.3 184.4 L173.5 183.0 L176.7 181.8 L179.9 180.5 L183.1 179.3 L186.3 178.1 L189.5 176.9 L192.7 175.8 L195.9 174.7 L199.1 173.6 L202.3 172.6 L205.5 171.7 L208.7 170.7 L211.9 169.8 L215.1 169.0 L218.3 168.2 L221.5 167.4 L224.7 166.7 L227.9 166.0 L231.1 165.3 L234.3 164.7 L237.5 164.1 L240.7 163.6 L243.9 163.1 L247.1 162.7 L250.3 162.3 L253.5 161.9 L256.7 161.6 L259.9 161.3 L263.1 161.1 L266.3 160.9 L269.5 160.7 L272.7 160.6 L275.9 160.5 L279.1 160.4 L282.3 160.4 L285.5 160.4 L288.7 160.4 L291.9 160.5 L295.1 160.6 L298.3 160.7 L301.5 160.9 L304.7 161.1 L307.9 161.3 L311.1 161.6 L314.3 161.8 L317.5 162.1 L320.7 162.5 L323.9 162.8 L327.1 163.2 L330.3 163.6 L333.5 164.0 L336.7 164.4 L339.9 164.9 L343.1 165.3 L346.3 165.8 L349.5 166.3 L352.7 166.9 L355.9 167.4 L359.1 168.0 L362.3 168.5 L365.5 169.1 L368.7 169.7 L371.9 170.3 L375.1 170.9 L378.3 171.5 L381.5 172.2 L384.7 172.8 L387.9 173.5 L391.1 174.1 L394.3 174.8 L397.5 175.5 L400.7 176.1 L403.9 176.8 L407.1 177.5 L410.3 178.2 L413.5 178.9 L416.7 179.6 L419.9 180.3 L423.1 180.9 L426.3 181.6 L429.5 182.3 L432.7 183.0 L435.9 183.7 L439.1 184.4 L442.3 185.1 L445.5 185.8 L448.7 186.5 L451.9 187.1 L455.1 187.8 L458.3 188.5 L461.5 189.2 L464.7 189.8 L467.9 190.5 L471.1 191.1 L474.3 191.8 L477.5 192.4 L480.7 193.1 L483.9 193.7 L487.1 194.3 L490.3 194.9 L493.5 195.5 L496.7 196.1 L499.9 196.7 L503.1 197.3 L506.3 197.9 L509.5 198.5 L512.7 199.0 L515.9 199.6 L519.1 200.1 L522.3 200.6 L525.5 201.2 L528.7 201.7 L531.9 202.2 L535.1 202.7 L538.3 203.2 L541.5 203.7 L544.7 204.2 L547.9 204.6 L551.1 205.1 L554.3 205.5 L557.5 206.0 L560.7 206.4 L563.9 206.8 L567.1 207.2 L570.3 207.6 L573.5 208.0 L576.7 208.4 L579.9 208.8 L583.1 209.2 L586.3 209.5 L589.5 209.9 L592.7 210.2 L595.9 210.6 L599.1 210.9 L602.3 211.2 L605.5 211.5 L608.7 211.8 L611.9 212.1 L615.1 212.4 L618.3 212.7 L621.5 213.0 L624.7 213.2 L627.9 213.5 L631.1 213.7 L634.3 214.0 L637.5 214.2 L640.7 214.4 L643.9 214.7 L647.1 214.9 L650.3 215.1 L653.5 215.3 L656.7 215.5 L659.9 215.7 L663.1 215.9 L666.3 216.0 L669.5 216.2 L672.7 216.4 L675.9 216.5 L679.1 216.7 L682.3 216.8 L685.5 217.0 L688.7 217.1 L691.9 217.2 L695.1 217.4 L698.3 217.5 L701.5 217.6 L704.7 217.7 L707.9 217.8" fill="none" stroke="var(--l-queue)" stroke-width="2.4"/>
+<path d="M71.1 220.0 L74.3 220.0 L77.5 220.0 L80.7 220.0 L83.9 220.0 L87.1 220.0 L90.3 220.0 L93.5 220.0 L96.7 220.0 L99.9 220.0 L103.1 220.0 L106.3 220.0 L109.5 220.0 L112.7 220.0 L115.9 220.0 L119.1 220.0 L122.3 220.0 L125.5 220.0 L128.7 220.0 L131.9 220.0 L135.1 220.0 L138.3 220.0 L141.5 220.0 L144.7 220.0 L147.9 220.0 L151.1 219.9 L154.3 219.9 L157.5 219.8 L160.7 219.7 L163.9 219.5 L167.1 219.3 L170.3 219.0 L173.5 218.5 L176.7 217.9 L179.9 217.1 L183.1 216.0 L186.3 214.7 L189.5 213.0 L192.7 210.9 L195.9 208.4 L199.1 205.5 L202.3 202.0 L205.5 197.9 L208.7 193.2 L211.9 187.9 L215.1 182.0 L218.3 175.5 L221.5 168.5 L224.7 160.8 L227.9 152.7 L231.1 144.2 L234.3 135.4 L237.5 126.3 L240.7 117.1 L243.9 108.0 L247.1 99.0 L250.3 90.2 L253.5 81.8 L256.7 73.9 L259.9 66.7 L263.1 60.1 L266.3 54.4 L269.5 49.6 L272.7 45.7 L275.9 42.8 L279.1 40.9 L282.3 40.1 L285.5 40.2 L288.7 41.4 L291.9 43.5 L295.1 46.5 L298.3 50.4 L301.5 55.0 L304.7 60.2 L307.9 66.1 L311.1 72.5 L314.3 79.2 L317.5 86.3 L320.7 93.6 L323.9 101.0 L327.1 108.5 L330.3 116.0 L333.5 123.4 L336.7 130.6 L339.9 137.7 L343.1 144.5 L346.3 151.0 L349.5 157.2 L352.7 163.1 L355.9 168.6 L359.1 173.8 L362.3 178.6 L365.5 183.0 L368.7 187.1 L371.9 190.8 L375.1 194.3 L378.3 197.4 L381.5 200.1 L384.7 202.7 L387.9 204.9 L391.1 206.9 L394.3 208.7 L397.5 210.3 L400.7 211.6 L403.9 212.8 L407.1 213.9 L410.3 214.8 L413.5 215.6 L416.7 216.3 L419.9 216.9 L423.1 217.4 L426.3 217.8 L429.5 218.2 L432.7 218.5 L435.9 218.7 L439.1 219.0 L442.3 219.1 L445.5 219.3 L448.7 219.4 L451.9 219.5 L455.1 219.6 L458.3 219.7 L461.5 219.8 L464.7 219.8 L467.9 219.8 L471.1 219.9 L474.3 219.9 L477.5 219.9 L480.7 219.9 L483.9 219.9 L487.1 220.0 L490.3 220.0 L493.5 220.0 L496.7 220.0 L499.9 220.0 L503.1 220.0 L506.3 220.0 L509.5 220.0 L512.7 220.0 L515.9 220.0 L519.1 220.0 L522.3 220.0 L525.5 220.0 L528.7 220.0 L531.9 220.0 L535.1 220.0 L538.3 220.0 L541.5 220.0 L544.7 220.0 L547.9 220.0 L551.1 220.0 L554.3 220.0 L557.5 220.0 L560.7 220.0 L563.9 220.0 L567.1 220.0 L570.3 220.0 L573.5 220.0 L576.7 220.0 L579.9 220.0 L583.1 220.0 L586.3 220.0 L589.5 220.0 L592.7 220.0 L595.9 220.0 L599.1 220.0 L602.3 220.0 L605.5 220.0 L608.7 220.0 L611.9 220.0 L615.1 220.0 L618.3 220.0 L621.5 220.0 L624.7 220.0 L627.9 220.0 L631.1 220.0 L634.3 220.0 L637.5 220.0 L640.7 220.0 L643.9 220.0 L647.1 220.0 L650.3 220.0 L653.5 220.0 L656.7 220.0 L659.9 220.0 L663.1 220.0 L666.3 220.0 L669.5 220.0 L672.7 220.0 L675.9 220.0 L679.1 220.0 L682.3 220.0 L685.5 220.0 L688.7 220.0 L691.9 220.0 L695.1 220.0 L698.3 220.0 L701.5 220.0 L704.7 220.0 L707.9 220.0" fill="none" stroke="var(--l-gpu)" stroke-width="2.4"/>
+<text class="dg-tiny" x="560" y="194" text-anchor="start">Beta(1, 1): sin datos, todo vale igual</text>
+<text class="dg-tiny" x="470" y="165" text-anchor="start">Beta(3, 9): 2 clics en 10, ancha</text>
+<text class="dg-tiny" x="330" y="60" text-anchor="start">Beta(21, 81): 20 clics en 100, angosta</text>
+<text class="dg-tiny" x="70.0" y="238" text-anchor="middle">0</text>
+<text class="dg-tiny" x="176.7" y="238" text-anchor="middle">0.1</text>
+<text class="dg-tiny" x="283.3" y="238" text-anchor="middle">0.2</text>
+<text class="dg-tiny" x="390.0" y="238" text-anchor="middle">0.3</text>
+<text class="dg-tiny" x="496.7" y="238" text-anchor="middle">0.4</text>
+<text class="dg-tiny" x="603.3" y="238" text-anchor="middle">0.5</text>
+<text class="dg-tiny" x="710.0" y="238" text-anchor="middle">0.6</text>
+<text class="dg-tiny" x="390.0" y="266" text-anchor="middle">CTR posible del ítem</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.7.</b> Lo que se cree del CTR de un ítem según sus datos. El promedio casi no cambia entre la curva ancha y la angosta; lo que cambia es la certeza, y es lo que usa Thompson para decidir a quién probar. Curvas calculadas con la densidad de la Beta.</figcaption>
+</figure>
+
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 362" role="img" aria-labelledby="f478t f478d">
+<title id="f478t">Thompson sampling</title>
+<desc id="f478d">Ficha de Thompson sampling. Qué entra: Por cada brazo, sus clics y sus impresiones sin clic. Al principio, cero y cero. Qué hace: Por cada impresión: saca un número al azar de la Beta(1 + clics, 1 + no clics) de cada brazo y muestra el que sacó el número más alto. Qué sale: El brazo elegido. Con el tiempo, el mejor recibe casi todo y los dudosos reciben pruebas en proporción a su chance de ser el mejor. Ejemplo: Brazo 1: Beta(3, 49)   → sorteo 0.061 Brazo 2: Beta(31, 571) → sorteo 0.049 Brazo 3: Beta(1, 1)    → sorteo 0.71   gana: sin datos, su curva es plana Con 30 impresiones sin clic, la curva del 3 se angosta cerca de 0 y deja de ganar. Qué falla sin él: Un A/B fijo gasta la mitad del tráfico en la variante peor hasta el final; solo explotar se clava en el primer brazo con suerte. Dónde vive: Lugares de exploración del re-ranking (Lámina 47.A, marca 6): miniaturas, ítems nuevos y notificaciones, donde el costo de probar es bajo.</desc>
+<defs><marker id="f478a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="114" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Por cada brazo, sus clics y sus</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">impresiones sin clic. Al</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">principio, cero y cero.</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="114" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Por cada impresión: saca un</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">número al azar de la Beta(1 +</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">clics, 1 + no clics) de cada</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">brazo y muestra el que sacó el</text>
+<text class="dg-tiny" x="291" y="120" text-anchor="start">número más alto.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="114" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">El brazo elegido. Con el</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">tiempo, el mejor recibe casi</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">todo y los dudosos reciben</text>
+<text class="dg-tiny" x="550" y="104" text-anchor="start">pruebas en proporción a su</text>
+<text class="dg-tiny" x="550" y="120" text-anchor="start">chance de ser el mejor.</text>
+<path class="dg-edge" d="M234 73.0 H275" marker-end="url(#f478a)"/>
+<path class="dg-edge" d="M493 73.0 H534" marker-end="url(#f478a)"/>
+<rect class="dg-box" x="20" y="144" width="730" height="102" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="164" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="184" text-anchor="start" style="white-space:pre">Brazo 1: Beta(3, 49)   → sorteo 0.061</text>
+<text class="dg-tiny dg-mono" x="32" y="200" text-anchor="start" style="white-space:pre">Brazo 2: Beta(31, 571) → sorteo 0.049</text>
+<text class="dg-tiny dg-mono" x="32" y="216" text-anchor="start" style="white-space:pre">Brazo 3: Beta(1, 1)    → sorteo 0.71   gana: sin datos, su curva es plana</text>
+<text class="dg-tiny dg-mono" x="32" y="232" text-anchor="start" style="white-space:pre">Con 30 impresiones sin clic, la curva del 3 se angosta cerca de 0 y deja de ganar.</text>
+<rect class="dg-warnbox" x="20" y="260" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="280" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="300" text-anchor="start">Un A/B fijo gasta la mitad del tráfico en la variante</text>
+<text class="dg-tiny" x="32" y="316" text-anchor="start">peor hasta el final; solo explotar se clava en el</text>
+<text class="dg-tiny" x="32" y="332" text-anchor="start">primer brazo con suerte.</text>
+<rect class="dg-box" x="393" y="260" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="280" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="300" text-anchor="start">Lugares de exploración del re-ranking (Lámina 47.A,</text>
+<text class="dg-tiny" x="405" y="316" text-anchor="start">marca 6): miniaturas, ítems nuevos y notificaciones,</text>
+<text class="dg-tiny" x="405" y="332" text-anchor="start">donde el costo de probar es bajo.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.8.</b> La ficha de Thompson sampling. Los sorteos del ejemplo son ilustrativos: cada corrida da otros números; lo que no cambia es que la curva ancha gana sorteos más seguido que lo que su promedio sugiere. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<pre data-lang="python"><code>import numpy as np
+
+rng = np.random.default_rng(0)
+clics = np.zeros(3)
+impresiones = np.zeros(3)
+
+def elegir():
+    muestras = rng.beta(1 + clics, 1 + impresiones - clics)   # un sorteo por brazo
+    return int(np.argmax(muestras))
+
+def registrar(brazo, hizo_clic):
+    impresiones[brazo] += 1
+    clics[brazo] += hizo_clic
+</code></pre>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f479t f479d">
+<title id="f479t">Tres políticas de exploración</title>
+<desc id="f479d">Tres columnas. Epsilon-greedy: con probabilidad 0.9 juega el mejor estimado y con 0.1, uno al azar; explora siempre lo mismo. UCB: juega el brazo con la estimación más alta más un bono de incertidumbre que crece cuando un brazo tiene pocas impresiones; es determinista. Thompson: sortea de la creencia de cada brazo y juega el sorteo más alto; explora en proporción a la duda.</desc>
+<defs><marker id="f479a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="20" width="230" height="210" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="34" y="44" text-anchor="start">Epsilon-greedy</text>
+<text class="dg-tiny" x="34" y="70" text-anchor="start">Con prob. 1 − ε: el mejor</text>
+<text class="dg-tiny" x="34" y="88" text-anchor="start">estimado. Con ε: uno al azar.</text>
+<text class="dg-tiny" x="34" y="106" text-anchor="start"></text>
+<text class="dg-tiny dg-mono" x="34" y="124" text-anchor="start" style="white-space:pre">ε = 0.1, 3 brazos: el mejor</text>
+<text class="dg-tiny dg-mono" x="34" y="142" text-anchor="start" style="white-space:pre">sale 0.9 + 0.1 / 3 = 93 %.</text>
+<text class="dg-tiny" x="34" y="210" text-anchor="start">Explora para siempre, aunque ya sepa.</text>
+<rect class="dg-layer" x="270" y="20" width="230" height="210" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="284" y="44" text-anchor="start">UCB1</text>
+<text class="dg-tiny" x="284" y="70" text-anchor="start">Juega el máximo de</text>
+<text class="dg-tiny" x="284" y="88" text-anchor="start">estimado + √(2 ln t / n).</text>
+<text class="dg-tiny" x="284" y="106" text-anchor="start"></text>
+<text class="dg-tiny dg-mono" x="284" y="124" text-anchor="start" style="white-space:pre">t = 1 000, n = 100: bono 0.37</text>
+<text class="dg-tiny dg-mono" x="284" y="142" text-anchor="start" style="white-space:pre">n = 800: bono 0.13</text>
+<text class="dg-tiny" x="284" y="210" text-anchor="start">Optimista ante la duda; determinista.</text>
+<rect class="dg-layer" x="520" y="20" width="230" height="210" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="534" y="44" text-anchor="start">Thompson</text>
+<text class="dg-tiny" x="534" y="70" text-anchor="start">Sortea de la Beta de cada</text>
+<text class="dg-tiny" x="534" y="88" text-anchor="start">brazo y juega el mayor.</text>
+<text class="dg-tiny" x="534" y="106" text-anchor="start"></text>
+<text class="dg-tiny dg-mono" x="534" y="124" text-anchor="start" style="white-space:pre">La curva ancha a veces gana;</text>
+<text class="dg-tiny dg-mono" x="534" y="142" text-anchor="start" style="white-space:pre">la angosta cerca de 0, nunca.</text>
+<text class="dg-tiny" x="534" y="210" text-anchor="start">Explora lo que podría ser mejor.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.9.</b> Las tres políticas clásicas con una cuenta cada una. El bono de UCB1 se pensó para recompensas entre 0 y 1: con CTR de 5&#8239;%, un bono de 0.37 es enorme y UCB1 explora de más, como se ve en el widget.</figcaption>
+</figure>
+
+
+<div data-sim="bandit"></div>
+
+<p>En el widget, con las mismas tres miniaturas (CTR real 4, 5 y 6.5&#8239;%, escondidos para la política) y 1 000 impresiones: Thompson le da al mejor brazo 529 impresiones y pierde 8.5 clics esperados; UCB1 se queda en 359 y pierde 12.8; al azar, 338 y 13.4. "Solo explotar" prueba cada brazo 20 veces y se queda con el que tuvo suerte: con la semilla inicial elige la miniatura 2 y le da 960 impresiones. Con 10 000, Thompson lleva al mejor brazo 8 312 y UCB1, 4 643: el bono de UCB1 está pensado para recompensas que van de 0 a 1 y, con CTR de pocos puntos, explora de más.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Un bandit gana más clics que un A/B durante la prueba, porque deja de mostrar lo malo en cuanto lo sabe. A cambio, mide peor la diferencia: el brazo malo recibe pocas impresiones y su CTR queda con un intervalo ancho. Si lo que necesitas es una decisión con un número para un informe ("la variante B sube un 3&#8239;% las compras"), es un A/B (<a href="m49-experimentos.html#ab-rec">M49</a>). Si lo que necesitas es mostrar lo mejor mientras aprendes, sobre muchas decisiones chicas que cambian (miniaturas, ítems nuevos), es un bandit.</p>
+</aside>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un bandit supone que el CTR de cada brazo no cambia. Una miniatura nueva tiene un efecto novedad, un producto se pone de moda, una noticia cambia lo que se busca. Si el bandit cuenta los clics de hace tres meses igual que los de ayer, se aferra a un ganador que ya no lo es. Se arregla descontando los datos viejos (multiplicar clics e impresiones por 0.99 cada hora) o con una ventana: la Beta se vuelve a ensanchar y el bandit vuelve a explorar.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> no se aprende de lo que no se muestra; epsilon-greedy explora siempre lo mismo, UCB es optimista ante la duda y Thompson explora en proporción a la chance de que algo sea mejor, sorteando de una Beta.</p>
+
+<h2 id="contextual"><span class="sec-num">47.6</span>Bandits contextuales</h2>
+
+<p>El bandit de 47.5 busca un ganador para todos. Pero la miniatura que funciona para quien mira dramas no es la que funciona para quien mira acción. Un <dfn data-term="bandit-contextual">bandit contextual</dfn> recibe, en cada impresión, el contexto (quién es, desde qué dispositivo, a qué hora, qué suele mirar) y aprende qué brazo gana en cada contexto.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f4710t f4710d">
+<title id="f4710t">Un bandit contextual</title>
+<desc id="f4710d">A la izquierda, el contexto de la impresión: país, dispositivo, hora y los géneros que más mira la persona. En el medio, un modelo lineal por brazo que predice el CTR a partir de ese contexto, más un bono por la incertidumbre de esa predicción en ese contexto. A la derecha, el brazo elegido. Abajo, el ejemplo: la misma miniatura con la cara del protagonista gana para quien mira dramas, y la de la escena de acción para quien mira acción.</desc>
+<defs><marker id="f4710a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="40" width="170" height="120" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="105.0" y="80.0" text-anchor="middle">Contexto x</text>
+<text class="dg-tiny" x="105.0" y="96.0" text-anchor="middle">país, dispositivo,</text>
+<text class="dg-tiny" x="105.0" y="112.0" text-anchor="middle">hora, géneros</text>
+<text class="dg-tiny" x="105.0" y="128.0" text-anchor="middle">favoritos</text>
+<rect class="dg-layer" x="240" y="30" width="300" height="140" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="256" y="56" text-anchor="start">Por cada brazo a:</text>
+<text class="dg-small dg-mono" x="256" y="82" text-anchor="start" style="white-space:pre">CTR(a, x) ≈ θₐ · x</text>
+<text class="dg-small dg-mono" x="256" y="106" text-anchor="start" style="white-space:pre">+ α · √(xᵀ Aₐ⁻¹ x)</text>
+<text class="dg-tiny" x="256" y="132" text-anchor="start">estimación + duda en este contexto</text>
+<text class="dg-tiny" x="256" y="152" text-anchor="start">(LinUCB; Li et al., 2010)</text>
+<rect class="dg-box dg-box--em" x="590" y="60" width="160" height="70" rx="8"/>
+<text class="dg-small" x="670.0" y="91.0" text-anchor="middle">Brazo con el</text>
+<text class="dg-tiny" x="670.0" y="107.0" text-anchor="middle">valor más alto</text>
+<path class="dg-edge" d="M192 100 H236" marker-end="url(#f4710a)"/>
+<path class="dg-edge" d="M542 95 H586" marker-end="url(#f4710a)"/>
+<rect class="dg-box" x="20" y="190" width="730" height="62" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-tiny dg-mono" x="32" y="212" text-anchor="start" style="white-space:pre">Mira dramas → gana la miniatura con la cara del protagonista.</text>
+<text class="dg-tiny dg-mono" x="32" y="232" text-anchor="start" style="white-space:pre">Mira acción → gana la de la escena de persecución. Un bandit sin contexto elegiría una sola para todos.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.10.</b> Un bandit contextual aprende qué brazo gana en cada contexto, no un ganador para todos. La fórmula es la de LinUCB, de Li y otros (2010); el ejemplo de miniaturas es el que contó Netflix en 2017. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<p>La versión más citada es LinUCB, de Li, Chu, Langford y Schapire (2010), que la usaron para elegir las noticias destacadas de la portada de Yahoo!. Cada brazo tiene un modelo lineal que predice el CTR a partir del contexto, y le suma un bono por la incertidumbre de esa predicción en ese contexto: el mismo optimismo de UCB, pero por contexto. En su experimento con tráfico real reportaron un 12.5&#8239;% más de clics que un bandit sin contexto <span class="badge badge--doc">Documentado</span>. Netflix contó en 2017 que elige la imagen de cada título por persona con bandits contextuales <span class="badge badge--doc">Documentado</span>.</p>
+
+<p>¿Por qué no reemplazar el ranker por un bandit contextual? Porque un ranker es, en cierto sentido, un bandit contextual con miles de brazos y sin bono de exploración. Lo que el bandit agrega es el bono, y el bono solo vale la pena donde hay pocos brazos, decisiones que se repiten mucho y un costo bajo de probar. Por eso se usan en las piezas chicas: la miniatura, el horario de una notificación, qué ítem nuevo ocupa el lugar de exploración.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> un bandit contextual aprende un ganador por contexto con una estimación más un bono de duda; se usa en decisiones chicas y repetidas, no en lugar del ranker.</p>
+
+<h2 id="bucle"><span class="sec-num">47.7</span>El bucle de retroalimentación</h2>
+
+<p>¿Por qué un recomendador tiende a mostrar siempre lo mismo? Porque aprende de lo que mostró. El ranker de mañana se entrena con los clics de hoy, y los clics de hoy solo existen para lo que el ranker de hoy puso en pantalla. Lo que no se mostró no tiene clics, y para el modelo siguiente es lo mismo que algo que nadie quiso. Es el <dfn data-term="bucle-retroalimentacion">bucle de retroalimentación</dfn>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f4711t f4711d">
+<title id="f4711t">El bucle de retroalimentación</title>
+<desc id="f4711d">Un ciclo de cuatro cajas: el modelo decide qué mostrar; lo mostrado recibe clics; los clics son los datos de entrenamiento; los datos entrenan al modelo siguiente, que vuelve a decidir. Una flecha punteada sale del ciclo hacia lo que no se mostró: no tiene clics, y el modelo nunca aprende de eso. Al costado, el efecto: lo popular se vuelve más popular, los gustos se estrechan y el catálogo efectivo se achica.</desc>
+<defs><marker id="f4711a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="250" y="20" width="180" height="50" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="340.0" y="41.0" text-anchor="middle">El modelo decide</text>
+<text class="dg-tiny" x="340.0" y="57.0" text-anchor="middle">qué mostrar</text>
+<rect class="dg-layer" x="470" y="120" width="180" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="560.0" y="141.0" text-anchor="middle">Lo mostrado</text>
+<text class="dg-tiny" x="560.0" y="157.0" text-anchor="middle">recibe clics</text>
+<rect class="dg-layer" x="250" y="220" width="180" height="50" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="340.0" y="241.0" text-anchor="middle">Los clics son</text>
+<text class="dg-tiny" x="340.0" y="257.0" text-anchor="middle">los datos</text>
+<rect class="dg-box" x="30" y="120" width="180" height="50" rx="8"/>
+<text class="dg-small" x="120.0" y="141.0" text-anchor="middle">Los datos entrenan</text>
+<text class="dg-tiny" x="120.0" y="157.0" text-anchor="middle">al modelo siguiente</text>
+<path class="dg-edge" d="M432 45 C 520 45, 560 70, 560 116" marker-end="url(#f4711a)"/>
+<path class="dg-edge" d="M560 172 C 560 220, 520 245, 434 245" marker-end="url(#f4711a)"/>
+<path class="dg-edge" d="M248 245 C 160 245, 120 220, 120 174" marker-end="url(#f4711a)"/>
+<path class="dg-edge" d="M120 118 C 120 70, 160 45, 246 45" marker-end="url(#f4711a)"/>
+<rect class="dg-warnbox" x="470" y="230" width="200" height="50" rx="8"/>
+<text class="dg-small" x="570.0" y="251.0" text-anchor="middle">Lo que no se mostró:</text>
+<text class="dg-tiny" x="570.0" y="267.0" text-anchor="middle">sin clics, sin datos</text>
+<path class="dg-feedback" d="M430 60 C 700 60, 700 180, 640 226" marker-end="url(#f4711a)"/>
+<text class="dg-small" x="285" y="140" text-anchor="start">El efecto:</text>
+<text class="dg-tiny" x="285" y="160" text-anchor="start">lo popular, más popular;</text>
+<text class="dg-tiny" x="285" y="176" text-anchor="start">los gustos, más estrechos;</text>
+<text class="dg-tiny" x="285" y="192" text-anchor="start">el catálogo útil, más chico.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.11.</b> Lo que muestras es lo que aprendes. Chaney, Stewart y Engelhardt (2018) lo llamaron <i>algorithmic confounding</i>: en sus simulaciones, entrenar con los datos que el propio recomendador generó vuelve más parecido lo que ve todo el mundo sin mejorar lo que cada persona disfruta. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<p>Se ve mejor con un experimento que sería imposible con personas: veinte ítems exactamente iguales, con el mismo CTR real del 5&#8239;%, ordenados durante 30 días por sus clics acumulados. Si el recomendador fuera neutral, cada uno recibiría un veinteavo de las impresiones.</p>
+
+<div data-sim="feedbackloop"></div>
+
+<p>Con el orden por clics acumulados, al día 30 cinco ítems recibieron todas las impresiones (150 000 en total: 1 000 sesiones por día, 5 lugares, 30 días) y los otros quince, ninguna. El Gini de la exposición, que vale 0 si todos reciben lo mismo, da 0.75. Agregar un 10&#8239;% de exploración le da a cada uno unas 750 impresiones, pero los cinco de arriba siguen con unas 27 700 cada uno: el ranking premia los clics acumulados, y estar arriba da más clics. Lo que sí cambia la forma es corregir por posición (47.8): con clics divididos por la atención que recibió cada lugar, y un previo para los que tienen pocos datos, trece ítems pasan del 1&#8239;% de las impresiones y el Gini baja a 0.59.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>El bucle no se ve en las métricas de siempre. El CTR puede subir mientras el catálogo útil se achica, porque el modelo se vuelve muy bueno en lo poco que muestra. Se vigila con métricas propias: cuántos ítems distintos recibieron impresiones esta semana, qué parte de las impresiones se llevó el 1&#8239;% más popular, cuántos ítems nuevos llegaron a 100 impresiones. Y se corta con dos herramientas: un poco de tráfico con exploración (que además da datos sin sesgo para medir, como en <a href="m49-experimentos.html#contrafactual">M49</a>) y la corrección por posición en el entrenamiento.</p>
+</aside>
+
+<p>Chaney, Stewart y Engelhardt (2018) lo estudiaron con simulaciones y lo llamaron <i>algorithmic confounding</i>: el recomendador es a la vez la causa de lo que se ve y el que aprende de lo que se ve, y no puede separar las dos cosas sin ayuda <span class="badge badge--doc">Documentado</span>. El bucle es también la base del problema de engagement de <a href="m51-engagement.html#aprende-solo">M51</a>: si lo que retiene se muestra más, y lo que se muestra más retiene más, el sistema empuja solo hacia lo que retiene, sea bueno para la persona o no.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> lo que muestras es lo que aprendes; con ítems iguales, el orden por clics concentra todo en unos pocos. Se vigila con métricas de exposición y se corta con exploración y corrección por posición.</p>
+
+<h2 id="sesgo-posicion"><span class="sec-num">47.8</span>Corregir el sesgo de posición</h2>
+
+<p>El <span data-term="sesgo-posicion">sesgo de posición</span> se presentó en <a href="m43-datos-recomendacion.html#sesgos">M43</a> con el modelo de examen: lo de arriba recibe más clics por estar arriba. Allí servía para entender por qué los datos mienten; aquí sirve para cortar el bucle de 47.7, porque es el mecanismo por el que estar arriba se convierte en clics. Hay dos formas de corregirlo.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f4712t f4712d">
+<title id="f4712t">Corregir el sesgo de posición</title>
+<desc id="f4712d">Dos etapas. Al entrenar, la posición en que se mostró cada ítem entra como una feature más, y el modelo aprende cuánto de cada clic se debe a la posición. Al servir, la posición se fija en 1 para todos los candidatos, así que el puntaje compara ítems sin la ventaja de su lugar. Abajo, la alternativa: pesar cada clic por la inversa de la propensión de su posición: un clic en la posición 1 pesa 1, en la 2 pesa 1.58, en la 3 pesa 2 y en la 5 pesa 2.58.</desc>
+<defs><marker id="f4712a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="28" text-anchor="start">Opción 1: la posición como feature</text>
+<rect class="dg-layer" x="20" y="40" width="340" height="74" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="190.0" y="65.0" text-anchor="middle">Al entrenar</text>
+<text class="dg-tiny" x="190.0" y="81.0" text-anchor="middle">features + posición real (1, 2, 3…)</text>
+<text class="dg-tiny" x="190.0" y="97.0" text-anchor="middle">el modelo separa calidad y lugar</text>
+<rect class="dg-layer" x="410" y="40" width="340" height="74" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="580.0" y="65.0" text-anchor="middle">Al servir</text>
+<text class="dg-tiny" x="580.0" y="81.0" text-anchor="middle">features + posición = 1 para todos</text>
+<text class="dg-tiny" x="580.0" y="97.0" text-anchor="middle">compara sin la ventaja del lugar</text>
+<path class="dg-edge" d="M362 77 H406" marker-end="url(#f4712a)"/>
+<text class="dg-group" x="20" y="148" text-anchor="start">Opción 2: pesar por la inversa de la propensión (IPS)</text>
+<rect class="dg-box" x="20" y="160" width="136" height="110" rx="8"/>
+<text class="dg-small" x="88" y="180" text-anchor="middle">Posición 1</text>
+<rect class="dg-layer" x="58" y="202.0" width="60" height="40.0" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="88" y="196.0" text-anchor="middle">mira 1</text>
+<text class="dg-tiny" x="88" y="260" text-anchor="middle">un clic pesa 1</text>
+<rect class="dg-box" x="168" y="160" width="136" height="110" rx="8"/>
+<text class="dg-small" x="236" y="180" text-anchor="middle">Posición 2</text>
+<rect class="dg-layer" x="206" y="216.8" width="60" height="25.2" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="236" y="210.8" text-anchor="middle">mira 0.63</text>
+<text class="dg-tiny" x="236" y="260" text-anchor="middle">un clic pesa 1.58</text>
+<rect class="dg-box" x="316" y="160" width="136" height="110" rx="8"/>
+<text class="dg-small" x="384" y="180" text-anchor="middle">Posición 3</text>
+<rect class="dg-layer" x="354" y="222.0" width="60" height="20.0" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="384" y="216.0" text-anchor="middle">mira 0.50</text>
+<text class="dg-tiny" x="384" y="260" text-anchor="middle">un clic pesa 2.00</text>
+<rect class="dg-box" x="464" y="160" width="136" height="110" rx="8"/>
+<text class="dg-small" x="532" y="180" text-anchor="middle">Posición 4</text>
+<rect class="dg-layer" x="502" y="224.8" width="60" height="17.2" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="532" y="218.8" text-anchor="middle">mira 0.43</text>
+<text class="dg-tiny" x="532" y="260" text-anchor="middle">un clic pesa 2.32</text>
+<rect class="dg-box" x="612" y="160" width="136" height="110" rx="8"/>
+<text class="dg-small" x="680" y="180" text-anchor="middle">Posición 5</text>
+<rect class="dg-layer" x="650" y="226.5" width="60" height="15.5" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="680" y="220.5" text-anchor="middle">mira 0.39</text>
+<text class="dg-tiny" x="680" y="260" text-anchor="middle">un clic pesa 2.58</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.12.</b> Las dos correcciones del sesgo de posición. Las propensiones son las del modelo de examen de <a href="m43-datos-recomendacion.html#sesgos">M43</a>, 1 / log₂(posición + 1); en producción se miden intercambiando posiciones en una fracción chica del tráfico. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<ol class="steps">
+  <li><span class="step-title">La posición como feature</span>Al entrenar, cada impresión lleva la posición en que se mostró. El modelo aprende cuánto del clic se debe al lugar y cuánto al ítem. Al servir, la posición se fija en 1 para todos los candidatos: el puntaje compara ítems como si todos estuvieran arriba. Es lo más simple y lo que más se usa.</li>
+  <li><span class="step-title">Pesar por la inversa de la propensión</span>La <dfn data-term="propension">propensión</dfn> es la probabilidad de que la persona mirara esa posición. Un clic en la posición 3, que se mira la mitad de las veces que la 1, vale el doble: peso 1 / 0.5 = 2. Así, en promedio, cada ítem cuenta como si hubiera estado en todas las posiciones por igual. Es la misma idea de IPS que <a href="m49-experimentos.html#contrafactual">M49</a> usa para evaluar sin lanzar.</li>
+</ol>
+
+<p>Las dos necesitan saber cuánto se mira cada posición, y eso no se puede sacar de los clics normales: arriba hay más clics por la posición y también porque el ranker puso ahí lo mejor. Se mide intercambiando: en una fracción chica del tráfico (un 1&#8239;%, por ejemplo), se intercambian al azar los ítems de las posiciones 1 y 2, o de la 1 y la 3. Como el intercambio es al azar, la diferencia de clics entre posiciones es solo de la posición. Joachims y otros lo hicieron así en búsqueda web en 2005 <span class="badge badge--doc">Documentado</span>. El widget <a href="m43-datos-recomendacion.html#sesgos">de M43</a> muestra la cuenta con el CTR observado y el corregido.</p>
+
+<pre data-lang="python"><code>import numpy as np
+
+propension = 1 / np.log2(np.arange(1, 11) + 1)   # posiciones 1..10: 1, 0.63, 0.5, ...
+
+def peso_ips(posicion, tope=10.0):
+    # Peso de una impresión con clic según su posición (desde 1), recortado.
+    return min(1 / propension[posicion - 1], tope)
+</code></pre>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Con muchas posiciones, la propensión de la 40 puede ser 0.02 y el peso de un clic ahí, 50: un solo clic de suerte en el fondo de la lista mueve el modelo más que cien clics arriba. Por eso los pesos se recortan (el <code>tope</code> del código). Recortar mete un poco de sesgo y saca mucha varianza; es el mismo trade-off que vuelve en <a href="m49-experimentos.html#contrafactual">M49</a>.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> la posición se corrige como feature (real al entrenar, constante al servir) o pesando cada clic por la inversa de su propensión, que se mide intercambiando posiciones al azar en poco tráfico.</p>
+
+<h2 id="equidad"><span class="sec-num">47.9</span>Exposición justa entre vendedores</h2>
+
+<p>En un marketplace, el bucle de 47.7 no es solo un problema de calidad: es un problema de negocio. Un vendedor que publica su primer producto en Mercado Barrio y no recibe ninguna impresión no vende, no vuelve a publicar y le cuenta a otros que la plataforma no sirve. La plataforma necesita vendedores nuevos, y el recomendador, si nadie lo corrige, no les da lugar.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f4713t f4713d">
+<title id="f4713t">Exposición de vendedores nuevos</title>
+<desc id="f4713d">Barras con la parte de las impresiones del feed que reciben los vendedores según su antigüedad. Sin cupo: los vendedores con más de un año reciben el 88 por ciento, los de uno a doce meses el 11 y los de menos de un mes el 1. Con un cupo de un lugar de cada diez para ítems nuevos con exploración: 80, 12 y 8 por ciento.</desc>
+<defs><marker id="f4713a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="20" y="52" text-anchor="start">Sin cupo</text>
+<rect class="dg-layer" x="190" y="30" width="475.2" height="34" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="427.6" y="52" text-anchor="middle">88 %</text>
+<rect class="dg-layer" x="665.2" y="30" width="59.4" height="34" rx="3" style="--c: var(--l-queue)"/>
+<text class="dg-tiny" x="694.9" y="52" text-anchor="middle">11 %</text>
+<rect class="dg-layer" x="724.6" y="30" width="5.4" height="34" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="744" y="52" text-anchor="end">1 %</text>
+<text class="dg-small" x="20" y="122" text-anchor="start">Con cupo de 1 en 10</text>
+<rect class="dg-layer" x="190" y="100" width="432.0" height="34" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="406.0" y="122" text-anchor="middle">80 %</text>
+<rect class="dg-layer" x="622.0" y="100" width="64.8" height="34" rx="3" style="--c: var(--l-queue)"/>
+<text class="dg-tiny" x="654.4" y="122" text-anchor="middle">12 %</text>
+<rect class="dg-layer" x="686.8" y="100" width="43.2" height="34" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="708.4" y="122" text-anchor="middle">8 %</text>
+<text class="dg-tiny" x="744" y="122" text-anchor="end">8 %</text>
+<rect class="dg-layer" x="190" y="180" width="16" height="16" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="214" y="193" text-anchor="start">más de 1 año</text>
+<rect class="dg-layer" x="370" y="180" width="16" height="16" rx="3" style="--c: var(--l-queue)"/>
+<text class="dg-tiny" x="394" y="193" text-anchor="start">1 a 12 meses</text>
+<rect class="dg-layer" x="550" y="180" width="16" height="16" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="574" y="193" text-anchor="start">menos de 1 mes</text>
+<text class="dg-tiny" x="744" y="22" text-anchor="end">nuevos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.13.</b> Cuánto del feed ven los vendedores según su antigüedad. Los porcentajes son un supuesto para el ejemplo de Mercado Barrio, no una medición: la forma (casi nada para los nuevos sin cupo) es la que produce el bucle de 47.7. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>La herramienta es un presupuesto de exposición. La cuenta, con los números de Mercado Barrio: 400 000 000 requests por día con 10 ítems en pantalla son 4 000 000 000 de impresiones diarias. Si un 5&#8239;% se dedica a exploración, son 200 000 000. Con 500 000 productos nuevos por día (un supuesto de este ejemplo), le tocan 400 impresiones a cada uno. Con un CTR del 3&#8239;%, son unos 12 clics esperados, y el CTR medido queda con un margen de ±1.7 puntos al 95&#8239;% (1.96 × √(0.03 × 0.97 / 400) = 0.017): alcanza para separar un producto muy bueno de uno muy malo, no para ordenar los del medio.</p>
+
+<p>Dentro de ese presupuesto, un bandit (47.5) decide quién recibe más: el que en sus primeras 100 impresiones va bien recibe las siguientes; el que va mal, deja de recibirlas. Es lo que hace el lugar fijo "uno de cada diez es nuevo" de la capa de reglas, con el bandit eligiendo qué ítem nuevo va en ese lugar.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>¿Justo para quién? Repartir exposición igual entre vendedores castiga a la persona que busca, que recibe peores ítems; repartirla por calidad medida castiga al nuevo, que todavía no tiene medida. "Exposición justa" puede querer decir proporcional a la calidad estimada, con un piso para lo nuevo, o igual oportunidad de ser evaluado. Es una decisión de producto y de política, y tiene que estar escrita en el design doc con su número: qué parte de las impresiones, para quién y cuándo se revisa.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> sin un presupuesto de exposición, el bucle deja sin lugar a los vendedores nuevos; se reserva una parte de las impresiones, se reparte con un bandit y se escribe en el design doc qué quiere decir justo.</p>
+
+<p>Para cerrar, el embudo con el re-ranking resaltado:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f47zt f47zd">
+<title id="f47zt">El embudo con el re-ranking resaltado</title>
+<desc id="f47zd">El embudo de Mercado Barrio: catálogo, recuperación, filtros, ranking liviano, ranking pesado y re-ranking, con el bucle de impresiones, log y entrenamiento. Resaltados, el re-ranking y el registro de impresiones, que son este módulo.</desc>
+<defs><marker id="f47za" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="540" y="26" text-anchor="start">Cuántos quedan y la latencia acumulada</text>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="160.0" y="40" width="340" height="32" rx="6"/>
+<text class="dg-small" x="330" y="61" text-anchor="middle">Catálogo</text>
+<text class="dg-small" x="540" y="53" text-anchor="start">100 000 000 ítems</text>
+<text class="dg-tiny" x="540" y="69" text-anchor="start">productos y videos de reseña</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="200.0" y="88" width="260" height="32" rx="6"/>
+<text class="dg-small" x="330" y="109" text-anchor="middle">Recuperación</text>
+<text class="dg-small" x="540" y="101" text-anchor="start">10 000 candidatos  ·  25 ms</text>
+<text class="dg-tiny" x="540" y="117" text-anchor="start">varias fuentes en paralelo</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="210.0" y="136" width="240" height="32" rx="6"/>
+<text class="dg-small" x="330" y="157" text-anchor="middle">Filtros</text>
+<text class="dg-small" x="540" y="149" text-anchor="start">unos 9 000  ·  30 ms</text>
+<text class="dg-tiny" x="540" y="165" text-anchor="start">ya visto, bloqueado, sin stock</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="245.0" y="184" width="170" height="32" rx="6"/>
+<text class="dg-small" x="330" y="205" text-anchor="middle">Ranking liviano</text>
+<text class="dg-small" x="540" y="197" text-anchor="start">500  ·  63 ms</text>
+<text class="dg-tiny" x="540" y="213" text-anchor="start">features y un modelo barato</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="270.0" y="232" width="120" height="32" rx="6"/>
+<text class="dg-small" x="330" y="253" text-anchor="middle">Ranking pesado</text>
+<text class="dg-small" x="540" y="245" text-anchor="start">50  ·  113 ms</text>
+<text class="dg-tiny" x="540" y="261" text-anchor="start">un modelo grande, multi-tarea</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="288.0" y="280" width="84" height="32" rx="6"/>
+<text class="dg-small" x="330" y="301" text-anchor="middle">Re-ranking</text>
+<text class="dg-small" x="540" y="293" text-anchor="start">10 en pantalla  ·  118 ms</text>
+<text class="dg-tiny" x="540" y="309" text-anchor="start">diversidad, frescura, reglas</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="230" y="336" width="200" height="40" rx="8"/>
+<text class="dg-small" x="330.0" y="360.0" text-anchor="middle">Registro de impresiones</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="20" y="336" width="130" height="40" rx="8"/>
+<text class="dg-small" x="85.0" y="360.0" text-anchor="middle">Log de eventos</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="20" y="150" width="120" height="44" rx="8"/>
+<text class="dg-small" x="80.0" y="176.0" text-anchor="middle">Entrenamiento</text>
+</g>
+<path class="dg-edge" d="M330 312 V334" marker-end="url(#f47za)"/>
+<path class="dg-edge" d="M230 356 H152" marker-end="url(#f47za)"/>
+<text class="dg-tiny" x="191" y="389" text-anchor="middle">con clics y compras</text>
+<path class="dg-edge" d="M80 336 V196" marker-end="url(#f47za)"/>
+<path class="dg-feedback" d="M140 166 H176 V104 H198" marker-end="url(#f47za)"/>
+<path class="dg-feedback" d="M140 178 H200 V200 H243" marker-end="url(#f47za)"/>
+<path class="dg-feedback" d="M140 188 H186 V248 H268" marker-end="url(#f47za)"/>
+<text class="dg-tiny" x="88" y="230" text-anchor="start">modelos nuevos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 47.14.</b> Dónde estás. El re-ranking convierte 50 ítems ordenados en 10 que forman una lista, en unos 5 ms. Lo que muestra vuelve como impresiones con su posición y su propensión, que es lo que permite corregir el bucle.</figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Lo que viene</p>
+  <p>El embudo de la recomendación de contenido está completo: recuperación, ranking y re-ranking. <a href="m48-grafos-amigos.html">M48</a> cambia de superficie: "personas que quizás conozcas", donde los ítems son personas, los datos son un grafo y el riesgo de equivocarse no es un clic perdido sino revelar una relación.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m47"></div>
+
+<div data-exercise="m47-explorar"></div>
+
+<div data-checkpoint="m47"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m47.data.js"></script>
+<script src="../assets/js/data/exercises/m47.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-bandit.js"></script>
+</body>
+</html>

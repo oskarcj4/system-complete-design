@@ -1,0 +1,914 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M50. Servir y operar un recomendador</title>
+<meta name="description" content="Una request del feed de punta a punta, el presupuesto de latencia, precalcular o calcular al pedir, features en tiempo real, la flota del ranker, el ritmo de entrenamiento, el registro de modelos, la deriva, la degradación, el ítem viral y la factura.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m50">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Servir y operar un recomendador</h1>
+        <p class="lead">Doscientos milisegundos, seis servicios y un modelo que se vuelve viejo cada hora.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M50</dd></div>
+          <div><dt>Parte</dt><dd>VI. ML System Design</dd></div>
+          <div><dt>Duración</dt><dd>150 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M46, M49</dd></div>
+          <div><dt>Estado</dt><dd data-status="m50">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Seguir una request del feed de punta a punta y repartir el presupuesto de latencia entre las etapas.</li>
+    <li>Decidir qué se precalcula y qué se calcula al pedir.</li>
+    <li>Diseñar features en tiempo real con un log de eventos y un job de streaming.</li>
+    <li>Dimensionar la flota del ranker en GPU o CPU con una cuenta de FLOPs.</li>
+    <li>Elegir el ritmo de entrenamiento y entender las tablas de embeddings sin colisiones.</li>
+    <li>Desplegar un modelo con su versión de features, detectar la deriva con PSI y degradar sin dejar el feed vacío.</li>
+  </ul>
+</section>
+
+<p>"Doscientos milisegundos, seis servicios y un modelo que se vuelve viejo cada hora." Hasta acá la parte armó las piezas de un recomendador y aprendió a medirlas. Este módulo las pone a correr juntas, 13 889 veces por segundo en el pico, y se ocupa de lo que pasa cuando una se rompe o se queda atrás.</p>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 390" role="img" aria-labelledby="f50at f50ad">
+<title id="f50at">La arquitectura de serving del feed</title>
+<desc id="f50ad">Arriba, el camino de una request: la app llama a la API del feed, que pide candidatos a varias fuentes, lee features del feature store en línea, pasa por el ranking liviano en CPU, el ranking pesado en GPU y el re-ranking, y devuelve diez ítems. Abajo, el camino de los datos: las impresiones y clics van al log de eventos, un job de streaming actualiza las features en línea en segundos, el entrenamiento lee el log y publica modelos en el registro, y una caché guarda el feed de respaldo.</desc>
+<defs><marker id="f50aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="22" text-anchor="start">El camino de una request (138 ms de 200)</text>
+<rect class="dg-layer" x="20" y="36" width="120" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="80.0" y="60.0" text-anchor="middle">API del feed</text>
+<text class="dg-tiny" x="80.0" y="76.0" text-anchor="middle">orquesta</text>
+<rect class="dg-layer" x="160" y="36" width="120" height="56" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="220.0" y="60.0" text-anchor="middle">Fuentes</text>
+<text class="dg-tiny" x="220.0" y="76.0" text-anchor="middle">candidatos</text>
+<rect class="dg-layer" x="300" y="36" width="120" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="360.0" y="60.0" text-anchor="middle">Ranking liviano</text>
+<text class="dg-tiny" x="360.0" y="76.0" text-anchor="middle">CPU, 9 000</text>
+<rect class="dg-layer" x="440" y="36" width="120" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="500.0" y="60.0" text-anchor="middle">Ranking pesado</text>
+<text class="dg-tiny" x="500.0" y="76.0" text-anchor="middle">GPU, 500</text>
+<rect class="dg-layer" x="580" y="36" width="120" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="640.0" y="60.0" text-anchor="middle">Re-ranking</text>
+<text class="dg-tiny" x="640.0" y="76.0" text-anchor="middle">50 a 10</text>
+<path class="dg-edge" d="M142 64 H156" marker-end="url(#f50aa)"/>
+<path class="dg-edge" d="M282 64 H296" marker-end="url(#f50aa)"/>
+<path class="dg-edge" d="M422 64 H436" marker-end="url(#f50aa)"/>
+<path class="dg-edge" d="M562 64 H576" marker-end="url(#f50aa)"/>
+<rect class="dg-layer" x="300" y="132" width="240" height="50" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="420.0" y="153.0" text-anchor="middle">Feature store en línea</text>
+<text class="dg-tiny" x="420.0" y="169.0" text-anchor="middle">último valor por usuario e ítem</text>
+<path class="dg-feedback" d="M360 94 V128"/>
+<path class="dg-feedback" d="M500 94 V128"/>
+<rect class="dg-warnbox" x="160" y="132" width="120" height="50" rx="8"/>
+<text class="dg-small" x="220.0" y="153.0" text-anchor="middle">Caché de respaldo</text>
+<text class="dg-tiny" x="220.0" y="169.0" text-anchor="middle">el feed de ayer</text>
+<path class="dg-feedback" d="M130 94 L190 128"/>
+<text class="dg-group" x="20" y="222" text-anchor="start">El camino de los datos</text>
+<rect class="dg-layer" x="20" y="236" width="150" height="50" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="95.0" y="257.0" text-anchor="middle">Log de eventos</text>
+<text class="dg-tiny" x="95.0" y="273.0" text-anchor="middle">Kafka</text>
+<rect class="dg-layer" x="220" y="236" width="170" height="50" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="305.0" y="257.0" text-anchor="middle">Features en streaming</text>
+<text class="dg-tiny" x="305.0" y="273.0" text-anchor="middle">Flink, segundos</text>
+<rect class="dg-layer" x="440" y="236" width="150" height="50" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="515.0" y="257.0" text-anchor="middle">Entrenamiento</text>
+<text class="dg-tiny" x="515.0" y="273.0" text-anchor="middle">diario o continuo</text>
+<rect class="dg-layer" x="620" y="236" width="130" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="685.0" y="257.0" text-anchor="middle">Registro</text>
+<text class="dg-tiny" x="685.0" y="273.0" text-anchor="middle">de modelos</text>
+<path class="dg-edge" d="M172 261 H216" marker-end="url(#f50aa)"/>
+<path class="dg-edge" d="M392 261 H436" marker-end="url(#f50aa)"/>
+<path class="dg-edge" d="M592 261 H616" marker-end="url(#f50aa)"/>
+<path class="dg-edge" d="M305 234 V186" marker-end="url(#f50aa)"/>
+<path class="dg-feedback" d="M650 234 L532 96" marker-end="url(#f50aa)"/>
+<path class="dg-feedback" d="M60 94 V232" marker-end="url(#f50aa)"/>
+<text class="dg-tiny" x="68" y="160" text-anchor="start">impresiones</text>
+<text class="dg-tiny" x="634" y="205" text-anchor="start">modelo nuevo</text>
+<rect class="dg-box" x="20" y="314" width="730" height="58" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-small" x="34" y="338" text-anchor="start">Arriba se mide en milisegundos y se paga en GPUs; abajo se mide en minutos y horas, y se paga en frescura.</text>
+<text class="dg-tiny" x="34" y="358" text-anchor="start">Casi todos los incidentes de un recomendador pasan en la frontera: un dato que llega tarde o distinto de arriba.</text>
+<g class="pl-pin"><circle cx="20" cy="36" r="11"/><text x="20" y="40" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="160" cy="36" r="11"/><text x="160" y="40" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="300" cy="132" r="11"/><text x="300" y="136" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="300" cy="36" r="11"/><text x="300" y="40" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="440" cy="36" r="11"/><text x="440" y="40" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="580" cy="36" r="11"/><text x="580" y="40" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="20" cy="236" r="11"/><text x="20" y="240" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="220" cy="236" r="11"/><text x="220" y="240" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="440" cy="236" r="11"/><text x="440" y="240" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="620" cy="236" r="11"/><text x="620" y="240" text-anchor="middle">10</text></g>
+<g class="pl-pin"><circle cx="160" cy="132" r="11"/><text x="160" y="136" text-anchor="middle">11</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 50.A.</b> Las once piezas de un recomendador en producción. Las de arriba responden cada request; las de abajo cambian lo que las de arriba saben. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>API del feed</b><span>Recibe la request, llama a las demás piezas con un deadline y arma la respuesta. <a href="#request">50.1</a></span></li>
+  <li><b>Fuentes de candidatos</b><span>Two-tower, ítem a ítem, grafo, populares y lo nuevo, en paralelo. <a href="#presupuesto">50.2</a></span></li>
+  <li><b>Feature store en línea</b><span>El último valor de cada feature, en milisegundos. <a href="#features-online">50.4</a></span></li>
+  <li><b>Ranking liviano</b><span>Un modelo barato que recorta de 9 000 a 500. <a href="#flota">50.5</a></span></li>
+  <li><b>Ranking pesado</b><span>El modelo multi-tarea de M46, en GPU. <a href="#flota">50.5</a></span></li>
+  <li><b>Re-ranking</b><span>Diversidad, reglas y exploración de M47. <a href="#request">50.1</a></span></li>
+  <li><b>Log de eventos</b><span>Impresiones y clics, con la variante y la propensión. <a href="#features-online">50.4</a></span></li>
+  <li><b>Features en streaming</b><span>Contadores que se actualizan en segundos. <a href="#features-online">50.4</a></span></li>
+  <li><b>Entrenamiento</b><span>Una vez por día, cada hora o sin parar. <a href="#entrenamiento">50.6</a></span></li>
+  <li><b>Registro de modelos</b><span>Qué modelo, con qué features, en qué porcentaje del tráfico. <a href="#registro">50.7</a></span></li>
+  <li><b>Caché de respaldo</b><span>Lo que se sirve cuando todo lo demás falla. <a href="#degradar">50.9</a></span></li>
+</ol>
+
+
+<p class="more-link"><b>Cómo leer este módulo:</b> 50.1, 50.2, 50.4, 50.5 y 50.9 son el núcleo (unos 90 minutos). El resto es lo que hace un equipo que ya tiene el recomendador en producción.</p>
+
+<h2 id="request"><span class="sec-num">50.1</span>Una request del feed de punta a punta</h2>
+
+<p>La API del feed no puntúa nada: orquesta. Recibe la request, pide candidatos, lee features, llama a los dos rankers y al re-ranking, y devuelve diez ítems. Cada llamada lleva el <a href="m08-resiliencia.html#deadline-viaje">deadline que viaja</a> de M08: lo que queda del presupuesto, para que nadie trabaje en una respuesta que ya llegó tarde.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 900 580" role="img" aria-labelledby="f501t f501d">
+<title id="f501t">Una request del feed de punta a punta</title>
+<desc id="f501d">Diagrama de secuencia de una request del feed con sus tiempos p99: la app pide el feed; la API pide candidatos a las fuentes en paralelo (25 ms) y filtra (5 ms); lee las features (15 ms); el ranking liviano puntúa 9 000 ítems (18 ms); el pesado puntúa 500 en GPU (50 ms); el re-ranking deja 10 (5 ms); la API responde y, aparte, publica las impresiones en Kafka sin esperar.</desc>
+<defs><marker id="f501-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f501-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f501-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f501-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="19.714285714285715" y="8" width="100.57142857142857" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">App</text>
+<path class="dg-frame" d="M70.0 40 V570"/>
+<rect class="dg-box" x="128.28571428571428" y="8" width="100.57142857142857" height="32" rx="4"/>
+<text class="dg-label" x="178.57142857142856" y="29" text-anchor="middle" style="font-size:13.5px">API del feed</text>
+<path class="dg-frame" d="M178.57142857142856 40 V570"/>
+<rect class="dg-box" x="236.85714285714283" y="8" width="100.57142857142857" height="32" rx="4"/>
+<text class="dg-label" x="287.1428571428571" y="29" text-anchor="middle" style="font-size:13.5px">Fuentes</text>
+<path class="dg-frame" d="M287.1428571428571 40 V570"/>
+<rect class="dg-box" x="345.42857142857144" y="8" width="100.57142857142857" height="32" rx="4"/>
+<text class="dg-label" x="395.7142857142857" y="29" text-anchor="middle" style="font-size:13.5px">Features</text>
+<path class="dg-frame" d="M395.7142857142857 40 V570"/>
+<rect class="dg-box" x="454.0" y="8" width="100.57142857142857" height="32" rx="4"/>
+<text class="dg-label" x="504.2857142857143" y="29" text-anchor="middle" style="font-size:13.5px">Liviano</text>
+<path class="dg-frame" d="M504.2857142857143 40 V570"/>
+<rect class="dg-box" x="562.5714285714286" y="8" width="100.57142857142857" height="32" rx="4"/>
+<text class="dg-label" x="612.8571428571429" y="29" text-anchor="middle" style="font-size:13.5px">Pesado</text>
+<path class="dg-frame" d="M612.8571428571429 40 V570"/>
+<rect class="dg-box" x="671.1428571428571" y="8" width="100.57142857142857" height="32" rx="4"/>
+<text class="dg-label" x="721.4285714285714" y="29" text-anchor="middle" style="font-size:13.5px">Re-ranking</text>
+<path class="dg-frame" d="M721.4285714285714 40 V570"/>
+<rect class="dg-box" x="779.7142857142857" y="8" width="100.57142857142857" height="32" rx="4"/>
+<text class="dg-label" x="830.0" y="29" text-anchor="middle" style="font-size:13.5px">Kafka</text>
+<path class="dg-frame" d="M830.0 40 V570"/>
+<path class="dg-edge" d="M73.0 72 L173.57142857142856 72" marker-end="url(#f501-a)"/>
+<rect x="88.58571428571427" y="55" width="71.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="124.28571428571428" y="66" text-anchor="middle">GET /feed</text>
+<path class="dg-edge" d="M181.57142857142856 106 L282.1428571428571 106" marker-end="url(#f501-a)"/>
+<rect x="141.05714285714282" y="89" width="183.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="232.85714285714283" y="100" text-anchor="middle">candidatos (5 en paralelo)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M284.1428571428571 140 L183.57142857142856 140" marker-end="url(#f501-r)"/>
+<rect x="180.65714285714284" y="123" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="232.85714285714283" y="134" text-anchor="middle">10 000 · 25 ms</text>
+<rect x="188.57142857142856" y="160" width="167" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="198.57142857142856" y="176">filtros: 9 000 · 5 ms</text>
+<path class="dg-edge" d="M181.57142857142856 208 L390.7142857142857 208" marker-end="url(#f501-a)"/>
+<rect x="225.04285714285712" y="191" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="287.1428571428571" y="202" text-anchor="middle">features de 9 000</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M392.7142857142857 242 L183.57142857142856 242" marker-end="url(#f501-r)"/>
+<rect x="264.6428571428571" y="225" width="45.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="287.1428571428571" y="236" text-anchor="middle">15 ms</text>
+<path class="dg-edge" d="M181.57142857142856 276 L499.2857142857143 276" marker-end="url(#f501-a)"/>
+<rect x="292.52857142857147" y="259" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="341.42857142857144" y="270" text-anchor="middle">puntuar 9 000</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M501.2857142857143 310 L183.57142857142856 310" marker-end="url(#f501-r)"/>
+<rect x="299.12857142857143" y="293" width="84.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="341.42857142857144" y="304" text-anchor="middle">500 · 18 ms</text>
+<path class="dg-edge" d="M181.57142857142856 344 L607.8571428571429 344" marker-end="url(#f501-a)"/>
+<rect x="353.4142857142857" y="327" width="84.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="395.7142857142857" y="338" text-anchor="middle">puntuar 500</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M609.8571428571429 378 L183.57142857142856 378" marker-end="url(#f501-r)"/>
+<rect x="356.7142857142857" y="361" width="78.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="395.7142857142857" y="372" text-anchor="middle">50 · 50 ms</text>
+<path class="dg-edge" d="M181.57142857142856 412 L716.4285714285714 412" marker-end="url(#f501-a)"/>
+<rect x="401.1" y="395" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="450.0" y="406" text-anchor="middle">re-ordenar 50</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M718.4285714285714 446 L183.57142857142856 446" marker-end="url(#f501-r)"/>
+<rect x="414.3" y="429" width="71.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="450.0" y="440" text-anchor="middle">10 · 5 ms</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M175.57142857142856 480 L75.0 480" marker-end="url(#f501-r)"/>
+<rect x="62.18571428571428" y="463" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="124.28571428571428" y="474" text-anchor="middle">10 ítems · 138 ms</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M181.57142857142856 514 L825.0 514" marker-end="url(#f501-q)"/>
+<rect x="415.7857142857143" y="497" width="177.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="504.2857142857143" y="508" text-anchor="middle">impresiones (sin esperar)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 50.1.</b> Seis llamadas en serie y una que no se espera. Los milisegundos son el reparto de <a href="m42-ml-system-design.html#numeros">M42</a>, un supuesto de diseño. Que la impresión se publique sin esperar es lo que mantiene el log fuera del camino crítico: si Kafka se pone lento, el feed no. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una cocina de restaurante a la hora pico. El jefe de cocina no cocina: canta las comandas, mira el reloj y, si el horno se atrasa, saca el plato sin gratinar antes que dejar la mesa esperando.</p>
+</aside>
+
+<p>Dos detalles que no se ven en el diagrama. Las features se piden en una sola llamada para los 9 000 candidatos (un <code>MGET</code> por lotes), no una por ítem: 9 000 viajes de red de 0.2 ms serían 1.8 segundos. Y la API guarda, junto con los diez ítems que devuelve, el id de la request, la versión del modelo, la variante del experimento y la propensión de cada lugar: sin eso no hay log para entrenar ni para medir (<a href="m43-datos-recomendacion.html#log">M43</a>, <a href="m49-experimentos.html#contrafactual">M49</a>).</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> una request son seis llamadas en serie con un deadline, más la publicación de las impresiones fuera del camino crítico.</p>
+
+<h2 id="presupuesto"><span class="sec-num">50.2</span>El presupuesto de latencia</h2>
+
+<p>El <dfn data-term="presupuesto-latencia">presupuesto de latencia</dfn> reparte los 200 ms p99 entre las etapas. Es el de <a href="m42-ml-system-design.html#numeros">M42</a>: recuperación 25, filtros 5, features 15, liviano 18, pesado 50, re-ranking 5, red y armado 20. Total, 138; quedan 62 de margen para el día malo.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f502t f502d">
+<title id="f502t">Esperar a la más lenta</title>
+<desc id="f502d">Cinco fuentes de candidatos responden en paralelo. Cuatro tardan unos 12 ms; la quinta, en esta request, tarda 60. Sin timeout, la recuperación entera tarda 60 ms. Con un timeout de 20 ms, la request sigue con cuatro fuentes y la quinta se anota como faltante. Abajo, la cuenta: si cada fuente pasa su p99 una vez cada cien, la chance de que alguna de las cinco lo pase es 1 menos 0.99 a la quinta, un 4.9 por ciento.</desc>
+<defs><marker id="f502a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="sim-axis" d="M150 30 V210"/>
+<text class="dg-tiny" x="140" y="51" text-anchor="end">Two-tower · 12 ms</text>
+<rect class="dg-layer" x="150" y="36" width="72" height="22" rx="4" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="140" y="83" text-anchor="end">Ítem a ítem · 10 ms</text>
+<rect class="dg-layer" x="150" y="68" width="60" height="22" rx="4" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="140" y="115" text-anchor="end">Grafo · 14 ms</text>
+<rect class="dg-layer" x="150" y="100" width="84" height="22" rx="4" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="140" y="147" text-anchor="end">Populares · 4 ms</text>
+<rect class="dg-layer" x="150" y="132" width="24" height="22" rx="4" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="140" y="179" text-anchor="end">Lo nuevo · 60 ms</text>
+<rect class="dg-layer" x="150" y="164" width="360" height="22" rx="4" style="--c: var(--l-gpu)"/>
+<path class="dg-feedback" d="M270 26 V200"/>
+<text class="dg-tiny" x="270" y="20" text-anchor="middle">timeout 20 ms</text>
+<rect class="dg-warnbox" x="560" y="40" width="190" height="70" rx="8"/>
+<text class="dg-small" x="655.0" y="71.0" text-anchor="middle">Sin timeout</text>
+<text class="dg-tiny" x="655.0" y="87.0" text-anchor="middle">la recuperación tarda 60 ms</text>
+<rect class="dg-box dg-box--em" x="560" y="124" width="190" height="70" rx="8"/>
+<text class="dg-small" x="655.0" y="155.0" text-anchor="middle">Con timeout</text>
+<text class="dg-tiny" x="655.0" y="171.0" text-anchor="middle">20 ms, sigue con cuatro</text>
+<rect class="dg-box" x="20" y="222" width="730" height="54" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-tiny dg-mono" x="34" y="244" text-anchor="start" style="white-space:pre">P(alguna de 5 pasa su p99) = 1 − 0.99⁵ = 4.9 %  ·  con 10 fuentes, 9.6 %</text>
+<text class="dg-tiny" x="34" y="264" text-anchor="start">Una de cada veinte requests espera a una fuente en su peor momento, si nadie la corta.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 50.2.</b> La latencia de cola del fan-out de <a href="m00-metodo.html#percentiles">M00</a> aplicada a la recuperación. Cada fuente tiene un timeout por debajo de su parte del presupuesto, y una request sin la fuente de lo nuevo es peor que una completa pero mucho mejor que una tarde. Los milisegundos son un ejemplo. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<div data-calc="recbudget"></div>
+
+<p>Prueba "Fuentes en serie": la recuperación pasa a 105 ms y la request se pasa del presupuesto. Prueba "Pesado partido en 4": 2 000 ítems al ranking pesado, repartidos en cuatro máquinas que puntúan 500 cada una a la vez. La latencia queda igual, 138 ms, pero la flota pasa de 20 a 78 GPUs: partir compra latencia con dinero.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: los percentiles no se suman</p>
+  <p>El p99 de la request no es la suma de los p99 de las etapas: sumarlos da un número pesimista, porque rara vez todas tienen su peor momento a la vez. Pero el p99 de un fan-out sí es peor que el de cada rama: con <i>n</i> ramas en paralelo, <b>P(alguna pasa su p99) = 1 − 0.99<sup><i>n</i></sup></b>. Por eso el presupuesto se reparte con sumas (es una cota segura) y se verifica midiendo el p99 de punta a punta.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> 138 de 200 ms repartidos por etapa; cada fuente con su timeout, porque en paralelo se espera a la más lenta.</p>
+
+<h2 id="precalcular"><span class="sec-num">50.3</span>Precalcular o calcular al pedir</h2>
+
+<p>No todo tiene que pasar dentro de la request. Lo que cambia lento se puede calcular antes y guardar; lo que cambia rápido tiene que calcularse al pedir.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f503t f503d">
+<title id="f503t">Precalcular o calcular al pedir</title>
+<desc id="f503d">Tres columnas. Precalcular todo: un job nocturno arma el feed de cada usuario y la request solo lo lee; rápido, pero viejo y gastado en quien no entra. Calcular todo al pedir: la request recorre el embudo entero; fresco, pero caro y lento. Híbrido: los candidatos se precalculan cada pocas horas y el ranking se hace al pedir, con las features de ahora.</desc>
+<defs><marker id="f503a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="20" width="230" height="36" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="135.0" y="42.0" text-anchor="middle">Precalcular todo</text>
+<text class="dg-small" x="32" y="82" text-anchor="start">Un job arma 50 ítems</text>
+<text class="dg-tiny" x="32" y="104" text-anchor="start">por usuario cada noche</text>
+<text class="dg-small" x="32" y="138" text-anchor="start">La request lee 1 clave: 2 ms</text>
+<text class="dg-tiny" x="32" y="160" text-anchor="start">Viejo hasta mañana</text>
+<text class="dg-small" x="32" y="194" text-anchor="start">50 M de feeds para</text>
+<text class="dg-tiny" x="32" y="216" text-anchor="start">20 M que entran</text>
+<rect class="dg-frame" x="20" y="64" width="230" height="186" rx="8"/>
+<rect class="dg-layer" x="270" y="20" width="230" height="36" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="385.0" y="42.0" text-anchor="middle">Al pedir</text>
+<text class="dg-small" x="282" y="82" text-anchor="start">La request recorre</text>
+<text class="dg-tiny" x="282" y="104" text-anchor="start">el embudo entero</text>
+<text class="dg-small" x="282" y="138" text-anchor="start">138 ms y la flota de 50.5</text>
+<text class="dg-tiny" x="282" y="160" text-anchor="start">Fresco al segundo</text>
+<text class="dg-small" x="282" y="194" text-anchor="start">Paga GPU por cada</text>
+<text class="dg-tiny" x="282" y="216" text-anchor="start">apertura del feed</text>
+<rect class="dg-frame" x="270" y="64" width="230" height="186" rx="8"/>
+<rect class="dg-layer" x="520" y="20" width="230" height="36" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="635.0" y="42.0" text-anchor="middle">Híbrido</text>
+<text class="dg-small" x="532" y="82" text-anchor="start">Candidatos por usuario</text>
+<text class="dg-tiny" x="532" y="104" text-anchor="start">cada 4 horas</text>
+<text class="dg-small" x="532" y="138" text-anchor="start">Ranking al pedir</text>
+<text class="dg-tiny" x="532" y="160" text-anchor="start">con features de ahora</text>
+<text class="dg-small" x="532" y="194" text-anchor="start">Recuperación barata,</text>
+<text class="dg-tiny" x="532" y="216" text-anchor="start">ranking fresco</text>
+<rect class="dg-frame" x="520" y="64" width="230" height="186" rx="8"/>
+<rect class="dg-box" x="20" y="262" width="730" height="30" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-tiny" x="34" y="282" text-anchor="start">Los 50 M registrados contra 20 M activos: precalcular para todos gasta el 60 % del cómputo en feeds que nadie abre.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 50.3.</b> Es el fan-out en escritura contra en lectura de <a href="m30-twitter.html#fanout">M30</a>, con una diferencia: en un timeline la lista se arma con lo que publican tus seguidos, y en un recomendador hay que puntuar. El híbrido precalcula lo barato y deja al pedir lo que cambia rápido. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>Mercado Barrio usa el híbrido. Cada cuatro horas, un job arma los 2 000 candidatos de dos torres de cada usuario activo en la última semana y los guarda; la request suma las fuentes que cambian rápido (lo nuevo, lo popular de la última hora) y rankea todo al pedir, con las features de ese momento. Un usuario que vuelve después de un mes no tiene candidatos guardados: la request los calcula en línea, más lenta pero completa. Es la misma idea que el umbral de <a href="m30-twitter.html#hibrido">M30</a>: se precalcula para el caso común y se calcula en línea para el raro.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> se precalcula lo que cambia lento (candidatos), se calcula al pedir lo que cambia rápido (el orden).</p>
+
+<h2 id="features-online"><span class="sec-num">50.4</span>Features en tiempo real</h2>
+
+<p>"Lo que viste hace 30 segundos" es la feature más valiosa de un feed y la más difícil de servir. El lote nocturno no la tiene; hace falta un camino que lleve el evento del log al feature store en segundos. Es una <dfn data-term="feature-tiempo-real">feature en tiempo real</dfn>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 346" role="img" aria-labelledby="f504t f504d">
+<title id="f504t">Feature en tiempo real</title>
+<desc id="f504d">Ficha de Feature en tiempo real. Qué entra: Los eventos del log (impresiones, clics, compras) en el momento en que pasan. Qué hace: Un job de streaming los agrupa por clave y ventana (clics del ítem en los últimos 10 minutos) y escribe el resultado en el feature store en línea. Qué sale: Un valor que tiene segundos de antigüedad, con su hora de cálculo, listo para leer en milisegundos. Ejemplo: clics_10m(item=884) = 412  (calculado 14:03:20) visto_hace_30s(usuario=42, item=884) = sí Kafka → Flink → Valkey: 30 s de punta a punta Qué falla sin él: Sin él, el ranker no sabe que un video explotó hace una hora ni que la persona ya lo vio, y se lo vuelve a mostrar. Dónde vive: En el job de Flink y en el feature store en línea; la misma definición alimenta el almacén offline para entrenar.</desc>
+<defs><marker id="f504a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="114" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Los eventos del log</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">(impresiones, clics, compras)</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">en el momento en que pasan.</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="114" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Un job de streaming los agrupa</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">por clave y ventana (clics del</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">ítem en los últimos 10 minutos)</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">y escribe el resultado en el</text>
+<text class="dg-tiny" x="291" y="120" text-anchor="start">feature store en línea.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="114" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Un valor que tiene segundos de</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">antigüedad, con su hora de</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">cálculo, listo para leer en</text>
+<text class="dg-tiny" x="550" y="104" text-anchor="start">milisegundos.</text>
+<path class="dg-edge" d="M234 73.0 H275" marker-end="url(#f504a)"/>
+<path class="dg-edge" d="M493 73.0 H534" marker-end="url(#f504a)"/>
+<rect class="dg-box" x="20" y="144" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="164" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="184" text-anchor="start" style="white-space:pre">clics_10m(item=884) = 412  (calculado 14:03:20)</text>
+<text class="dg-tiny dg-mono" x="32" y="200" text-anchor="start" style="white-space:pre">visto_hace_30s(usuario=42, item=884) = sí</text>
+<text class="dg-tiny dg-mono" x="32" y="216" text-anchor="start" style="white-space:pre">Kafka → Flink → Valkey: 30 s de punta a punta</text>
+<rect class="dg-warnbox" x="20" y="244" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="264" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="284" text-anchor="start">Sin él, el ranker no sabe que un video explotó hace</text>
+<text class="dg-tiny" x="32" y="300" text-anchor="start">una hora ni que la persona ya lo vio, y se lo vuelve a</text>
+<text class="dg-tiny" x="32" y="316" text-anchor="start">mostrar.</text>
+<rect class="dg-box" x="393" y="244" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="264" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="284" text-anchor="start">En el job de Flink y en el feature store en línea; la</text>
+<text class="dg-tiny" x="405" y="300" text-anchor="start">misma definición alimenta el almacén offline para</text>
+<text class="dg-tiny" x="405" y="316" text-anchor="start">entrenar.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 50.4.</b> La ficha de una feature en tiempo real. La definición es una sola, como en <a href="m43-datos-recomendacion.html#feature-store">el feature store de M43</a>; lo nuevo es que se recalcula en segundos. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>El camino es el de <a href="m07-mensajeria.html#kafka">M07</a>: la API publica cada impresión y cada clic en Kafka, particionado por usuario; un job de Flink lee la partición, mantiene contadores por ventana y escribe en el feature store en línea (un Valkey o Redis). La misma definición de la feature corre en lote sobre el log histórico para el almacén offline, así entrenar y servir ven lo mismo (el <span data-term="training-serving-skew">training-serving skew</span> de <a href="m43-datos-recomendacion.html#skew">M43</a>).</p>
+
+<div data-sim="freshness"></div>
+
+<p>Con "Lote diario", el ranker cree todo el día que el video tiene un 2&#8239;% de CTR mientras la gente lo mira a un 10&#8239;%: un error medio del 73&#8239;% en las seis horas del pico. "Cada hora" reacciona en 78 minutos. "Streaming", en 6. Con el ítem estable, los tres dan lo mismo: el streaming solo vale para lo que cambia rápido, y cuesta un job que no se apaga nunca.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Si el job de streaming se atrasa (un rebalanceo de Kafka, un checkpoint lento), el feature store no da error: sigue devolviendo el último valor, cada vez más viejo. Por eso cada valor guarda su hora de cálculo, el servidor mide la edad de lo que lee y el retraso del consumidor (el <i>lag</i>) tiene alerta propia.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> Kafka, Flink y un feature store en línea llevan un evento a la feature en segundos; el streaming solo vale para lo que cambia rápido.</p>
+
+<h2 id="flota"><span class="sec-num">50.5</span>La flota del ranker</h2>
+
+<p>En el pico, 13 889 requests por segundo × 500 ítems = 6 944 444 puntuaciones por segundo en el ranking pesado, y 125 000 000 en el liviano. Cuánto hardware hace falta sale de una cuenta de FLOPs, como la de <a href="m13-gpus.html#sizing">M13</a> para un LLM.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f505t f505d">
+<title id="f505t">La misma carga en GPU y en CPU</title>
+<desc id="f505d">Dos barras con lo que cuesta al mes puntuar 6.9 millones de ítems por segundo con un modelo de 20 MFLOP por ítem. En GPU: 14 L4 a 10 TFLOPS efectivos, 20 con holgura, unos 11 750 dólares al mes. En CPU: 5 556 vCPU a 25 GFLOPS efectivos cada una, 348 instancias de 16 vCPU, unos 146 900 dólares al mes. Abajo, el batching: una request trae 500 ítems y la GPU rinde con lotes de miles, así que el servidor junta varias requests en una ventana de 2 ms.</desc>
+<defs><marker id="f505a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="26" text-anchor="start">Ranking pesado: 6 944 444 puntuaciones/s × 20 MFLOP = 139 TFLOPS sostenidos</text>
+<text class="dg-small" x="20" y="68" text-anchor="start">GPU</text>
+<rect class="dg-layer" x="70" y="46" width="44.792375765827096" height="30" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="122.7923757658271" y="66" text-anchor="start">11 750 USD/mes</text>
+<text class="dg-tiny" x="70" y="92" text-anchor="start">20 × g6.xlarge (L4), 10 TFLOPS efectivos</text>
+<text class="dg-small" x="20" y="122" text-anchor="start">CPU</text>
+<rect class="dg-layer" x="70" y="100" width="560.0" height="30" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="622.0" y="120" text-anchor="end">146 900 USD/mes</text>
+<text class="dg-tiny" x="70" y="146" text-anchor="start">348 × c7g.4xlarge, 25 GFLOPS por vCPU</text>
+<text class="dg-group" x="20" y="178" text-anchor="start">Batching por request</text>
+<rect class="dg-layer" x="20" y="190" width="80" height="34" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="60.0" y="211.0" text-anchor="middle">req 1: 500</text>
+<path class="dg-edge" d="M60 226 C 60 246, 420 236, 436 236" marker-end="url(#f505a)"/>
+<rect class="dg-layer" x="110" y="190" width="80" height="34" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="150.0" y="211.0" text-anchor="middle">req 2: 500</text>
+<path class="dg-edge" d="M150 226 C 150 246, 420 236, 436 236" marker-end="url(#f505a)"/>
+<rect class="dg-layer" x="200" y="190" width="80" height="34" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="240.0" y="211.0" text-anchor="middle">req 3: 500</text>
+<path class="dg-edge" d="M240 226 C 240 246, 420 236, 436 236" marker-end="url(#f505a)"/>
+<rect class="dg-layer" x="290" y="190" width="80" height="34" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="330.0" y="211.0" text-anchor="middle">req 4: 500</text>
+<path class="dg-edge" d="M330 226 C 330 246, 420 236, 436 236" marker-end="url(#f505a)"/>
+<rect class="dg-layer" x="440" y="214" width="150" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="515.0" y="232.0" text-anchor="middle">lote de 2 000</text>
+<text class="dg-tiny" x="515.0" y="248.0" text-anchor="middle">una pasada de GPU</text>
+<text class="dg-tiny" x="600" y="232" text-anchor="start">ventana de 2 ms:</text>
+<text class="dg-tiny" x="600" y="248" text-anchor="start">suma 2 ms de latencia,</text>
+<text class="dg-tiny" x="600" y="264" text-anchor="start">rinde varias veces más</text>
+<text class="dg-tiny" x="20" y="288" text-anchor="start">Los FLOPs por ítem y los efectivos por dispositivo son supuestos de diseño; los precios, de lista en us-east-1.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 50.5.</b> La cuenta que decide el hardware del ranking pesado. Con un modelo así de denso, la GPU sale más de diez veces más barata; con un modelo de árboles chico, como el liviano, la CPU alcanza y evita mover datos. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: dimensionar con FLOPs</p>
+  <p><b>Dispositivos = puntuaciones/s × FLOP por ítem / FLOP/s efectivos por dispositivo</b>, más la holgura.</p>
+  <p>Pesado: 6 944 444 × 20 000 000 = 1.39 × 10¹⁴ FLOP/s. Una L4 a 10 TFLOPS efectivos (una fracción chica de su pico, porque las búsquedas en tablas de embeddings están limitadas por la memoria): 13.9 GPUs, 20 con un 40&#8239;% de holgura para picos y para perder una zona. Liviano: 125 000 000 × 100 000 = 1.25 × 10¹³ FLOP/s; a 25 GFLOPS por vCPU, 500 vCPU, 32 máquinas de 16. Los FLOPs por ítem y los efectivos son supuestos; se miden con el modelo real.</p>
+</aside>
+
+<p>El pesado vive en GPU porque es denso: con 20 MFLOP por ítem, la CPU cuesta más de diez veces más. El liviano vive en CPU porque es un modelo de árboles chico que corre al lado de la recuperación y no paga el viaje a otra máquina. Lo que hace rendir a la GPU es el batching: una request trae 500 ítems y la GPU rinde con miles, así que el servidor junta las requests que llegan en una ventana de 2 ms, como el batching dinámico de los motores de <a href="m15-motores-inferencia.html#batching">M15</a>.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> 6.9 millones de puntuaciones por segundo × 20 MFLOP son unas 20 GPUs; el batching por ventana las hace rendir.</p>
+
+<h2 id="entrenamiento"><span class="sec-num">50.6</span>Entrenar cada día o continuamente</h2>
+
+<p>Un modelo entrenado anoche no sabe nada del video que explotó esta mañana ni del usuario que se registró hace una hora. Hay tres ritmos.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f506t f506d">
+<title id="f506t">Tres ritmos de entrenamiento</title>
+<desc id="f506d">Tres líneas de tiempo de 24 horas. Lote diario: un entrenamiento de cuatro horas cada noche, y el modelo servido tiene entre cuatro y veintiocho horas de atraso. Incremental: cada hora se continúa el modelo anterior con la última hora de datos. En línea: los trabajadores de entrenamiento leen el log sin parar y empujan los parámetros que cambiaron a los servidores cada minuto.</desc>
+<defs><marker id="f506a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="20" y="50" text-anchor="start">Lote diario</text>
+<path class="sim-axis" d="M130 44 H650"/>
+<rect class="dg-layer" x="130.0" y="32" width="86.66666666666667" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="662" y="50" text-anchor="start">atraso: 4 a 28 h</text>
+<text class="dg-small" x="20" y="104" text-anchor="start">Incremental</text>
+<path class="sim-axis" d="M130 98 H650"/>
+<rect class="dg-layer" x="130.0" y="86" width="8.666666666666666" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="151.66666666666666" y="86" width="8.666666666666664" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="173.33333333333334" y="86" width="8.666666666666664" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="195.0" y="86" width="8.666666666666664" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="216.66666666666669" y="86" width="8.666666666666673" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="238.33333333333331" y="86" width="8.666666666666673" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="260.0" y="86" width="8.666666666666673" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="281.66666666666663" y="86" width="8.666666666666673" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="303.33333333333337" y="86" width="8.666666666666673" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="325.0" y="86" width="8.666666666666673" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="346.66666666666663" y="86" width="8.666666666666673" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="368.33333333333337" y="86" width="8.666666666666673" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="390.0" y="86" width="8.666666666666673" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="411.6666666666667" y="86" width="8.666666666666673" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="433.3333333333333" y="86" width="8.666666666666673" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="455.0" y="86" width="8.666666666666673" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="476.6666666666667" y="86" width="8.666666666666636" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="498.3333333333333" y="86" width="8.666666666666636" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="520.0" y="86" width="8.666666666666636" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="541.6666666666667" y="86" width="8.666666666666636" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="563.3333333333333" y="86" width="8.666666666666636" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="585.0" y="86" width="8.666666666666636" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="606.6666666666667" y="86" width="8.666666666666636" height="24" rx="3" style="--c: var(--l-queue)"/>
+<rect class="dg-layer" x="628.3333333333333" y="86" width="8.666666666666636" height="24" rx="3" style="--c: var(--l-queue)"/>
+<text class="dg-tiny" x="662" y="104" text-anchor="start">atraso: ~1 h</text>
+<text class="dg-small" x="20" y="158" text-anchor="start">En línea</text>
+<path class="sim-axis" d="M130 152 H650"/>
+<rect class="dg-layer" x="130.0" y="140" width="520.0" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="662" y="158" text-anchor="start">atraso: ~1 min</text>
+<text class="dg-tiny" x="130.0" y="196" text-anchor="middle">0 h</text>
+<text class="dg-tiny" x="260.0" y="196" text-anchor="middle">6 h</text>
+<text class="dg-tiny" x="390.0" y="196" text-anchor="middle">12 h</text>
+<text class="dg-tiny" x="520.0" y="196" text-anchor="middle">18 h</text>
+<text class="dg-tiny" x="650.0" y="196" text-anchor="middle">24 h</text>
+<text class="dg-tiny" x="20" y="230" text-anchor="start">Más fresco es más caro de operar: un entrenamiento que nunca para necesita su propio monitoreo y su propio rollback.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 50.6.</b> Tres formas de que el modelo aprenda lo de hoy. ByteDance describió en 2022 Monolith, su sistema de entrenamiento en línea, que sincroniza los parámetros que cambiaron con los servidores en minutos <span class="badge badge--doc">Documentado</span>. Las barras son un esquema.</figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Lote diario.</b> Simple y reproducible: cada noche se entrena desde cero, o desde el modelo anterior, con los últimos días. El modelo servido tiene entre 4 y 28 horas de atraso.</li>
+  <li><b>Incremental.</b> Cada hora se continúa el modelo anterior con la última hora. Los ids nuevos aparecen enseguida, y el entrenamiento completo se sigue haciendo cada tanto para limpiar el error que se acumula.</li>
+  <li><b><dfn data-term="entrenamiento-continuo">Entrenamiento continuo</dfn></b> (en línea). Los trabajadores leen el log sin parar, actualizan los parámetros y empujan a los servidores solo lo que cambió. Monolith, de ByteDance, sincroniza las tablas de embeddings cada pocos minutos <span class="badge badge--doc">Documentado</span>.</li>
+</ul>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f507t f507d">
+<title id="f507t">Tabla de embeddings con hash o sin colisiones</title>
+<desc id="f507d">A la izquierda, el truco del hash: 50 millones de usuarios en una tabla de 10 millones de filas; cada fila la comparten varios, y el vector de Ana es en parte el de otros. La cuenta: la probabilidad de que un usuario comparta su fila es 1 menos e a la menos N sobre B: con 5 usuarios por fila, 99 por ciento. A la derecha, una tabla sin colisiones: un mapa de id a vector que crece, con dos filtros: solo entran ids vistos varias veces, y los que no aparecen en semanas se borran.</desc>
+<defs><marker id="f507a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="24" text-anchor="start">Hash: 50 M usuarios en 10 M filas</text>
+<rect class="dg-box" x="20" y="36" width="120" height="30" rx="8"/>
+<text class="dg-tiny" x="80.0" y="55.0" text-anchor="middle">fila 0</text>
+<rect class="dg-box" x="20" y="76" width="120" height="30" rx="8"/>
+<text class="dg-tiny" x="80.0" y="95.0" text-anchor="middle">fila 1</text>
+<rect class="dg-box" x="20" y="116" width="120" height="30" rx="8"/>
+<text class="dg-tiny" x="80.0" y="135.0" text-anchor="middle">fila 2</text>
+<rect class="dg-box" x="20" y="156" width="120" height="30" rx="8"/>
+<text class="dg-tiny" x="80.0" y="175.0" text-anchor="middle">fila 3</text>
+<rect class="dg-box" x="20" y="196" width="120" height="30" rx="8"/>
+<text class="dg-tiny" x="80.0" y="215.0" text-anchor="middle">fila 4</text>
+<text class="dg-tiny" x="250" y="52" text-anchor="start">Ana</text>
+<path class="dg-feedback" d="M244 48 L142 51"/>
+<text class="dg-tiny" x="250" y="80" text-anchor="start">Luis</text>
+<path class="dg-feedback" d="M244 76 L142 51"/>
+<text class="dg-tiny" x="250" y="108" text-anchor="start">Eva</text>
+<path class="dg-feedback" d="M244 104 L142 91"/>
+<text class="dg-tiny" x="250" y="136" text-anchor="start">Tere</text>
+<path class="dg-feedback" d="M244 132 L142 171"/>
+<text class="dg-tiny" x="250" y="164" text-anchor="start">Uma</text>
+<path class="dg-feedback" d="M244 160 L142 171"/>
+<text class="dg-tiny" x="250" y="192" text-anchor="start">Vera</text>
+<path class="dg-feedback" d="M244 188 L142 171"/>
+<rect class="dg-box" x="20" y="244" width="330" height="28" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-tiny dg-mono" x="30" y="263" text-anchor="start" style="white-space:pre">P(compartir) = 1 − e^(−N/B) = 1 − e^(−5) = 99 %</text>
+<text class="dg-group" x="420" y="24" text-anchor="start">Sin colisiones: un mapa que crece</text>
+<rect class="dg-layer" x="420" y="36" width="150" height="30" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="495.0" y="55.0" text-anchor="middle">Ana → v₁</text>
+<rect class="dg-layer" x="420" y="76" width="150" height="30" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="495.0" y="95.0" text-anchor="middle">Luis → v₂</text>
+<rect class="dg-layer" x="420" y="116" width="150" height="30" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="495.0" y="135.0" text-anchor="middle">Eva → v₃</text>
+<rect class="dg-layer" x="420" y="156" width="150" height="30" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="495.0" y="175.0" text-anchor="middle">Tere → v₄</text>
+<rect class="dg-box" x="600" y="36" width="150" height="70" rx="8"/>
+<text class="dg-small" x="675.0" y="67.0" text-anchor="middle">Entra si se vio</text>
+<text class="dg-tiny" x="675.0" y="83.0" text-anchor="middle">5 veces o más</text>
+<rect class="dg-box" x="600" y="120" width="150" height="70" rx="8"/>
+<text class="dg-small" x="675.0" y="151.0" text-anchor="middle">Se borra si no</text>
+<text class="dg-tiny" x="675.0" y="167.0" text-anchor="middle">aparece en 30 días</text>
+<text class="dg-tiny" x="420" y="220" text-anchor="start">Cada id tiene su vector; la memoria la acotan los dos filtros.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 50.7.</b> Las tablas de embeddings de <a href="m46-ranking.html#profundo-tablas">M46</a> en producción. Con hash, la tabla tiene tamaño fijo y los ids nuevos entran solos, a cambio de mezclar personas. Monolith usa una tabla sin colisiones con filtro por frecuencia y vencimiento <span class="badge badge--doc">Documentado</span>. La cuenta de la izquierda es una aproximación de Poisson.</figcaption>
+</figure>
+
+
+<p>El problema propio de entrenar en línea son los ids: llegan usuarios y videos nuevos todo el tiempo y cada uno necesita su fila. Con el truco del hash de <a href="m46-ranking.html#profundo-tablas">M46</a>, la tabla tiene tamaño fijo y se mezclan personas. Una <dfn data-term="tabla-sin-colisiones">tabla sin colisiones</dfn> le da a cada id su vector, y controla la memoria con dos reglas: un id entra cuando se vio varias veces, y sale cuando deja de aparecer.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Más fresco es mejor modelo y peor operación. Un entrenamiento que nunca para no tiene un "modelo de anoche" al que volver si algo sale mal: hay que guardar puntos de control cada tanto, validar cada sincronización y poder congelar las actualizaciones. Muchos equipos se quedan en incremental por hora con las features en tiempo real: la mayor parte de la frescura, con un rollback simple.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> diario, incremental o continuo; lo continuo necesita tablas sin colisiones y un rollback propio.</p>
+
+<h2 id="registro"><span class="sec-num">50.7</span>Registro de modelos y despliegue</h2>
+
+<p>El <span data-term="model-registry">registro de modelos</span> (el <a href="m19-router-flota.html#registry">model registry</a> de M19, ahora para un recomendador) guarda cada versión con lo que hace falta para servirla y para reproducirla: el archivo del modelo, la lista de features con su versión, el corte de datos con que se entrenó, sus métricas offline y en qué porcentaje del tráfico está.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f508t f508d">
+<title id="f508t">Del registro al cien por ciento</title>
+<desc id="f508d">Una escalera de cinco pasos. El registro guarda el modelo junto con la versión de las features y del dato de entrenamiento. Primero, evaluación offline. Después, shadow: el modelo nuevo puntúa las requests reales sin que nadie vea su orden. Después, canary al 1 por ciento con métricas de protección y rollback automático. Después, el A/B al 50 por ciento. Al final, el cien.</desc>
+<defs><marker id="f508a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="150" width="112" height="52" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="76.0" y="172.0" text-anchor="middle">Registro</text>
+<text class="dg-tiny" x="76.0" y="188.0" text-anchor="middle">con features v12</text>
+<path class="dg-edge" d="M134 176 H142" marker-end="url(#f508a)"/>
+<rect class="dg-layer" x="144" y="126" width="112" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="200.0" y="148.0" text-anchor="middle">Offline</text>
+<text class="dg-tiny" x="200.0" y="164.0" text-anchor="middle">AUC, calibración</text>
+<path class="dg-edge" d="M258 152 H266" marker-end="url(#f508a)"/>
+<rect class="dg-layer" x="268" y="102" width="112" height="52" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="324.0" y="124.0" text-anchor="middle">Shadow</text>
+<text class="dg-tiny" x="324.0" y="140.0" text-anchor="middle">puntúa, nadie ve</text>
+<path class="dg-edge" d="M382 128 H390" marker-end="url(#f508a)"/>
+<rect class="dg-layer" x="392" y="78" width="112" height="52" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="448.0" y="100.0" text-anchor="middle">Canary 1 %</text>
+<text class="dg-tiny" x="448.0" y="116.0" text-anchor="middle">rollback automático</text>
+<path class="dg-edge" d="M506 104 H514" marker-end="url(#f508a)"/>
+<rect class="dg-layer" x="516" y="54" width="112" height="52" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="572.0" y="76.0" text-anchor="middle">A/B 50 %</text>
+<text class="dg-tiny" x="572.0" y="92.0" text-anchor="middle">dos semanas (M49)</text>
+<path class="dg-edge" d="M630 80 H638" marker-end="url(#f508a)"/>
+<rect class="dg-layer" x="640" y="30" width="112" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="696.0" y="52.0" text-anchor="middle">100 %</text>
+<text class="dg-tiny" x="696.0" y="68.0" text-anchor="middle">y el anterior listo</text>
+<rect class="dg-box" x="20" y="212" width="730" height="30" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-tiny" x="34" y="232" text-anchor="start">El modelo y sus features se versionan juntos: un modelo v13 que lee features v12 es un incidente, no un despliegue.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 50.8.</b> La escalera de <a href="m22-operar-modelos.html#canary">M22</a> con el A/B de <a href="m49-experimentos.html#ab-rec">M49</a> en el medio. Lo propio de un recomendador es el primer escalón: el registro guarda la versión de las features que el modelo espera, y el servidor se niega a cargar un modelo que no coincide. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>El shadow de <a href="m22-operar-modelos.html#shadow">M22</a> sirve acá para algo concreto: comparar la distribución de puntajes del modelo nuevo con la del viejo sobre las mismas requests, y la latencia real en la flota, antes de que una sola persona vea su orden. El canary del 1&#8239;% tiene protecciones automáticas (CTR, errores, latencia p99) y vuelve al modelo anterior sin esperar a nadie.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el modelo se registra con la versión de sus features; shadow, canary, A/B y cien, con el anterior siempre listo.</p>
+
+<h2 id="deriva"><span class="sec-num">50.8</span>Deriva y regresiones silenciosas</h2>
+
+<p>Un recomendador roto casi nunca da error: devuelve diez ítems, a tiempo, peores. La <span data-term="deriva">deriva</span> de <a href="m22-operar-modelos.html#deriva">M22</a> tiene acá tres lugares donde mirarse: las features que entran, los puntajes que salen y la calibración. La <dfn data-term="deriva-features">deriva de features</dfn> es la más común y la más fácil de medir.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f509t f509d">
+<title id="f509t">Medir cuánto se movió una distribución</title>
+<desc id="f509d">Dos histogramas de cuatro baldes del puntaje del ranker. Entrenamiento: 25 por ciento en cada balde. Producción esta semana: 10, 20, 30 y 40 por ciento. Debajo, el PSI balde por balde y la suma: 0.23, un cambio moderado según la convención de la industria.</desc>
+<defs><marker id="f509a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="60" y="75.0" width="44" height="75.0" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="82" y="69.0" text-anchor="middle">25 %</text>
+<rect class="dg-layer" x="110" y="120.0" width="44" height="30.0" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="132" y="114.0" text-anchor="middle">10 %</text>
+<text class="dg-tiny" x="107" y="172" text-anchor="middle">balde 1</text>
+<text class="dg-tiny dg-mono" x="107" y="194" text-anchor="middle" style="white-space:pre">0.137</text>
+<rect class="dg-layer" x="230" y="75.0" width="44" height="75.0" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="252" y="69.0" text-anchor="middle">25 %</text>
+<rect class="dg-layer" x="280" y="90.0" width="44" height="60.0" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="302" y="84.0" text-anchor="middle">20 %</text>
+<text class="dg-tiny" x="277" y="172" text-anchor="middle">balde 2</text>
+<text class="dg-tiny dg-mono" x="277" y="194" text-anchor="middle" style="white-space:pre">0.011</text>
+<rect class="dg-layer" x="400" y="75.0" width="44" height="75.0" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="422" y="69.0" text-anchor="middle">25 %</text>
+<rect class="dg-layer" x="450" y="60.0" width="44" height="90.0" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="472" y="54.0" text-anchor="middle">30 %</text>
+<text class="dg-tiny" x="447" y="172" text-anchor="middle">balde 3</text>
+<text class="dg-tiny dg-mono" x="447" y="194" text-anchor="middle" style="white-space:pre">0.009</text>
+<rect class="dg-layer" x="570" y="75.0" width="44" height="75.0" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="592" y="69.0" text-anchor="middle">25 %</text>
+<rect class="dg-layer" x="620" y="30.0" width="44" height="120.0" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="642" y="24.0" text-anchor="middle">40 %</text>
+<text class="dg-tiny" x="617" y="172" text-anchor="middle">balde 4</text>
+<text class="dg-tiny dg-mono" x="617" y="194" text-anchor="middle" style="white-space:pre">0.071</text>
+<path class="sim-axis" d="M40 150 H740"/>
+<rect x="40" y="12" width="14" height="12" rx="2" class="dg-layer" style="--c: var(--l-service)"/><rect x="40" y="32" width="14" height="12" rx="2" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="60" y="22" text-anchor="start">entrenamiento</text>
+<text class="dg-tiny" x="60" y="42" text-anchor="start">producción</text>
+<rect class="dg-box" x="20" y="214" width="730" height="74" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-tiny dg-mono" x="34" y="236" text-anchor="start" style="white-space:pre">PSI = Σ (prod − entr) · ln(prod / entr) = 0.137 + 0.011 + 0.009 + 0.071 = 0.228</text>
+<text class="dg-tiny" x="34" y="258" text-anchor="start">Convención: menos de 0.1, estable; de 0.1 a 0.25, mirar; más de 0.25, actuar.</text>
+<text class="dg-tiny" x="34" y="276" text-anchor="start">No dice por qué se movió: la gente cambió, una feature se rompió o el modelo nuevo es distinto.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 50.9.</b> El índice de estabilidad de la población (PSI) compara dos distribuciones balde por balde. Los umbrales 0.1 y 0.25 son una convención del riesgo crediticio que se adoptó en ML, no una ley. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: PSI</p>
+  <p><b>PSI = Σ (<i>p</i><sub>prod</sub> − <i>p</i><sub>entr</sub>) · ln(<i>p</i><sub>prod</sub> / <i>p</i><sub>entr</sub>)</b>, sobre los mismos baldes.</p>
+  <p>En palabras: por cada balde, cuánto cambió la proporción, pesado por cuánto cambió en proporción. Si nada cambió, cada término es cero. Con 25, 25, 25 y 25&#8239;% contra 10, 20, 30 y 40&#8239;%: 0.137 + 0.011 + 0.009 + 0.071 = 0.228.</p>
+  <pre data-lang="python"><code>import numpy as np
+
+def psi(entr, prod, eps=1e-6):
+    e, p = np.asarray(entr) + eps, np.asarray(prod) + eps   # eps: un balde vacío no da infinito
+    return float(np.sum((p - e) * np.log(p / e)))
+
+psi([.25, .25, .25, .25], [.10, .20, .30, .40])   # 0.228</code></pre>
+</aside>
+
+<p>El <dfn data-term="psi">PSI</dfn> (<i>population stability index</i>) se calcula cada hora para cada feature y para el puntaje. Tres señales más, que atrapan lo que el PSI no ve:</p>
+
+<ul>
+  <li><b>Tasa de nulos o valores por defecto</b> de cada feature: una feature que pasa del 0.1 al 30&#8239;% de valores por defecto es un pipeline roto, aunque su distribución "se parezca".</li>
+  <li><b>Calibración</b>: el CTR que predice el modelo dividido el CTR observado, la cuenta de <a href="m46-ranking.html#calibracion">M46</a>. Si pasa de 1.0 a 1.3, el modelo promete un 30&#8239;% más de clics de los que hay.</li>
+  <li><b>Métricas de producto por versión de modelo y por segmento</b>: el CTR del feed en Android de una versión, no del sitio entero.</li>
+</ul>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> PSI por feature y por puntaje, tasa de nulos, calibración y métricas por segmento: un recomendador roto no da error.</p>
+
+<h2 id="degradar"><span class="sec-num">50.9</span>Degradar con elegancia</h2>
+
+<p>La regla es que el feed siempre responde. Cada pieza tiene un plan para cuando la de al lado falla, y el plan está escrito y probado antes del incidente: es la <span data-term="graceful-degradation">degradación elegante</span> de <a href="m08-resiliencia.html#degradacion">M08</a>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f5010t f5010d">
+<title id="f5010t">La escalera de respaldo</title>
+<desc id="f5010d">Cinco escalones, de la falla más chica a la más grande. Una fuente no responde: se sigue sin ella. El feature store tarda: valores por defecto y una marca en el log. El ranker pesado cae: se usa el orden del liviano. Todo el embudo cae: el feed de ayer desde la caché. Ni eso: populares del país. A la derecha, cuánto se pierde de calidad en cada uno, como supuesto.</desc>
+<defs><marker id="f5010a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-warnbox" x="20" y="16" width="210" height="42" rx="8"/>
+<text class="dg-tiny" x="125.0" y="41.0" text-anchor="middle">Cae una fuente</text>
+<rect class="dg-layer" x="250" y="16" width="260" height="42" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="380.0" y="41.0" text-anchor="middle">seguir con las otras cuatro</text>
+<path class="dg-edge" d="M232 37 H246" marker-end="url(#f5010a)"/>
+<text class="dg-tiny" x="526" y="42" text-anchor="start">−1 % de clics</text>
+<rect class="dg-warnbox" x="50" y="68" width="210" height="42" rx="8"/>
+<text class="dg-tiny" x="155.0" y="93.0" text-anchor="middle">Feature store lento</text>
+<rect class="dg-layer" x="280" y="68" width="260" height="42" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="410.0" y="93.0" text-anchor="middle">valores por defecto, marcar</text>
+<path class="dg-edge" d="M262 89 H276" marker-end="url(#f5010a)"/>
+<text class="dg-tiny" x="556" y="94" text-anchor="start">−5 % de clics</text>
+<rect class="dg-warnbox" x="80" y="120" width="210" height="42" rx="8"/>
+<text class="dg-tiny" x="185.0" y="145.0" text-anchor="middle">Cae el pesado</text>
+<rect class="dg-layer" x="310" y="120" width="260" height="42" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="440.0" y="145.0" text-anchor="middle">orden del liviano</text>
+<path class="dg-edge" d="M292 141 H306" marker-end="url(#f5010a)"/>
+<text class="dg-tiny" x="586" y="146" text-anchor="start">−10 % de clics</text>
+<rect class="dg-warnbox" x="110" y="172" width="210" height="42" rx="8"/>
+<text class="dg-tiny" x="215.0" y="197.0" text-anchor="middle">Cae el embudo</text>
+<rect class="dg-layer" x="340" y="172" width="260" height="42" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="470.0" y="197.0" text-anchor="middle">feed de ayer, en caché</text>
+<path class="dg-edge" d="M322 193 H336" marker-end="url(#f5010a)"/>
+<text class="dg-tiny" x="616" y="198" text-anchor="start">−25 % de clics</text>
+<rect class="dg-warnbox" x="140" y="224" width="210" height="42" rx="8"/>
+<text class="dg-tiny" x="245.0" y="249.0" text-anchor="middle">Cae todo</text>
+<rect class="dg-layer" x="370" y="224" width="260" height="42" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="500.0" y="249.0" text-anchor="middle">populares del país</text>
+<path class="dg-edge" d="M352 245 H366" marker-end="url(#f5010a)"/>
+<text class="dg-tiny" x="646" y="250" text-anchor="start">−40 % de clics</text>
+<text class="dg-tiny" x="20" y="290" text-anchor="start">Las pérdidas son supuestos. Cada escalón tiene su prueba: se apaga la pieza en un ensayo y se mide el tiempo.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 50.10.</b> La degradación elegante de <a href="m08-resiliencia.html#degradacion">M08</a> en un recomendador. Lo que no se negocia es que el feed responda: un feed peor durante diez minutos cuesta mucho menos que una pantalla vacía. Las pérdidas son supuestos para ordenar los escalones. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>El último escalón tiene que ser <span data-term="estabilidad-estatica">estáticamente estable</span>, como el router de <a href="m19-router-flota.html#planos">M19</a>: un feed de respaldo por país y segmento, regenerado cada hora y guardado en la caché y en la CDN, que se sirve sin llamar a ningún modelo. Y cada respuesta degradada se marca en el log: si no, el entrenamiento de mañana aprende de un feed que nadie eligió, y el bucle de <a href="m47-reranking-exploracion.html#bucle">M47</a> empieza solo.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> cinco escalones de respaldo, del más chico al feed estático; las respuestas degradadas se marcan para no entrenar con ellas.</p>
+
+<h2 id="viral"><span class="sec-num">50.10</span>El ítem viral</h2>
+
+<p>Un video que entra al 30&#8239;% de los feeds convierte su clave del feature store en una <span data-term="hot-key">clave caliente</span>: todas las requests leen la misma y todas las impresiones escriben sus contadores en el mismo shard.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f5011t f5011d">
+<title id="f5011t">El ítem que está en todos los feeds</title>
+<desc id="f5011d">Un video entra al 30 por ciento de los feeds: 4 167 lecturas por segundo de la misma clave en el feature store y otras tantas escrituras de sus contadores, todas al mismo shard. Tres arreglos: una caché local en cada servidor con un segundo de vida para las features del ítem, contadores que Flink suma en ventanas de diez segundos y escribe una vez, y réplicas de lectura de la clave.</desc>
+<defs><marker id="f5011a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="30" width="150" height="60" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="95.0" y="56.0" text-anchor="middle">13 889 req/s</text>
+<text class="dg-tiny" x="95.0" y="72.0" text-anchor="middle">30 % con el video</text>
+<rect class="dg-warnbox" x="290" y="30" width="190" height="60" rx="8"/>
+<text class="dg-small" x="385.0" y="56.0" text-anchor="middle">Shard 7 del feature store</text>
+<text class="dg-tiny" x="385.0" y="72.0" text-anchor="middle">item:884</text>
+<path class="dg-edge" d="M172 60 H286" marker-end="url(#f5011a)"/>
+<text class="dg-tiny" x="180" y="50" text-anchor="start">4 167 lecturas/s</text>
+<text class="dg-tiny" x="180" y="108" text-anchor="start">+ 4 167 escrituras/s</text>
+<path class="dg-feedback" d="M172 76 C 210 110, 250 100, 286 80"/>
+<rect class="dg-layer" x="20" y="140" width="180" height="36" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="110.0" y="162.0" text-anchor="middle">Caché local</text>
+<text class="dg-tiny" x="214" y="163" text-anchor="start">1 s de vida en cada API: 1 lectura/s por servidor</text>
+<rect class="dg-layer" x="20" y="184" width="180" height="36" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="110.0" y="206.0" text-anchor="middle">Contadores en ventana</text>
+<text class="dg-tiny" x="214" y="207" text-anchor="start">Flink suma 10 s y escribe 1 vez</text>
+<rect class="dg-layer" x="20" y="228" width="180" height="36" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-tiny" x="110.0" y="250.0" text-anchor="middle">Réplicas de la clave</text>
+<text class="dg-tiny" x="214" y="251" text-anchor="start">item:884#0 … #7, lectura al azar</text>
+<rect class="dg-box dg-box--em" x="520" y="140" width="230" height="120" rx="8"/>
+<text class="dg-small" x="635.0" y="180.0" text-anchor="middle">Con los tres</text>
+<text class="dg-tiny" x="635.0" y="196.0" text-anchor="middle">≈ 60 lecturas/s (60 servidores)</text>
+<text class="dg-tiny" x="635.0" y="212.0" text-anchor="middle">0.1 escrituras/s</text>
+<text class="dg-tiny" x="635.0" y="228.0" text-anchor="middle">carga repartida en 8 shards</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 50.11.</b> La clave caliente de <a href="m04-cache.html#hot-keys">M04</a> y los contadores de <a href="m30-twitter.html#contadores">M30</a>, ahora en el feature store. La cuenta: 13 889 × 0.3 = 4 167. Con caché local de un segundo, cada uno de 60 servidores lee la clave una vez por segundo. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>Los arreglos son los de <a href="m04-cache.html#hot-keys">M04</a>, con una ventaja: las features de un ítem pueden tener un segundo de antigüedad sin que nadie lo note, así que una caché local en cada servidor resuelve las lecturas. Las escrituras se resuelven sin escribir por evento: el job de streaming ya agrupa por ventana (50.4) y escribe una vez cada diez segundos.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> caché local de un segundo, contadores por ventana y réplicas de la clave; un ítem viral no puede tumbar un shard.</p>
+
+<h2 id="costo"><span class="sec-num">50.11</span>Cuánto cuesta</h2>
+
+<p>Con las cuentas de este módulo se puede armar la factura. La escala "Producción" es Mercado Barrio.</p>
+
+<div data-calc="bom" data-preset="m50"></div>
+
+<p>En producción, unos 58 400 USD al mes. Con 400 000 000 de requests por día, son 12 000 millones por mes: menos de medio centavo de dólar cada mil requests, y unos 0.003 USD por usuario activo al mes. Las dos líneas más grandes son las dos etapas de ranking, y la tercera es el índice de recuperación: el embudo de <a href="m42-ml-system-design.html#recomendador">M42</a> también es la forma de la factura. Con el pesado en CPU (Figura 50.5), la factura se multiplicaría por más de tres.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> unos 58 400 USD al mes para 20 millones de personas; el ranking y el índice son la mayor parte.</p>
+
+<p>Para cerrar, el embudo visto desde producción:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f50zt f50zd">
+<title id="f50zt">El embudo con las etapas que se sirven en línea</title>
+<desc id="f50zd">El embudo de Mercado Barrio: catálogo, recuperación, filtros, ranking liviano, ranking pesado y re-ranking, con el bucle de impresiones, log y entrenamiento. Resaltadas, todas las etapas que corren dentro de una request: recuperación, filtros, ranking liviano, ranking pesado y re-ranking.</desc>
+<defs><marker id="f50za" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="540" y="26" text-anchor="start">Cuántos quedan y la latencia acumulada</text>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="160.0" y="40" width="340" height="32" rx="6"/>
+<text class="dg-small" x="330" y="61" text-anchor="middle">Catálogo</text>
+<text class="dg-small" x="540" y="53" text-anchor="start">100 000 000 ítems</text>
+<text class="dg-tiny" x="540" y="69" text-anchor="start">productos y videos de reseña</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="200.0" y="88" width="260" height="32" rx="6"/>
+<text class="dg-small" x="330" y="109" text-anchor="middle">Recuperación</text>
+<text class="dg-small" x="540" y="101" text-anchor="start">10 000 candidatos  ·  25 ms</text>
+<text class="dg-tiny" x="540" y="117" text-anchor="start">varias fuentes en paralelo</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="210.0" y="136" width="240" height="32" rx="6"/>
+<text class="dg-small" x="330" y="157" text-anchor="middle">Filtros</text>
+<text class="dg-small" x="540" y="149" text-anchor="start">unos 9 000  ·  30 ms</text>
+<text class="dg-tiny" x="540" y="165" text-anchor="start">ya visto, bloqueado, sin stock</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="245.0" y="184" width="170" height="32" rx="6"/>
+<text class="dg-small" x="330" y="205" text-anchor="middle">Ranking liviano</text>
+<text class="dg-small" x="540" y="197" text-anchor="start">500  ·  63 ms</text>
+<text class="dg-tiny" x="540" y="213" text-anchor="start">features y un modelo barato</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="270.0" y="232" width="120" height="32" rx="6"/>
+<text class="dg-small" x="330" y="253" text-anchor="middle">Ranking pesado</text>
+<text class="dg-small" x="540" y="245" text-anchor="start">50  ·  113 ms</text>
+<text class="dg-tiny" x="540" y="261" text-anchor="start">un modelo grande, multi-tarea</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="288.0" y="280" width="84" height="32" rx="6"/>
+<text class="dg-small" x="330" y="301" text-anchor="middle">Re-ranking</text>
+<text class="dg-small" x="540" y="293" text-anchor="start">10 en pantalla  ·  118 ms</text>
+<text class="dg-tiny" x="540" y="309" text-anchor="start">diversidad, frescura, reglas</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="230" y="336" width="200" height="40" rx="8"/>
+<text class="dg-small" x="330.0" y="360.0" text-anchor="middle">Registro de impresiones</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="20" y="336" width="130" height="40" rx="8"/>
+<text class="dg-small" x="85.0" y="360.0" text-anchor="middle">Log de eventos</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="20" y="150" width="120" height="44" rx="8"/>
+<text class="dg-small" x="80.0" y="176.0" text-anchor="middle">Entrenamiento</text>
+</g>
+<path class="dg-edge" d="M330 312 V334" marker-end="url(#f50za)"/>
+<path class="dg-edge" d="M230 356 H152" marker-end="url(#f50za)"/>
+<text class="dg-tiny" x="191" y="389" text-anchor="middle">con clics y compras</text>
+<path class="dg-edge" d="M80 336 V196" marker-end="url(#f50za)"/>
+<path class="dg-feedback" d="M140 166 H176 V104 H198" marker-end="url(#f50za)"/>
+<path class="dg-feedback" d="M140 178 H200 V200 H243" marker-end="url(#f50za)"/>
+<path class="dg-feedback" d="M140 188 H186 V248 H268" marker-end="url(#f50za)"/>
+<text class="dg-tiny" x="88" y="230" text-anchor="start">modelos nuevos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 50.12.</b> Dónde estás. Servir es todo el camino de arriba en 138 ms; operar es que el de abajo (registro, log y entrenamiento) no le cambie el piso sin avisar.</figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Lo que viene</p>
+  <p>El recomendador ya funciona y se mide. <a href="m51-engagement.html">M51</a> pregunta qué está optimizando: por qué los feeds enganchan, qué cuesta eso a las personas y cómo se diseña uno que optimice lo que la gente quiere y no solo lo que hace.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m50"></div>
+
+<div data-exercise="m50-incidente"></div>
+
+<div data-checkpoint="m50"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m50.data.js"></script>
+<script src="../assets/js/data/exercises/m50.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-serve.js"></script>
+<script src="../assets/js/widgets/sim-infra.js"></script>
+</body>
+</html>

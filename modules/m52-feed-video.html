@@ -1,0 +1,964 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M52. Caso de estudio: un feed de video corto</title>
+<meta name="description" content="Clip, un feed de video corto con 50 millones de usuarios activos: números, arquitectura con mapa, API, señales, tandas de exploración para videos nuevos, candidatos, ranker multi-tarea, tiempo real, re-ranking, moderación, engagement, fallas, flota y factura.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/map.css">
+</head>
+<body data-root="../" data-module="m52">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Caso de estudio: un feed de video corto</h1>
+        <p class="lead">Un video de 15 segundos, miles de millones de veces al día: el feed de punta a punta, con mapa.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M52</dd></div>
+          <div><dt>Parte</dt><dd>VI. ML System Design</dd></div>
+          <div><dt>Duración</dt><dd>180 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M42 a M51</dd></div>
+          <div><dt>Estado</dt><dd data-status="m52">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Dimensionar un feed de video corto desde los usuarios activos hasta las GPUs.</li>
+    <li>Explicar de punta a punta qué pasa cuando alguien pide el feed, ve un video entero o toca "no me interesa".</li>
+    <li>Diseñar cómo un video nuevo consigue sus primeras impresiones con tandas de exploración.</li>
+    <li>Armar el ranker multi-tarea, el re-ranking con diversidad y la moderación antes de distribuir.</li>
+    <li>Decidir qué hace el sistema cuando cae una pieza o un video se vuelve viral.</li>
+    <li>Estimar la factura en AWS y ver por qué la CDN es casi todo.</li>
+  </ul>
+</section>
+
+<p>Un video de 15 segundos, miles de millones de veces al día. Este caso junta todo lo de la parte en un solo producto: <b>Clip</b>, un feed de video corto con 50 millones de usuarios activos por día. Es un diseño de referencia; lo que viene de lo que publicaron TikTok, ByteDance y YouTube lleva su badge.</p>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 420" role="img" aria-labelledby="f52at f52ad">
+<title id="f52at">Clip por dentro</title>
+<desc id="f52ad">Cinco franjas de arriba abajo. Personas: quien mira y quien publica. Entrada: la CDN de video, la API del feed, la ingesta de eventos y la subida. Una request: candidatos, ranking liviano, ranking pesado en GPU y re-ranking; a la derecha, moderación. Índices y log: índice vectorial, grafo, feature store, reglas y Kafka. Aprender: stream de features, data lake y entrenamiento continuo, que publica modelos al ranking pesado.</desc>
+<defs><marker id="f52aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="14" y="52" text-anchor="start">Personas</text>
+<rect class="dg-layer" x="140.0" y="28" width="291.0" height="44" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="285.5" y="54.0" text-anchor="middle">Lucía mira</text>
+<rect class="dg-layer" x="445.0" y="28" width="291.0" height="44" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="590.5" y="54.0" text-anchor="middle">Mara publica</text>
+<text class="dg-group" x="14" y="132" text-anchor="start">Entrada</text>
+<rect class="dg-layer" x="140.0" y="108" width="138.5" height="44" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="209.2" y="134.0" text-anchor="middle">CDN de video</text>
+<rect class="dg-layer" x="292.5" y="108" width="138.5" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="361.8" y="134.0" text-anchor="middle">API del feed</text>
+<rect class="dg-layer" x="445.0" y="108" width="138.5" height="44" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="514.2" y="134.0" text-anchor="middle">Ingesta de eventos</text>
+<rect class="dg-layer" x="597.5" y="108" width="138.5" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="666.8" y="134.0" text-anchor="middle">Subida</text>
+<text class="dg-group" x="14" y="212" text-anchor="start">Una request</text>
+<rect class="dg-layer" x="140.0" y="188" width="108.0" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="194.0" y="214.0" text-anchor="middle">Candidatos</text>
+<rect class="dg-layer" x="262.0" y="188" width="108.0" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="316.0" y="214.0" text-anchor="middle">Liviano</text>
+<rect class="dg-layer" x="384.0" y="188" width="108.0" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="438.0" y="214.0" text-anchor="middle">Pesado (GPU)</text>
+<rect class="dg-layer" x="506.0" y="188" width="108.0" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="560.0" y="214.0" text-anchor="middle">Re-ranking</text>
+<rect class="dg-layer" x="628.0" y="188" width="108.0" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="682.0" y="214.0" text-anchor="middle">Moderación</text>
+<text class="dg-group" x="14" y="292" text-anchor="start">Índices y log</text>
+<rect class="dg-layer" x="140.0" y="268" width="138.5" height="44" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="209.2" y="294.0" text-anchor="middle">Índice vectorial</text>
+<rect class="dg-layer" x="292.5" y="268" width="138.5" height="44" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="361.8" y="294.0" text-anchor="middle">Feature store</text>
+<rect class="dg-layer" x="445.0" y="268" width="138.5" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="514.2" y="294.0" text-anchor="middle">Reglas</text>
+<rect class="dg-layer" x="597.5" y="268" width="138.5" height="44" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="666.8" y="294.0" text-anchor="middle">Kafka</text>
+<text class="dg-group" x="14" y="372" text-anchor="start">Aprender</text>
+<rect class="dg-layer" x="140.0" y="348" width="189.33333333333334" height="44" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="234.7" y="374.0" text-anchor="middle">Stream de features</text>
+<rect class="dg-layer" x="343.33333333333337" y="348" width="189.33333333333334" height="44" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="438.0" y="374.0" text-anchor="middle">Data lake</text>
+<rect class="dg-layer" x="546.6666666666667" y="348" width="189.33333333333334" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="641.3" y="374.0" text-anchor="middle">Entrenamiento</text>
+<g class="pl-pin"><circle cx="294.5" cy="110" r="11"/><text x="294.5" y="114" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="142.0" cy="190" r="11"/><text x="142.0" y="194" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="386.0" cy="190" r="11"/><text x="386.0" y="194" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="508.0" cy="190" r="11"/><text x="508.0" y="194" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="630.0" cy="190" r="11"/><text x="630.0" y="194" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="599.5" cy="270" r="11"/><text x="599.5" y="274" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="142.0" cy="350" r="11"/><text x="142.0" y="354" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="548.6666666666667" cy="350" r="11"/><text x="548.6666666666667" y="354" text-anchor="middle">8</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 52.A.</b> Las piezas de Clip en el orden en que las recorre una request. El mapa de 52.2 tiene cada una con sus cinco pestañas. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>API del feed</b><span>Sostiene el presupuesto de 200 ms y decide qué hacer si una etapa no llega. <a href="#api">52.3</a></span></li>
+  <li><b>Candidatos</b><span>Junta 5 000 videos de cinco fuentes, una de ellas solo para videos nuevos. <a href="#candidatos">52.6</a></span></li>
+  <li><b>Ranking pesado</b><span>Un modelo multi-tarea que predice siete reacciones y las suma con pesos. <a href="#ranking">52.7</a></span></li>
+  <li><b>Re-ranking</b><span>Arma la página de 8: un video por creador, temas variados y un lugar de exploración. <a href="#reranking">52.9</a></span></li>
+  <li><b>Moderación</b><span>Revisa cada video antes de su primera impresión, no después. <a href="#integridad">52.10</a></span></li>
+  <li><b>Kafka</b><span>El log de cada vista, cada impresión y cada video aprobado. <a href="#senales">52.4</a></span></li>
+  <li><b>Stream de features</b><span>Lleva una vista al feature store en segundos. <a href="#tiempo-real">52.8</a></span></li>
+  <li><b>Entrenamiento</b><span>Sigue entrenando con las últimas horas y publica versiones al ranker. <a href="#tiempo-real">52.8</a></span></li>
+</ol>
+
+
+<p class="more-link"><b>Cómo leer este caso:</b> el mapa de 52.2 es el centro. Cada sección después de 52.3 explica una pieza del mapa y tiene un escenario que la recorre.</p>
+
+<h2 id="numeros"><span class="sec-num">52.1</span>Qué se construye y los números</h2>
+
+<p>Un feed vertical: un video ocupa la pantalla, se desliza al siguiente. No hay que elegir qué mirar: el feed elige. Eso cambia el problema respecto del feed de <a href="m42-ml-system-design.html#numeros">Mercado Barrio</a>: cada video dura segundos, así que hay muchas más decisiones por sesión, y cada una se juzga enseguida.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Dato</th><th class="r">Valor</th><th>De dónde sale</th></tr></thead>
+    <tbody>
+      <tr><td>Usuarios activos por día</td><td class="r">50 000 000</td><td>Supuesto del caso</td></tr>
+      <tr><td>Videos vistos por usuario por día</td><td class="r">40</td><td>Supuesto: unos 20 minutos de videos de 30 s</td></tr>
+      <tr><td>Vistas por día</td><td class="r">2 000 000 000</td><td>50 M × 40</td></tr>
+      <tr><td>Requests del feed por segundo, pico</td><td class="r">8 681</td><td>2 000 M ÷ 8 por página ÷ 86 400 × 3</td></tr>
+      <tr><td>Eventos por segundo, pico</td><td class="r">208 333</td><td>3 eventos por vista: 6 000 M por día ÷ 86 400 × 3</td></tr>
+      <tr><td>Videos nuevos por día</td><td class="r">500 000</td><td>1&#8239;% de los usuarios publica uno</td></tr>
+      <tr><td>Videos elegibles en el índice</td><td class="r">50 000 000</td><td>Los de los últimos meses que pasaron moderación</td></tr>
+      <tr><td>Presupuesto de una request</td><td class="r">200 ms</td><td>El mismo de <a href="m50-serving-recomendacion.html#presupuesto">M50</a></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f521t f521d">
+<title id="f521t">De los usuarios a las GPUs</title>
+<desc id="f521d">Una cadena de siete cajas con su cuenta. 50 millones de usuarios activos por día por 40 videos dan 2 000 millones de vistas por día. Divididas en páginas de 8, 250 millones de requests por día. Divididas por 86 400 segundos, 2 894 por segundo, y por 3 en el pico, 8 681. Por 500 videos en el ranking pesado, 4.34 millones de puntuaciones por segundo. Por 20 megaFLOP y divididas por 10 teraFLOP efectivos por GPU, 8.7 GPUs; con 40 por ciento de holgura, 13.</desc>
+<defs><marker id="f521a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="35" y="30" width="115" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="92.5" y="54.0" text-anchor="middle">50 M</text>
+<text class="dg-tiny" x="92.5" y="70.0" text-anchor="middle">usuarios/día</text>
+<rect class="dg-layer" x="230" y="30" width="115" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="287.5" y="54.0" text-anchor="middle">2 000 M</text>
+<text class="dg-tiny" x="287.5" y="70.0" text-anchor="middle">vistas/día</text>
+<rect class="dg-layer" x="425" y="30" width="115" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="482.5" y="54.0" text-anchor="middle">250 M</text>
+<text class="dg-tiny" x="482.5" y="70.0" text-anchor="middle">requests/día</text>
+<rect class="dg-layer" x="620" y="30" width="115" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="677.5" y="54.0" text-anchor="middle">8 681</text>
+<text class="dg-tiny" x="677.5" y="70.0" text-anchor="middle">requests/s pico</text>
+<rect class="dg-layer" x="620" y="150" width="115" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="677.5" y="174.0" text-anchor="middle">4.34 M</text>
+<text class="dg-tiny" x="677.5" y="190.0" text-anchor="middle">puntuaciones/s</text>
+<rect class="dg-layer" x="425" y="150" width="115" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="482.5" y="174.0" text-anchor="middle">8.7</text>
+<text class="dg-tiny" x="482.5" y="190.0" text-anchor="middle">GPUs L4</text>
+<rect class="dg-layer" x="230" y="150" width="115" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="287.5" y="174.0" text-anchor="middle">13</text>
+<text class="dg-tiny" x="287.5" y="190.0" text-anchor="middle">con holgura</text>
+<path class="dg-edge" d="M152 58 H228" marker-end="url(#f521a)"/>
+<text class="dg-tiny dg-mono" x="190.0" y="50" text-anchor="middle" style="white-space:pre">× 40</text>
+<path class="dg-edge" d="M347 58 H423" marker-end="url(#f521a)"/>
+<text class="dg-tiny dg-mono" x="385.0" y="50" text-anchor="middle" style="white-space:pre">÷ 8</text>
+<path class="dg-edge" d="M542 58 H618" marker-end="url(#f521a)"/>
+<text class="dg-tiny dg-mono" x="580.0" y="37" text-anchor="middle" style="white-space:pre">÷ 86 400</text>
+<text class="dg-tiny dg-mono" x="580.0" y="50" text-anchor="middle" style="white-space:pre">× 3</text>
+<path class="dg-edge" d="M677.5 88 V148" marker-end="url(#f521a)"/>
+<text class="dg-tiny dg-mono" x="687.5" y="122" text-anchor="start" style="white-space:pre">× 500</text>
+<path class="dg-edge" d="M618 178 H542" marker-end="url(#f521a)"/>
+<text class="dg-tiny dg-mono" x="580.0" y="157" text-anchor="middle" style="white-space:pre">× 20 MFLOP</text>
+<text class="dg-tiny dg-mono" x="580.0" y="170" text-anchor="middle" style="white-space:pre">÷ 10 TFLOPS</text>
+<path class="dg-edge" d="M423 178 H347" marker-end="url(#f521a)"/>
+<text class="dg-tiny dg-mono" x="385.0" y="170" text-anchor="middle" style="white-space:pre">× 1.4</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 52.1.</b> La cuenta que dimensiona el ranking pesado, el mismo método de <a href="m50-serving-recomendacion.html#flota">M50</a> con los números de Clip. El pico de 3 veces el promedio y los 20 MFLOP por video son supuestos. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: la cadena de la figura 52.1</p>
+  <p>Cada paso es una multiplicación o una división con unidades que se cancelan. La que más se olvida es el pico: el tráfico no es plano, y la flota se dimensiona para la hora más cargada.</p>
+  <pre data-lang="python"><code>vistas = 50e6 * 40                  # 2e9 por día
+rps_pico = vistas / 8 / 86_400 * 3   # 8 680.6
+puntuaciones = rps_pico * 500        # 4.34e6 por segundo
+gpus = puntuaciones * 20e6 / 10e12   # 8.68; con 40 % de holgura, 12.2 → 13</code></pre>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> 2 000 millones de vistas, 8 681 requests por segundo en el pico y 13 GPUs para el ranking pesado.</p>
+
+<h2 id="arquitectura"><span class="sec-num">52.2</span>La arquitectura de Clip</h2>
+
+<p>Cinco franjas: las personas, la entrada, una request del feed, los índices con el log, y lo que aprende. Toca una pieza para ver qué hace, su API, sus datos, cómo falla y sus números. Elige un escenario para seguir un viaje paso a paso.</p>
+
+<div data-map="m52-feed"></div>
+
+<p>Los siete escenarios recorren lo que sigue en el módulo: pedir el feed (52.3), ver un video entero (52.4 y 52.8), un video nuevo y su primera tanda (52.5), un video viral (52.12), la caída del ranking pesado (52.12), un modelo nuevo en canary (52.8) y "no me interesa" (52.11). Cada salto usa una flecha del mapa.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> las 21 piezas de Clip y los siete viajes que las recorren.</p>
+
+<h2 id="api"><span class="sec-num">52.3</span>La API: pedir el feed y mandar eventos</h2>
+
+<p>Dos endpoints sostienen todo el producto. Uno pide videos; el otro dice qué se hizo con ellos. El <code>req_id</code> los une: sin él, no se sabe qué impresión produjo qué vista.</p>
+
+<div class="endpoint">
+  <div class="ep-head">
+    <span class="ep-method" data-m="GET">GET</span>
+    <code class="ep-path">/v1/feed</code>
+    <span class="badge badge--ref">Diseño de referencia</span>
+  </div>
+  <p class="ep-desc">Devuelve la página siguiente del feed. La app la pide cuando quedan 3 videos por ver.</p>
+  <div class="ep-body">
+    <p class="ep-sec">Request</p>
+<pre data-lang="http"><code>GET /v1/feed?cursor=c_12&amp;n=8
+Authorization: Bearer …</code></pre>
+    <p class="ep-sec">Respuesta 200</p>
+<pre data-lang="json"><code>{
+  "req_id": "r_51",
+  "items": [
+    { "video_id": "v_9f3c", "url": "https://v.clip.example/v/9f3c/720p.mp4",
+      "duration_ms": 15000, "slot": "rank" },
+    { "video_id": "v_a771", "url": "https://v.clip.example/v/a771/720p.mp4",
+      "duration_ms": 20000, "slot": "explore" }
+  ],
+  "cursor": "c_13",
+  "degraded": false
+}</code></pre>
+    <p class="ep-sec">Códigos de respuesta</p>
+    <ul class="ep-responses">
+      <li><span class="st st--2xx">200</span><span>La página, aunque sea degradada: <code>degraded</code> lo dice.</span></li>
+      <li><span class="st st--4xx">401</span><span>Sin sesión: la app muestra el feed de respaldo de lo popular.</span></li>
+      <li><span class="st st--4xx">429</span><span>Demasiadas páginas por minuto: un cliente roto o un bot.</span></li>
+    </ul>
+  </div>
+</div>
+
+<div class="endpoint">
+  <div class="ep-head">
+    <span class="ep-method" data-m="POST">POST</span>
+    <code class="ep-path">/v1/events</code>
+    <span class="badge badge--ref">Diseño de referencia</span>
+  </div>
+  <p class="ep-desc">Recibe un lote de eventos de la app: cada 10 segundos o al pasar a segundo plano.</p>
+  <div class="ep-body">
+    <p class="ep-sec">Request</p>
+<pre data-lang="json"><code>[
+  { "id": "e_1", "type": "view_end", "video_id": "v_9f3c", "req_id": "r_51",
+    "watched_ms": 30000, "duration_ms": 15000, "client_ts": "2026-11-01T14:02:11Z" },
+  { "id": "e_2", "type": "not_interested", "video_id": "v_77aa", "req_id": "r_51" }
+]</code></pre>
+    <p class="ep-sec">Códigos de respuesta</p>
+    <ul class="ep-responses">
+      <li><span class="st st--2xx">202</span><span>Aceptado: Kafka confirmó. Se procesa después.</span></li>
+      <li><span class="st st--4xx">400</span><span>Un evento mal formado: se rechaza ese, no el lote.</span></li>
+      <li><span class="st st--5xx">503</span><span>Kafka no responde: la app reintenta con los mismos <code>id</code>, y el stream descarta los repetidos.</span></li>
+    </ul>
+  </div>
+</div>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> <code>GET /v1/feed</code> devuelve 8 videos con un <code>req_id</code>; <code>POST /v1/events</code> devuelve lo que se hizo con cada uno.</p>
+
+<h2 id="senales"><span class="sec-num">52.4</span>Las señales: qué dice una vista</h2>
+
+<p>En un feed de video nadie da cinco estrellas. Las señales son <a href="m43-datos-recomendacion.html#eventos">implícitas</a> casi todas, y la más rica es cuánto se miró. La <dfn data-term="tasa-finalizacion">tasa de finalización</dfn> (la fracción de vistas que llegan al final del video) es la etiqueta principal; su problema es que depende de la duración: un video de 7 segundos se termina mucho más fácil que uno de 60.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f524bt f524bd">
+<title id="f524bt">Tres vistas del mismo video</title>
+<desc id="f524bd">El mismo video de 15 segundos visto por tres personas, como barras de tiempo. Ana lo salta a los 2 segundos: señal negativa. Beto lo ve entero: vista completa. Carla lo ve entero y lo repite hasta los 30 segundos: vista completa y repetición. Debajo, las etiquetas que el sistema arma con cada una.</desc>
+<defs><marker id="f524ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="sim-axis" d="M140 26 H380"/>
+<text class="dg-tiny" x="140" y="18" text-anchor="middle">0 s</text>
+<text class="dg-tiny" x="380" y="18" text-anchor="middle">15 s (fin)</text>
+<text class="dg-tiny" x="620" y="18" text-anchor="middle">30 s</text>
+<text class="dg-small" x="126" y="60" text-anchor="end">Ana</text>
+<rect class="dg-layer" x="140" y="40" width="32" height="28" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="630" y="59" text-anchor="start" style="white-space:pre">salto: finish=0</text>
+<text class="dg-small" x="126" y="116" text-anchor="end">Beto</text>
+<rect class="dg-layer" x="140" y="96" width="240" height="28" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="630" y="115" text-anchor="start" style="white-space:pre">finish=1</text>
+<text class="dg-small" x="126" y="172" text-anchor="end">Carla</text>
+<rect class="dg-layer" x="140" y="152" width="240" height="28" rx="4" style="--c: var(--l-service)"/>
+<rect class="dg-layer" x="380" y="152" width="240" height="28" rx="4" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="390" y="171" text-anchor="start">+15 s, repite</text>
+<text class="dg-tiny dg-mono" x="630" y="171" text-anchor="start" style="white-space:pre">finish=1 · repeat=1</text>
+<path class="dg-feedback" d="M380 30 V210"/>
+<text class="dg-tiny" x="20" y="230" text-anchor="start">La duración importa: ver entero uno de 60 s dice más que ver entero uno de 7 s. Por eso se compara contra lo esperado para esa duración.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 52.5.</b> Las etiquetas que salen de una vista. TikTok explicó que si alguien ve un video largo de principio a fin es una señal fuerte de interés <span class="badge badge--doc">Documentado</span>. La repetición y el salto rápido son las dos señales implícitas más claras. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Señal</th><th>Qué dice</th><th>Cuánto pesa</th></tr></thead>
+    <tbody>
+      <tr><td>Vista completa</td><td>Interés; más fuerte cuanto más largo el video.</td><td>Etiqueta principal, comparada contra lo esperado para su duración.</td></tr>
+      <tr><td>Repetición</td><td>Gustó mucho.</td><td>Fuerte y rara.</td></tr>
+      <tr><td>Salto en menos de 2 s</td><td>No interesó.</td><td>Negativa débil: también puede ser un dedo apurado.</td></tr>
+      <tr><td>Like, comentario</td><td>Gustó, en público.</td><td>Media.</td></tr>
+      <tr><td>Compartir</td><td>Gustó y vale para otros.</td><td>Muy fuerte; también la tiene el contenido que indigna (<a href="m51-engagement.html#aprende-solo">M51</a>).</td></tr>
+      <tr><td>Seguir al creador</td><td>Quiere más de esa persona.</td><td>Muy fuerte y muy rara.</td></tr>
+      <tr><td>"No me interesa"</td><td>Lo rechaza a propósito.</td><td>Negativa explícita: resta en el puntaje.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>TikTok describió los factores de su recomendador: las interacciones (lo que se ve, se comparte, se comenta, a quién se sigue), la información del video (texto, sonidos, hashtags) y, con menos peso, la del dispositivo y la cuenta (idioma, país) <span class="badge badge--doc">Documentado</span>. YouTube cuenta que, además de clics y tiempo visto, usa encuestas en el producto, compartidos, likes y dislikes <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 820 512" role="img" aria-labelledby="f524t f524d">
+<title id="f524t">De una vista al feed siguiente</title>
+<desc id="f524d">Diagrama de secuencia: la app manda el evento de fin de vista a la ingesta, que lo publica en Kafka y responde 202. El stream lo lee y actualiza la sesión en el feature store en unos segundos. La request siguiente del feed lee esa sesión en el ranking pesado.</desc>
+<defs><marker id="f524-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="f524-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="f524-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="f524-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="17.333333333333336" y="8" width="105.33333333333333" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">App</text>
+<path class="dg-frame" d="M70.0 40 V502"/>
+<rect class="dg-box" x="130.66666666666666" y="8" width="105.33333333333333" height="32" rx="4"/>
+<text class="dg-label" x="183.33333333333331" y="29" text-anchor="middle" style="font-size:13.5px">Ingesta</text>
+<path class="dg-frame" d="M183.33333333333331 40 V502"/>
+<rect class="dg-box" x="243.99999999999997" y="8" width="105.33333333333333" height="32" rx="4"/>
+<text class="dg-label" x="296.66666666666663" y="29" text-anchor="middle" style="font-size:13.5px">Kafka</text>
+<path class="dg-frame" d="M296.66666666666663 40 V502"/>
+<rect class="dg-box" x="357.3333333333333" y="8" width="105.33333333333333" height="32" rx="4"/>
+<text class="dg-label" x="410.0" y="29" text-anchor="middle" style="font-size:13.5px">Stream</text>
+<path class="dg-frame" d="M410.0 40 V502"/>
+<rect class="dg-box" x="470.6666666666666" y="8" width="105.33333333333333" height="32" rx="4"/>
+<text class="dg-label" x="523.3333333333333" y="29" text-anchor="middle" style="font-size:13.5px">Feature store</text>
+<path class="dg-frame" d="M523.3333333333333 40 V502"/>
+<rect class="dg-box" x="584.0" y="8" width="105.33333333333333" height="32" rx="4"/>
+<text class="dg-label" x="636.6666666666666" y="29" text-anchor="middle" style="font-size:13.5px">API del feed</text>
+<path class="dg-frame" d="M636.6666666666666 40 V502"/>
+<rect class="dg-box" x="697.3333333333334" y="8" width="105.33333333333333" height="32" rx="4"/>
+<text class="dg-label" x="750.0" y="29" text-anchor="middle" style="font-size:13.5px">Ranking pesado</text>
+<path class="dg-frame" d="M750.0 40 V502"/>
+<path class="dg-edge" d="M73.0 72 L178.33333333333331 72" marker-end="url(#f524-a)"/>
+<rect x="34.86666666666666" y="55" width="183.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="126.66666666666666" y="66" text-anchor="middle">POST /v1/events · view_end</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M186.33333333333331 106 L291.66666666666663 106" marker-end="url(#f524-q)"/>
+<rect x="191.09999999999997" y="89" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="239.99999999999997" y="100" text-anchor="middle">events · u_77</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M180.33333333333331 140 L75.0 140" marker-end="url(#f524-r)"/>
+<rect x="110.76666666666665" y="123" width="31.799999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="126.66666666666666" y="134" text-anchor="middle">202</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M299.66666666666663 174 L405.0 174" marker-end="url(#f524-q)"/>
+<rect x="320.93333333333334" y="157" width="64.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="353.3333333333333" y="168" text-anchor="middle">view_end</text>
+<path class="dg-edge" d="M413.0 208 L518.3333333333333 208" marker-end="url(#f524-a)"/>
+<rect x="407.8666666666666" y="191" width="117.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="466.66666666666663" y="202" text-anchor="middle">SET u_77:session</text>
+<rect x="420.0" y="228" width="244" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="430.0" y="244">5 a 30 s del evento a la feature</text>
+<path class="dg-edge" d="M73.0 276 L631.6666666666666 276" marker-end="url(#f524-a)"/>
+<rect x="307.73333333333335" y="259" width="91.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="353.3333333333333" y="270" text-anchor="middle">GET /v1/feed</text>
+<path class="dg-edge" d="M639.6666666666666 310 L745.0 310" marker-end="url(#f524-a)"/>
+<rect x="657.6333333333332" y="293" width="71.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="693.3333333333333" y="304" text-anchor="middle">rank(500)</text>
+<path class="dg-edge" d="M747.0 344 L528.3333333333333 344" marker-end="url(#f524-a)"/>
+<rect x="558.0666666666666" y="327" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="636.6666666666666" y="338" text-anchor="middle">MGET u_77 + 500 videos</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M526.3333333333333 378 L745.0 378" marker-end="url(#f524-r)"/>
+<rect x="584.4666666666666" y="361" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="636.6666666666666" y="372" text-anchor="middle">sesión: cocina</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M747.0 412 L641.6666666666666 412" marker-end="url(#f524-r)"/>
+<rect x="644.4333333333333" y="395" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="693.3333333333333" y="406" text-anchor="middle">cocina arriba</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M633.6666666666666 446 L75.0 446" marker-end="url(#f524-r)"/>
+<rect x="320.93333333333334" y="429" width="64.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="353.3333333333333" y="440" text-anchor="middle">8 videos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 52.4.</b> El viaje de una vista: es el escenario "Ver un video entero" del mapa. La app no espera al stream, y el feed no espera a Kafka. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: finalización contra lo esperado</p>
+  <p>Para comparar videos de duraciones distintas se divide la tasa observada por la esperada para esa duración. Si los videos de 15 s se terminan en promedio el 55&#8239;% de las veces y este el 62&#8239;%, su índice es 62 ÷ 55 = 1.13: un 13&#8239;% mejor que lo normal para su largo.</p>
+  <pre data-lang="python"><code>def indice_finalizacion(completas, vistas, esperada_por_duracion):
+    return (completas / vistas) / esperada_por_duracion   # 186/300 / 0.55 = 1.127</code></pre>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> la vista completa, comparada contra su duración, es la etiqueta principal; "no me interesa" es la negativa explícita.</p>
+
+<h2 id="nuevo-video"><span class="sec-num">52.5</span>Un video nuevo: las tandas de exploración</h2>
+
+<p>Mara sube un video. Nadie lo vio, así que el ranker no sabe nada de él: el <span data-term="arranque-frio">arranque en frío</span> de <a href="m44-modelos-clasicos.html#frio">M44</a>, y además 500 000 veces por día. Si el feed solo mostrara lo que ya probó que funciona, ningún video nuevo llegaría a nadie y los creadores dejarían de subir. La salida es darle a cada video aprobado una <dfn data-term="tanda-exploracion">tanda de exploración</dfn>: un número chico de impresiones con personas cercanas a su contenido, y más si le va bien.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f525t f525d">
+<title id="f525t">Tandas de exploración</title>
+<desc id="f525d">Dos videos nuevos recorren tandas de tráfico creciente: 300, 3 000, 30 000 impresiones y después el ranking normal. Cada tanda termina en una puerta que compara la tasa de vistas completas contra el umbral para esa duración. El video A pasa las tres puertas; el video B no pasa la primera y se queda en 300 impresiones.</desc>
+<defs><marker id="f525a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="30" width="140" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="90.0" y="54.0" text-anchor="middle">Tanda 1</text>
+<text class="dg-tiny" x="90.0" y="70.0" text-anchor="middle">300 impresiones</text>
+<rect class="dg-box dg-box--em" x="170" y="46" width="30" height="24" rx="12"/>
+<text class="dg-small" x="185" y="62" text-anchor="middle">?</text>
+<path class="dg-edge" d="M160 58 H170" marker-end="url(#f525a)"/>
+<path class="dg-edge" d="M200 58 H208" marker-end="url(#f525a)"/>
+<rect class="dg-layer" x="210" y="30" width="140" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="280.0" y="54.0" text-anchor="middle">Tanda 2</text>
+<text class="dg-tiny" x="280.0" y="70.0" text-anchor="middle">3 000 impresiones</text>
+<rect class="dg-box dg-box--em" x="360" y="46" width="30" height="24" rx="12"/>
+<text class="dg-small" x="375" y="62" text-anchor="middle">?</text>
+<path class="dg-edge" d="M350 58 H360" marker-end="url(#f525a)"/>
+<path class="dg-edge" d="M390 58 H398" marker-end="url(#f525a)"/>
+<rect class="dg-layer" x="400" y="30" width="140" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="470.0" y="54.0" text-anchor="middle">Tanda 3</text>
+<text class="dg-tiny" x="470.0" y="70.0" text-anchor="middle">30 000 impresiones</text>
+<rect class="dg-box dg-box--em" x="550" y="46" width="30" height="24" rx="12"/>
+<text class="dg-small" x="565" y="62" text-anchor="middle">?</text>
+<path class="dg-edge" d="M540 58 H550" marker-end="url(#f525a)"/>
+<path class="dg-edge" d="M580 58 H588" marker-end="url(#f525a)"/>
+<rect class="dg-layer" x="590" y="30" width="140" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="660.0" y="54.0" text-anchor="middle">Ranking normal</text>
+<text class="dg-tiny" x="660.0" y="70.0" text-anchor="middle">sin tope</text>
+<text class="dg-group" x="20" y="120" text-anchor="start">Video A</text>
+<text class="dg-tiny" x="90" y="144" text-anchor="middle">completas: 62 % ✓</text>
+<text class="dg-tiny" x="280" y="144" text-anchor="middle">completas: 58 % ✓</text>
+<text class="dg-tiny" x="470" y="144" text-anchor="middle">completas: 57 % ✓</text>
+<text class="dg-group" x="20" y="186" text-anchor="start">Video B</text>
+<text class="dg-tiny" x="90" y="210" text-anchor="middle">completas: 21 % ✗</text>
+<text class="dg-tiny" x="250" y="210" text-anchor="start">se queda en 300: costó 300 impresiones, no 300 000</text>
+<path class="dg-frame" d="M20 160 H750"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 52.6.</b> Un video nuevo no compite de entrada con los que ya tienen millones de vistas: recibe una tanda chica y, si le va bien, otra más grande. TikTok dijo que un video puede tener muchas vistas aunque su cuenta no tenga seguidores <span class="badge badge--doc">Documentado</span>. Los tamaños y los umbrales son un ejemplo. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 314" role="img" aria-labelledby="f525bt f525bd">
+<title id="f525bt">Tanda de exploración</title>
+<desc id="f525bd">Ficha de Tanda de exploración. Qué entra: Un video aprobado sin vistas, su vector de contenido y un presupuesto de impresiones. Qué hace: Lo muestra a personas cercanas a su vector, en el lugar de exploración del re-ranking, y mide sus vistas completas. Qué sale: Una decisión: pasa a la tanda siguiente, se queda donde está o deja de recibir tráfico. Ejemplo: 300 impresiones · 186 completas = 62 % umbral para 20 s: 45 % → pasa a 3 000 Qué falla sin él: Los videos nuevos nunca llegan a nadie: el ranker no tiene datos para puntuarlos, y sin impresiones nunca los tendrá. Dónde vive: En la fuente de exploración de los candidatos (52.6), el lugar del re-ranking (52.9) y el stream que cuenta la tanda (52.8).</desc>
+<defs><marker id="f525ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="98" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Un video aprobado sin vistas,</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">su vector de contenido y un</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">presupuesto de impresiones.</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="98" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Lo muestra a personas cercanas</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">a su vector, en el lugar de</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">exploración del re-ranking, y</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">mide sus vistas completas.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="98" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Una decisión: pasa a la tanda</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">siguiente, se queda donde está</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">o deja de recibir tráfico.</text>
+<path class="dg-edge" d="M234 65.0 H275" marker-end="url(#f525ba)"/>
+<path class="dg-edge" d="M493 65.0 H534" marker-end="url(#f525ba)"/>
+<rect class="dg-box" x="20" y="128" width="730" height="70" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="148" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="168" text-anchor="start" style="white-space:pre">300 impresiones · 186 completas = 62 %</text>
+<text class="dg-tiny dg-mono" x="32" y="184" text-anchor="start" style="white-space:pre">umbral para 20 s: 45 % → pasa a 3 000</text>
+<rect class="dg-warnbox" x="20" y="212" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="232" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="252" text-anchor="start">Los videos nuevos nunca llegan a nadie: el ranker no</text>
+<text class="dg-tiny" x="32" y="268" text-anchor="start">tiene datos para puntuarlos, y sin impresiones nunca</text>
+<text class="dg-tiny" x="32" y="284" text-anchor="start">los tendrá.</text>
+<rect class="dg-box" x="393" y="212" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="232" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="252" text-anchor="start">En la fuente de exploración de los candidatos (52.6),</text>
+<text class="dg-tiny" x="405" y="268" text-anchor="start">el lugar del re-ranking (52.9) y el stream que cuenta</text>
+<text class="dg-tiny" x="405" y="284" text-anchor="start">la tanda (52.8).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 52.7.</b> La ficha de la <span data-term="tanda-exploracion">tanda de exploración</span>: un bandit de <a href="m47-reranking-exploracion.html#exploracion">M47</a> aplicado a videos nuevos.</figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: cuánto cuesta y cuánto se sabe con 300</p>
+  <p><b>Costo.</b> 500 000 videos × 300 impresiones = 150 millones por día, el 7.5&#8239;% de las 2 000 millones de vistas. Es el precio de que el catálogo se renueve; con tandas de 1 000 sería el 25&#8239;%.</p>
+  <p><b>Precisión.</b> Con 300 impresiones y una tasa cerca de 0.5, el error estándar es √(0.5 × 0.5 ÷ 300) = 0.029: el intervalo del 95&#8239;% mide ±5.7 puntos. Alcanza para separar un 62&#8239;% de un 21&#8239;%, no un 50&#8239;% de un 53&#8239;%. Por eso la segunda tanda es 10 veces más grande: ahí el error baja a ±1.8 puntos.</p>
+  <pre data-lang="python"><code>import math
+costo = 500_000 * 300 / 2e9                  # 0.075
+margen = 1.96 * math.sqrt(0.25 / 300)        # 0.0566
+margen_t2 = 1.96 * math.sqrt(0.25 / 3_000)   # 0.0179</code></pre>
+</aside>
+
+<p>Las tandas son un bandit de <a href="m47-reranking-exploracion.html#exploracion">M47</a> con una forma particular: el presupuesto de exploración se reparte en escalones, y cada escalón es una prueba que decide si se gasta el siguiente. Dos cuidados: el umbral se compara contra lo esperado para la duración (52.4), y la primera tanda va a personas cercanas al vector de contenido del video, no al azar, para que un video de cocina no fracase por mostrarse a quien no le interesa la cocina.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> tandas de 300, 3 000 y 30 000 con una puerta en cada una; cuestan el 7.5&#8239;% de las vistas.</p>
+
+<h2 id="candidatos"><span class="sec-num">52.6</span>Los candidatos</h2>
+
+<p>Cinco fuentes en paralelo, con el diseño de <a href="m45-recuperacion.html#fuentes">M45</a>. La que más aporta es el two-tower: el vector de Lucía contra el índice HNSW de los 50 millones de videos elegibles. Una fuente existe solo para los videos nuevos.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 200" role="img" aria-labelledby="f526t f526d">
+<title id="f526t">Las fuentes de candidatos de Clip</title>
+<desc id="f526d">Cinco fuentes de candidatos con cuántos aporta cada una a los 5 000: vecinos del vector del usuario, 2 000; parecidos a lo último que vio, 1 200; populares en su región, 1 000; exploración de videos nuevos, 500; lo nuevo de sus seguidos, 300.</desc>
+<defs><marker id="f526a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-tiny" x="220" y="33" text-anchor="end">vecinos del vector</text>
+<rect class="dg-layer" x="230" y="16" width="400.0" height="24" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="638.0" y="33" text-anchor="start">2 000</text>
+<text class="dg-tiny" x="220" y="67" text-anchor="end">parecidos a lo último visto</text>
+<rect class="dg-layer" x="230" y="50" width="240.0" height="24" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="478.0" y="67" text-anchor="start">1 200</text>
+<text class="dg-tiny" x="220" y="101" text-anchor="end">populares en su región</text>
+<rect class="dg-layer" x="230" y="84" width="200.0" height="24" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="438.0" y="101" text-anchor="start">1 000</text>
+<text class="dg-tiny" x="220" y="135" text-anchor="end">exploración (videos nuevos)</text>
+<rect class="dg-layer" x="230" y="118" width="100.0" height="24" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="338.0" y="135" text-anchor="start">500</text>
+<text class="dg-tiny" x="220" y="169" text-anchor="end">lo nuevo de sus seguidos</text>
+<rect class="dg-layer" x="230" y="152" width="60.0" height="24" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="298.0" y="169" text-anchor="start">300</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 52.8.</b> Cinco fuentes para 5 000 candidatos. En un feed de video corto, la mayor parte viene de fuera de lo que sigue la persona, al revés que en la timeline de <a href="m30-twitter.html#leer">M30</a>. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Vecinos del vector.</b> El vector del usuario sale de la torre de usuario con su historia y su sesión; se recalcula en cada request con la sesión fresca (52.8).</li>
+  <li><b>Parecidos a lo último visto.</b> Ítem a ítem sobre los tres videos que vio entero en la sesión: es lo que hace que el feed "entienda" rápido.</li>
+  <li><b>Populares en su región.</b> El respaldo para quien recién llega, y la fuente del feed degradado.</li>
+  <li><b>Exploración.</b> Los videos con tanda abierta, cerca del vector del usuario (52.5).</li>
+  <li><b>Seguidos.</b> Lo nuevo de las cuentas que sigue, del grafo de <a href="m48-grafos-amigos.html#grafo">M48</a>.</li>
+</ul>
+
+<p>Los filtros de <a href="m45-recuperacion.html#filtros">M45</a> van dentro de la búsqueda: solo videos elegibles para su edad y su región, y ninguno ya visto en los últimos días.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> cinco fuentes para 5 000 candidatos; la mayoría viene de fuera de lo que la persona sigue.</p>
+
+<h2 id="ranking"><span class="sec-num">52.7</span>El ranking: un modelo, siete reacciones</h2>
+
+<p>El ranking pesado es el <span data-term="multi-tarea">modelo multi-tarea</span> de <a href="m46-ranking.html#multitarea">M46</a>: una base compartida y una cabeza por reacción. Covington y colaboradores describieron en 2016 el recomendador de YouTube con dos redes, una de candidatos y otra de ranking, y un ranking que predecía el tiempo visto esperado en lugar del clic <span class="badge badge--doc">Documentado</span>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f527t f527d">
+<title id="f527t">El ranker multi-tarea de Clip</title>
+<desc id="f527d">Abajo, las features de la persona, del video y del contexto entran a una base compartida. De ella salen siete cabezas: verlo entero, tiempo esperado, repetir, like, compartir, seguir al creador y no me interesa. Arriba, una suma con pesos las convierte en un puntaje; el peso de no me interesa es negativo.</desc>
+<defs><marker id="f527a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="160" y="270" width="450" height="44" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="385.0" y="296.0" text-anchor="middle">features: persona · video · contexto · sesión</text>
+<rect class="dg-layer" x="160" y="196" width="450" height="48" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="385.0" y="224.0" text-anchor="middle">base compartida (embeddings y capas densas)</text>
+<path class="dg-edge" d="M385 270 V246" marker-end="url(#f527a)"/>
+<rect class="dg-layer" x="20" y="110" width="96" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="68.0" y="136.0" text-anchor="middle">p(entero)</text>
+<path class="dg-edge" d="M385 196 L68 156"/>
+<rect class="dg-layer" x="126" y="110" width="96" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="174.0" y="136.0" text-anchor="middle">tiempo</text>
+<path class="dg-edge" d="M385 196 L174 156"/>
+<rect class="dg-layer" x="232" y="110" width="96" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="280.0" y="136.0" text-anchor="middle">p(repite)</text>
+<path class="dg-edge" d="M385 196 L280 156"/>
+<rect class="dg-layer" x="338" y="110" width="96" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="386.0" y="136.0" text-anchor="middle">p(like)</text>
+<path class="dg-edge" d="M385 196 L386 156"/>
+<rect class="dg-layer" x="444" y="110" width="96" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="492.0" y="136.0" text-anchor="middle">p(comparte)</text>
+<path class="dg-edge" d="M385 196 L492 156"/>
+<rect class="dg-layer" x="550" y="110" width="96" height="44" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="598.0" y="136.0" text-anchor="middle">p(sigue)</text>
+<path class="dg-edge" d="M385 196 L598 156"/>
+<rect class="dg-warnbox" x="656" y="110" width="96" height="44" rx="8"/>
+<text class="dg-small" x="704.0" y="136.0" text-anchor="middle">p(no me int.)</text>
+<path class="dg-edge" d="M385 196 L704 156"/>
+<rect class="dg-layer" x="160" y="20" width="450" height="48" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="385.0" y="48.0" text-anchor="middle">puntaje = Σ wₖ · pₖ, con w(no me interesa) &lt; 0</text>
+<path class="dg-feedback" d="M68 110 L385 70"/>
+<path class="dg-feedback" d="M174 110 L385 70"/>
+<path class="dg-feedback" d="M280 110 L385 70"/>
+<path class="dg-feedback" d="M386 110 L385 70"/>
+<path class="dg-feedback" d="M492 110 L385 70"/>
+<path class="dg-feedback" d="M598 110 L385 70"/>
+<path class="dg-feedback" d="M704 110 L385 70"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 52.9.</b> El modelo multi-tarea de <a href="m46-ranking.html#multitarea">M46</a> con las reacciones de un feed de video. Cada cabeza se entrena con su propia etiqueta; los pesos de arriba son la decisión de producto de <a href="m51-engagement.html#alternativas">M51</a>. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: dos videos y sus puntajes</p>
+  <p>Pesos de Clip: 1 para verlo entero, 0.5 para repetir, 0.5 para like, 2 para compartir, 1 para seguir y −3 para "no me interesa". El video A (un tutorial) y el B (una polémica):</p>
+  <div class="table-wrap">
+    <table class="t">
+      <thead><tr><th>Video</th><th class="r">p(entero)</th><th class="r">p(repite)</th><th class="r">p(like)</th><th class="r">p(comparte)</th><th class="r">p(sigue)</th><th class="r">p(no me int.)</th><th class="r">Puntaje</th></tr></thead>
+      <tbody>
+        <tr><td>A, tutorial</td><td class="r">0.62</td><td class="r">0.10</td><td class="r">0.08</td><td class="r">0.03</td><td class="r">0.010</td><td class="r">0.01</td><td class="r">0.75</td></tr>
+        <tr><td>B, polémica</td><td class="r">0.70</td><td class="r">0.05</td><td class="r">0.04</td><td class="r">0.06</td><td class="r">0.005</td><td class="r">0.08</td><td class="r">0.63</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>B se termina más y se comparte el doble, pero su 8&#8239;% de "no me interesa" le resta 0.24. Sin ese peso, B ganaría con 0.87 contra 0.78.</p>
+  <pre data-lang="python"><code>W = dict(entero=1, repite=0.5, like=0.5, comparte=2, sigue=1, no_interesa=-3)
+A = dict(entero=.62, repite=.10, like=.08, comparte=.03, sigue=.010, no_interesa=.01)
+B = dict(entero=.70, repite=.05, like=.04, comparte=.06, sigue=.005, no_interesa=.08)
+puntaje = lambda p: sum(W[k] * p[k] for k in W)   # A: 0.75, B: 0.63</code></pre>
+</aside>
+
+<p>Dos detalles que cambian el resultado. Las probabilidades tienen que estar <a href="m46-ranking.html#calibracion">calibradas</a>: si p(compartir) está inflada al doble, su peso real es el doble del que se eligió. Y el modelo ve la posición en la que se mostró cada video al entrenar, para no aprender el <a href="m47-reranking-exploracion.html#sesgo-posicion">sesgo de posición</a>; en un feed vertical la posición es el orden de llegada, y el primero de la página siempre se ve.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> siete cabezas, una suma con pesos y un peso negativo para "no me interesa"; las probabilidades calibradas.</p>
+
+<h2 id="tiempo-real"><span class="sec-num">52.8</span>Tiempo real: features en segundos, modelo en minutos</h2>
+
+<p>En un feed de video corto, la sesión cambia en segundos: tres videos de cocina vistos enteros dicen más que la historia de un mes. Clip actualiza dos cosas en tiempo real. Las <span data-term="feature-tiempo-real">features</span>, con el stream de <a href="m50-serving-recomendacion.html#features-online">M50</a>: la sesión del usuario y los contadores de la última hora de cada video, en 5 a 30 segundos. Y el modelo, con entrenamiento continuo.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f528t f528d">
+<title id="f528t">Entrenar mientras se sirve</title>
+<desc id="f528d">A la izquierda, el entrenamiento en línea lee el stream de impresiones unidas con sus etiquetas y actualiza sus parámetros. A la derecha, el serving responde requests. Entre los dos, dos flechas de sincronización: los embeddings que cambiaron viajan cada pocos minutos; las capas densas, con menos frecuencia. Debajo, la tabla de embeddings sin colisiones con vencimiento y filtro de frecuencia.</desc>
+<defs><marker id="f528a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="40" width="230" height="70" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="135.0" y="71.0" text-anchor="middle">Entrenamiento en línea</text>
+<text class="dg-tiny" x="135.0" y="87.0" text-anchor="middle">impresión + etiqueta, en minutos</text>
+<rect class="dg-layer" x="520" y="40" width="230" height="70" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="635.0" y="71.0" text-anchor="middle">Serving: ranking pesado</text>
+<text class="dg-tiny" x="635.0" y="87.0" text-anchor="middle">responde 8 681 requests/s</text>
+<path class="dg-edge" d="M252 62 H518" marker-end="url(#f528a)"/>
+<text class="dg-tiny" x="385" y="54" text-anchor="middle">embeddings que cambiaron: cada pocos minutos</text>
+<path class="dg-edge" d="M252 94 H518" marker-end="url(#f528a)"/>
+<text class="dg-tiny" x="385" y="88" text-anchor="middle">capas densas: con menos frecuencia</text>
+<rect class="dg-layer" x="20" y="150" width="730" height="60" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="385.0" y="176.0" text-anchor="middle">Tabla de embeddings sin colisiones</text>
+<text class="dg-tiny" x="385.0" y="192.0" text-anchor="middle">un vector por id; entra si se vio más de k veces, sale si no aparece en N días</text>
+<path class="dg-edge" d="M135 112 V148" marker-end="url(#f528a)"/>
+<path class="dg-edge" d="M635 148 V112" marker-end="url(#f528a)"/>
+<text class="dg-tiny" x="20" y="244" text-anchor="start">Un video de hace 10 minutos ya tiene su embedding aprendido en el serving. Con un reentrenamiento diario,</text>
+<text class="dg-tiny" x="20" y="262" text-anchor="start">tendría solo su vector de contenido hasta mañana, que para un video viral es toda su vida útil.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 52.10.</b> El diseño de Monolith (ByteDance, 2022): entrenamiento en tiempo real con sincronización de parámetros al serving y una tabla de embeddings sin colisiones <span class="badge badge--doc">Documentado</span>. Ver <a href="m50-serving-recomendacion.html#entrenamiento">M50</a>.</figcaption>
+</figure>
+
+
+<p>ByteDance publicó en 2022 el diseño de Monolith, su sistema de recomendación en tiempo real: entrena en línea a partir del stream de impresiones unidas con sus acciones, sincroniza los parámetros con el serving en intervalos de minutos y usa una <span data-term="tabla-sin-colisiones">tabla de embeddings sin colisiones</span>, con vencimiento y filtro de frecuencia para acotar la memoria <span class="badge badge--doc">Documentado</span>. El escenario "Un modelo nuevo en canary" del mapa muestra la otra mitad: una versión nueva no reemplaza a la anterior de golpe, pasa por el registro, unas pocas réplicas y un 1&#8239;% de usuarios.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Entrenar en línea hace que un video viral tenga su embedding aprendido en minutos. A cambio, un problema en los datos (una feature que llega por defecto, un bot que mira en bucle) entra al modelo en minutos también. Por eso la validación de datos y la <a href="m50-serving-recomendacion.html#deriva">vigilancia de deriva</a> no son opcionales, y por eso cada versión pasa por el canary aunque se publique cada hora.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> features en segundos con el stream, modelo en minutos con entrenamiento continuo, y canary para cada versión.</p>
+
+<h2 id="reranking"><span class="sec-num">52.9</span>El re-ranking: la página de 8</h2>
+
+<p>El ranker puntúa videos sueltos; el re-ranking arma una página. Con las reglas de <a href="m47-reranking-exploracion.html#reglas">M47</a>: un video por creador, no más de dos del mismo tema seguidos y un lugar de cada 8 para la tanda de exploración.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f529t f529d">
+<title id="f529t">Una página de 8 videos</title>
+<desc id="f529d">Ocho lugares en fila. Cada uno con su creador y su tema: cocina de c1, viajes de c2, cocina de c3, humor de c4, el lugar 5 es exploración (video nuevo de cocina de Mara), música de c5, viajes de c6, ciencia de c7. Debajo, las tres reglas: un video por creador, no más de dos del mismo tema seguidos y un lugar de exploración cada 8.</desc>
+<defs><marker id="f529a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="30" width="82" height="90" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="61.0" y="63.0" text-anchor="middle">1</text>
+<text class="dg-tiny" x="61.0" y="79.0" text-anchor="middle">cocina</text>
+<text class="dg-tiny" x="61.0" y="95.0" text-anchor="middle">c1</text>
+<rect class="dg-layer" x="112" y="30" width="82" height="90" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="153.0" y="63.0" text-anchor="middle">2</text>
+<text class="dg-tiny" x="153.0" y="79.0" text-anchor="middle">viajes</text>
+<text class="dg-tiny" x="153.0" y="95.0" text-anchor="middle">c2</text>
+<rect class="dg-layer" x="204" y="30" width="82" height="90" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="245.0" y="63.0" text-anchor="middle">3</text>
+<text class="dg-tiny" x="245.0" y="79.0" text-anchor="middle">cocina</text>
+<text class="dg-tiny" x="245.0" y="95.0" text-anchor="middle">c3</text>
+<rect class="dg-layer" x="296" y="30" width="82" height="90" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="337.0" y="63.0" text-anchor="middle">4</text>
+<text class="dg-tiny" x="337.0" y="79.0" text-anchor="middle">humor</text>
+<text class="dg-tiny" x="337.0" y="95.0" text-anchor="middle">c4</text>
+<rect class="dg-layer" x="388" y="30" width="82" height="90" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="429.0" y="63.0" text-anchor="middle">5</text>
+<text class="dg-tiny" x="429.0" y="79.0" text-anchor="middle">cocina</text>
+<text class="dg-tiny" x="429.0" y="95.0" text-anchor="middle">Mara</text>
+<rect class="dg-layer" x="480" y="30" width="82" height="90" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="521.0" y="63.0" text-anchor="middle">6</text>
+<text class="dg-tiny" x="521.0" y="79.0" text-anchor="middle">música</text>
+<text class="dg-tiny" x="521.0" y="95.0" text-anchor="middle">c5</text>
+<rect class="dg-layer" x="572" y="30" width="82" height="90" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="613.0" y="63.0" text-anchor="middle">7</text>
+<text class="dg-tiny" x="613.0" y="79.0" text-anchor="middle">viajes</text>
+<text class="dg-tiny" x="613.0" y="95.0" text-anchor="middle">c6</text>
+<rect class="dg-layer" x="664" y="30" width="82" height="90" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="705.0" y="63.0" text-anchor="middle">8</text>
+<text class="dg-tiny" x="705.0" y="79.0" text-anchor="middle">ciencia</text>
+<text class="dg-tiny" x="705.0" y="95.0" text-anchor="middle">c7</text>
+<text class="dg-tiny" x="429" y="140" text-anchor="middle">exploración</text>
+<text class="dg-small" x="20" y="176" text-anchor="start">Un video por creador · no más de 2 del mismo tema seguidos · 1 lugar de exploración cada 8</text>
+<text class="dg-tiny" x="20" y="202" text-anchor="start">Sin re-ranking, el orden puro del ranker podía traer 5 de cocina seguidos, 2 de ellos del mismo creador.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 52.11.</b> La página que arma el re-ranking. TikTok explicó que su feed evita mostrar dos videos seguidos del mismo creador o con el mismo sonido <span class="badge badge--doc">Documentado</span>. Las reglas de <a href="m47-reranking-exploracion.html#diversidad">M47</a>, con un lugar fijo para la tanda de exploración. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Diversidad.</b> Sin ella, el orden puro trae cinco videos de cocina seguidos, porque el ranker los puntúa a todos alto por la misma razón. MMR o reglas simples, como en <a href="m47-reranking-exploracion.html#diversidad">M47</a>.</li>
+  <li><b>Repetición.</b> Nada ya visto en los últimos días, salvo que la persona lo busque.</li>
+  <li><b>Exploración.</b> El lugar fijo es lo que garantiza las 150 millones de impresiones por día para videos nuevos; si compitieran por puntaje, perderían siempre.</li>
+  <li><b>Integridad.</b> Una última consulta a las reglas: el veredicto de moderación y los ocultos de la persona.</li>
+</ul>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> la página se arma con diversidad, sin repetir, con un lugar fijo de exploración y una última consulta a las reglas.</p>
+
+<h2 id="integridad"><span class="sec-num">52.10</span>Integridad: revisar antes de distribuir</h2>
+
+<p>En una red social que muestra lo de los seguidos, un video malo llega a quienes eligieron seguir a esa cuenta. En un feed que recomienda a desconocidos, un video malo puede llegar a un millón de personas en una hora: la recomendación es el amplificador. Por eso la moderación va antes de la primera tanda.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f5210t f5210d">
+<title id="f5210t">Revisar antes de distribuir</title>
+<desc id="f5210d">Un video subido pasa por transcodificación y por clasificadores de imagen, audio y texto. Tres salidas: claramente bien, pasa a elegible; claramente mal, se rechaza; dudoso, va a revisión humana. Hay una cuarta salida: apto pero sin recomendar, que se ve en el perfil pero no entra al feed. Recién un video elegible recibe su primera tanda.</desc>
+<defs><marker id="f5210a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="120" width="120" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="80.0" y="144.0" text-anchor="middle">Subida</text>
+<text class="dg-tiny" x="80.0" y="160.0" text-anchor="middle">transcodificar</text>
+<rect class="dg-layer" x="180" y="120" width="150" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="255.0" y="144.0" text-anchor="middle">Clasificadores</text>
+<text class="dg-tiny" x="255.0" y="160.0" text-anchor="middle">imagen, audio, texto</text>
+<path class="dg-edge" d="M142 148 H178" marker-end="url(#f5210a)"/>
+<rect class="dg-ok" x="420" y="20" width="170" height="50" rx="8"/>
+<text class="dg-small" x="505.0" y="41.0" text-anchor="middle">Elegible</text>
+<text class="dg-tiny" x="505.0" y="57.0" text-anchor="middle">recibe su tanda</text>
+<path class="dg-edge" d="M332 148 L418 45" marker-end="url(#f5210a)"/>
+<rect class="dg-bad" x="420" y="92" width="170" height="50" rx="8"/>
+<text class="dg-small" x="505.0" y="113.0" text-anchor="middle">Rechazado</text>
+<text class="dg-tiny" x="505.0" y="129.0" text-anchor="middle">no se publica</text>
+<path class="dg-edge" d="M332 148 L418 117" marker-end="url(#f5210a)"/>
+<rect class="dg-warnbox" x="420" y="164" width="170" height="50" rx="8"/>
+<text class="dg-small" x="505.0" y="185.0" text-anchor="middle">Revisión humana</text>
+<text class="dg-tiny" x="505.0" y="201.0" text-anchor="middle">los dudosos</text>
+<path class="dg-edge" d="M332 148 L418 189" marker-end="url(#f5210a)"/>
+<rect class="dg-layer" x="420" y="236" width="170" height="50" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="505.0" y="257.0" text-anchor="middle">Sin recomendar</text>
+<text class="dg-tiny" x="505.0" y="273.0" text-anchor="middle">solo en el perfil</text>
+<path class="dg-edge" d="M332 148 L418 261" marker-end="url(#f5210a)"/>
+<path class="dg-edge" d="M592 189 H612 V58 H594" marker-end="url(#f5210a)"/>
+<text class="dg-tiny" x="618" y="128" text-anchor="start">veredicto</text>
+<rect class="dg-layer" x="630" y="20" width="120" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="690.0" y="41.0" text-anchor="middle">Tanda 1</text>
+<text class="dg-tiny" x="690.0" y="57.0" text-anchor="middle">300</text>
+<path class="dg-edge" d="M592 32 H628" marker-end="url(#f5210a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 52.12.</b> La moderación va antes de la primera impresión. La salida "sin recomendar" es la que más importa para un recomendador: un video puede estar permitido y aun así no ser elegible para el feed, como describen las políticas de elegibilidad de TikTok y YouTube <span class="badge badge--doc">Documentado</span>. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Antes, no después.</b> Ningún video sin veredicto recibe impresiones; si la revisión humana se atrasa, los dudosos esperan.</li>
+  <li><b>Permitido no es lo mismo que recomendable.</b> Hay videos que pueden estar en el perfil de su autor pero no entrar al feed de desconocidos: contenido para adultos en cuentas de menores, desinformación verificada, contenido de bajo valor repetido.</li>
+  <li><b>Revisar otra vez al crecer.</b> Un video que pasa de la tanda 3 al ranking normal va a llegar a millones: es el momento de una segunda revisión, con más contexto (comentarios, denuncias).</li>
+  <li><b>Los números.</b> 5.8 videos por segundo. Si el 3&#8239;% va a revisión humana y cada uno lleva 1 minuto, son 15 000 minutos por día, unas 31 personas a tiempo completo en turnos de 8 horas, sin contar picos.</li>
+</ul>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> moderación antes de la primera tanda, "sin recomendar" como salida propia y segunda revisión al crecer.</p>
+
+<h2 id="engagement"><span class="sec-num">52.11</span>Engagement: lo de M51 en este producto</h2>
+
+<p>Un feed vertical de videos cortos tiene de fábrica todos los mecanismos de <a href="m51-engagement.html#mecanismos">M51</a>: scroll sin fin, autoplay (el siguiente video ya está ahí) y recompensa variable (cada deslizar puede ser el bueno). Las contramedidas se diseñan con el sistema, no se agregan después.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Decisión de Clip</th><th>Dónde vive</th><th>Lo que evita</th></tr></thead>
+    <tbody>
+      <tr><td>Peso −3 para "no me interesa" y una cabeza de satisfacción declarada</td><td>Ranking pesado (52.7)</td><td>Que lo que retiene y se rechaza suba solo.</td></tr>
+      <tr><td>Máximo dos del mismo tema seguidos</td><td>Re-ranking (52.9)</td><td>El pozo de un solo tema.</td></tr>
+      <tr><td>Recordatorio de pausa a los 60 minutos; para menores, por defecto</td><td>App y configuración de la cuenta</td><td>Sesiones que terminan por cansancio y no por decisión.</td></tr>
+      <tr><td>"No me interesa" a la vista, con efecto en la página siguiente</td><td>Stream y reglas (escenario del mapa)</td><td>Controles que no cambian nada.</td></tr>
+      <tr><td>Un feed sin perfilado (lo popular de la región, en orden)</td><td>Fuente de populares y API</td><td>Incumplir el artículo 38 del <span data-term="dsa">DSA</span> si Clip es una plataforma muy grande.</td></tr>
+      <tr><td>Arrepentimiento y uso nocturno como métricas de protección</td><td>Experimentos (<a href="m49-experimentos.html#largo-plazo">M49</a>)</td><td>Lanzar un cambio que sube el tiempo y deja peor a la gente.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> cada contramedida de M51 tiene una pieza de Clip donde vive.</p>
+
+<h2 id="fallas"><span class="sec-num">52.12</span>Qué pasa cuando algo falla</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Falla</th><th>Qué ve Lucía</th><th>Qué hace el sistema</th></tr></thead>
+    <tbody>
+      <tr><td>Cae el ranking pesado</td><td>Un feed algo peor</td><td>Orden del liviano, respuesta marcada como degradada, circuit breaker abierto. Escenario "Cae el ranking pesado".</td></tr>
+      <tr><td>Un video viral</td><td>Nada</td><td>La CDN absorbe los bytes; el stream pre-agrega por segundo; el ranker guarda un segundo la clave caliente. Escenario "Un video viral".</td></tr>
+      <tr><td>Kafka lento</td><td>Nada</td><td>La ingesta responde más lento y la app reintenta; las features se atrasan; el feed no espera.</td></tr>
+      <tr><td>El stream se atrasa</td><td>Un feed que "entiende" más lento</td><td>Features de hace minutos; alerta por lag del consumidor.</td></tr>
+      <tr><td>Un modelo nuevo empeora</td><td>Nada, si el canary lo frena</td><td>Vuelta a la versión anterior desde el registro, en minutos.</td></tr>
+      <tr><td>La revisión humana se atrasa</td><td>Nada</td><td>Los videos dudosos esperan; los creadores ven "en revisión".</td></tr>
+      <tr><td>Se cae el índice vectorial</td><td>Un feed más genérico</td><td>Siguen las otras cuatro fuentes; si fallan todas, el feed de respaldo de lo popular.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>La regla es la de <a href="m50-serving-recomendacion.html#degradar">M50</a>: el feed siempre responde, y cada respuesta degradada se marca para no entrenar con ella.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> cada falla tiene un escalón abajo, y casi ninguna la ve quien mira.</p>
+
+<h2 id="flota"><span class="sec-num">52.13</span>Estimar la flota</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Pieza</th><th>Carga en el pico</th><th>Cuenta</th><th class="r">Máquinas</th></tr></thead>
+    <tbody>
+      <tr><td>Ranking pesado</td><td>4.34 M puntuaciones/s</td><td>× 20 MFLOP ÷ 10 TFLOPS = 8.7; × 1.4</td><td class="r">13 GPUs L4</td></tr>
+      <tr><td>Ranking liviano</td><td>43.4 M puntuaciones/s</td><td>Proporcional a M50: 125 M/s en 32 instancias</td><td class="r">12 c7g.4xlarge</td></tr>
+      <tr><td>Moderación</td><td>5.8 videos/s</td><td>× 2 s de GPU = 11.6</td><td class="r">12 GPUs L4</td></tr>
+      <tr><td>Kafka</td><td>208 333 eventos/s</td><td>× 200 B = 42 MB/s</td><td class="r">9 brokers</td></tr>
+      <tr><td>Feature store</td><td>4.3 M claves leídas/s</td><td>Lecturas por lotes, con réplicas</td><td class="r">12 nodos</td></tr>
+      <tr><td>Data lake</td><td>1.2 TB por día</td><td>× 365</td><td class="r">438 TB al año</td></tr>
+      <tr><td>CDN</td><td>2 000 M vistas × 3.75 MB</td><td>7.5 PB por día</td><td class="r">225 PB al mes</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el recomendador cabe en unas decenas de máquinas; la CDN mueve 7.5 PB por día.</p>
+
+<h2 id="implementalo"><span class="sec-num">52.14</span>Impleméntalo tú mismo: Clip en AWS</h2>
+
+<p>La factura con precios de lista de AWS en us-east-1. Cambia la escala y mira qué fila manda.</p>
+
+<div data-calc="bom" data-preset="m52"></div>
+
+<p>En producción, la CDN es el 97&#8239;% de los 4.6 millones de dólares por mes, y el recomendador entero (ranking, índices, features, Kafka, stream, lake y entrenamiento) son unos 60 000. Es la misma conclusión que en los medios de <a href="m30-twitter.html#implementalo">M30</a>, más extrema: en video, lo caro es mover bytes. Por eso el tamaño de cada calidad y la decisión de cuántos segundos precargar del siguiente video valen más dinero que cualquier optimización del modelo.</p>
+
+<p>Para cerrar, el embudo completo:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f52zt f52zd">
+<title id="f52zt">El embudo de Clip completo</title>
+<desc id="f52zd">El embudo de Mercado Barrio: catálogo, recuperación, filtros, ranking liviano, ranking pesado y re-ranking, con el bucle de impresiones, log y entrenamiento. Todas las etapas resaltadas: el caso de estudio las recorre todas.</desc>
+<defs><marker id="f52za" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="540" y="26" text-anchor="start">Cuántos quedan y la latencia acumulada</text>
+<g>
+<rect class="dg-box dg-box--em" x="160.0" y="40" width="340" height="32" rx="6"/>
+<text class="dg-small" x="330" y="61" text-anchor="middle">Catálogo</text>
+<text class="dg-small" x="540" y="53" text-anchor="start">100 000 000 ítems</text>
+<text class="dg-tiny" x="540" y="69" text-anchor="start">productos y videos de reseña</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="200.0" y="88" width="260" height="32" rx="6"/>
+<text class="dg-small" x="330" y="109" text-anchor="middle">Recuperación</text>
+<text class="dg-small" x="540" y="101" text-anchor="start">10 000 candidatos  ·  25 ms</text>
+<text class="dg-tiny" x="540" y="117" text-anchor="start">varias fuentes en paralelo</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="210.0" y="136" width="240" height="32" rx="6"/>
+<text class="dg-small" x="330" y="157" text-anchor="middle">Filtros</text>
+<text class="dg-small" x="540" y="149" text-anchor="start">unos 9 000  ·  30 ms</text>
+<text class="dg-tiny" x="540" y="165" text-anchor="start">ya visto, bloqueado, sin stock</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="245.0" y="184" width="170" height="32" rx="6"/>
+<text class="dg-small" x="330" y="205" text-anchor="middle">Ranking liviano</text>
+<text class="dg-small" x="540" y="197" text-anchor="start">500  ·  63 ms</text>
+<text class="dg-tiny" x="540" y="213" text-anchor="start">features y un modelo barato</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="270.0" y="232" width="120" height="32" rx="6"/>
+<text class="dg-small" x="330" y="253" text-anchor="middle">Ranking pesado</text>
+<text class="dg-small" x="540" y="245" text-anchor="start">50  ·  113 ms</text>
+<text class="dg-tiny" x="540" y="261" text-anchor="start">un modelo grande, multi-tarea</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="288.0" y="280" width="84" height="32" rx="6"/>
+<text class="dg-small" x="330" y="301" text-anchor="middle">Re-ranking</text>
+<text class="dg-small" x="540" y="293" text-anchor="start">10 en pantalla  ·  118 ms</text>
+<text class="dg-tiny" x="540" y="309" text-anchor="start">diversidad, frescura, reglas</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="230" y="336" width="200" height="40" rx="8"/>
+<text class="dg-small" x="330.0" y="360.0" text-anchor="middle">Registro de impresiones</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="20" y="336" width="130" height="40" rx="8"/>
+<text class="dg-small" x="85.0" y="360.0" text-anchor="middle">Log de eventos</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="20" y="150" width="120" height="44" rx="8"/>
+<text class="dg-small" x="80.0" y="176.0" text-anchor="middle">Entrenamiento</text>
+</g>
+<path class="dg-edge" d="M330 312 V334" marker-end="url(#f52za)"/>
+<path class="dg-edge" d="M230 356 H152" marker-end="url(#f52za)"/>
+<text class="dg-tiny" x="191" y="389" text-anchor="middle">con clics y compras</text>
+<path class="dg-edge" d="M80 336 V196" marker-end="url(#f52za)"/>
+<path class="dg-feedback" d="M140 166 H176 V104 H198" marker-end="url(#f52za)"/>
+<path class="dg-feedback" d="M140 178 H200 V200 H243" marker-end="url(#f52za)"/>
+<path class="dg-feedback" d="M140 188 H186 V248 H268" marker-end="url(#f52za)"/>
+<text class="dg-tiny" x="88" y="230" text-anchor="start">modelos nuevos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 52.13.</b> Dónde estás: en un caso de estudio, todas las etapas a la vez. Clip las recorre en cada request en menos de 200 ms, y aprende de cada vista en segundos.</figcaption>
+</figure>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m52"></div>
+
+<div data-exercise="m52-nuevo"></div>
+
+<div data-checkpoint="m52"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m52.data.js"></script>
+<script src="../assets/js/data/exercises/m52.data.js"></script>
+<script src="../assets/js/data/maps/m52-feed.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/map/map-engine.js"></script>
+<script src="../assets/js/map/flow-sim.js"></script>
+<script src="../assets/js/widgets/sim-infra.js"></script>
+</body>
+</html>

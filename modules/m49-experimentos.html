@@ -1,0 +1,1061 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M49. Evaluar y experimentar</title>
+<meta name="description" content="Evaluación offline sin fugas, el A/B de un recomendador, cuántos usuarios hacen falta, CUPED, interleaving, efectos de red, evaluación contrafactual con IPS, métricas de largo plazo y las trampas de siempre.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m49">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Evaluar y experimentar</h1>
+        <p class="lead">La métrica offline subió un 3 %. ¿Lo lanzas?</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M49</dd></div>
+          <div><dt>Parte</dt><dd>VI. ML System Design</dd></div>
+          <div><dt>Duración</dt><dd>120 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M46, M22</dd></div>
+          <div><dt>Estado</dt><dd data-status="m49">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Evaluar un ranker offline sin fugas, con partición por tiempo, y explicar por qué offline y online no coinciden.</li>
+    <li>Diseñar el A/B de un recomendador: unidad de aleatorización, duración y efecto novedad.</li>
+    <li>Calcular cuántos usuarios hacen falta con la regla 16 σ² / δ² y reducirlos con CUPED.</li>
+    <li>Explicar cuándo conviene interleaving y cuándo un A/B.</li>
+    <li>Reconocer un efecto de red y elegir aleatorizar por grupos.</li>
+    <li>Estimar una política nueva con los logs de la vieja (IPS) y saber cuándo no se puede.</li>
+    <li>Detectar las trampas de siempre: mirar todos los días, muchas métricas y SRM.</li>
+  </ul>
+</section>
+
+<p>"La métrica offline subió un 3&#8239;%. ¿Lo lanzas?" Es la pregunta con la que termina cada módulo de esta parte: el ranker de <a href="m46-ranking.html">M46</a>, el re-ranking y la exploración de <a href="m47-reranking-exploracion.html">M47</a>, el PYMK de <a href="m48-grafos-amigos.html">M48</a>. Este módulo es la respuesta: una escalera de formas de medir, de la más barata a la más fiel, y las trampas que hacen que un experimento diga lo que no pasó.</p>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f49at f49ad">
+<title id="f49at">Las piezas de un experimento</title>
+<desc id="f49ad">De izquierda a derecha, la escalera por la que pasa un cambio antes de lanzarse: evaluación offline sobre el log partido por tiempo, evaluación contrafactual con IPS, interleaving para comparar órdenes, el A/B con usuarios asignados por hash, y el holdout de largo plazo. Debajo, lo que comparten: el servicio de asignación, el log con la variante y la propensión, el chequeo de SRM y el cálculo de potencia antes de empezar.</desc>
+<defs><marker id="f49aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="40" width="132" height="60" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="86.0" y="66.0" text-anchor="middle">Offline</text>
+<text class="dg-tiny" x="86.0" y="82.0" text-anchor="middle">partición por tiempo</text>
+<path class="dg-edge" d="M154 70 H166" marker-end="url(#f49aa)"/>
+<rect class="dg-layer" x="170" y="40" width="132" height="60" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="236.0" y="66.0" text-anchor="middle">Contrafactual</text>
+<text class="dg-tiny" x="236.0" y="82.0" text-anchor="middle">IPS con el log</text>
+<path class="dg-edge" d="M304 70 H316" marker-end="url(#f49aa)"/>
+<rect class="dg-layer" x="320" y="40" width="132" height="60" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="386.0" y="66.0" text-anchor="middle">Interleaving</text>
+<text class="dg-tiny" x="386.0" y="82.0" text-anchor="middle">dos órdenes, una lista</text>
+<path class="dg-edge" d="M454 70 H466" marker-end="url(#f49aa)"/>
+<rect class="dg-layer" x="470" y="40" width="132" height="60" rx="8" style="--c: var(--l-edge)"/>
+<text class="dg-small" x="536.0" y="66.0" text-anchor="middle">A/B</text>
+<text class="dg-tiny" x="536.0" y="82.0" text-anchor="middle">usuarios al azar</text>
+<path class="dg-edge" d="M604 70 H616" marker-end="url(#f49aa)"/>
+<rect class="dg-layer" x="620" y="40" width="132" height="60" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="686.0" y="66.0" text-anchor="middle">Holdout</text>
+<text class="dg-tiny" x="686.0" y="82.0" text-anchor="middle">meses, 2 %</text>
+<text class="dg-tiny" x="20" y="24" text-anchor="start">Más barato, menos fiel</text>
+<text class="dg-tiny" x="750" y="24" text-anchor="end">Más caro, más fiel</text>
+<text class="dg-group" x="20" y="150" text-anchor="start">Lo que todos usan</text>
+<rect class="dg-layer" x="20" y="162" width="170" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="105.0" y="186.0" text-anchor="middle">Asignación</text>
+<text class="dg-tiny" x="105.0" y="202.0" text-anchor="middle">hash(usuario, experimento)</text>
+<rect class="dg-layer" x="206" y="162" width="170" height="56" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="291.0" y="186.0" text-anchor="middle">Log</text>
+<text class="dg-tiny" x="291.0" y="202.0" text-anchor="middle">variante y propensión</text>
+<rect class="dg-warnbox" x="392" y="162" width="170" height="56" rx="8"/>
+<text class="dg-small" x="477.0" y="186.0" text-anchor="middle">Potencia</text>
+<text class="dg-tiny" x="477.0" y="202.0" text-anchor="middle">cuántos y cuánto tiempo</text>
+<rect class="dg-warnbox" x="578" y="162" width="170" height="56" rx="8"/>
+<text class="dg-small" x="663.0" y="186.0" text-anchor="middle">SRM</text>
+<text class="dg-tiny" x="663.0" y="202.0" text-anchor="middle">¿se repartió bien?</text>
+<rect class="dg-box" x="20" y="246" width="730" height="64" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-small" x="34" y="270" text-anchor="start">Pregunta de cada escalón: ¿vale la pena el siguiente?</text>
+<text class="dg-tiny" x="34" y="292" text-anchor="start">Un cambio que pierde offline casi nunca llega al A/B; uno que gana offline todavía puede perder online.</text>
+<g class="pl-pin"><circle cx="20" cy="40" r="11"/><text x="20" y="44" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="170" cy="40" r="11"/><text x="170" y="44" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="320" cy="40" r="11"/><text x="320" y="44" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="470" cy="40" r="11"/><text x="470" y="44" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="620" cy="40" r="11"/><text x="620" y="44" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="20" cy="162" r="11"/><text x="20" y="166" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="206" cy="162" r="11"/><text x="206" y="166" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="392" cy="162" r="11"/><text x="392" y="166" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="750" cy="162" r="11"/><text x="750" y="166" text-anchor="middle">9</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 49.A.</b> Cada escalón es más caro y más fiel que el anterior. Los cuatro de abajo no son escalones: sin ellos, ninguno de los de arriba mide lo que dice medir.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Evaluación offline</b><span>Las métricas de M46 sobre el log, partido por tiempo. Para descartar rápido. <a href="#offline">49.1</a></span></li>
+  <li><b>Evaluación contrafactual</b><span>Estimar cómo le habría ido a una política nueva con los logs de la vieja. <a href="#contrafactual">49.7</a></span></li>
+  <li><b>Interleaving</b><span>Mezclar dos rankers en la misma lista y ver cuál se lleva los clics. <a href="#interleaving">49.5</a></span></li>
+  <li><b>A/B</b><span>Usuarios repartidos al azar entre variantes; la única forma de medir el efecto en el negocio. <a href="#ab-rec">49.2</a></span></li>
+  <li><b>Holdout de largo plazo</b><span>Un grupo chico que no recibe los cambios por meses. <a href="#largo-plazo">49.8</a></span></li>
+  <li><b>Asignación</b><span>Un hash estable del usuario y del experimento decide la variante. <a href="#ab-rec">49.2</a></span></li>
+  <li><b>Log con variante y propensión</b><span>Sin la variante no se compara nada; sin la propensión, no hay contrafactual. <a href="#contrafactual">49.7</a></span></li>
+  <li><b>Potencia</b><span>Cuántos usuarios y cuántos días hacen falta, antes de empezar. <a href="#potencia">49.3</a></span></li>
+  <li><b>SRM</b><span>Si los grupos no tienen el tamaño esperado, el experimento está roto. <a href="#trampas">49.9</a></span></li>
+</ol>
+
+
+<p>El caso: el equipo de Mercado Barrio entrena un ranker nuevo para el feed. El 5&#8239;% de las personas activas compra algo en un día a partir del feed, y producto quiere detectar un cambio de una décima de punto (de 5.0&#8239;% a 5.1&#8239;%). Hay 20 000 000 de personas activas por día.</p>
+
+<p class="more-link"><b>Cómo leer este módulo:</b> el núcleo son 49.1 a 49.4 y 49.9 (unos 70 minutos). 49.5 a 49.8 son las herramientas de un equipo que ya experimenta.</p>
+
+<h2 id="offline"><span class="sec-num">49.1</span>Evaluación offline bien hecha</h2>
+
+<p>La evaluación offline usa el log de impresiones de <a href="m43-datos-recomendacion.html#log">M43</a> y las métricas de <a href="m46-ranking.html#metricas-rank">M46</a> (AUC, log loss, NDCG@k). Es barata y rápida, y sirve para descartar: un modelo que pierde offline casi nunca gana online. El error más común no está en la métrica sino en cómo se parte el log.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f491t f491d">
+<title id="f491t">Partir al azar contra partir por tiempo</title>
+<desc id="f491d">Dos líneas de tiempo con 30 días de interacciones. Arriba, partición al azar: puntos de entrenamiento y de prueba mezclados en todos los días, así que el modelo entrena con el día 28 y se prueba con el día 3: ve el futuro. Abajo, partición por tiempo: entrena con los días 1 a 23, se valida con el 24 al 26 y se prueba con el 27 al 30, que es lo que pasa en producción.</desc>
+<defs><marker id="f491a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="32" text-anchor="start">Al azar: entrena con el futuro</text>
+<path class="sim-axis" d="M20 90 H750"/>
+<circle cx="30" cy="56" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="30" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="30" cy="78" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="54" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="54" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="54" cy="78" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="78" cy="56" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="78" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="78" cy="78" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="102" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="102" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="102" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="126" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="126" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="126" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="150" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="150" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="150" cy="78" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="174" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="174" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="174" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="198" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="198" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="198" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="222" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="222" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="222" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="246" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="246" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="246" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="270" cy="56" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="270" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="270" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="294" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="294" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="294" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="318" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="318" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="318" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="342" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="342" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="342" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="366" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="366" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="366" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="390" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="390" cy="67" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="390" cy="78" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="414" cy="56" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="414" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="414" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="438" cy="56" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="438" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="438" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="462" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="462" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="462" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="486" cy="56" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="486" cy="67" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="486" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="510" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="510" cy="67" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="510" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="534" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="534" cy="67" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="534" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="558" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="558" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="558" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="582" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="582" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="582" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="606" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="606" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="606" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="630" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="630" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="630" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="654" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="654" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="654" cy="78" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="678" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="678" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="678" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="702" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="702" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="702" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="726" cy="56" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="726" cy="67" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="726" cy="78" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="30" y="106" text-anchor="middle">día 1</text>
+<text class="dg-tiny" x="246" y="106" text-anchor="middle">día 10</text>
+<text class="dg-tiny" x="486" y="106" text-anchor="middle">día 20</text>
+<text class="dg-tiny" x="726" y="106" text-anchor="middle">día 30</text>
+<text class="dg-group" x="20" y="142" text-anchor="start">Por tiempo: como en producción</text>
+<path class="sim-axis" d="M20 200 H750"/>
+<circle cx="30" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="30" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="30" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="54" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="54" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="54" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="78" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="78" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="78" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="102" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="102" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="102" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="126" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="126" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="126" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="150" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="150" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="150" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="174" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="174" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="174" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="198" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="198" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="198" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="222" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="222" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="222" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="246" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="246" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="246" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="270" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="270" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="270" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="294" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="294" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="294" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="318" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="318" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="318" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="342" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="342" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="342" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="366" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="366" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="366" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="390" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="390" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="390" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="414" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="414" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="414" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="438" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="438" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="438" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="462" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="462" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="462" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="486" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="486" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="486" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="510" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="510" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="510" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="534" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="534" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="534" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="558" cy="166" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="558" cy="177" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="558" cy="188" r="4" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="582" cy="166" r="4" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="582" cy="177" r="4" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="582" cy="188" r="4" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="606" cy="166" r="4" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="606" cy="177" r="4" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="606" cy="188" r="4" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="630" cy="166" r="4" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="630" cy="177" r="4" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="630" cy="188" r="4" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="654" cy="166" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="654" cy="177" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="654" cy="188" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="678" cy="166" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="678" cy="177" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="678" cy="188" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="702" cy="166" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="702" cy="177" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="702" cy="188" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="726" cy="166" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="726" cy="177" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="726" cy="188" r="4" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="30" y="216" text-anchor="middle">día 1</text>
+<text class="dg-tiny" x="246" y="216" text-anchor="middle">día 10</text>
+<text class="dg-tiny" x="486" y="216" text-anchor="middle">día 20</text>
+<text class="dg-tiny" x="726" y="216" text-anchor="middle">día 30</text>
+<path class="dg-feedback" d="M582 150 V210"/>
+<path class="dg-feedback" d="M654 150 V210"/>
+<text class="dg-tiny" x="306" y="250" text-anchor="start">entrenamiento</text>
+<text class="dg-tiny" x="436" y="250" text-anchor="start">validación</text>
+<text class="dg-tiny" x="546" y="250" text-anchor="start">prueba</text>
+<circle cx="296" cy="246" r="5" class="dg-layer" style="--c: var(--l-service)"/><circle cx="426" cy="246" r="5" class="dg-layer" style="--c: var(--l-queue)"/><circle cx="536" cy="246" r="5" class="dg-layer" style="--c: var(--l-gpu)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 49.1.</b> La partición al azar deja que el modelo aprenda de lo que pasó después del momento que se evalúa, y la métrica sale optimista. Es la fuga de <a href="m43-datos-recomendacion.html#fugas">M43</a> aplicada a la partición entera. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>La <dfn data-term="particion-temporal">partición por tiempo</dfn> entrena con los primeros días, valida con los siguientes y prueba con los últimos. Es lo que pasa en producción: el modelo se entrena con el pasado y sirve el futuro. Una variante para modelos por usuario es <i>leave-last-out</i>: por cada persona, la última interacción va a prueba y las anteriores a entrenamiento.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Partir al azar es como estudiar para un examen con las respuestas del examen mezcladas entre los ejercicios de práctica. Sacas buena nota y no aprendiste nada que sirva para el examen del mes que viene.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f492t f492d">
+<title id="f492t">Por qué offline y online no coinciden</title>
+<desc id="f492d">A la izquierda, la evaluación offline: el ranker nuevo se mide sobre las impresiones que eligió el ranker viejo, y solo puede ganar puntos por reordenar lo que ya se mostró. A la derecha, online: el ranker nuevo elige qué mostrar, la gente reacciona a eso, y aparecen ítems que el log nunca vio. Tres causas en el medio: el log solo tiene lo que mostró la política vieja, la métrica offline no es la de negocio, y la gente cambia al ver algo nuevo.</desc>
+<defs><marker id="f492a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="30" width="220" height="120" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="130.0" y="70.0" text-anchor="middle">Offline</text>
+<text class="dg-tiny" x="130.0" y="86.0" text-anchor="middle">reordena lo que el ranker</text>
+<text class="dg-tiny" x="130.0" y="102.0" text-anchor="middle">viejo mostró y la persona</text>
+<text class="dg-tiny" x="130.0" y="118.0" text-anchor="middle">tocó (o no)</text>
+<rect class="dg-layer" x="530" y="30" width="220" height="120" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="640.0" y="70.0" text-anchor="middle">Online</text>
+<text class="dg-tiny" x="640.0" y="86.0" text-anchor="middle">elige qué mostrar; la</text>
+<text class="dg-tiny" x="640.0" y="102.0" text-anchor="middle">persona ve ítems que</text>
+<text class="dg-tiny" x="640.0" y="118.0" text-anchor="middle">el log nunca tuvo</text>
+<rect class="dg-warnbox" x="260" y="40" width="250" height="30" rx="8"/>
+<text class="dg-tiny" x="385.0" y="59.0" text-anchor="middle">El log solo tiene lo que mostró la vieja</text>
+<rect class="dg-warnbox" x="260" y="78" width="250" height="30" rx="8"/>
+<text class="dg-tiny" x="385.0" y="97.0" text-anchor="middle">NDCG no es compras ni retención</text>
+<rect class="dg-warnbox" x="260" y="116" width="250" height="30" rx="8"/>
+<text class="dg-tiny" x="385.0" y="135.0" text-anchor="middle">La gente reacciona a lo nuevo (novedad)</text>
+<path class="dg-edge" d="M242 90 H256" marker-end="url(#f492a)"/>
+<path class="dg-edge" d="M512 90 H526" marker-end="url(#f492a)"/>
+<rect class="dg-box" x="20" y="176" width="730" height="76" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-small" x="34" y="200" text-anchor="start">Ejemplo (supuesto): NDCG@10 offline +3 %; compras por usuario en el A/B +0.4 %, intervalo ±0.6 %.</text>
+<text class="dg-tiny" x="34" y="222" text-anchor="start">La dirección suele coincidir; el tamaño, casi nunca. Offline sirve para descartar y ordenar candidatos,</text>
+<text class="dg-tiny" x="34" y="240" text-anchor="start">no para decidir el lanzamiento.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 49.2.</b> Los resultados offline y los de un A/B no siempre coinciden; varios equipos lo documentaron, entre ellos Netflix y el trabajo de Gilotte y otros (2018) sobre A/B offline. Las cifras de la caja son un supuesto para fijar la idea. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<p>Aun bien hecha, la evaluación offline tiene un límite que no se arregla con más cuidado: mide sobre lo que mostró el sistema viejo. Si el ranker nuevo trae ítems que el viejo nunca mostraba, el log no sabe qué habría pasado con ellos. Por eso offline ordena candidatos y el A/B decide.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el log se parte por tiempo; offline sirve para descartar, no para lanzar, porque solo ve lo que mostró la política vieja.</p>
+
+<h2 id="ab-rec"><span class="sec-num">49.2</span>El A/B de un recomendador</h2>
+
+<p>El A/B de <a href="m22-operar-modelos.html#ab">M22</a> es el mismo: usuarios repartidos al azar, métricas de producto, semanas. En un recomendador se suman tres decisiones.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f493t f493d">
+<title id="f493t">Asignar por usuario y esperar la novedad</title>
+<desc id="f493d">A la izquierda, la asignación: el id del usuario y el nombre del experimento entran a un hash, el resultado módulo 1000 decide el bucket, y los buckets 0 a 49 son control y 50 a 99 tratamiento; el resto no participa. El mismo usuario cae siempre en la misma variante. A la derecha, la curva del efecto día por día: arranca alto por novedad y baja hasta estabilizarse después de una o dos semanas.</desc>
+<defs><marker id="f493a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="40" width="160" height="50" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="100.0" y="61.0" text-anchor="middle">usuario 42</text>
+<text class="dg-tiny" x="100.0" y="77.0" text-anchor="middle">exp: ranker-v7</text>
+<rect class="dg-layer" x="210" y="40" width="140" height="50" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="280.0" y="61.0" text-anchor="middle">hash % 1000</text>
+<text class="dg-tiny" x="280.0" y="77.0" text-anchor="middle">= 73</text>
+<path class="dg-edge" d="M182 65 H206" marker-end="url(#f493a)"/>
+<rect class="dg-box" x="20" y="130" width="100" height="40" rx="8"/>
+<text class="dg-small" x="70.0" y="146.0" text-anchor="middle">0–49</text>
+<text class="dg-tiny" x="70.0" y="162.0" text-anchor="middle">control</text>
+<rect class="dg-box dg-box--em" x="130" y="130" width="110" height="40" rx="8"/>
+<text class="dg-small" x="185.0" y="146.0" text-anchor="middle">50–99</text>
+<text class="dg-tiny" x="185.0" y="162.0" text-anchor="middle">tratamiento</text>
+<rect class="dg-box" x="250" y="130" width="100" height="40" rx="8"/>
+<text class="dg-small" x="300.0" y="146.0" text-anchor="middle">100–999</text>
+<text class="dg-tiny" x="300.0" y="162.0" text-anchor="middle">fuera</text>
+<path class="dg-edge" d="M280 92 C 260 112, 200 112, 190 126" marker-end="url(#f493a)"/>
+<text class="dg-tiny" x="20" y="205" text-anchor="start">Mismo usuario, misma variante, en todas las</text>
+<text class="dg-tiny" x="20" y="221" text-anchor="start">requests y dispositivos. Otro experimento usa</text>
+<text class="dg-tiny" x="20" y="237" text-anchor="start">otro nombre: los buckets salen independientes.</text>
+<text class="dg-group" x="420" y="26" text-anchor="start">Efecto medido por día (supuesto)</text>
+<path class="sim-axis" d="M430 230 H750"/>
+<path class="sim-axis" d="M430 40 V230"/>
+<path d="M430.0 65.0 L444.5 97.8 L459.0 122.5 L473.5 141.0 L488.0 154.9 L502.5 165.4 L517.0 173.2 L531.5 179.1 L546.0 183.6 L560.5 186.9 L575.0 189.4 L589.5 191.3 L604.0 192.7 L618.5 193.8 L633.0 194.6 L647.5 195.2 L662.0 195.6 L676.5 196.0 L691.0 196.2 L705.5 196.4 L720.0 196.6 L734.5 196.7" class="dg-edge" style="stroke: var(--l-gpu); stroke-width: 2.5; fill: none"/>
+<path class="dg-feedback" d="M430 197.0 H750"/>
+<text class="dg-tiny" x="746" y="191.0" text-anchor="end">efecto estable +0.6 %</text>
+<text class="dg-tiny" x="440" y="56" text-anchor="start">+3 % el primer día</text>
+<text class="dg-tiny" x="430.0" y="248" text-anchor="middle">día 0</text>
+<text class="dg-tiny" x="531.5" y="248" text-anchor="middle">día 7</text>
+<text class="dg-tiny" x="633.0" y="248" text-anchor="middle">día 14</text>
+<text class="dg-tiny" x="734.5" y="248" text-anchor="middle">día 21</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 49.3.</b> La unidad de aleatorización es el usuario, no la request: si cada request sorteara, una misma persona vería dos rankers y los efectos se mezclarían. Y la primera semana miente: lo nuevo llama la atención y después se acomoda. La curva es un supuesto para mostrar la forma. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<ol class="steps">
+  <li><span class="step-title">La unidad es el usuario</span>La asignación sale de un hash del id del usuario y del nombre del experimento, módulo 1 000: los buckets 0 a 49 son control y 50 a 99 tratamiento. Es estable (la misma persona ve siempre lo mismo) y cada experimento reparte independiente de los demás. Cada impresión se registra con su variante: es el campo <code>variant</code> del log de <a href="m43-datos-recomendacion.html#log">M43</a>.</li>
+  <li><span class="step-title">La duración se fija antes</span>Al menos una semana completa, porque el lunes no se compra como el sábado, y lo que diga el cálculo de potencia (49.3).</li>
+  <li><span class="step-title">La primera semana miente</span>El <dfn data-term="efecto-novedad">efecto novedad</dfn> infla el tratamiento al principio: lo nuevo llama la atención. El efecto contrario, la aversión al cambio, lo desinfla. Se mira la curva día por día y se decide con la parte estable.</li>
+</ol>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Un equipo grande corre decenas de experimentos a la vez sobre el mismo feed. Con hashes independientes, cada persona está en varios a la vez, y eso está bien mientras los cambios no choquen (dos experimentos que tocan el mismo re-ranking van en la misma "capa", excluyentes entre sí). Es el diseño de capas que Google describió en 2010 (Tang y otros) <span class="badge badge--doc">Documentado</span>.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> se asigna por usuario con un hash estable, se fija la duración antes y se descuenta la novedad.</p>
+
+<h2 id="potencia"><span class="sec-num">49.3</span>Cuántos usuarios hacen falta</h2>
+
+<p>Antes de empezar se calcula cuántos usuarios hacen falta para ver el cambio que importa. Si no alcanzan, el experimento va a decir "sin diferencia" aunque la haya. La <dfn data-term="potencia-estadistica">potencia</dfn> es justamente la probabilidad de detectar un efecto que existe.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="f494t f494d">
+<title id="f494t">Significancia y potencia</title>
+<desc id="f494d">Dos curvas normales. La de la izquierda es la diferencia que se mediría si el cambio no hiciera nada, centrada en cero; sus dos colas, más allá de 1.96 errores estándar, suman el 5 por ciento: es alfa, la chance de un falso positivo. La de la derecha es la diferencia si el cambio sube la tasa en delta; la parte que cae más allá del umbral es la potencia, el 80 por ciento. Para que la curva de la derecha quede lo bastante lejos, delta tiene que valer unos 2.8 errores estándar.</desc>
+<defs><marker id="f494a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path d="M150.0 216.5 L153.0 215.0 L156.0 213.3 L159.0 211.5 L162.0 209.5 L165.0 207.4 L168.0 205.1 L171.0 202.6 L174.0 200.0 L177.0 197.2 L180.0 194.3 L183.0 191.1 L186.0 187.9 L189.0 184.4 L192.0 180.8 L195.0 177.0 L198.0 173.1 L201.0 169.1 L204.0 164.9 L207.0 160.6 L210.0 156.2 L213.0 151.7 L216.0 147.2 L219.0 142.6 L222.0 138.1 L225.0 133.5 L228.0 128.9 L231.0 124.4 L234.0 119.9 L237.0 115.6 L240.0 111.3 L243.0 107.3 L246.0 103.4 L249.0 99.7 L252.0 96.2 L255.0 93.0 L258.0 90.1 L261.0 87.4 L264.0 85.1 L267.0 83.1 L270.0 81.4 L273.0 80.1 L276.0 79.2 L279.0 78.6 L282.0 78.4 L285.0 78.6 L288.0 79.2 L291.0 80.1 L294.0 81.4 L297.0 83.1 L300.0 85.1 L303.0 87.4 L306.0 90.1 L309.0 93.0 L312.0 96.2 L315.0 99.7 L318.0 103.4 L321.0 107.3 L324.0 111.3 L327.0 115.6 L330.0 119.9 L333.0 124.4 L336.0 128.9 L339.0 133.5 L342.0 138.1 L345.0 142.6 L348.0 147.2 L351.0 151.7 L354.0 156.2 L357.0 160.6 L360.0 164.9 L363.0 169.1 L366.0 173.1 L369.0 177.0 L372.0 180.8 L375.0 184.4 L378.0 187.9 L381.0 191.1 L384.0 194.3 L387.0 197.2 L390.0 200.0 L393.0 202.6 L396.0 205.1 L399.0 207.4 L402.0 209.5 L405.0 211.5 L408.0 213.3 L411.0 215.0 L414.0 216.5 L417.0 217.9 L420.0 219.2 L423.0 220.4 L426.0 221.5 L429.0 222.5 L432.0 223.3 L435.0 224.1 L438.0 224.8 L441.0 225.5 L444.0 226.0 L447.0 226.5 L450.0 227.0 L453.0 227.4 L456.0 227.7 L459.0 228.0 L462.0 228.3 L465.0 228.6 L468.0 228.8 L471.0 228.9 L474.0 229.1 L477.0 229.2 L480.0 229.3 L483.0 229.4 L486.0 229.5 L489.0 229.6 L492.0 229.7 L495.0 229.7 L498.0 229.8 L501.0 229.8 L504.0 229.8 L507.0 229.9 L510.0 229.9 L513.0 229.9 L516.0 229.9 L519.0 229.9 L522.0 229.9 L525.0 230.0 L528.0 230.0 L531.0 230.0 L534.0 230.0 L537.0 230.0 L540.0 230.0 L543.0 230.0 L546.0 230.0 L549.0 230.0 L552.0 230.0 L555.0 230.0 L558.0 230.0 L561.0 230.0 L564.0 230.0 L567.0 230.0 L570.0 230.0 L573.0 230.0 L576.0 230.0 L579.0 230.0 L582.0 230.0 L585.0 230.0 L588.0 230.0 L591.0 230.0 L594.0 230.0 L597.0 230.0 L600.0 230.0 L603.0 230.0 L606.0 230.0 L609.0 230.0 L612.0 230.0 L615.0 230.0 L618.0 230.0 L621.0 230.0 L624.0 230.0 L627.0 230.0 L630.0 230.0 L633.0 230.0 L636.0 230.0 L639.0 230.0" class="dg-edge" style="stroke: var(--l-service); stroke-width: 2.2; fill: none"/>
+<path d="M150.0 230.0 L153.0 230.0 L156.0 230.0 L159.0 230.0 L162.0 230.0 L165.0 230.0 L168.0 230.0 L171.0 230.0 L174.0 230.0 L177.0 230.0 L180.0 230.0 L183.0 230.0 L186.0 230.0 L189.0 230.0 L192.0 230.0 L195.0 230.0 L198.0 230.0 L201.0 230.0 L204.0 230.0 L207.0 230.0 L210.0 229.9 L213.0 229.9 L216.0 229.9 L219.0 229.9 L222.0 229.9 L225.0 229.9 L228.0 229.8 L231.0 229.8 L234.0 229.8 L237.0 229.7 L240.0 229.7 L243.0 229.6 L246.0 229.5 L249.0 229.4 L252.0 229.3 L255.0 229.2 L258.0 229.1 L261.0 228.9 L264.0 228.8 L267.0 228.6 L270.0 228.3 L273.0 228.0 L276.0 227.7 L279.0 227.4 L282.0 227.0 L285.0 226.5 L288.0 226.0 L291.0 225.5 L294.0 224.8 L297.0 224.1 L300.0 223.3 L303.0 222.5 L306.0 221.5 L309.0 220.4 L312.0 219.2 L315.0 217.9 L318.0 216.5 L321.0 215.0 L324.0 213.3 L327.0 211.5 L330.0 209.5 L333.0 207.4 L336.0 205.1 L339.0 202.6 L342.0 200.0 L345.0 197.2 L348.0 194.3 L351.0 191.1 L354.0 187.9 L357.0 184.4 L360.0 180.8 L363.0 177.0 L366.0 173.1 L369.0 169.1 L372.0 164.9 L375.0 160.6 L378.0 156.2 L381.0 151.7 L384.0 147.2 L387.0 142.6 L390.0 138.1 L393.0 133.5 L396.0 128.9 L399.0 124.4 L402.0 119.9 L405.0 115.6 L408.0 111.3 L411.0 107.3 L414.0 103.4 L417.0 99.7 L420.0 96.2 L423.0 93.0 L426.0 90.1 L429.0 87.4 L432.0 85.1 L435.0 83.1 L438.0 81.4 L441.0 80.1 L444.0 79.2 L447.0 78.6 L450.0 78.4 L453.0 78.6 L456.0 79.2 L459.0 80.1 L462.0 81.4 L465.0 83.1 L468.0 85.1 L471.0 87.4 L474.0 90.1 L477.0 93.0 L480.0 96.2 L483.0 99.7 L486.0 103.4 L489.0 107.3 L492.0 111.3 L495.0 115.6 L498.0 119.9 L501.0 124.4 L504.0 128.9 L507.0 133.5 L510.0 138.1 L513.0 142.6 L516.0 147.2 L519.0 151.7 L522.0 156.2 L525.0 160.6 L528.0 164.9 L531.0 169.1 L534.0 173.1 L537.0 177.0 L540.0 180.8 L543.0 184.4 L546.0 187.9 L549.0 191.1 L552.0 194.3 L555.0 197.2 L558.0 200.0 L561.0 202.6 L564.0 205.1 L567.0 207.4 L570.0 209.5 L573.0 211.5 L576.0 213.3 L579.0 215.0 L582.0 216.5 L585.0 217.9 L588.0 219.2 L591.0 220.4 L594.0 221.5 L597.0 222.5 L600.0 223.3 L603.0 224.1 L606.0 224.8 L609.0 225.5 L612.0 226.0 L615.0 226.5 L618.0 227.0 L621.0 227.4 L624.0 227.7 L627.0 228.0 L630.0 228.3 L633.0 228.6 L636.0 228.8 L639.0 228.9" class="dg-edge" style="stroke: var(--l-gpu); stroke-width: 2.2; fill: none"/>
+<path d="M399.6 230 L399.6 123.5 L402.6 119.0 L405.6 114.7 L408.6 110.5 L411.6 106.5 L414.6 102.6 L417.6 99.0 L420.6 95.6 L423.6 92.4 L426.6 89.5 L429.6 86.9 L432.6 84.6 L435.6 82.7 L438.6 81.1 L441.6 79.9 L444.6 79.0 L447.6 78.5 L450.6 78.4 L453.6 78.7 L456.6 79.3 L459.6 80.3 L462.6 81.7 L465.6 83.4 L468.6 85.5 L471.6 87.9 L474.6 90.6 L477.6 93.6 L480.6 96.9 L483.6 100.4 L486.6 104.1 L489.6 108.1 L492.6 112.2 L495.6 116.4 L498.6 120.8 L501.6 125.3 L504.6 129.8 L507.6 134.4 L510.6 139.0 L513.6 143.6 L516.6 148.1 L519.6 152.6 L522.6 157.1 L525.6 161.5 L528.6 165.7 L531.6 169.9 L534.6 173.9 L537.6 177.8 L540.6 181.5 L543.6 185.1 L546.6 188.5 L549.6 191.8 L552.6 194.9 L555.6 197.8 L558.6 200.5 L561.6 203.1 L564.6 205.5 L567.6 207.8 L570.6 209.9 L573.6 211.8 L576.6 213.6 L579.6 215.3 L582.6 216.8 L585.6 218.2 L588.6 219.5 L591.6 220.6 L594.6 221.7 L597.6 222.6 L600.6 223.5 L603.6 224.3 L606.6 225.0 L609.6 225.6 L612.6 226.1 L615.6 226.6 L618.6 227.1 L621.6 227.5 L624.6 227.8 L627.6 228.1 L630.6 228.4 L633.6 228.6 L636.6 228.8 L639.6 229.0 L642.6 229.1 L645.6 229.3 L648.6 229.4 L651.6 229.5 L651.6 230 Z" class="dg-layer" style="--c: var(--l-gpu); stroke: none"/>
+<path d="M399.6 230 L399.6 207.8 L402.6 209.9 L405.6 211.8 L408.6 213.6 L411.6 215.3 L414.6 216.8 L417.6 218.2 L420.6 219.5 L423.6 220.6 L426.6 221.7 L429.6 222.6 L432.6 223.5 L435.6 224.3 L438.6 225.0 L441.6 225.6 L444.6 226.1 L447.6 226.6 L450.6 227.1 L453.6 227.5 L456.6 227.8 L459.6 228.1 L462.6 228.4 L465.6 228.6 L468.6 228.8 L471.6 229.0 L474.6 229.1 L477.6 229.3 L480.6 229.4 L483.6 229.5 L486.6 229.5 L489.6 229.6 L492.6 229.7 L495.6 229.7 L498.6 229.8 L501.6 229.8 L504.6 229.8 L507.6 229.9 L510.6 229.9 L513.6 229.9 L516.6 229.9 L519.6 229.9 L522.6 230.0 L525.6 230.0 L528.6 230.0 L531.6 230.0 L534.6 230.0 L537.6 230.0 L540.6 230.0 L543.6 230.0 L546.6 230.0 L546.6 230 Z" class="dg-warnbox" style="stroke: none"/>
+<path class="sim-axis" d="M150.0 230 H654.0"/>
+<path class="dg-feedback" d="M399.6 40 V230"/>
+<text class="dg-tiny" x="399.6" y="34" text-anchor="middle">umbral: 1.96 errores estándar</text>
+<text class="dg-tiny" x="282.0" y="250" text-anchor="middle">0</text>
+<text class="dg-tiny" x="450.0" y="250" text-anchor="middle">δ</text>
+<text class="dg-tiny" x="282.0" y="70" text-anchor="middle">Si el cambio no hace nada</text>
+<text class="dg-tiny" x="490.0" y="70" text-anchor="start">Si el cambio sube δ</text>
+<text class="dg-tiny" x="426.0" y="268" text-anchor="end">α / 2 = 2.5 % (falso positivo)</text>
+<text class="dg-tiny" x="498.00000000000006" y="200" text-anchor="start">potencia: 80 %</text>
+<text class="dg-tiny dg-mono" x="150.0" y="284" text-anchor="start" style="white-space:pre">δ = (1.96 + 0.84) errores estándar = 2.8 · √(2 σ² / n)</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 49.4.</b> De dónde sale el 16. Despejando <i>n</i> de δ = 2.8 · √(2 σ² / <i>n</i>) queda <i>n</i> = 2 · 2.8² · σ² / δ² = 15.7 · σ² / δ², que se redondea a 16. Es la fórmula del tamaño de muestra que usa Kohavi en <i>Trustworthy Online Controlled Experiments</i>. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: la regla 16 σ² / δ²</p>
+  <p>En palabras: hacen falta más usuarios cuanto más ruidosa es la métrica (σ²) y cuanto más chico es el cambio que se busca (δ). Como δ va al cuadrado, buscar un cambio la mitad de grande cuesta cuatro veces más usuarios.</p>
+  <p><b><i>n</i> por grupo ≈ 16 · σ² / δ²</b>, con α = 0.05 y potencia del 80&#8239;%.</p>
+  <p>Para una tasa <i>p</i> (comprar o no), σ² = <i>p</i> · (1 − <i>p</i>). Con <i>p</i> = 0.05: σ² = 0.05 × 0.95 = 0.0475. Para δ = 0.001 (una décima de punto): 16 × 0.0475 / 0.000001 = <b>760 000 usuarios por grupo</b>.</p>
+  <pre data-lang="python"><code>def usuarios_por_grupo(p, delta):
+    sigma2 = p * (1 - p)
+    return 16 * sigma2 / delta ** 2
+
+usuarios_por_grupo(0.05, 0.001)   # 760000.0</code></pre>
+</aside>
+
+<div data-calc="abpower"></div>
+
+<p>Con 20 000 000 de personas por día y el 10&#8239;% del tráfico en el experimento, 1 520 000 usuarios se juntan en menos de un día. Igual corre una semana, por los ciclos semanales y la novedad. Ahora busca un cambio de 0.05 puntos: son 3 040 000 por grupo, cuatro veces más. Y si la métrica fuera "compró algo en el mes", con <i>p</i> = 0.3, σ² sube a 0.21 y el mismo cambio absoluto necesita más de cuatro veces más usuarios.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>El δ es una decisión de negocio, no de estadística: el cambio más chico que justificaría lanzar. Pedir detectar cambios muy chicos hace los experimentos largos; aceptar solo cambios grandes deja pasar mejoras reales que suman. Muchos equipos fijan δ por lo que cuesta mantener el modelo nuevo.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> n ≈ 16 σ² / δ² por grupo; con 5&#8239;% y una décima de punto, 760 000. El δ lo fija el negocio.</p>
+
+<h2 id="cuped"><span class="sec-num">49.4</span>Reducir la varianza: CUPED</h2>
+
+<p>Gran parte del ruido de un A/B no tiene que ver con el cambio: es que unas personas compran mucho y otras casi nada. Si sabes cuánto compraba cada una antes del experimento, puedes restar esa parte. Eso es <dfn data-term="cuped">CUPED</dfn> (<i>Controlled-experiment Using Pre-Experiment Data</i>).</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 362" role="img" aria-labelledby="f495t f495d">
+<title id="f495t">CUPED</title>
+<desc id="f495d">Ficha de CUPED. Qué entra: El resultado de cada usuario durante el experimento (Y) y la misma métrica medida antes de empezar (X). Qué hace: Estima θ = cov(X, Y) / var(X) y le resta a cada usuario θ · (X − promedio de X): lo que iba a hacer de todos modos. Qué sale: La misma diferencia entre grupos, con una varianza que baja en un factor 1 − ρ², donde ρ es la correlación entre X e Y. Ejemplo: ρ = 0.7  →  1 − 0.49 = 0.51 de la varianza 760 000 usuarios por grupo  →  387 600 para la misma potencia X tiene que medirse antes del experimento: si el tratamiento la toca, sesga Qué falla sin él: Sin CUPED, el experimento necesita el doble de usuarios o de días para ver el mismo cambio, porque gran parte del ruido es que unas personas compran mucho más que otras. Dónde vive: En el análisis del A/B, después de juntar los datos: no cambia la asignación ni el producto.</desc>
+<defs><marker id="f495a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="114" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">El resultado de cada usuario</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">durante el experimento (Y) y la</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">misma métrica medida antes de</text>
+<text class="dg-tiny" x="32" y="104" text-anchor="start">empezar (X).</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="114" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Estima θ = cov(X, Y) / var(X) y</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">le resta a cada usuario θ · (X</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">− promedio de X): lo que iba a</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">hacer de todos modos.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="114" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">La misma diferencia entre</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">grupos, con una varianza que</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">baja en un factor 1 − ρ², donde</text>
+<text class="dg-tiny" x="550" y="104" text-anchor="start">ρ es la correlación entre X e</text>
+<text class="dg-tiny" x="550" y="120" text-anchor="start">Y.</text>
+<path class="dg-edge" d="M234 73.0 H275" marker-end="url(#f495a)"/>
+<path class="dg-edge" d="M493 73.0 H534" marker-end="url(#f495a)"/>
+<rect class="dg-box" x="20" y="144" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="164" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="184" text-anchor="start" style="white-space:pre">ρ = 0.7  →  1 − 0.49 = 0.51 de la varianza</text>
+<text class="dg-tiny dg-mono" x="32" y="200" text-anchor="start" style="white-space:pre">760 000 usuarios por grupo  →  387 600 para la misma potencia</text>
+<text class="dg-tiny dg-mono" x="32" y="216" text-anchor="start" style="white-space:pre">X tiene que medirse antes del experimento: si el tratamiento la toca, sesga</text>
+<rect class="dg-warnbox" x="20" y="244" width="357" height="102" rx="8"/>
+<text class="dg-group" x="32" y="264" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="284" text-anchor="start">Sin CUPED, el experimento necesita el doble de</text>
+<text class="dg-tiny" x="32" y="300" text-anchor="start">usuarios o de días para ver el mismo cambio, porque</text>
+<text class="dg-tiny" x="32" y="316" text-anchor="start">gran parte del ruido es que unas personas compran</text>
+<text class="dg-tiny" x="32" y="332" text-anchor="start">mucho más que otras.</text>
+<rect class="dg-box" x="393" y="244" width="357" height="102" rx="8"/>
+<text class="dg-group" x="405" y="264" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="284" text-anchor="start">En el análisis del A/B, después de juntar los datos:</text>
+<text class="dg-tiny" x="405" y="300" text-anchor="start">no cambia la asignación ni el producto.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 49.5.</b> La ficha de CUPED. Lo propusieron Deng, Xu, Kohavi y Walker en Microsoft (2013), y hoy lo traen casi todas las plataformas de experimentos. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: el ajuste</p>
+  <p><b><i>Y</i>' = <i>Y</i> − θ · (<i>X</i> − promedio de <i>X</i>)</b>, con θ = cov(<i>X</i>, <i>Y</i>) / var(<i>X</i>).</p>
+  <p>En palabras: a lo que compró cada persona durante el experimento se le resta lo que se esperaba por su historia. La varianza de <i>Y</i>' es var(<i>Y</i>) · (1 − ρ²). Con ρ = 0.7, queda el 51&#8239;%, y el tamaño de 49.3 baja de 760 000 a 387 600 por grupo.</p>
+  <pre data-lang="python"><code>import numpy as np
+
+def cuped(y, x):
+    theta = np.cov(x, y)[0, 1] / np.var(x, ddof=1)
+    return y - theta * (x - x.mean())   # mismo promedio de diferencia, menos ruido</code></pre>
+</aside>
+
+<div data-sim="cuped"></div>
+
+<p>Prueba con ρ = 0 (la historia no dice nada): los dos intervalos son iguales. Con ρ = 0.7, el de CUPED es bastante más angosto, y con esta muestra es el único que no cruza el cero. Pide "Otra muestra" varias veces: la diferencia simple salta más que la ajustada. La condición que no se negocia es que <i>X</i> se mida antes de la asignación: si el tratamiento cambia <i>X</i>, el ajuste se lleva parte del efecto.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> CUPED resta lo que cada persona iba a hacer igual; con ρ = 0.7 hace falta la mitad de usuarios. X se mide antes del experimento.</p>
+
+<h2 id="interleaving"><span class="sec-num">49.5</span>Interleaving</h2>
+
+<p>Para comparar dos órdenes del mismo catálogo hay algo mucho más sensible que un A/B: mostrarle a cada persona una lista que mezcla los dos y ver cuál se lleva los clics. Es el <dfn data-term="interleaving">interleaving</dfn>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f496t f496d">
+<title id="f496t">Team-draft interleaving</title>
+<desc id="f496d">Dos listas, la del ranker A con los ítems a1 a a5 y la del ranker B con b1, a2, b3, a1, b5. Como al armar equipos en un partido, se tira una moneda para ver quién elige primero y después se alternan: cada ranker aporta su mejor ítem que todavía no está en la lista. La lista intercalada queda b1, a1, a2, b3, a3, b5, con cada lugar marcado con el equipo que lo puso. La persona hace clic en a1 y en b3: un clic para cada equipo, empate. Si hubiera hecho clic solo en a2 y a3, ganaría A.</desc>
+<defs><marker id="f496a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="24" text-anchor="start">Ranker A</text>
+<text class="dg-group" x="20" y="110" text-anchor="start">Ranker B</text>
+<rect class="dg-layer" x="20" y="32" width="60" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="50.0" y="56.0" text-anchor="middle">a1</text>
+<rect class="dg-layer" x="90" y="32" width="60" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="120.0" y="56.0" text-anchor="middle">a2</text>
+<rect class="dg-layer" x="160" y="32" width="60" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="190.0" y="56.0" text-anchor="middle">a3</text>
+<rect class="dg-layer" x="230" y="32" width="60" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="260.0" y="56.0" text-anchor="middle">a4</text>
+<rect class="dg-layer" x="300" y="32" width="60" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="330.0" y="56.0" text-anchor="middle">a5</text>
+<rect class="dg-layer" x="20" y="118" width="60" height="40" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="50.0" y="142.0" text-anchor="middle">b1</text>
+<rect class="dg-layer" x="90" y="118" width="60" height="40" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="120.0" y="142.0" text-anchor="middle">a2</text>
+<rect class="dg-layer" x="160" y="118" width="60" height="40" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="190.0" y="142.0" text-anchor="middle">b3</text>
+<rect class="dg-layer" x="230" y="118" width="60" height="40" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="260.0" y="142.0" text-anchor="middle">a1</text>
+<rect class="dg-layer" x="300" y="118" width="60" height="40" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="330.0" y="142.0" text-anchor="middle">b5</text>
+<text class="dg-group" x="410" y="24" text-anchor="start">Lista intercalada</text>
+<rect class="dg-layer" x="410" y="32" width="90" height="30" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="455.0" y="51.0" text-anchor="middle">1. b1</text>
+<text class="dg-tiny" x="512" y="52" text-anchor="start">equipo B</text>
+<rect class="dg-layer" x="410" y="70" width="90" height="30" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="455.0" y="89.0" text-anchor="middle">2. a1</text>
+<text class="dg-tiny" x="512" y="90" text-anchor="start">equipo A   ← clic</text>
+<rect class="dg-layer" x="410" y="108" width="90" height="30" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="455.0" y="127.0" text-anchor="middle">3. a2</text>
+<text class="dg-tiny" x="512" y="128" text-anchor="start">equipo A</text>
+<rect class="dg-layer" x="410" y="146" width="90" height="30" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="455.0" y="165.0" text-anchor="middle">4. b3</text>
+<text class="dg-tiny" x="512" y="166" text-anchor="start">equipo B   ← clic</text>
+<rect class="dg-layer" x="410" y="184" width="90" height="30" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="455.0" y="203.0" text-anchor="middle">5. a3</text>
+<text class="dg-tiny" x="512" y="204" text-anchor="start">equipo A</text>
+<rect class="dg-layer" x="410" y="222" width="90" height="30" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="455.0" y="241.0" text-anchor="middle">6. b5</text>
+<text class="dg-tiny" x="512" y="242" text-anchor="start">equipo B</text>
+<rect class="dg-box" x="20" y="186" width="370" height="100" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-tiny" x="34" y="208" text-anchor="start">Moneda: empieza B. B pone b1.</text>
+<text class="dg-tiny" x="34" y="226" text-anchor="start">A pone a1. Le toca a quien tiene menos;</text>
+<text class="dg-tiny" x="34" y="244" text-anchor="start">empate: moneda, gana A, pone a2.</text>
+<text class="dg-tiny" x="34" y="262" text-anchor="start">B: a2 ya está, pone b3. Moneda: A pone a3; B, b5.</text>
+<text class="dg-tiny" x="34" y="280" text-anchor="start">Clics: a1 (A) y b3 (B). Empate.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 49.6.</b> Team-draft interleaving: la persona ve una sola lista y no sabe que hay dos rankers. Cada sesión es una pequeña votación entre dos órdenes, hecha por la misma persona en el mismo momento. Chapelle y otros (2012) lo validaron a escala en búsqueda, y Netflix contó en 2017 que lo usa para filtrar rankers antes del A/B. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<div data-sim="interleave"></div>
+
+<p>Con "B un poco mejor" y 2 000 sesiones, el A/B no ve nada (z = 0.6) y el interleaving da un z cercano a 8. La razón es la varianza: en el A/B se comparan grupos de personas distintas, y unas hacen muchos más clics que otras; en el interleaving cada persona compara los dos rankers a la vez, así que su nivel de actividad no importa. Netflix contó que necesitaba unas 100 veces menos usuarios que un A/B para elegir el mejor ranker <span class="badge badge--doc">Documentado</span>.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Interleaving responde "¿qué orden prefiere la gente?", no "¿cuánto sube el negocio?": no mide retención ni compras por usuario, y no sirve para cambios que no son un orden (un diseño nuevo, más ítems). Se usa como filtro: de diez rankers candidatos, interleaving elige dos, y esos dos van al A/B.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> interleaving mezcla dos rankers en una lista; es mucho más sensible que un A/B para comparar órdenes, y no mide el negocio.</p>
+
+<h2 id="red"><span class="sec-num">49.6</span>Efectos de red</h2>
+
+<p>Un A/B supone que tratar a una persona no cambia a las demás. En un recomendador con grafo eso falla: si el feed nuevo hace que Ana compre más, la fuente "lo que compran tus contactos" de Luis cambia aunque Luis esté en control. Es un <dfn data-term="efecto-red">efecto de red</dfn>, y casi siempre achica la diferencia medida.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f497t f497d">
+<title id="f497t">Cuando tratar a Ana cambia lo que ve Luis</title>
+<desc id="f497d">A la izquierda, aleatorización por usuario en un grafo de contactos: Ana está en tratamiento y ve un feed nuevo que la hace comprar más; Luis, su contacto, está en control, pero su fuente de lo que compran tus contactos se llena con las compras de Ana: el control ya no es control. A la derecha, aleatorización por grupos: barrios enteros en tratamiento o en control, con pocas aristas que cruzan.</desc>
+<defs><marker id="f497a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="24" text-anchor="start">Por usuario: el control se contamina</text>
+<path class="dg-edge" d="M80 90 L170 70"/>
+<path class="dg-edge" d="M80 90 L130 160"/>
+<path class="dg-edge" d="M170 70 L230 140"/>
+<path class="dg-edge" d="M130 160 L230 140"/>
+<path class="dg-edge" d="M130 160 L60 200"/>
+<path class="dg-edge" d="M230 140 L210 220"/>
+<path class="dg-edge" d="M170 70 L300 80"/>
+<path class="dg-edge" d="M230 140 L300 200"/>
+<path class="dg-edge" d="M210 220 L300 200"/>
+<path class="dg-edge" d="M60 200 L210 220"/>
+<circle cx="80" cy="90" r="16" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="170" cy="70" r="16" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="130" cy="160" r="16" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="230" cy="140" r="16" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="60" cy="200" r="16" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="210" cy="220" r="16" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="300" cy="80" r="16" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="300" cy="200" r="16" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="80" y="94" text-anchor="middle">Ana</text>
+<text class="dg-tiny" x="170" y="74" text-anchor="middle">Luis</text>
+<text class="dg-tiny" x="20" y="260" text-anchor="start">Luis (control) ve las compras de Ana (tratamiento).</text>
+<text class="dg-group" x="410" y="24" text-anchor="start">Por grupo: barrios enteros</text>
+<rect class="dg-frame" x="420" y="40" width="150" height="190" rx="10"/>
+<text class="dg-tiny" x="495" y="60" text-anchor="middle">barrio en tratamiento</text>
+<path class="dg-edge" d="M460 100 L530 95"/>
+<path class="dg-edge" d="M460 100 L498 135"/>
+<path class="dg-edge" d="M530 95 L498 135"/>
+<path class="dg-edge" d="M470 170 L498 135"/>
+<path class="dg-edge" d="M535 175 L498 135"/>
+<path class="dg-edge" d="M470 170 L535 175"/>
+<circle cx="460" cy="100" r="14" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="530" cy="95" r="14" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="470" cy="170" r="14" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="535" cy="175" r="14" class="dg-layer" style="--c: var(--l-gpu)"/>
+<circle cx="498" cy="135" r="14" class="dg-layer" style="--c: var(--l-gpu)"/>
+<rect class="dg-frame" x="590" y="40" width="150" height="190" rx="10"/>
+<text class="dg-tiny" x="665" y="60" text-anchor="middle">barrio en control</text>
+<path class="dg-edge" d="M630 100 L700 95"/>
+<path class="dg-edge" d="M630 100 L668 135"/>
+<path class="dg-edge" d="M700 95 L668 135"/>
+<path class="dg-edge" d="M640 170 L668 135"/>
+<path class="dg-edge" d="M705 175 L668 135"/>
+<path class="dg-edge" d="M640 170 L705 175"/>
+<circle cx="630" cy="100" r="14" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="700" cy="95" r="14" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="640" cy="170" r="14" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="705" cy="175" r="14" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="668" cy="135" r="14" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M535 135 L630 100"/>
+<text class="dg-tiny" x="582" y="250" text-anchor="middle">una arista cruza: poca contaminación</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 49.7.</b> Con efectos de red, el tratamiento de una persona llega a las demás y el control deja de serlo. Aleatorizar por grupos (barrios, ciudades, comunidades del grafo de <a href="m48-grafos-amigos.html#particionar">M48</a>) reduce la <span class="no-autolink">contaminación</span> a cambio de muchas menos unidades y más varianza. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>La salida es aleatorizar por grupos: barrios, ciudades o comunidades del grafo. Cuesta muchas menos unidades (miles de barrios en lugar de millones de personas) y por eso más varianza. Un mercado tiene un efecto parecido del otro lado: si el ranker de tratamiento manda más compras a ciertos vendedores, esos vendedores se quedan sin stock también para el control. Ahí se aleatoriza por mercado o por tiempo (un día sí, otro no, alternando).</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> con grafo o con mercado, tratar a uno cambia a otros; se aleatoriza por grupos a cambio de varianza.</p>
+
+<h2 id="contrafactual"><span class="sec-num">49.7</span>Evaluar sin lanzar: IPS</h2>
+
+<p>¿Se puede saber cómo le iría a una política nueva sin mostrársela a nadie? A veces. Si la política vieja era aleatoria en parte y guardó con qué probabilidad eligió cada ítem (la <a href="m47-reranking-exploracion.html#sesgo-posicion">propensión de M47</a>), se puede reponderar el log. Es el estimador <dfn data-term="ips">IPS</dfn> (<i>inverse propensity scoring</i>).</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f498t f498d">
+<title id="f498t">Pesar el log por la propensión</title>
+<desc id="f498d">Una tabla con cinco filas de log. Cada fila tiene la persona, el ítem que eligió la política vieja, su probabilidad de elegirlo, si hubo clic, y si la política nueva habría elegido lo mismo. Solo cuentan las filas donde coinciden, y cada clic se divide por la probabilidad: un clic en un ítem que la vieja elegía el 20 por ciento de las veces vale 5.</desc>
+<defs><marker id="f498a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="30" y="30" text-anchor="start">Persona</text>
+<text class="dg-group" x="140" y="30" text-anchor="start">La vieja mostró</text>
+<text class="dg-group" x="300" y="30" text-anchor="start">p(vieja)</text>
+<text class="dg-group" x="400" y="30" text-anchor="start">Clic</text>
+<text class="dg-group" x="480" y="30" text-anchor="start">¿La nueva?</text>
+<text class="dg-group" x="610" y="30" text-anchor="start">Aporte</text>
+<rect class="dg-box dg-box--em" x="20" y="44" width="730" height="28" rx="6"/>
+<text class="dg-tiny" x="30" y="64" text-anchor="start">Ana</text>
+<text class="dg-tiny" x="140" y="64" text-anchor="start">C</text>
+<text class="dg-tiny dg-mono" x="300" y="64" text-anchor="start" style="white-space:pre">0.20</text>
+<text class="dg-tiny dg-mono" x="400" y="64" text-anchor="start" style="white-space:pre">1</text>
+<text class="dg-tiny" x="480" y="64" text-anchor="start">sí</text>
+<text class="dg-tiny dg-mono" x="610" y="64" text-anchor="start" style="white-space:pre">1 / 0.20 = 5</text>
+<rect class="dg-box" x="20" y="78" width="730" height="28" rx="6"/>
+<text class="dg-tiny" x="30" y="98" text-anchor="start">Luis</text>
+<text class="dg-tiny" x="140" y="98" text-anchor="start">A</text>
+<text class="dg-tiny dg-mono" x="300" y="98" text-anchor="start" style="white-space:pre">0.30</text>
+<text class="dg-tiny dg-mono" x="400" y="98" text-anchor="start" style="white-space:pre">1</text>
+<text class="dg-tiny" x="480" y="98" text-anchor="start">no (C)</text>
+<text class="dg-tiny dg-mono" x="610" y="98" text-anchor="start" style="white-space:pre">0</text>
+<rect class="dg-box dg-box--em" x="20" y="112" width="730" height="28" rx="6"/>
+<text class="dg-tiny" x="30" y="132" text-anchor="start">Eva</text>
+<text class="dg-tiny" x="140" y="132" text-anchor="start">C</text>
+<text class="dg-tiny dg-mono" x="300" y="132" text-anchor="start" style="white-space:pre">0.20</text>
+<text class="dg-tiny dg-mono" x="400" y="132" text-anchor="start" style="white-space:pre">0</text>
+<text class="dg-tiny" x="480" y="132" text-anchor="start">sí</text>
+<text class="dg-tiny dg-mono" x="610" y="132" text-anchor="start" style="white-space:pre">0</text>
+<rect class="dg-box" x="20" y="146" width="730" height="28" rx="6"/>
+<text class="dg-tiny" x="30" y="166" text-anchor="start">Tere</text>
+<text class="dg-tiny" x="140" y="166" text-anchor="start">B</text>
+<text class="dg-tiny dg-mono" x="300" y="166" text-anchor="start" style="white-space:pre">0.20</text>
+<text class="dg-tiny dg-mono" x="400" y="166" text-anchor="start" style="white-space:pre">0</text>
+<text class="dg-tiny" x="480" y="166" text-anchor="start">no (C)</text>
+<text class="dg-tiny dg-mono" x="610" y="166" text-anchor="start" style="white-space:pre">0</text>
+<rect class="dg-box" x="20" y="180" width="730" height="28" rx="6"/>
+<text class="dg-tiny" x="30" y="200" text-anchor="start">Uma</text>
+<text class="dg-tiny" x="140" y="200" text-anchor="start">A</text>
+<text class="dg-tiny dg-mono" x="300" y="200" text-anchor="start" style="white-space:pre">0.30</text>
+<text class="dg-tiny dg-mono" x="400" y="200" text-anchor="start" style="white-space:pre">0</text>
+<text class="dg-tiny" x="480" y="200" text-anchor="start">no (C)</text>
+<text class="dg-tiny dg-mono" x="610" y="200" text-anchor="start" style="white-space:pre">0</text>
+<rect class="dg-box" x="20" y="228" width="730" height="40" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-tiny dg-mono" x="34" y="253" text-anchor="start" style="white-space:pre">IPS = (5 + 0 + 0 + 0 + 0) / 5 = 1.0. Con cinco filas no alcanza; con 10 000 converge al CTR de C.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 49.8.</b> El estimador de propensión inversa (IPS) cuenta solo lo que la política vieja mostró y que la nueva también mostraría, y lo pesa por lo raro que era. Con cinco filas el resultado es absurdo (un CTR de 1.0); el simulador de abajo lo hace con miles. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: el estimador IPS</p>
+  <p><b>V̂(nueva) = (1/<i>n</i>) · Σ 1[nueva elige <i>a<sub>i</sub></i>] · <i>r<sub>i</sub></i> / <i>p</i><sub>vieja</sub>(<i>a<sub>i</sub></i>)</b></p>
+  <p>En palabras: de cada fila del log, si la política nueva habría mostrado lo mismo, el resultado cuenta multiplicado por 1 / probabilidad de que la vieja lo mostrara; si no, cuenta cero. Ejemplo: 10 000 logs, la vieja mostraba C con probabilidad 0.2, hay unas 2 000 filas con C y 110 clics: 110 / 0.2 / 10 000 = 0.055, el CTR de C.</p>
+  <pre data-lang="python"><code>def ips(logs, nueva, tope=None):
+    total = 0.0
+    for x, a, p, r in logs:                  # contexto, acción, propensión, recompensa
+        if nueva(x) == a:
+            w = 1 / p if tope is None else min(1 / p, tope)
+            total += w * r
+    return total / len(logs)</code></pre>
+</aside>
+
+<div data-sim="ips"></div>
+
+<p>Mira los tres casos. Si la vieja explora, IPS acierta y su barra es angosta. Si la vieja mostraba C solo el 2&#8239;% de las veces, IPS sigue acertando en promedio pero la barra se ensancha: cada clic pesa 50. El recorte (<i>clipping</i>) la achica y a cambio subestima. Y si la vieja nunca mostró C, no hay nada que pesar: ninguna cuenta recupera lo que nunca se registró. Es el mismo trade-off de varianza y sesgo del recorte de propensiones en M47.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Una propensión mal registrada (la del ranker pesado cuando el re-ranking después movió el ítem, o una calculada a mano en lugar de la que se usó) sesga todo el estimador sin que nada lo avise. La propensión se registra en el momento de servir, con la decisión final, junto a la variante. Saito y otros publicaron en 2020 el Open Bandit Dataset de ZOZOTOWN, con logs y propensiones reales, para medir estos estimadores <span class="badge badge--doc">Documentado</span>.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> IPS pesa el log por 1 / propensión y estima una política nueva sin lanzarla, si la vieja exploró; el recorte cambia varianza por sesgo.</p>
+
+<h2 id="largo-plazo"><span class="sec-num">49.8</span>Métricas de largo plazo</h2>
+
+<p>Un A/B de dos semanas mide clics y compras de dos semanas. Lo que más importa (si la gente vuelve el mes que viene) tarda más. Hay tres herramientas.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 272" role="img" aria-labelledby="f499t f499d">
+<title id="f499t">Holdout de largo plazo</title>
+<desc id="f499d">Una línea de tiempo de seis meses. El 98 por ciento de los usuarios recibe cada cambio que se lanza, en seis lanzamientos. Un 2 por ciento, el holdout, se queda con el sistema de enero. En junio se compara la retención a 28 días de los dos grupos: la suma real de los seis cambios, que suele ser menor que la suma de lo que dijo cada A/B.</desc>
+<defs><marker id="f499a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="40" y="44" text-anchor="start">98 % de los usuarios: reciben cada lanzamiento</text>
+<text class="dg-tiny" x="70" y="186" text-anchor="middle">ene</text>
+<rect x="40" y="56" width="60" height="28" rx="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="70" y="74" text-anchor="middle">+1.2 %</text>
+<text class="dg-tiny" x="190" y="186" text-anchor="middle">feb</text>
+<rect x="160" y="56" width="60" height="28" rx="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="190" y="74" text-anchor="middle">+0.8 %</text>
+<text class="dg-tiny" x="310" y="186" text-anchor="middle">mar</text>
+<rect x="280" y="56" width="60" height="28" rx="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="310" y="74" text-anchor="middle">+0.5 %</text>
+<text class="dg-tiny" x="430" y="186" text-anchor="middle">abr</text>
+<rect x="400" y="56" width="60" height="28" rx="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="430" y="74" text-anchor="middle">+0.9 %</text>
+<text class="dg-tiny" x="550" y="186" text-anchor="middle">may</text>
+<rect x="520" y="56" width="60" height="28" rx="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="550" y="74" text-anchor="middle">+0.4 %</text>
+<text class="dg-tiny" x="670" y="186" text-anchor="middle">jun</text>
+<rect x="640" y="56" width="60" height="28" rx="6" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="670" y="74" text-anchor="middle">+0.7 %</text>
+<text class="dg-small" x="40" y="116" text-anchor="start">2 %: holdout</text>
+<rect class="dg-layer" x="40" y="128" width="690" height="28" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-tiny" x="385" y="146" text-anchor="middle">sistema de enero, sin ningún cambio durante seis meses</text>
+<rect class="dg-box" x="40" y="204" width="690" height="30" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-small" x="54" y="224" text-anchor="start">En junio: suma de los A/B +4.5 %; holdout contra el resto, +2.1 %.</text>
+<text class="dg-tiny" x="40" y="258" text-anchor="start">Las cifras son un supuesto. Lo que se documenta seguido es que la suma de los A/B sobreestima el total.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 49.9.</b> Un holdout responde lo que ningún A/B de dos semanas puede: si los cambios del semestre, juntos, mejoraron algo que tarda en verse, como la retención. Kohavi y otros recomiendan holdouts así justamente porque los efectos de cada A/B no se suman. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Retención a 28 días</b> de las personas que entraron al experimento en su primera semana: alarga la medición sin alargar la asignación.</li>
+  <li>Un <dfn data-term="holdout">holdout</dfn> de largo plazo: un 1 a 5&#8239;% de usuarios que no recibe los cambios por meses. Mide el efecto sumado de todo lo que se lanzó y caza los cambios que ganan clics y pierden retención.</li>
+  <li><b>Métricas sustitutas</b>: algo que se mide en dos semanas y predice el largo plazo (por ejemplo, días con al menos una compra), validado contra holdouts anteriores.</li>
+</ul>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Un holdout cuesta: el 2&#8239;% de los usuarios se pierde todas las mejoras del semestre. Por eso es chico, rota cada tantos meses y se usa para lo que nadie más puede responder. Es también el lugar donde aparece lo que trata <a href="m51-engagement.html#medir-dano">M51</a>: un cambio que sube el tiempo en la app y baja cómo se siente la gente después.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el largo plazo se mide con retención a 28 días, holdouts de meses y sustitutas validadas; la suma de los A/B sobreestima.</p>
+
+<h2 id="trampas"><span class="sec-num">49.9</span>Trampas comunes</h2>
+
+<p>Tres trampas explican la mayoría de los "ganadores" que después no se sostienen.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f4910t f4910d">
+<title id="f4910t">Mirar todos los días</title>
+<desc id="f4910d">Un gráfico del valor z de un A/A, un experimento donde las dos variantes son idénticas, medido cada día durante 14 días. La línea sube y baja por azar y el día 6 cruza 1.96: quien mira todos los días y frena al primer cruce declara un ganador que no existe. En una simulación propia con 4 000 A/A, frenar al primer cruce en 14 miradas da un falso positivo el 22 por ciento de las veces, no el 5.</desc>
+<defs><marker id="f4910a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="sim-axis" d="M60 40 V220"/>
+<path class="sim-axis" d="M60 130 H740"/>
+<path class="dg-feedback" d="M60 51.6 H740"/>
+<text class="dg-tiny" x="740" y="45.599999999999994" text-anchor="end">z = 1.96</text>
+<path class="dg-feedback" d="M60 208.4 H740"/>
+<text class="dg-tiny" x="740" y="202.4" text-anchor="end">z = -1.96</text>
+<path d="M84.0 114.0 L132.0 94.0 L180.0 78.0 L228.0 98.0 L276.0 66.0 L324.0 46.0 L372.0 62.0 L420.0 82.0 L468.0 106.0 L516.0 94.0 L564.0 114.0 L612.0 126.0 L660.0 142.0 L708.0 122.0" class="dg-edge" style="stroke: var(--l-gpu); stroke-width: 2.5; fill: none"/>
+<circle cx="324.0" cy="46.0" r="7" class="dg-warnbox"/>
+<text class="dg-tiny" x="336.0" y="36.0" text-anchor="start">día 6: "¡ganó B!"</text>
+<text class="dg-tiny" x="84.0" y="238" text-anchor="middle">día 1</text>
+<text class="dg-tiny" x="372.0" y="238" text-anchor="middle">día 7</text>
+<text class="dg-tiny" x="708.0" y="238" text-anchor="middle">día 14</text>
+<text class="dg-tiny" x="66" y="252" text-anchor="start">A/A: las dos variantes son iguales. La línea es un ejemplo dibujado.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 49.10.</b> Cada mirada es otra oportunidad de que el azar cruce el umbral. El 22&#8239;% sale de una simulación propia (4 000 A/A, tasa del 5&#8239;%, 2 000 usuarios por grupo y día, 14 miradas). Se arregla fijando la duración antes de empezar o con métodos secuenciales que ajustan el umbral. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Mirar todos los días y frenar cuando conviene.</b> Con 14 miradas, un A/A da falso positivo el 22&#8239;% de las veces en la simulación de la figura. Se fija la duración antes, o se usa un método secuencial que lo permite.</li>
+  <li><b>Muchas métricas a la vez.</b> Con 20 métricas independientes a α = 0.05, la probabilidad de que alguna salga "significativa" por azar es 1 − 0.95²⁰ = 64&#8239;%. Se elige una métrica principal antes de empezar; las demás son protección (<i class="no-autolink">guardrail metrics</i>) o exploración, no criterio de lanzamiento.</li>
+  <li><b>SRM</b> (<dfn data-term="srm">sample ratio mismatch</dfn>): los grupos no tienen el tamaño que deberían. Si se esperaba 50/50 con 1 995 000 usuarios y salieron 1 000 000 y 995 000, χ² = 2 × 2 500² / 997 500 = 12.5, con un valor p de 0.0004. Un cuarto de punto de diferencia ya es demasiado para el azar: algo (un bot filtrado solo en un grupo, un crash del tratamiento en un navegador) se llevó usuarios. El experimento no se mira.</li>
+</ul>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: el chequeo de SRM</p>
+  <p>Se compara lo observado con lo esperado con una prueba χ²: <b>χ² = Σ (observado − esperado)² / esperado</b>. Con dos grupos, un χ² mayor que 10.8 tiene un valor p menor que 0.001, y casi todas las plataformas frenan el análisis ahí.</p>
+  <pre data-lang="python"><code>from scipy.stats import chisquare
+chisquare([1_000_000, 995_000])   # statistic ≈ 12.5, pvalue ≈ 0.0004</code></pre>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 360" role="img" aria-labelledby="f4911t f4911d">
+<title id="f4911t">Antes de decir que ganó</title>
+<desc id="f4911d">Un recorrido de cinco preguntas en orden. ¿Los grupos tienen el tamaño esperado (SRM)? Si no, el experimento está roto. ¿Corrió el tiempo que se fijó antes de empezar? ¿La métrica principal mejoró con un intervalo que no cruza cero? ¿Alguna métrica de protección empeoró? ¿El efecto es estable después de la primera semana? Solo con las cinco en orden se lanza.</desc>
+<defs><marker id="f4911a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="20" width="240" height="42" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="140.0" y="37.0" text-anchor="middle">¿SRM?</text>
+<text class="dg-tiny" x="140.0" y="53.0" text-anchor="middle">grupos del tamaño esperado</text>
+<rect class="dg-warnbox" x="290" y="20" width="300" height="42" rx="8"/>
+<text class="dg-tiny" x="440.0" y="45.0" text-anchor="middle">si no: roto, no se mira nada</text>
+<path class="dg-edge" d="M262 41 H286" marker-end="url(#f4911a)"/>
+<path class="dg-edge" d="M140 64 V70" marker-end="url(#f4911a)"/>
+<rect class="dg-layer" x="20" y="72" width="240" height="42" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="140.0" y="89.0" text-anchor="middle">¿Duración?</text>
+<text class="dg-tiny" x="140.0" y="105.0" text-anchor="middle">la que se fijó antes</text>
+<rect class="dg-warnbox" x="290" y="72" width="300" height="42" rx="8"/>
+<text class="dg-tiny" x="440.0" y="97.0" text-anchor="middle">si no: no se decide todavía</text>
+<path class="dg-edge" d="M262 93 H286" marker-end="url(#f4911a)"/>
+<path class="dg-edge" d="M140 116 V122" marker-end="url(#f4911a)"/>
+<rect class="dg-layer" x="20" y="124" width="240" height="42" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="140.0" y="141.0" text-anchor="middle">¿Métrica principal?</text>
+<text class="dg-tiny" x="140.0" y="157.0" text-anchor="middle">intervalo que no cruza 0</text>
+<rect class="dg-warnbox" x="290" y="124" width="300" height="42" rx="8"/>
+<text class="dg-tiny" x="440.0" y="149.0" text-anchor="middle">si no: no hay evidencia</text>
+<path class="dg-edge" d="M262 145 H286" marker-end="url(#f4911a)"/>
+<path class="dg-edge" d="M140 168 V174" marker-end="url(#f4911a)"/>
+<rect class="dg-layer" x="20" y="176" width="240" height="42" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="140.0" y="193.0" text-anchor="middle">¿Protecciones?</text>
+<text class="dg-tiny" x="140.0" y="209.0" text-anchor="middle">ninguna empeora</text>
+<rect class="dg-warnbox" x="290" y="176" width="300" height="42" rx="8"/>
+<text class="dg-tiny" x="440.0" y="201.0" text-anchor="middle">si no: no se lanza o se arregla</text>
+<path class="dg-edge" d="M262 197 H286" marker-end="url(#f4911a)"/>
+<path class="dg-edge" d="M140 220 V226" marker-end="url(#f4911a)"/>
+<rect class="dg-layer" x="20" y="228" width="240" height="42" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="140.0" y="245.0" text-anchor="middle">¿Novedad?</text>
+<text class="dg-tiny" x="140.0" y="261.0" text-anchor="middle">estable tras la semana 1</text>
+<rect class="dg-warnbox" x="290" y="228" width="300" height="42" rx="8"/>
+<text class="dg-tiny" x="440.0" y="253.0" text-anchor="middle">si no: esperar o holdout</text>
+<path class="dg-edge" d="M262 249 H286" marker-end="url(#f4911a)"/>
+<rect class="dg-box dg-box--em" x="20" y="302" width="240" height="42" rx="8"/>
+<text class="dg-small" x="140.0" y="319.0" text-anchor="middle">Lanzar</text>
+<text class="dg-tiny" x="140.0" y="335.0" text-anchor="middle">y anotar el efecto</text>
+<path class="dg-edge" d="M140 272 V298" marker-end="url(#f4911a)"/>
+<text class="dg-tiny" x="150" y="290" text-anchor="start">las cinco dicen sí</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 49.11.</b> Las trampas de 49.9 convertidas en una lista de comprobación. El orden importa: un SRM invalida todo lo que viene después, así que se mira primero. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p class="more-link"><b>Lo que ahora sabes:</b> duración fija, una métrica principal y SRM primero. Un ganador que no pasa las cinco preguntas no es un ganador.</p>
+
+<p>Para cerrar, el embudo visto desde los experimentos:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f49zt f49zd">
+<title id="f49zt">El embudo con lo que mide un experimento resaltado</title>
+<desc id="f49zd">El embudo de Mercado Barrio: catálogo, recuperación, filtros, ranking liviano, ranking pesado y re-ranking, con el bucle de impresiones, log y entrenamiento. Resaltados, el registro de impresiones, el log y el entrenamiento: lo que un experimento necesita para medir y lo que decide.</desc>
+<defs><marker id="f49za" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="540" y="26" text-anchor="start">Cuántos quedan y la latencia acumulada</text>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="160.0" y="40" width="340" height="32" rx="6"/>
+<text class="dg-small" x="330" y="61" text-anchor="middle">Catálogo</text>
+<text class="dg-small" x="540" y="53" text-anchor="start">100 000 000 ítems</text>
+<text class="dg-tiny" x="540" y="69" text-anchor="start">productos y videos de reseña</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="200.0" y="88" width="260" height="32" rx="6"/>
+<text class="dg-small" x="330" y="109" text-anchor="middle">Recuperación</text>
+<text class="dg-small" x="540" y="101" text-anchor="start">10 000 candidatos  ·  25 ms</text>
+<text class="dg-tiny" x="540" y="117" text-anchor="start">varias fuentes en paralelo</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="210.0" y="136" width="240" height="32" rx="6"/>
+<text class="dg-small" x="330" y="157" text-anchor="middle">Filtros</text>
+<text class="dg-small" x="540" y="149" text-anchor="start">unos 9 000  ·  30 ms</text>
+<text class="dg-tiny" x="540" y="165" text-anchor="start">ya visto, bloqueado, sin stock</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="245.0" y="184" width="170" height="32" rx="6"/>
+<text class="dg-small" x="330" y="205" text-anchor="middle">Ranking liviano</text>
+<text class="dg-small" x="540" y="197" text-anchor="start">500  ·  63 ms</text>
+<text class="dg-tiny" x="540" y="213" text-anchor="start">features y un modelo barato</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="270.0" y="232" width="120" height="32" rx="6"/>
+<text class="dg-small" x="330" y="253" text-anchor="middle">Ranking pesado</text>
+<text class="dg-small" x="540" y="245" text-anchor="start">50  ·  113 ms</text>
+<text class="dg-tiny" x="540" y="261" text-anchor="start">un modelo grande, multi-tarea</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="288.0" y="280" width="84" height="32" rx="6"/>
+<text class="dg-small" x="330" y="301" text-anchor="middle">Re-ranking</text>
+<text class="dg-small" x="540" y="293" text-anchor="start">10 en pantalla  ·  118 ms</text>
+<text class="dg-tiny" x="540" y="309" text-anchor="start">diversidad, frescura, reglas</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="230" y="336" width="200" height="40" rx="8"/>
+<text class="dg-small" x="330.0" y="360.0" text-anchor="middle">Registro de impresiones</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="20" y="336" width="130" height="40" rx="8"/>
+<text class="dg-small" x="85.0" y="360.0" text-anchor="middle">Log de eventos</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="20" y="150" width="120" height="44" rx="8"/>
+<text class="dg-small" x="80.0" y="176.0" text-anchor="middle">Entrenamiento</text>
+</g>
+<path class="dg-edge" d="M330 312 V334" marker-end="url(#f49za)"/>
+<path class="dg-edge" d="M230 356 H152" marker-end="url(#f49za)"/>
+<text class="dg-tiny" x="191" y="389" text-anchor="middle">con clics y compras</text>
+<path class="dg-edge" d="M80 336 V196" marker-end="url(#f49za)"/>
+<path class="dg-feedback" d="M140 166 H176 V104 H198" marker-end="url(#f49za)"/>
+<path class="dg-feedback" d="M140 178 H200 V200 H243" marker-end="url(#f49za)"/>
+<path class="dg-feedback" d="M140 188 H186 V248 H268" marker-end="url(#f49za)"/>
+<text class="dg-tiny" x="88" y="230" text-anchor="start">modelos nuevos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 49.12.</b> Dónde estás. Los experimentos no son una etapa del embudo: miden el embudo entero. Viven en el registro (la variante y la propensión de cada impresión) y deciden qué modelo nuevo pasa del entrenamiento a producción.</figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Lo que viene</p>
+  <p>Ya sabes construir y medir un recomendador. <a href="m50-serving-recomendacion.html">M50</a> lo pone en producción: el presupuesto de latencia de 138 ms repartido por etapa, el feature store en línea, cachés, frescura y qué hacer cuando una pieza se cae.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m49"></div>
+
+<div data-exercise="m49-lanzar"></div>
+
+<div data-checkpoint="m49"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m49.data.js"></script>
+<script src="../assets/js/data/exercises/m49.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-exp.js"></script>
+</body>
+</html>
