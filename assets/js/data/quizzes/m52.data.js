@@ -1,0 +1,160 @@
+SD.defineQuiz('m52', {
+  title: 'Quiz: un feed de video corto', pass: 0.7,
+  questions: [
+    { id: 'rps', type: 'single', fixed: true,
+      prompt: '50 millones de usuarios ven 40 videos por día, en páginas de 8, con un pico de 3 veces el promedio. ¿Cuántas requests del feed por segundo hay en el pico?',
+      options: ['2 894', '8 681', '23 148', '69 444'],
+      answer: 1,
+      explain: '2 000 M ÷ 8 = 250 M requests por día; ÷ 86 400 = 2 894 por segundo en promedio; × 3 = 8 681. 69 444 serían las vistas por segundo en el pico, sin dividir por 8. Vuelve a 52.1.' },
+    { id: 'gpus', type: 'single', fixed: true,
+      prompt: '8 681 requests por segundo × 500 videos × 20 MFLOP, en GPUs de 10 TFLOPS efectivos y con 40&#8239;% de holgura. ¿Cuántas GPUs?',
+      options: ['9', '13', '87', '130'],
+      answer: 1,
+      explain: '4.34 M puntuaciones/s × 2 × 10⁷ FLOP = 8.68 × 10¹³ FLOP/s; ÷ 10¹³ = 8.7 GPUs; × 1.4 = 12.2, que se redondea a 13. Vuelve a 52.1.' },
+    { id: 'reqid', type: 'single',
+      prompt: '¿Para qué sirve el <code>req_id</code> que la API devuelve con cada página y la app manda en cada evento?',
+      options: [
+        'Para unir cada impresión con lo que pasó después, y así armar las etiquetas de entrenamiento',
+        'Para que la CDN sepa qué calidad de video mandar según la request que lo pidió',
+        'Para autenticar los eventos: la ingesta rechaza los que traen un req_id desconocido',
+        'Para que la API pueda repetir exactamente la misma página de 8 videos si la app la pide otra vez después de un corte de red'
+      ],
+      answer: 0,
+      explain: 'Sin una clave común, no se sabe qué impresión produjo qué vista, y sin eso no hay negativos ni etiquetas. La autenticación va por la sesión, no por el req_id. Vuelve a 52.3.' },
+    { id: 'duracion', type: 'single',
+      prompt: 'Un video de 7 segundos tiene un 70&#8239;% de vistas completas y uno de 60 segundos, un 40&#8239;%. ¿Qué concluyes?',
+      options: [
+        'Que el de 7 segundos es mejor: la tasa de finalización es la etiqueta principal',
+        'Nada todavía: hay que comparar cada tasa contra lo esperado para su duración',
+        'Que el de 60 segundos es mejor, porque los videos largos siempre retienen más tiempo',
+        'Que hay que descartar la finalización y usar solo likes, que no dependen de la duración'
+      ],
+      answer: 1,
+      explain: 'Un video corto se termina mucho más fácil. Si lo esperado es 75&#8239;% para 7 s y 30&#8239;% para 60 s, el largo está muy por encima de lo normal y el corto por debajo. Vuelve a 52.4.' },
+    { id: 'repeticion', type: 'single',
+      prompt: 'Carla ve entero un video de 15 segundos y lo repite. ¿Qué etiquetas arma el sistema?',
+      options: [
+        'Ninguna nueva: una repetición es la misma vista contada dos veces y se descarta',
+        'Vista completa y repetición, dos señales positivas que el modelo predice por separado',
+        'Solo un like implícito, porque repetir y dar like se consideran la misma reacción',
+        'Una vista completa y una negativa, porque repetir indica que no entendió el video'
+      ],
+      answer: 1,
+      explain: 'Terminar y repetir son dos cabezas del modelo multi-tarea; repetir es una señal fuerte y rara. Vuelve a 52.4 y 52.7.' },
+    { id: 'tanda', type: 'single',
+      prompt: '¿Por qué un video nuevo recibe una tanda de 300 impresiones y no compite directo en el ranking?',
+      options: [
+        'Porque el ranker no tiene datos de interacción de un video nuevo y lo puntuaría siempre bajo',
+        'Porque los videos nuevos pesan más y tardan en cargar, así que se muestran a pocos',
+        'Porque la moderación solo aprueba los videos de a 300 impresiones por vez',
+        'Porque la CDN todavía no tiene el video en caché en sus PoP y no aguantaría más pedidos que esos en la primera hora'
+      ],
+      answer: 0,
+      explain: 'Sin vistas no hay señal colaborativa: el arranque en frío. La tanda le da un lugar garantizado para juntar datos, con un costo acotado. Vuelve a 52.5.' },
+    { id: 'costo', type: 'single', fixed: true,
+      prompt: '500 000 videos nuevos por día, cada uno con una primera tanda de 300 impresiones, sobre 2 000 millones de vistas. ¿Qué fracción de las vistas va a la primera tanda?',
+      options: ['0.75&#8239;%', '7.5&#8239;%', '15&#8239;%', '75&#8239;%'],
+      answer: 1,
+      explain: '500 000 × 300 = 150 M; ÷ 2 000 M = 0.075. Vuelve a 52.5.' },
+    { id: 'margen', type: 'single', fixed: true,
+      prompt: 'Con 300 impresiones y una tasa cerca de 0.5, ¿cuánto mide aproximadamente el margen del intervalo del 95&#8239;%?',
+      options: ['±0.6 puntos', '±1.8 puntos', '±5.7 puntos', '±29 puntos'],
+      answer: 2,
+      explain: '1.96 × √(0.25 ÷ 300) = 0.057. Con 3 000 impresiones sería ±1.8 puntos. Vuelve a 52.5.' },
+    { id: 'fuentes', type: 'single',
+      prompt: '¿Qué diferencia las fuentes de candidatos de Clip de las de la timeline de Twitter (M30)?',
+      options: [
+        'Clip no usa índice vectorial: todo sale del grafo de seguidos, como en Twitter',
+        'En Clip la mayoría de los candidatos viene de fuera de lo que la persona sigue',
+        'Clip pide los candidatos de a uno y en serie, para que el ranker los vea en orden',
+        'En Clip los candidatos se precalculan una vez por día y no cambian durante la sesión'
+      ],
+      answer: 1,
+      explain: 'En un feed de video corto, lo de los seguidos es una fuente chica (300 de 5 000); el resto viene del vector, de lo parecido a lo último visto, de lo popular y de la exploración. Vuelve a 52.6.' },
+    { id: 'puntaje', type: 'single', fixed: true,
+      prompt: 'Pesos: entero 1, repite 0.5, like 0.5, comparte 2, sigue 1, "no me interesa" −3. Un video tiene 0.70, 0.05, 0.04, 0.06, 0.005 y 0.08. ¿Cuánto puntúa?',
+      options: ['0.39', '0.63', '0.87', '1.11'],
+      answer: 1,
+      explain: '0.70 + 0.025 + 0.02 + 0.12 + 0.005 − 0.24 = 0.63. Sin el peso negativo daría 0.87. Vuelve a 52.7.' },
+    { id: 'calibrar', type: 'single',
+      prompt: 'La cabeza de p(compartir) está inflada: predice el doble de lo real. ¿Qué pasa con el puntaje?',
+      options: [
+        'Nada: los pesos se eligen sobre el orden, y un factor constante no cambia el orden',
+        'Compartir pesa en la práctica el doble de lo que se eligió, y cambia la mezcla del feed',
+        'El modelo se corrige solo en el siguiente entrenamiento continuo, sin hacer nada',
+        'Solo cambia el puntaje de los videos que nadie compartió, que quedan más abajo'
+      ],
+      answer: 1,
+      explain: 'En una suma con pesos, cada probabilidad tiene que estar calibrada: si una está inflada, su peso efectivo también. El orden entre videos cambia porque los demás términos no se inflaron. Vuelve a 52.7 y M46.' },
+    { id: 'monolith', type: 'multi',
+      prompt: '¿Qué describe el diseño de Monolith publicado por ByteDance? Elige todas las que correspondan.',
+      options: [
+        'Entrenamiento en línea a partir del stream de impresiones con sus acciones',
+        'Sincronización de parámetros entre entrenamiento y serving en intervalos de minutos',
+        'Una tabla de embeddings sin colisiones con vencimiento y filtro de frecuencia',
+        'Un reentrenamiento completo desde cero cada noche, sin tocar el modelo de día'
+      ],
+      answer: [0, 1, 2],
+      explain: 'Monolith entrena en tiempo real, sincroniza con el serving en minutos y evita las colisiones de hash con una tabla que crece y vence. Un reentrenamiento nocturno es justo lo que reemplaza. Vuelve a 52.8.' },
+    { id: 'riesgo-online', type: 'single',
+      prompt: '¿Cuál es el riesgo principal de entrenar en línea?',
+      options: [
+        'Que el modelo se vuelve demasiado grande para la memoria de la GPU en pocas horas',
+        'Que un problema en los datos entra al modelo en minutos, igual que las señales buenas',
+        'Que ya no se puede hacer canary, porque el modelo cambia en cada minuto y nunca hay dos versiones fijas que comparar entre sí',
+        'Que las features en tiempo real dejan de servir, porque el modelo ya las aprendió'
+      ],
+      answer: 1,
+      explain: 'Lo rápido vale para lo bueno y para lo malo: una feature por defecto o un bot entran enseguida. Por eso validación de datos, vigilancia de deriva y canary para cada versión. Vuelve a 52.8.' },
+    { id: 'slot', type: 'single',
+      prompt: '¿Por qué la exploración tiene un lugar fijo en la página en lugar de competir por puntaje?',
+      options: [
+        'Porque así el video nuevo siempre aparece primero y el creador lo nota enseguida',
+        'Porque si compitiera, perdería casi siempre contra videos con datos y las tandas no se completarían',
+        'Porque el re-ranking no puede leer el puntaje de los videos de exploración',
+        'Porque el artículo 38 del DSA obliga a reservar un lugar de cada 8 para contenido nuevo de creadores sin seguidores'
+      ],
+      answer: 1,
+      explain: 'Sin datos, el ranker lo puntúa bajo; el lugar fijo garantiza las impresiones de la tanda. Vuelve a 52.9.' },
+    { id: 'moderar', type: 'multi',
+      prompt: '¿Qué es cierto sobre la moderación de Clip? Elige todas las que correspondan.',
+      options: [
+        'Ningún video recibe su primera tanda sin un veredicto',
+        'Un video puede estar permitido en el perfil y no ser elegible para el feed',
+        'Un video que pasa a ranking normal se revisa otra vez, con más contexto',
+        'Los videos dudosos se distribuyen mientras esperan la revisión humana'
+      ],
+      answer: [0, 1, 2],
+      explain: 'La recomendación amplifica: lo que se revisa después ya llegó a miles. Los dudosos esperan, no se distribuyen. Vuelve a 52.10.' },
+    { id: 'viral', type: 'single',
+      prompt: 'Un video recibe 1 400 vistas por segundo. ¿Qué evita que su contador sature un nodo del feature store?',
+      options: [
+        'Particionar Kafka por video, para que todos sus eventos vayan a una sola tarea',
+        'Que el stream pre-agregue por segundo y escriba una vez por tarea',
+        'Escribir cada evento en el feature store apenas llega, sin esperar',
+        'Bajar la retención de Kafka para que el viral ocupe menos espacio'
+      ],
+      answer: 1,
+      explain: 'Con 32 tareas que suman un segundo y escriben una vez, son 32 escrituras por segundo en lugar de 1 400. Kafka se particiona por usuario, no por video, justamente para no tener una partición caliente. Vuelve al escenario "Un video viral" y a 52.12.' },
+    { id: 'caida', type: 'single',
+      prompt: 'Cae el ranking pesado a la hora pico. ¿Qué devuelve la API?',
+      options: [
+        'Un 503 hasta que vuelva, para no mostrar un feed de peor calidad',
+        'La página con el orden del liviano, re-ranking normal y la marca de degradada',
+        'La última página que vio cada usuario, guardada en caché, sin pedir candidatos',
+        'Una página vacía con un aviso, y la app reintenta en 30 segundos'
+      ],
+      answer: 1,
+      explain: 'El feed siempre responde: un escalón abajo está el liviano, y la marca evita entrenar con esas impresiones. Vuelve a 52.12 y M50.' },
+    { id: 'cdn', type: 'single',
+      prompt: 'En la factura de Clip en producción, ¿qué fila es la más grande?',
+      options: [
+        'El ranking pesado en GPU, porque es la pieza más cara por máquina',
+        'La entrega de video por CDN, casi toda la factura',
+        'El entrenamiento continuo, porque corre todo el día en instancias de 4 GPUs',
+        'El data lake, porque guarda un año de eventos'
+      ],
+      answer: 1,
+      explain: '7.5 PB por día de video son unos 4.5 millones de dólares al mes a precio de lista; el recomendador entero, unos 60 000. Vuelve a 52.14.' }
+  ]
+});

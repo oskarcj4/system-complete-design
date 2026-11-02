@@ -1,0 +1,1125 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M48. Grafos y recomendación de amigos</title>
+<meta name="description" content="Personas que quizás conozcas: el grafo social, el cierre triádico, Adamic-Adar, la explosión del segundo salto, PageRank personalizado, embeddings de grafo, dónde guardar y cómo partir un grafo, el pipeline de PYMK y los daños que hay que impedir.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+</head>
+<body data-root="../" data-module="m48">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Grafos y recomendación de amigos</h1>
+        <p class="lead">Personas que quizás conozcas: un problema de grafos con miles de millones de aristas, privacidad y una explosión en el segundo salto.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M48</dd></div>
+          <div><dt>Parte</dt><dd>VI. ML System Design</dd></div>
+          <div><dt>Duración</dt><dd>150 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M44, M30</dd></div>
+          <div><dt>Estado</dt><dd data-status="m48">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Describir un grafo social con sus palabras (nodo, arista, grado, vecindario) y elegir entre lista y matriz de adyacencia.</li>
+    <li>Plantear "personas que quizás conozcas" como predicción de aristas y medirlo por invitaciones aceptadas.</li>
+    <li>Calcular vecinos comunes, Jaccard y Adamic-Adar a mano, y explicar por qué pesan distinto.</li>
+    <li>Estimar la explosión del segundo salto y acotarla con topes, muestreo y precálculo por lotes.</li>
+    <li>Explicar el PageRank personalizado como una caminata con reinicio y cuándo conviene un embedding de grafo.</li>
+    <li>Elegir dónde guardar el grafo y cómo partirlo, con sus cortes.</li>
+    <li>Escribir las reglas que impiden que una sugerencia revele algo de una tercera persona.</li>
+  </ul>
+</section>
+
+<p>Hasta ahora, los ítems eran productos y videos. En este módulo son personas. "Personas que quizás conozcas" (PYMK, por <i>people you may know</i>) es la superficie que más hizo crecer a las redes sociales y la que más incidentes de privacidad tuvo, y tiene la misma forma que el embudo de <a href="m42-ml-system-design.html">M42</a>: fuentes de candidatos, un ranker y una capa de reglas. Lo nuevo es de dónde salen los candidatos: de un grafo, que explota en el segundo salto, que no entra en una máquina y que se parte mal.</p>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 380" role="img" aria-labelledby="f48at f48ad">
+<title id="f48at">Las piezas de personas que quizás conozcas</title>
+<desc id="f48ad">El pipeline de recomendación de amigos. Arriba, el grafo social guardado en un almacén con caché y partido en particiones. De ahí salen tres fuentes de candidatos: los amigos de amigos a dos saltos, el PageRank personalizado y las señales de fuera del grafo, como contactos subidos o la misma escuela. Los candidatos pasan por las features (vecinos comunes, Adamic-Adar, interacciones), por un ranker que predice si la invitación se acepta, por los filtros de privacidad y bloqueos, y por un cupo diario. Al final, la lista de sugerencias.</desc>
+<defs><marker id="f48aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="20" width="220" height="64" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="130.0" y="48.0" text-anchor="middle">Grafo social</text>
+<text class="dg-tiny" x="130.0" y="64.0" text-anchor="middle">personas y amistades</text>
+<rect class="dg-layer" x="270" y="20" width="210" height="64" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="375.0" y="48.0" text-anchor="middle">Almacén con caché</text>
+<text class="dg-tiny" x="375.0" y="64.0" text-anchor="middle">listas de adyacencia</text>
+<rect class="dg-layer" x="510" y="20" width="240" height="64" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="630.0" y="48.0" text-anchor="middle">Particiones</text>
+<text class="dg-tiny" x="630.0" y="64.0" text-anchor="middle">hash o por comunidad</text>
+<path class="dg-edge" d="M242 52 H266" marker-end="url(#f48aa)"/>
+<path class="dg-feedback" d="M482 52 H506"/>
+<text class="dg-group" x="20" y="120" text-anchor="start">Fuentes de candidatos</text>
+<rect class="dg-layer" x="20" y="132" width="220" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="130.0" y="156.0" text-anchor="middle">Amigos de amigos</text>
+<text class="dg-tiny" x="130.0" y="172.0" text-anchor="middle">dos saltos, con tope</text>
+<rect class="dg-layer" x="270" y="132" width="210" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="375.0" y="156.0" text-anchor="middle">PageRank personalizado</text>
+<text class="dg-tiny" x="375.0" y="172.0" text-anchor="middle">caminatas con reinicio</text>
+<rect class="dg-layer" x="510" y="132" width="240" height="56" rx="8" style="--c: var(--l-external)"/>
+<text class="dg-small" x="630.0" y="156.0" text-anchor="middle">Señales fuera del grafo</text>
+<text class="dg-tiny" x="630.0" y="172.0" text-anchor="middle">contactos, escuela, lugar</text>
+<path class="dg-edge" d="M130 86 V128" marker-end="url(#f48aa)"/>
+<path class="dg-edge" d="M375 86 V128" marker-end="url(#f48aa)"/>
+<rect class="dg-layer" x="20" y="226" width="170" height="56" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="105.0" y="250.0" text-anchor="middle">Features</text>
+<text class="dg-tiny" x="105.0" y="266.0" text-anchor="middle">en común, Adamic-Adar</text>
+<rect class="dg-layer" x="220" y="226" width="160" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="300.0" y="250.0" text-anchor="middle">Ranker</text>
+<text class="dg-tiny" x="300.0" y="266.0" text-anchor="middle">¿acepta la invitación?</text>
+<rect class="dg-warnbox" x="410" y="226" width="170" height="56" rx="8"/>
+<text class="dg-small" x="495.0" y="250.0" text-anchor="middle">Filtros</text>
+<text class="dg-tiny" x="495.0" y="266.0" text-anchor="middle">bloqueos, privacidad</text>
+<rect class="dg-box dg-box--em" x="610" y="226" width="140" height="56" rx="8"/>
+<text class="dg-small" x="680.0" y="250.0" text-anchor="middle">Cupo diario</text>
+<text class="dg-tiny" x="680.0" y="266.0" text-anchor="middle">y sugerencias</text>
+<path class="dg-edge" d="M130 190 V208"/>
+<path class="dg-edge" d="M375 190 V208"/>
+<path class="dg-edge" d="M630 190 V208 H105"/>
+<path class="dg-edge" d="M105 208 V222" marker-end="url(#f48aa)"/>
+<path class="dg-edge" d="M192 254 H216" marker-end="url(#f48aa)"/>
+<path class="dg-edge" d="M382 254 H406" marker-end="url(#f48aa)"/>
+<path class="dg-edge" d="M582 254 H606" marker-end="url(#f48aa)"/>
+<rect class="dg-layer" x="220" y="314" width="360" height="46" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="400.0" y="341.0" text-anchor="middle">Registro: mostradas, aceptadas, ignoradas, reportadas</text>
+<path class="dg-edge" d="M680 284 V337 H584" marker-end="url(#f48aa)"/>
+<path class="dg-feedback" d="M218 337 H105 V286" marker-end="url(#f48aa)"/>
+<g class="pl-pin"><circle cx="20" cy="20" r="11"/><text x="20" y="24" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="270" cy="20" r="11"/><text x="270" y="24" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="750" cy="20" r="11"/><text x="750" y="24" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="20" cy="132" r="11"/><text x="20" y="136" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="270" cy="132" r="11"/><text x="270" y="136" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="750" cy="132" r="11"/><text x="750" y="136" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="20" cy="226" r="11"/><text x="20" y="230" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="220" cy="226" r="11"/><text x="220" y="230" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="410" cy="226" r="11"/><text x="410" y="230" text-anchor="middle">9</text></g>
+<g class="pl-pin"><circle cx="750" cy="226" r="11"/><text x="750" y="230" text-anchor="middle">10</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 48.A.</b> PYMK es el mismo embudo de M42 con otros ítems: las personas. Las fuentes salen de un grafo, el ranker predice si una invitación se acepta, y la capa de filtros es más estricta que en un feed, porque sugerir a alguien puede revelar algo de una tercera persona.</figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Grafo social</b><span>Personas como nodos y amistades como aristas; seguir es una arista con dirección. <a href="#grafo">48.1</a></span></li>
+  <li><b>Almacén del grafo</b><span>Listas de adyacencia en una base de grafos, en un KV con caché como TAO o en Redis. <a href="#almacenar">48.8</a></span></li>
+  <li><b>Particiones</b><span>Un grafo de miles de millones de aristas no entra en una máquina; partirlo corta aristas. <a href="#particionar">48.9</a></span></li>
+  <li><b>Amigos de amigos</b><span>El cierre triádico: la fuente más fuerte, y la que explota en el segundo salto. <a href="#explosion">48.4</a></span></li>
+  <li><b>PageRank personalizado</b><span>Una caminata que vuelve a casa; llega más lejos que dos saltos. <a href="#ppr">48.5</a></span></li>
+  <li><b>Señales fuera del grafo</b><span>Contactos subidos, escuela, trabajo, lugar: útiles y con riesgos de privacidad. <a href="#otras-senales">48.7</a></span></li>
+  <li><b>Features del par</b><span>Vecinos comunes, Jaccard, Adamic-Adar e interacciones entre las dos personas. <a href="#vecinos">48.3</a></span></li>
+  <li><b>Ranker</b><span>Predice si la invitación se acepta, no si se envía. <a href="#pymk">48.2</a></span></li>
+  <li><b>Filtros que no se negocian</b><span>Bloqueos, rechazos previos, menores, relaciones sensibles. <a href="#danos">48.11</a></span></li>
+  <li><b>Cupo y sugerencias</b><span>Cuántas se muestran por día y dónde. <a href="#pipeline-pymk">48.10</a></span></li>
+</ol>
+
+
+<p>El caso es una función nueva de Mercado Barrio: los compradores pueden agregarse como contactos para ver qué compran sus amigos (la fuente de "lo que compran tus contactos" de <a href="m45-recuperacion.html#fuentes">M45</a>) y pueden seguir a vendedores. Con 20 000 000 de personas activas y 200 contactos de promedio, el grafo tiene 2 000 000 000 de amistades. Algunos vendedores tienen 1 000 000 de seguidores.</p>
+
+<p class="more-link"><b>Cómo leer este módulo:</b> el núcleo son 48.1 a 48.5, 48.8 y 48.11 (unos 80 minutos). 48.6, 48.9 y 48.10 son a fondo.</p>
+
+<h2 id="grafo"><span class="sec-num">48.1</span>Qué es un grafo</h2>
+
+<p>Un <dfn data-term="grafo">grafo</dfn> es un conjunto de nodos unidos por aristas. En un grafo social, los nodos son personas y las aristas, relaciones. Si la relación es mutua (la amistad), la arista no tiene dirección; si no lo es (seguir a una tienda), la tiene. Twitter guardaba el suyo, de seguidores, en las dos direcciones (<a href="m30-twitter.html#grafo">M30</a>), porque se consulta en los dos sentidos.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un mapa de subte: las estaciones son nodos y los tramos entre estaciones, aristas. Una estación de combinación tiene muchos tramos (grado alto). "Cuántas estaciones hay a dos paradas" es exactamente la pregunta de los amigos de amigos.</p>
+</aside>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: las palabras de un grafo</p>
+  <ul>
+    <li><b>Grado</b> de un nodo: cuántas aristas tiene. En un grafo dirigido se separan el grado de entrada (seguidores) y el de salida (a cuántos sigue).</li>
+    <li><b>Vecindario</b> N(<i>v</i>): los nodos a una arista de <i>v</i>. Los amigos de Ana.</li>
+    <li><b>Camino</b>: una sucesión de aristas. Ana → Carla → Luis es un camino de largo 2, y Luis está "a dos saltos".</li>
+    <li><b>Lista de adyacencia</b>: por cada nodo, la lista de sus vecinos. Ocupa proporcional a las aristas. La <b>matriz de adyacencia</b> tiene una celda por par de nodos y ocupa proporcional a nodos²: con 20 000 000 de personas son 4 × 10¹⁴ celdas, casi todas cero.</li>
+  </ul>
+  <p>En Python, una lista de adyacencia es un diccionario de conjuntos: <code>amigos = {"ana": {"carla", "diego"}, "carla": {"ana"}, ...}</code>.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 360" role="img" aria-labelledby="f481t f481d">
+<title id="f481t">Dirigido y no dirigido, lista y matriz</title>
+<desc id="f481d">Arriba a la izquierda, un grafo no dirigido de amistad entre Ana, Carla, Diego y Eva: Ana es amiga de las tres personas y Carla de Diego. Arriba a la derecha, un grafo dirigido: Ana sigue a una tienda y la tienda no sigue a Ana. Abajo, el mismo grafo de amistad guardado como lista de adyacencia (cada persona con su lista de amigos) y como matriz de 4 por 4 con unos y ceros. Con 20 millones de personas, la matriz tendría 400 billones de celdas casi todas en cero; la lista guarda solo las aristas que existen.</desc>
+<defs><marker id="f481a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="24" text-anchor="start">Amistad: no dirigido</text>
+<path class="dg-edge" d="M90 100 L40 170"/>
+<path class="dg-edge" d="M90 100 L170 170"/>
+<path class="dg-edge" d="M90 100 L200 70"/>
+<path class="dg-edge" d="M40 170 L170 170"/>
+<circle cx="90" cy="100" r="20" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="90" y="104" text-anchor="middle">Ana</text>
+<circle cx="40" cy="170" r="20" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="40" y="174" text-anchor="middle">Carla</text>
+<circle cx="170" cy="170" r="20" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="170" y="174" text-anchor="middle">Diego</text>
+<circle cx="200" cy="70" r="20" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="200" y="74" text-anchor="middle">Eva</text>
+<text class="dg-tiny" x="250" y="100" text-anchor="start">grado de Ana = 3</text>
+<text class="dg-tiny" x="250" y="118" text-anchor="start">vecindario de Ana:</text>
+<text class="dg-tiny" x="250" y="134" text-anchor="start">Carla, Diego, Eva</text>
+<text class="dg-group" x="420" y="24" text-anchor="start">Seguir: dirigido</text>
+<circle cx="470" cy="110" r="22" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="470" y="114" text-anchor="middle">Ana</text>
+<rect x="610" y="88" width="120" height="44" rx="8" class="dg-layer" style="--c: var(--l-external)"/>
+<text class="dg-tiny" x="670" y="114" text-anchor="middle">Tienda Sol</text>
+<path class="dg-edge" d="M494 110 H606" marker-end="url(#f481a)"/>
+<text class="dg-tiny" x="550" y="100" text-anchor="middle">sigue</text>
+<text class="dg-tiny" x="420" y="162" text-anchor="start">La tienda no sigue a Ana: la arista tiene dirección.</text>
+<text class="dg-tiny" x="420" y="178" text-anchor="start">Seguidores de la tienda: grado de entrada.</text>
+<text class="dg-group" x="20" y="216" text-anchor="start">Lista de adyacencia</text>
+<text class="dg-tiny dg-mono" x="20" y="240" text-anchor="start" style="white-space:pre">Ana   → Carla, Diego, Eva</text>
+<text class="dg-tiny dg-mono" x="20" y="258" text-anchor="start" style="white-space:pre">Carla → Ana, Diego</text>
+<text class="dg-tiny dg-mono" x="20" y="276" text-anchor="start" style="white-space:pre">Diego → Ana, Carla</text>
+<text class="dg-tiny dg-mono" x="20" y="294" text-anchor="start" style="white-space:pre">Eva   → Ana</text>
+<text class="dg-tiny" x="20" y="330" text-anchor="start">Guarda solo lo que existe: 8 entradas (cada amistad dos veces).</text>
+<text class="dg-group" x="420" y="216" text-anchor="start">Matriz de adyacencia</text>
+<text class="dg-tiny" x="498" y="236" text-anchor="middle">A</text>
+<text class="dg-tiny" x="532" y="236" text-anchor="middle">C</text>
+<text class="dg-tiny" x="566" y="236" text-anchor="middle">D</text>
+<text class="dg-tiny" x="600" y="236" text-anchor="middle">E</text>
+<text class="dg-tiny" x="470" y="258" text-anchor="middle">A</text>
+<rect class="dg-box" x="484" y="244" width="28" height="18" rx="3"/>
+<text class="dg-tiny dg-mono" x="498" y="257" text-anchor="middle" style="white-space:pre">0</text>
+<rect class="dg-layer" x="518" y="244" width="28" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="532" y="257" text-anchor="middle" style="white-space:pre">1</text>
+<rect class="dg-layer" x="552" y="244" width="28" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="566" y="257" text-anchor="middle" style="white-space:pre">1</text>
+<rect class="dg-layer" x="586" y="244" width="28" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="600" y="257" text-anchor="middle" style="white-space:pre">1</text>
+<text class="dg-tiny" x="470" y="280" text-anchor="middle">C</text>
+<rect class="dg-layer" x="484" y="266" width="28" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="498" y="279" text-anchor="middle" style="white-space:pre">1</text>
+<rect class="dg-box" x="518" y="266" width="28" height="18" rx="3"/>
+<text class="dg-tiny dg-mono" x="532" y="279" text-anchor="middle" style="white-space:pre">0</text>
+<rect class="dg-layer" x="552" y="266" width="28" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="566" y="279" text-anchor="middle" style="white-space:pre">1</text>
+<rect class="dg-box" x="586" y="266" width="28" height="18" rx="3"/>
+<text class="dg-tiny dg-mono" x="600" y="279" text-anchor="middle" style="white-space:pre">0</text>
+<text class="dg-tiny" x="470" y="302" text-anchor="middle">D</text>
+<rect class="dg-layer" x="484" y="288" width="28" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="498" y="301" text-anchor="middle" style="white-space:pre">1</text>
+<rect class="dg-layer" x="518" y="288" width="28" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="532" y="301" text-anchor="middle" style="white-space:pre">1</text>
+<rect class="dg-box" x="552" y="288" width="28" height="18" rx="3"/>
+<text class="dg-tiny dg-mono" x="566" y="301" text-anchor="middle" style="white-space:pre">0</text>
+<rect class="dg-box" x="586" y="288" width="28" height="18" rx="3"/>
+<text class="dg-tiny dg-mono" x="600" y="301" text-anchor="middle" style="white-space:pre">0</text>
+<text class="dg-tiny" x="470" y="324" text-anchor="middle">E</text>
+<rect class="dg-layer" x="484" y="310" width="28" height="18" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny dg-mono" x="498" y="323" text-anchor="middle" style="white-space:pre">1</text>
+<rect class="dg-box" x="518" y="310" width="28" height="18" rx="3"/>
+<text class="dg-tiny dg-mono" x="532" y="323" text-anchor="middle" style="white-space:pre">0</text>
+<rect class="dg-box" x="552" y="310" width="28" height="18" rx="3"/>
+<text class="dg-tiny dg-mono" x="566" y="323" text-anchor="middle" style="white-space:pre">0</text>
+<rect class="dg-box" x="586" y="310" width="28" height="18" rx="3"/>
+<text class="dg-tiny dg-mono" x="600" y="323" text-anchor="middle" style="white-space:pre">0</text>
+<text class="dg-tiny" x="420" y="345" text-anchor="start">16 celdas para 4 amistades. Con 20 000 000 de personas, 4 × 10¹⁴.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.1.</b> Las palabras del módulo en un dibujo. Un grafo social real es disperso, como la matriz usuario-ítem de M43: por eso se guarda como listas de adyacencia, y cada amistad se guarda en las dos direcciones, como el grafo de seguidores de M30.</figcaption>
+</figure>
+
+
+<p>El <dfn data-term="grado-nodo">grado</dfn> de un nodo es lo que más importa en este módulo, porque los grafos sociales tienen grados muy desparejos: la mayoría de las personas tiene unos cientos de amigos y unas pocas cuentas tienen millones de seguidores. Es la cola larga de <a href="m43-datos-recomendacion.html">M43</a> otra vez: unos pocos nodos concentran muchísimas aristas, y casi todos los problemas de costo del módulo salen de ahí.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> un grafo social es disperso y de grados desparejos; se guarda como listas de adyacencia, con cada amistad en las dos direcciones.</p>
+
+<h2 id="pymk"><span class="sec-num">48.2</span>El problema de PYMK</h2>
+
+<p>Recomendar amigos es predecir aristas que todavía no existen: la <dfn data-term="link-prediction">predicción de enlaces</dfn> (<i>link prediction</i>). La mejor señal es tan vieja como la sociología: si dos personas tienen un amigo en común, es mucho más probable que se conozcan. Se llama <dfn data-term="cierre-triadico">cierre triádico</dfn>, porque cerrar la arista completa un triángulo.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f482t f482d">
+<title id="f482t">Cierre triádico</title>
+<desc id="f482d">Tres momentos. Primero, Ana es amiga de Carla y Carla es amiga de Luis, pero Ana y Luis no se conocen: hay un triángulo abierto. Segundo, el recomendador sugiere a Luis en la lista de Ana. Tercero, si Ana envía la invitación y Luis la acepta, aparece la arista que cierra el triángulo. Abajo, la métrica: lo que cuenta es la invitación aceptada, no la enviada.</desc>
+<defs><marker id="f482a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="24" text-anchor="start">Triángulo abierto</text>
+<path class="dg-edge" d="M60 160 L130 60 L200 160"/>
+<circle cx="60" cy="160" r="22" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="60" y="164" text-anchor="middle">Ana</text>
+<circle cx="130" cy="60" r="22" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="130" y="64" text-anchor="middle">Carla</text>
+<circle cx="200" cy="160" r="22" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="200" y="164" text-anchor="middle">Luis</text>
+<text class="dg-group" x="275" y="24" text-anchor="start">Sugerencia</text>
+<path class="dg-edge" d="M315 160 L385 60 L455 160"/>
+<path class="dg-feedback" d="M337 160 H433"/>
+<text class="dg-tiny" x="385" y="152" text-anchor="middle">¿lo conoces?</text>
+<circle cx="315" cy="160" r="22" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="315" y="164" text-anchor="middle">Ana</text>
+<circle cx="385" cy="60" r="22" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="385" y="64" text-anchor="middle">Carla</text>
+<circle cx="455" cy="160" r="22" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="455" y="164" text-anchor="middle">Luis</text>
+<text class="dg-group" x="530" y="24" text-anchor="start">Triángulo cerrado</text>
+<path class="dg-edge" d="M570 160 L640 60 L710 160"/>
+<path d="M592 160 H688" class="dg-edge" style="stroke: var(--l-gpu); stroke-width: 3"/>
+<circle cx="570" cy="160" r="22" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="570" y="164" text-anchor="middle">Ana</text>
+<circle cx="640" cy="60" r="22" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="640" y="64" text-anchor="middle">Carla</text>
+<circle cx="710" cy="160" r="22" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="710" y="164" text-anchor="middle">Luis</text>
+<path class="dg-edge" d="M240 120 H266" marker-end="url(#f482a)"/>
+<path class="dg-edge" d="M495 120 H521" marker-end="url(#f482a)"/>
+<rect class="dg-box" x="20" y="204" width="730" height="40" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-tiny dg-mono" x="34" y="229" text-anchor="start" style="white-space:pre">Enviadas: 1 000 sugerencias → 120 invitaciones → 84 aceptadas. La métrica es 84, no 120 (supuesto).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.2.</b> El cierre triádico: si dos personas tienen un amigo en común, es más probable que se conozcan. Recomendar amigos es predecir aristas que todavía no existen, y se mide por las que el otro acepta. Las cifras de la caja son un supuesto para fijar la idea. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>Lo que se predice importa. Si el ranker predice "va a hacer clic en Enviar invitación", aprende a mostrar personas a las que da curiosidad invitar (exparejas, gente famosa del barrio) y no personas que van a aceptar. La etiqueta correcta es la invitación <b>aceptada</b>: es lo que crea una arista y lo que la otra persona quería. Es la misma lección de Goodhart de <a href="m42-ml-system-design.html#metricas">M42</a>: la métrica que se optimiza tiene que ser la que se quiere de verdad, y aquí hay dos personas en juego, no una.</p>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>Una red social nueva tiene un interés enorme en que la gente se conecte rápido, y PYMK es su palanca. Ese interés empuja a usar todas las señales posibles (contactos, ubicación, correos), y de ahí salen los incidentes de 48.7 y 48.11. El objetivo se escribe en el design doc con su contrapeso: aceptadas por cada mil sugerencias, y reportes por cada mil, con un límite.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> PYMK predice aristas nuevas; la mejor señal es el cierre triádico, y la etiqueta es la invitación aceptada, no la enviada.</p>
+
+<h2 id="vecinos"><span class="sec-num">48.3</span>Vecinos comunes, Jaccard y Adamic-Adar</h2>
+
+<p>¿Cuánto dice un amigo en común? Depende de quién sea. Compartir a una amiga que tiene 3 amigos es casi una prueba de que se conocen; compartir a alguien con 5 000 amigos dice poco. Tres medidas, de la más simple a la más fina:</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: tres medidas de un par</p>
+  <ul>
+    <li><b>Vecinos comunes</b>: |N(<i>a</i>) ∩ N(<i>b</i>)|, cuántos amigos comparten.</li>
+    <li><b>Jaccard</b>: |N(<i>a</i>) ∩ N(<i>b</i>)| / |N(<i>a</i>) ∪ N(<i>b</i>)|, la misma cuenta dividida por todos los amigos de los dos. Es el Jaccard de los conjuntos de <a href="m44-modelos-clasicos.html">M44</a>.</li>
+    <li><b><dfn data-term="adamic-adar">Adamic-Adar</dfn></b>: Σ<sub><i>c</i> ∈ N(<i>a</i>) ∩ N(<i>b</i>)</sub> 1 / ln(grado(<i>c</i>)). Cada amigo en común suma, pero menos cuanto más amigos tiene.</li>
+  </ul>
+  <p>Ejemplo: Ana y Luis comparten a Carla (3 amigos) y a Diego (50). Vecinos comunes: 2. Adamic-Adar: 1 / ln 3 + 1 / ln 50 = 0.910 + 0.256 = 1.166. Carla aporta 3.6 veces lo que aporta Diego.</p>
+  <p>En Python: <code>aa = sum(1 / math.log(len(amigos[c])) for c in amigos[a] &amp; amigos[b])</code>.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="f483t f483d">
+<title id="f483t">Adamic-Adar con dos amigos en común</title>
+<desc id="f483d">Ana y Luis tienen dos amigos en común: Carla, que tiene 3 amigos, y Diego, que tiene 50. Vecinos comunes da 2. Adamic-Adar suma 1 sobre el logaritmo natural del grado de cada amigo en común: Carla aporta 1 / ln 3 = 0.910 y Diego, 1 / ln 50 = 0.256, en total 1.166. Carla aporta 3.6 veces lo que Diego.</desc>
+<defs><marker id="f483a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<circle cx="80" cy="140" r="26" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="80" y="144" text-anchor="middle">Ana</text>
+<circle cx="380" cy="140" r="26" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="380" y="144" text-anchor="middle">Luis</text>
+<circle cx="230" cy="60" r="24" class="dg-layer" style="--c: var(--l-queue)"/>
+<text class="dg-tiny" x="230" y="64" text-anchor="middle">Carla</text>
+<circle cx="230" cy="220" r="24" class="dg-layer" style="--c: var(--l-queue)"/>
+<text class="dg-tiny" x="230" y="224" text-anchor="middle">Diego</text>
+<path class="dg-edge" d="M102 126 L208 70"/>
+<path class="dg-edge" d="M252 70 L358 126"/>
+<path class="dg-edge" d="M102 154 L208 210"/>
+<path class="dg-edge" d="M252 210 L358 154"/>
+<path class="dg-feedback" d="M214 78 L190 104 M246 78 L270 104"/>
+<text class="dg-tiny" x="230" y="118" text-anchor="middle">+1 amigo más</text>
+<path class="dg-feedback" d="M253.2 231.8 L276.3 243.6"/>
+<path class="dg-feedback" d="M248.4 238.4 L266.8 256.8"/>
+<path class="dg-feedback" d="M241.8 243.2 L253.6 266.3"/>
+<path class="dg-feedback" d="M234.1 245.7 L238.1 271.4"/>
+<path class="dg-feedback" d="M225.9 245.7 L221.9 271.4"/>
+<path class="dg-feedback" d="M218.2 243.2 L206.4 266.3"/>
+<path class="dg-feedback" d="M211.6 238.4 L193.2 256.8"/>
+<path class="dg-feedback" d="M206.8 231.8 L183.7 243.6"/>
+<text class="dg-tiny" x="300" y="270" text-anchor="middle">+48 amigos más</text>
+<text class="dg-group" x="470" y="50" text-anchor="start">Amigo en común</text>
+<text class="dg-group" x="620" y="50" text-anchor="end">Grado</text>
+<text class="dg-group" x="740" y="50" text-anchor="end">1 / ln(grado)</text>
+<path class="dg-feedback" d="M470 62 H750"/>
+<text class="dg-small" x="470" y="84" text-anchor="start">Carla</text>
+<text class="dg-small dg-mono" x="620" y="84" text-anchor="end" style="white-space:pre">3</text>
+<text class="dg-small dg-mono" x="740" y="84" text-anchor="end" style="white-space:pre">0.910</text>
+<text class="dg-small" x="470" y="118" text-anchor="start">Diego</text>
+<text class="dg-small dg-mono" x="620" y="118" text-anchor="end" style="white-space:pre">50</text>
+<text class="dg-small dg-mono" x="740" y="118" text-anchor="end" style="white-space:pre">0.256</text>
+<path class="dg-feedback" d="M470 130 H750"/>
+<text class="dg-small" x="470" y="152" text-anchor="start">Adamic-Adar</text>
+<text class="dg-small dg-mono" x="620" y="152" text-anchor="end" style="white-space:pre"></text>
+<text class="dg-small dg-mono" x="740" y="152" text-anchor="end" style="white-space:pre">1.166</text>
+<text class="dg-small" x="470" y="186" text-anchor="start">Vecinos comunes</text>
+<text class="dg-small dg-mono" x="620" y="186" text-anchor="end" style="white-space:pre"></text>
+<text class="dg-small dg-mono" x="740" y="186" text-anchor="end" style="white-space:pre">2</text>
+<text class="dg-tiny" x="470" y="236" text-anchor="start">Compartir a alguien con 3 amigos es raro y dice más.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.3.</b> El ejemplo resuelto de la sección. Las dos medidas cuentan los mismos amigos en común; Adamic-Adar los pesa por lo raro que es compartirlos. Adamic y Adar lo propusieron en 2003, y Liben-Nowell y Kleinberg lo encontraron entre los mejores predictores simples de aristas nuevas. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<p>¿Por qué el logaritmo y no 1 / grado? Porque 1 / grado castiga demasiado: con 1 / grado, Diego aportaría 0.02 y Carla 0.33, dieciséis veces más; el logaritmo deja la proporción en 3.6. Adamic y Adar lo propusieron para páginas personales en 2003, y Liben-Nowell y Kleinberg lo compararon con una docena de medidas en redes de coautoría: estuvo entre las mejores <span class="badge badge--doc">Documentado</span>. En un PYMK moderno no se usa sola: es una feature más del ranker, junto con los vecinos comunes, las interacciones entre las dos personas y el contexto.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> los amigos en común se pesan por lo raro que es compartirlos; Adamic-Adar suma 1 / ln(grado) y es una feature del ranker, no el ranker.</p>
+
+<h2 id="explosion"><span class="sec-num">48.4</span>La explosión del segundo salto</h2>
+
+<p>Para calcular los amigos de amigos de Ana hay que leer la lista de cada uno de sus amigos. Con 200 amigos de 200 amigos cada uno son hasta 40 000 caminos, con repetidos. No parece mucho, hasta que entre los amigos aparece una cuenta grande.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 362" role="img" aria-labelledby="f484t f484d">
+<title id="f484t">Candidatos por amigos de amigos</title>
+<desc id="f484d">Ficha de Candidatos por amigos de amigos. Qué entra: La lista de amigos de la persona y, por cada amigo, su propia lista de amigos. Qué hace: Recorre dos saltos, saca a la persona y a sus amigos actuales, y cuenta por cada candidato cuántos caminos llegan a él (los amigos en común). Qué sale: Unos cientos de candidatos con sus amigos en común, que van a las features y al ranker. Ejemplo: Ana: 200 amigos × 200 amigos cada uno = hasta 40 000 caminos (con repetidos) Un nodo con 5 000 amigos de 5 000 amigos: 25 000 000 caminos Con un tope de 1 000 aristas por amigo, dos cuentas de 1 000 000 suman 2 000, no 2 000 000 Qué falla sin él: Sin los dos saltos se pierde la mejor señal de PYMK; sin el tope, una sola cuenta enorme convierte la consulta en minutos. Dónde vive: Fuente de candidatos (Lámina 48.A, marca 4), en lotes nocturnos sobre todo el grafo, con una actualización en línea para las amistades nuevas.</desc>
+<defs><marker id="f484a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="130" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">La lista de amigos de la</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">persona y, por cada amigo, su</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">propia lista de amigos.</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="130" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Recorre dos saltos, saca a la</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">persona y a sus amigos</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">actuales, y cuenta por cada</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">candidato cuántos caminos</text>
+<text class="dg-tiny" x="291" y="120" text-anchor="start">llegan a él (los amigos en</text>
+<text class="dg-tiny" x="291" y="136" text-anchor="start">común).</text>
+<rect class="dg-box" x="538" y="16" width="212" height="130" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Unos cientos de candidatos con</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">sus amigos en común, que van a</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">las features y al ranker.</text>
+<path class="dg-edge" d="M234 81.0 H275" marker-end="url(#f484a)"/>
+<path class="dg-edge" d="M493 81.0 H534" marker-end="url(#f484a)"/>
+<rect class="dg-box" x="20" y="160" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="180" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="200" text-anchor="start" style="white-space:pre">Ana: 200 amigos × 200 amigos cada uno = hasta 40 000 caminos (con repetidos)</text>
+<text class="dg-tiny dg-mono" x="32" y="216" text-anchor="start" style="white-space:pre">Un nodo con 5 000 amigos de 5 000 amigos: 25 000 000 caminos</text>
+<text class="dg-tiny dg-mono" x="32" y="232" text-anchor="start" style="white-space:pre">Con un tope de 1 000 aristas por amigo, dos cuentas de 1 000 000 suman 2 000, no 2 000 000</text>
+<rect class="dg-warnbox" x="20" y="260" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="280" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="300" text-anchor="start">Sin los dos saltos se pierde la mejor señal de PYMK;</text>
+<text class="dg-tiny" x="32" y="316" text-anchor="start">sin el tope, una sola cuenta enorme convierte la</text>
+<text class="dg-tiny" x="32" y="332" text-anchor="start">consulta en minutos.</text>
+<rect class="dg-box" x="393" y="260" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="280" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="300" text-anchor="start">Fuente de candidatos (Lámina 48.A, marca 4), en lotes</text>
+<text class="dg-tiny" x="405" y="316" text-anchor="start">nocturnos sobre todo el grafo, con una actualización</text>
+<text class="dg-tiny" x="405" y="332" text-anchor="start">en línea para las amistades nuevas.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.4.</b> La ficha de la fuente de amigos de amigos. Los números del ejemplo son los del widget de abajo. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 310" role="img" aria-labelledby="f485t f485d">
+<title id="f485t">La explosión del segundo salto</title>
+<desc id="f485d">Un abanico de tres niveles. Ana en el centro. En el primer salto, 200 amigos. En el segundo, cada uno con 200 amigos: hasta 40 000 caminos. Una de las amigas sigue a una cuenta con 1 000 000 de seguidores, y esa sola rama aporta más que todas las demás juntas. A la derecha, las tres defensas: tope por nodo, muestreo y precálculo por lotes.</desc>
+<defs><marker id="f485a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<circle cx="70" cy="150" r="24" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="70" y="154" text-anchor="middle">Ana</text>
+<path class="dg-edge" d="M94 150 L176 40"/>
+<circle cx="190" cy="40" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<path class="dg-feedback" d="M202 40 L262 31"/>
+<path class="dg-feedback" d="M202 40 L262 37"/>
+<path class="dg-feedback" d="M202 40 L262 43"/>
+<path class="dg-feedback" d="M202 40 L262 49"/>
+<path class="dg-edge" d="M94 150 L176 76"/>
+<circle cx="190" cy="76" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<path class="dg-feedback" d="M202 76 L262 67"/>
+<path class="dg-feedback" d="M202 76 L262 73"/>
+<path class="dg-feedback" d="M202 76 L262 79"/>
+<path class="dg-feedback" d="M202 76 L262 85"/>
+<path class="dg-edge" d="M94 150 L176 112"/>
+<circle cx="190" cy="112" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<path class="dg-feedback" d="M202 112 L262 103"/>
+<path class="dg-feedback" d="M202 112 L262 109"/>
+<path class="dg-feedback" d="M202 112 L262 115"/>
+<path class="dg-feedback" d="M202 112 L262 121"/>
+<path class="dg-edge" d="M94 150 L176 148"/>
+<circle cx="190" cy="148" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<path class="dg-feedback" d="M202 148 L262 139"/>
+<path class="dg-feedback" d="M202 148 L262 145"/>
+<path class="dg-feedback" d="M202 148 L262 151"/>
+<path class="dg-feedback" d="M202 148 L262 157"/>
+<path class="dg-edge" d="M94 150 L176 184"/>
+<circle cx="190" cy="184" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<path class="dg-feedback" d="M202 184 L262 175"/>
+<path class="dg-feedback" d="M202 184 L262 181"/>
+<path class="dg-feedback" d="M202 184 L262 187"/>
+<path class="dg-feedback" d="M202 184 L262 193"/>
+<path class="dg-edge" d="M94 150 L176 220"/>
+<circle cx="190" cy="220" r="12" class="dg-layer" style="--c: var(--l-gpu)"/>
+<path class="dg-feedback" d="M202 220 L330 194"/>
+<path class="dg-feedback" d="M202 220 L330 198"/>
+<path class="dg-feedback" d="M202 220 L330 202"/>
+<path class="dg-feedback" d="M202 220 L330 206"/>
+<path class="dg-feedback" d="M202 220 L330 210"/>
+<path class="dg-feedback" d="M202 220 L330 214"/>
+<path class="dg-feedback" d="M202 220 L330 218"/>
+<path class="dg-feedback" d="M202 220 L330 222"/>
+<path class="dg-feedback" d="M202 220 L330 226"/>
+<path class="dg-feedback" d="M202 220 L330 230"/>
+<path class="dg-feedback" d="M202 220 L330 234"/>
+<path class="dg-feedback" d="M202 220 L330 238"/>
+<path class="dg-feedback" d="M202 220 L330 242"/>
+<path class="dg-feedback" d="M202 220 L330 246"/>
+<path class="dg-edge" d="M94 150 L176 256"/>
+<circle cx="190" cy="256" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<path class="dg-feedback" d="M202 256 L262 247"/>
+<path class="dg-feedback" d="M202 256 L262 253"/>
+<path class="dg-feedback" d="M202 256 L262 259"/>
+<path class="dg-feedback" d="M202 256 L262 265"/>
+<text class="dg-tiny" x="190" y="24" text-anchor="middle">200 amigos</text>
+<text class="dg-tiny" x="270" y="24" text-anchor="start">× 200 = 40 000</text>
+<text class="dg-tiny" x="250" y="296" text-anchor="start">una sola rama: 1 000 000</text>
+<rect class="dg-box" x="470" y="30" width="280" height="240" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="486" y="54" text-anchor="start">Tres defensas</text>
+<text class="dg-small" x="486" y="82" text-anchor="start">Tope por nodo</text>
+<text class="dg-tiny" x="600" y="82" text-anchor="start">leer como mucho 1 000 aristas</text>
+<text class="dg-tiny" x="600" y="110" text-anchor="start">por amigo: las más recientes</text>
+<text class="dg-small" x="486" y="138" text-anchor="start">Muestreo</text>
+<text class="dg-tiny" x="600" y="138" text-anchor="start">una caminata al azar en lugar</text>
+<text class="dg-tiny" x="600" y="166" text-anchor="start">de todos los caminos</text>
+<text class="dg-small" x="486" y="194" text-anchor="start">Precálculo</text>
+<text class="dg-tiny" x="600" y="194" text-anchor="start">por lotes, de noche, y en línea</text>
+<text class="dg-tiny" x="600" y="222" text-anchor="start">solo lo que cambió hoy</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.5.</b> El segundo salto crece como el producto de los grados, y una cuenta enorme domina todo. Es el mismo problema de las cuentas famosas en el fan-out de M30, visto desde la lectura. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<div data-calc="fof"></div>
+
+<p>Prueba los casos. La persona típica lee 40 000 aristas. Si dos de sus contactos son vendedores con 1 000 000 de seguidores, lee 2 039 600, y el 98&#8239;% sale de esas dos cuentas, que además no aportan candidatos útiles: nadie conoce a un millón de personas. Con un tope de 1 000 aristas por amigo, vuelve a 41 600. Y un nodo con 5 000 amigos de 5 000 lee 25 000 000: con el costo supuesto de 50 ns por arista, más de un segundo solo en leer.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Hay tres defensas y se combinan. El <b>tope por nodo</b> (leer como mucho 1 000 aristas de cada amigo, las más recientes) es simple y casi no pierde: los vecinos de una cuenta enorme son malos candidatos. El <b>muestreo</b> (seguir caminos al azar en lugar de todos) es lo que hace el PageRank personalizado de 48.5. El <b>precálculo por lotes</b> mueve el costo fuera de la request: de noche se calculan los candidatos de todos y en línea solo se agregan los de las amistades de hoy (48.10).</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el segundo salto crece como el producto de los grados y lo dominan las cuentas grandes; se acota con un tope por nodo, muestreo y precálculo.</p>
+
+<h2 id="ppr"><span class="sec-num">48.5</span>PageRank personalizado y caminatas aleatorias</h2>
+
+<p>Los amigos de amigos miran exactamente dos saltos. ¿Y si la persona que Ana conoce está a tres, o si los dos saltos dan 5 000 candidatos empatados? El <dfn data-term="pagerank-personalizado">PageRank personalizado</dfn> (PPR) da un puntaje a todo el grafo desde el punto de vista de Ana, con una <dfn data-term="caminata-aleatoria">caminata aleatoria</dfn>: sale de Ana, en cada paso salta a un vecino al azar y, con probabilidad α, vuelve a casa. El puntaje de cada persona es la fracción del tiempo que la caminata pasa en ella.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="f486t f486d">
+<title id="f486t">Una caminata que vuelve a casa</title>
+<desc id="f486d">Una caminata aleatoria con reinicio desde Ana. En cada paso, con probabilidad 1 menos alfa salta a un vecino al azar y con probabilidad alfa vuelve a Ana. Se muestran ocho pasos de una caminata: Ana, Carla, Luis, Marta, vuelve a Ana, Eva, Tere, Vera. El puntaje de cada persona es la fracción del tiempo que la caminata pasa en ella.</desc>
+<defs><marker id="f486a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<circle cx="50" cy="80" r="26" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="50" y="84" text-anchor="middle">Ana</text>
+<text class="dg-tiny" x="50" y="130" text-anchor="middle">paso 0</text>
+<path class="dg-edge" d="M78 80 H114" marker-end="url(#f486a)"/>
+<circle cx="144" cy="80" r="26" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="144" y="84" text-anchor="middle">Carla</text>
+<text class="dg-tiny" x="144" y="130" text-anchor="middle">paso 1</text>
+<path class="dg-edge" d="M172 80 H208" marker-end="url(#f486a)"/>
+<circle cx="238" cy="80" r="26" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="238" y="84" text-anchor="middle">Luis</text>
+<text class="dg-tiny" x="238" y="130" text-anchor="middle">paso 2</text>
+<path class="dg-edge" d="M266 80 H302" marker-end="url(#f486a)"/>
+<circle cx="332" cy="80" r="26" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="332" y="84" text-anchor="middle">Marta</text>
+<text class="dg-tiny" x="332" y="130" text-anchor="middle">paso 3</text>
+<path class="dg-feedback" d="M352 62 C 372 20, 392 20, 404 60" marker-end="url(#f486a)"/>
+<text class="dg-tiny" x="379" y="22" text-anchor="middle">vuelve (α)</text>
+<circle cx="426" cy="80" r="26" class="dg-layer" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="426" y="84" text-anchor="middle">Ana</text>
+<text class="dg-tiny" x="426" y="130" text-anchor="middle">paso 4</text>
+<path class="dg-edge" d="M454 80 H490" marker-end="url(#f486a)"/>
+<circle cx="520" cy="80" r="26" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="520" y="84" text-anchor="middle">Eva</text>
+<text class="dg-tiny" x="520" y="130" text-anchor="middle">paso 5</text>
+<path class="dg-edge" d="M548 80 H584" marker-end="url(#f486a)"/>
+<circle cx="614" cy="80" r="26" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="614" y="84" text-anchor="middle">Tere</text>
+<text class="dg-tiny" x="614" y="130" text-anchor="middle">paso 6</text>
+<path class="dg-edge" d="M642 80 H678" marker-end="url(#f486a)"/>
+<circle cx="708" cy="80" r="26" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="708" y="84" text-anchor="middle">Vera</text>
+<text class="dg-tiny" x="708" y="130" text-anchor="middle">paso 7</text>
+<rect class="dg-box" x="20" y="158" width="730" height="44" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-tiny dg-mono" x="34" y="185" text-anchor="start" style="white-space:pre">puntaje(x) = fracción de los pasos en x.   α = 0.15: en promedio, 1 / 0.15 ≈ 6.7 pasos antes de volver.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.6.</b> El PageRank personalizado como caminata. Con α chico la caminata se aleja más y encuentra personas a tres o cuatro saltos; con α grande se queda cerca. Pixie, de Pinterest, hace caminatas así sobre un grafo de unos 3 000 millones de nodos y 17 000 millones de aristas guardado en la memoria de una máquina (Eksombatchai y otros, 2018). <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: la caminata como ecuación</p>
+  <p>Con <i>x</i> el vector de probabilidades (una por persona), <i>e</i><sub>Ana</sub> el vector con un 1 en Ana y <i>P</i> la matriz de transición (de cada persona, 1 / grado a cada vecino):</p>
+  <p><b><i>x</i> = α · <i>e</i><sub>Ana</sub> + (1 − α) · <i>x</i> · <i>P</i></b></p>
+  <p>En palabras: la probabilidad de estar en una persona es la de haber vuelto a casa (si es Ana) más la de haber llegado desde un vecino. Se resuelve repitiendo la cuenta hasta que no cambie. El PageRank de Google es lo mismo con el reinicio a cualquier página al azar; el personalizado reinicia siempre en la misma persona.</p>
+  <p>En el grafo de abajo, con α = 0.15, la caminata pasa el 7.1&#8239;% del tiempo en Marta y el 6.7&#8239;% en Luis: las dos personas con dos amigos en común con Ana.</p>
+</aside>
+
+<div data-sim="ppr"></div>
+
+<p>Mira tres cosas. Primero, Vera no tiene ningún amigo en común con Ana y sin embargo, con α = 0.15, queda por encima de los cuatro amigos de Diego: la caminata llega a ella por Eva y Tere, una zona del grafo bien conectada, mientras que Diego, con 7 amigos, reparte su paso entre todos. Segundo, con α = 0.5 la caminata casi no se aleja y Vera cae. Tercero, la caminata con semilla se acerca al cálculo exacto: en producción no se resuelve la ecuación para todo el grafo, se hacen unos miles de pasos por persona, que es justo lo que hace Pixie <span class="badge badge--doc">Documentado</span>.</p>
+
+<pre data-lang="python"><code>import random
+
+def ppr_caminata(amigos, casa, alfa=0.15, pasos=10_000, rng=random.Random(0)):
+    visitas = {}
+    actual = casa
+    for _ in range(pasos):
+        if rng.random() &lt; alfa:
+            actual = casa                                       # vuelve a casa
+        else:
+            actual = rng.choice(list(amigos[actual]))           # salta a un vecino
+        visitas[actual] = visitas.get(actual, 0) + 1
+    return {p: v / pasos for p, v in visitas.items()}
+</code></pre>
+
+<p>Twitter armó su "a quién seguir" de 2010 sobre una variante de esto, con el grafo entero en la memoria de una sola máquina para que las caminatas fueran rápidas (Gupta y otros, 2013) <span class="badge badge--doc">Documentado</span>.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el PageRank personalizado es una caminata que vuelve a casa con probabilidad α; llega más allá de dos saltos, desempata por estructura y se calcula con unos miles de pasos.</p>
+
+<h2 id="embeddings-grafo"><span class="sec-num">48.6</span>Embeddings de grafo y GNN</h2>
+
+<p>Las medidas anteriores miran el grafo en el momento de la consulta. Un embedding de grafo hace el trabajo antes: le da a cada persona un vector, de modo que dos personas cercanas en el grafo queden cerca en el espacio, y la consulta es una búsqueda de vecinos como la de <a href="m45-recuperacion.html">M45</a>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 360" role="img" aria-labelledby="f487t f487d">
+<title id="f487t">Embeddings de grafo</title>
+<desc id="f487d">Dos formas. Arriba, node2vec: se hacen caminatas desde cada nodo, cada caminata se trata como una frase, y un modelo como word2vec aprende un vector por nodo de modo que los nodos que aparecen cerca en las caminatas quedan cerca. Abajo, una red de grafo como GraphSAGE: el vector de Ana sale de juntar los vectores de una muestra de sus vecinos, y los de ellos, de los suyos, durante dos capas.</desc>
+<defs><marker id="f487a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="24" text-anchor="start">node2vec: caminatas como frases</text>
+<rect class="dg-layer" x="20" y="36" width="220" height="70" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="130.0" y="59.0" text-anchor="middle">Caminatas</text>
+<text class="dg-tiny" x="130.0" y="75.0" text-anchor="middle">Ana Carla Luis Marta</text>
+<text class="dg-tiny" x="130.0" y="91.0" text-anchor="middle">Eva Tere Uma Vera</text>
+<rect class="dg-layer" x="280" y="36" width="200" height="70" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="380.0" y="59.0" text-anchor="middle">Modelo de palabras</text>
+<text class="dg-tiny" x="380.0" y="75.0" text-anchor="middle">skip-gram, como</text>
+<text class="dg-tiny" x="380.0" y="91.0" text-anchor="middle">en word2vec</text>
+<rect class="dg-layer" x="520" y="36" width="230" height="70" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="635.0" y="59.0" text-anchor="middle">Un vector por nodo</text>
+<text class="dg-tiny" x="635.0" y="75.0" text-anchor="middle">Ana ≈ [0.3, −1.2, …]</text>
+<text class="dg-tiny" x="635.0" y="91.0" text-anchor="middle">cerca de quienes la rodean</text>
+<path class="dg-edge" d="M242 71 H276" marker-end="url(#f487a)"/>
+<path class="dg-edge" d="M482 71 H516" marker-end="url(#f487a)"/>
+<text class="dg-group" x="20" y="150" text-anchor="start">GNN (GraphSAGE): juntar a los vecinos</text>
+<circle cx="120" cy="250" r="24" class="dg-layer" style="--c: var(--l-gpu)"/>
+<text class="dg-tiny" x="120" y="254" text-anchor="middle">Ana</text>
+<circle cx="280" cy="180" r="20" class="dg-layer" style="--c: var(--l-queue)"/>
+<text class="dg-tiny" x="280" y="184" text-anchor="middle">Carla</text>
+<path class="dg-edge" d="M258 180 L146 240" marker-end="url(#f487a)"/>
+<circle cx="400" cy="162" r="7" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M393 162 L302 180"/>
+<circle cx="400" cy="180" r="7" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M393 180 L302 180"/>
+<circle cx="400" cy="198" r="7" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M393 198 L302 180"/>
+<circle cx="280" cy="250" r="20" class="dg-layer" style="--c: var(--l-queue)"/>
+<text class="dg-tiny" x="280" y="254" text-anchor="middle">Diego</text>
+<path class="dg-edge" d="M258 250 L146 250" marker-end="url(#f487a)"/>
+<circle cx="400" cy="232" r="7" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M393 232 L302 250"/>
+<circle cx="400" cy="250" r="7" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M393 250 L302 250"/>
+<circle cx="400" cy="268" r="7" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M393 268 L302 250"/>
+<circle cx="280" cy="320" r="20" class="dg-layer" style="--c: var(--l-queue)"/>
+<text class="dg-tiny" x="280" y="324" text-anchor="middle">Eva</text>
+<path class="dg-edge" d="M258 320 L146 260" marker-end="url(#f487a)"/>
+<circle cx="400" cy="302" r="7" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M393 302 L302 320"/>
+<circle cx="400" cy="320" r="7" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M393 320 L302 320"/>
+<circle cx="400" cy="338" r="7" class="dg-layer" style="--c: var(--l-service)"/>
+<path class="dg-feedback" d="M393 338 L302 320"/>
+<text class="dg-tiny" x="440" y="190" text-anchor="start">Capa 2: cada amigo junta una muestra</text>
+<text class="dg-tiny" x="440" y="206" text-anchor="start">de sus amigos (por ejemplo, 10).</text>
+<text class="dg-tiny" x="440" y="236" text-anchor="start">Capa 1: Ana junta lo de sus amigos</text>
+<text class="dg-tiny" x="440" y="252" text-anchor="start">y lo mezcla con sus propias features.</text>
+<text class="dg-tiny" x="440" y="282" text-anchor="start">PinSage: así, sobre 3 000 millones de nodos.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.7.</b> Dos formas de convertir un grafo en vectores. node2vec (Grover y Leskovec, 2016) aprende de caminatas; GraphSAGE (Hamilton y otros, 2017) aprende a juntar vecinos y sirve para nodos nuevos sin reentrenar. PinSage (Ying y otros, 2018) lo llevó a escala en Pinterest. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<p><dfn data-term="node2vec">node2vec</dfn> hace caminatas desde cada nodo y trata cada caminata como una frase: los nodos que aparecen juntos en las caminatas quedan cerca, como las palabras que aparecen juntas en word2vec. Dos parámetros sesgan la caminata para que explore más a lo ancho (la comunidad) o más a lo lejos (roles parecidos en otras partes del grafo). Una <dfn data-term="gnn">GNN</dfn> (red neuronal de grafos) como GraphSAGE aprende otra cosa: una función que arma el vector de un nodo juntando los de una muestra de sus vecinos, en dos o tres capas. Como aprende la función y no los vectores, sirve para una persona nueva sin reentrenar.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>¿Cuándo valen lo que cuestan? Cuando hay muchas señales en los nodos (fotos, textos, compras) que se quieren mezclar con la estructura, y cuando el grafo es tan grande que los dos saltos no alcanzan. Pinterest entrenó PinSage sobre 3 000 millones de nodos para recomendar pins <span class="badge badge--doc">Documentado</span>. Para un PYMK que empieza, los dos saltos con Adamic-Adar y un PPR barato ganan casi siempre: son explicables ("tienen 12 amigos en común"), no necesitan GPU y no hay que reentrenar nada cuando cambia el grafo.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> node2vec aprende un vector por nodo con caminatas; una GNN aprende a juntar vecinos y sirve para nodos nuevos. Valen cuando hay mucha señal en los nodos; para empezar, dos saltos y PPR.</p>
+
+<h2 id="otras-senales"><span class="sec-num">48.7</span>Señales fuera del grafo</h2>
+
+<p>Una persona recién llegada no tiene amigos en la plataforma: no hay segundo salto. Ahí entran las señales de afuera: los contactos que subió del teléfono, la escuela o el trabajo que declaró, los lugares que comparte con otros, los grupos. Son el arranque en frío de <a href="m44-modelos-clasicos.html#frio">M44</a> para personas, y cada una trae un riesgo.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f488t f488d">
+<title id="f488t">Señales fuera del grafo y su riesgo</title>
+<desc id="f488d">Una tabla de cinco señales con lo que aportan y lo que pueden revelar. Contactos subidos: encuentran a quien conoces fuera de la plataforma; pueden juntar a una psiquiatra con sus pacientes. Misma escuela o trabajo: buena señal en redes profesionales; revela dónde estudia o trabaja alguien. Ubicación: personas que comparten lugares; puede revelar quién visita una clínica o un refugio. Grupos en común: intereses compartidos; un grupo de salud o de religión es un dato sensible. Interacciones: personas que se escriben o comentan; puede sugerir a un ex o a alguien bloqueado en otra app.</desc>
+<defs><marker id="f488a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="34" y="43" text-anchor="start">Señal</text>
+<text class="dg-group" x="230" y="43" text-anchor="start">Qué aporta</text>
+<text class="dg-group" x="514" y="43" text-anchor="start">Qué puede revelar</text>
+<rect class="dg-box" x="20" y="64" width="730" height="36" rx="6"/>
+<rect class="dg-warnbox" x="500" y="64" width="250" height="36" rx="6"/>
+<text class="dg-small" x="34" y="87" text-anchor="start">Contactos subidos</text>
+<text class="dg-tiny" x="230" y="87" text-anchor="start">a quien conoces fuera</text>
+<text class="dg-tiny" x="514" y="87" text-anchor="start">una psiquiatra y sus pacientes</text>
+<rect class="dg-box" x="20" y="108" width="730" height="36" rx="6"/>
+<rect class="dg-warnbox" x="500" y="108" width="250" height="36" rx="6"/>
+<text class="dg-small" x="34" y="131" text-anchor="start">Escuela o trabajo</text>
+<text class="dg-tiny" x="230" y="131" text-anchor="start">colegas y compañeros</text>
+<text class="dg-tiny" x="514" y="131" text-anchor="start">dónde está alguien</text>
+<rect class="dg-box" x="20" y="152" width="730" height="36" rx="6"/>
+<rect class="dg-warnbox" x="500" y="152" width="250" height="36" rx="6"/>
+<text class="dg-small" x="34" y="175" text-anchor="start">Ubicación</text>
+<text class="dg-tiny" x="230" y="175" text-anchor="start">gente de los mismos lugares</text>
+<text class="dg-tiny" x="514" y="175" text-anchor="start">quién va a una clínica</text>
+<rect class="dg-box" x="20" y="196" width="730" height="36" rx="6"/>
+<rect class="dg-warnbox" x="500" y="196" width="250" height="36" rx="6"/>
+<text class="dg-small" x="34" y="219" text-anchor="start">Grupos en común</text>
+<text class="dg-tiny" x="230" y="219" text-anchor="start">intereses compartidos</text>
+<text class="dg-tiny" x="514" y="219" text-anchor="start">salud, religión, política</text>
+<rect class="dg-box" x="20" y="240" width="730" height="36" rx="6"/>
+<rect class="dg-warnbox" x="500" y="240" width="250" height="36" rx="6"/>
+<text class="dg-small" x="34" y="263" text-anchor="start">Interacciones</text>
+<text class="dg-tiny" x="230" y="263" text-anchor="start">a quien le escribes</text>
+<text class="dg-tiny" x="514" y="263" text-anchor="start">un ex, alguien que huyó</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.8.</b> Cada señal que no sale del grafo social sale de algo que la persona hizo en otro contexto. El caso de los contactos subidos que juntaban a pacientes de una misma psiquiatra lo publicó Gizmodo en 2016. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<p>El caso de los contactos es el más conocido. Si una psiquiatra sube su agenda, y sus pacientes también, el sistema ve que todos comparten un contacto y les sugiere a los pacientes entre sí: revela algo que nadie dijo. Lo mismo con la ubicación (dos personas que pasan noches en el mismo refugio) o con un grupo de salud. Ninguna persona hizo nada inseguro; el daño sale de juntar señales.</p>
+
+<aside class="callout callout--fail">
+  <p class="callout-label">Qué pasa si falla</p>
+  <p>Un candidato que solo tiene a su favor una señal sensible no se muestra. Las señales sensibles pueden sumar en el ranker cuando hay otras (12 amigos en común y la misma escuela), pero nunca son la única razón, y la persona tiene que poder ver y apagar qué señales usa la plataforma. Es una regla de la capa de filtros (48.11), no un peso del modelo.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> las señales de afuera resuelven el arranque en frío de una persona y pueden revelar relaciones de terceros; una señal sensible sola nunca alcanza para sugerir.</p>
+
+<h2 id="almacenar"><span class="sec-num">48.8</span>Dónde guardar un grafo</h2>
+
+<p>Hay dos familias: las bases que hacen los saltos por ti y los almacenes que guardan listas y dejan los saltos al servicio.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f489t f489d">
+<title id="f489t">Tres formas de guardar el grafo</title>
+<desc id="f489d">Tres bloques lado a lado. Neo4j: una base de grafos donde cada nodo apunta a sus aristas y una consulta en Cypher recorre caminos; cómoda para consultas de varios saltos, difícil de escalar a miles de millones de aristas. TAO: objetos y asociaciones guardados en MySQL particionado con una capa de caché enorme delante; lecturas de listas de asociaciones por id, a escala de Facebook. Redis: un conjunto por persona con los ids de sus amigos; muy rápido, todo en memoria, sin consultas de varios saltos: los saltos los hace el servicio.</desc>
+<defs><marker id="f489a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="20" width="230" height="190" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="34" y="44" text-anchor="start">Neo4j y Cypher</text>
+<text class="dg-tiny dg-mono" x="34" y="74" text-anchor="start" style="white-space:pre">(Ana)-[:AMIGO]-(Carla)</text>
+<text class="dg-tiny dg-mono" x="34" y="96" text-anchor="start" style="white-space:pre">recorre caminos de</text>
+<text class="dg-tiny" x="34" y="118" text-anchor="start">varios saltos en la base</text>
+<text class="dg-tiny" x="34" y="140" text-anchor="start"></text>
+<text class="dg-tiny" x="34" y="162" text-anchor="start">Escala: una máquina grande</text>
+<text class="dg-tiny" x="34" y="184" text-anchor="start">o un clúster con límites</text>
+<rect class="dg-layer" x="270" y="20" width="230" height="190" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="284" y="44" text-anchor="start">TAO (Facebook)</text>
+<text class="dg-tiny dg-mono" x="284" y="74" text-anchor="start" style="white-space:pre">objeto: Ana (id 42)</text>
+<text class="dg-tiny dg-mono" x="284" y="96" text-anchor="start" style="white-space:pre">asociación: (42, amigo, 77)</text>
+<text class="dg-tiny" x="284" y="118" text-anchor="start">MySQL particionado con</text>
+<text class="dg-tiny" x="284" y="140" text-anchor="start">caché delante</text>
+<text class="dg-tiny" x="284" y="162" text-anchor="start">Escala: mil millones de</text>
+<text class="dg-tiny" x="284" y="184" text-anchor="start">lecturas por segundo</text>
+<rect class="dg-layer" x="520" y="20" width="230" height="190" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="534" y="44" text-anchor="start">Redis</text>
+<text class="dg-tiny dg-mono" x="534" y="74" text-anchor="start" style="white-space:pre">SADD amigos:42 77 91 …</text>
+<text class="dg-tiny dg-mono" x="534" y="96" text-anchor="start" style="white-space:pre">SINTER amigos:42 amigos:77</text>
+<text class="dg-tiny" x="534" y="118" text-anchor="start">todo en memoria</text>
+<text class="dg-tiny" x="534" y="140" text-anchor="start"></text>
+<text class="dg-tiny" x="534" y="162" text-anchor="start">Escala: tantos nodos como</text>
+<text class="dg-tiny" x="534" y="184" text-anchor="start">particiones; saltos en el código</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.9.</b> La base de grafos hace los saltos por ti; TAO y Redis guardan listas y dejan los saltos al servicio. TAO está descrito en Bronson y otros (2013), con su escala de mil millones de lecturas por segundo. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<p><dfn data-term="neo4j">Neo4j</dfn> es la base de grafos más usada: cada nodo apunta directo a sus aristas, y una consulta en <dfn data-term="cypher">Cypher</dfn> describe un patrón de caminos. La consulta de amigos de amigos con Adamic-Adar entra en ocho líneas:</p>
+
+<pre data-lang="sql"><code>// Amigos de amigos de Ana que todavía no son sus amigos         (1)
+MATCH (a:Persona {id: $ana})-[:AMIGO]-(c:Persona)-[:AMIGO]-(x:Persona)
+WHERE x &lt;&gt; a AND NOT EXISTS { (a)-[:AMIGO]-(x) }                 // (2)
+RETURN x.id AS candidato,
+       count(c) AS en_comun,                                       // (3)
+       sum(1.0 / log(COUNT { (c)-[:AMIGO]-() })) AS adamic_adar    // (4)
+ORDER BY adamic_adar DESC
+LIMIT 50</code></pre>
+<ol class="code-key">
+  <li><b>(1)</b> El patrón dice "de Ana a una persona <code>c</code> por una arista de amistad, y de <code>c</code> a otra <code>x</code>". Sin flecha, la arista se recorre en cualquier sentido, como corresponde a la amistad.</li>
+  <li><b>(2)</b> Saca a Ana y a quienes ya son sus amigos. <code>EXISTS { … }</code> es un subquery que vale verdadero si el patrón existe.</li>
+  <li><b>(3)</b> Cada fila es un camino Ana → <code>c</code> → <code>x</code>; agrupar por <code>x</code> y contar caminos da los amigos en común.</li>
+  <li><b>(4)</b> <code>COUNT { … }</code> cuenta las amistades de <code>c</code> (su grado), y <code>log</code> es el logaritmo natural: la suma es Adamic-Adar. Los subqueries <code>COUNT { }</code> y <code>EXISTS { }</code> son de Neo4j 5.</li>
+</ol>
+
+
+<p>En el otro extremo está <dfn data-term="tao">TAO</dfn>, el almacén del grafo de Facebook (Bronson y otros, 2013): dos tipos de datos, objetos (una persona, una foto) y asociaciones (Ana es amiga de Carla), guardados en MySQL particionado por id con una capa de caché enorme delante. No hace saltos: responde "dame las asociaciones de tipo amigo de 42", muy rápido y a escala de mil millones de lecturas por segundo <span class="badge badge--doc">Documentado</span>. Los saltos los hace el servicio de PYMK, en lotes. En el medio, Redis con un conjunto por persona: <code>SINTER</code> da los amigos en común de dos personas en microsegundos, con todo en memoria.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Opción</th><th>Saltos</th><th>Escala</th><th>Bueno para</th><th>Malo para</th></tr></thead>
+    <tbody>
+      <tr><td>Neo4j y Cypher</td><td>En la base</td><td>Una máquina grande o un clúster con límites</td><td>Explorar, prototipos, grafos de millones de aristas</td><td>Miles de millones de aristas con tráfico en línea</td></tr>
+      <tr><td>KV con caché (TAO)</td><td>En el servicio</td><td>Miles de millones de lecturas por segundo</td><td>Listas de adyacencia por id, a cualquier escala</td><td>Consultas de varios saltos en línea</td></tr>
+      <tr><td>Redis con conjuntos</td><td>En el servicio</td><td>Lo que entre en la memoria de las particiones</td><td>Amigos en común en línea, candidatos precalculados</td><td>Durabilidad y grafos que no entran en memoria</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Para Mercado Barrio, con 2 000 000 000 de amistades guardadas en las dos direcciones a 16 bytes por entrada, el grafo ocupa 64 GB: entra en la memoria de unas pocas máquinas. La decisión razonable es la del medio: las listas en un KV durable con caché (como los demás datos del sitio), los saltos por lotes en un trabajo nocturno, y los candidatos del día en Redis.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> una base de grafos hace los saltos y no escala fácil; un KV con caché como TAO guarda listas a cualquier escala y deja los saltos al servicio.</p>
+
+<h2 id="particionar"><span class="sec-num">48.9</span>Partir un grafo</h2>
+
+<p>Cuando el grafo no entra en una máquina, se parte. La forma de siempre, el hash de la clave de <a href="m05-bases-de-datos.html#sharding">M05</a>, reparte parejo, pero en un grafo tiene un costo: los amigos de Ana caen en particiones al azar, así que leerlos toca casi todas. El <dfn data-term="particionado-grafo">particionado por comunidad</dfn> intenta lo contrario: poner juntas a las personas que son amigas, para que la mayoría de las aristas quede dentro de una partición.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f4810t f4810d">
+<title id="f4810t">Cortar un grafo</title>
+<desc id="f4810d">Dos particiones del mismo grafo de 12 personas en tres comunidades. A la izquierda, por hash del id: cada persona cae en una partición al azar y casi todas las aristas cruzan de una partición a otra. A la derecha, por comunidad: cada comunidad queda en su partición y solo dos aristas cruzan.</desc>
+<defs><marker id="f4810a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="24" text-anchor="start">Hash por persona</text>
+<rect class="dg-frame" x="20" y="40" width="110" height="200" rx="8"/>
+<rect class="dg-frame" x="140" y="40" width="110" height="200" rx="8"/>
+<rect class="dg-frame" x="260" y="40" width="110" height="200" rx="8"/>
+<path d="M40 80 L160 80" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M40 80 L280 80" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M160 80 L280 80" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M160 80 L220 80" class="dg-edge"/>
+<path d="M280 80 L220 80" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M100 80 L340 80" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M100 80 L160 160" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M340 80 L40 160" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M160 160 L40 160" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M340 80 L160 160" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M280 160 L100 160" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M280 160 L220 160" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M100 160 L340 160" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M220 160 L340 160" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M100 160 L220 160" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M220 80 L100 80" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M40 160 L280 160" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<circle cx="40" cy="80" r="12" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="160" cy="80" r="12" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="280" cy="80" r="12" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="220" cy="80" r="12" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="100" cy="80" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="340" cy="80" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="160" cy="160" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="40" cy="160" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="280" cy="160" r="12" class="dg-layer" style="--c: var(--l-external)"/>
+<circle cx="100" cy="160" r="12" class="dg-layer" style="--c: var(--l-external)"/>
+<circle cx="220" cy="160" r="12" class="dg-layer" style="--c: var(--l-external)"/>
+<circle cx="340" cy="160" r="12" class="dg-layer" style="--c: var(--l-external)"/>
+<text class="dg-small" x="20" y="268" text-anchor="start">16 de 17 aristas cruzan particiones</text>
+<text class="dg-group" x="405" y="24" text-anchor="start">Por comunidad</text>
+<rect class="dg-frame" x="405" y="40" width="110" height="200" rx="8"/>
+<rect class="dg-frame" x="525" y="40" width="110" height="200" rx="8"/>
+<rect class="dg-frame" x="645" y="40" width="110" height="200" rx="8"/>
+<path d="M425 80 L485 80" class="dg-edge"/>
+<path d="M425 80 L425 160" class="dg-edge"/>
+<path d="M485 80 L425 160" class="dg-edge"/>
+<path d="M485 80 L485 160" class="dg-edge"/>
+<path d="M425 160 L485 160" class="dg-edge"/>
+<path d="M545 80 L605 80" class="dg-edge"/>
+<path d="M545 80 L545 160" class="dg-edge"/>
+<path d="M605 80 L605 160" class="dg-edge"/>
+<path d="M545 160 L605 160" class="dg-edge"/>
+<path d="M605 80 L545 160" class="dg-edge"/>
+<path d="M665 80 L725 80" class="dg-edge"/>
+<path d="M665 80 L665 160" class="dg-edge"/>
+<path d="M725 80 L725 160" class="dg-edge"/>
+<path d="M665 160 L725 160" class="dg-edge"/>
+<path d="M725 80 L665 160" class="dg-edge"/>
+<path d="M485 160 L545 80" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<path d="M605 160 L665 80" class="dg-feedback" style="stroke: var(--l-gpu)"/>
+<circle cx="425" cy="80" r="12" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="485" cy="80" r="12" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="425" cy="160" r="12" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="485" cy="160" r="12" class="dg-layer" style="--c: var(--l-service)"/>
+<circle cx="545" cy="80" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="605" cy="80" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="545" cy="160" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="605" cy="160" r="12" class="dg-layer" style="--c: var(--l-queue)"/>
+<circle cx="665" cy="80" r="12" class="dg-layer" style="--c: var(--l-external)"/>
+<circle cx="725" cy="80" r="12" class="dg-layer" style="--c: var(--l-external)"/>
+<circle cx="665" cy="160" r="12" class="dg-layer" style="--c: var(--l-external)"/>
+<circle cx="725" cy="160" r="12" class="dg-layer" style="--c: var(--l-external)"/>
+<text class="dg-small" x="405" y="268" text-anchor="start">2 de 17 aristas cruzan particiones</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.10.</b> El color de cada punto es su comunidad; las líneas punteadas cruzan de partición. Con hash, una consulta de amigos va a casi todas las particiones; por comunidad, a una o dos. Ugander y Backstrom (2013) partieron el grafo de Facebook con propagación de etiquetas balanceada para mantener locales la mayoría de las amistades. <span class="badge badge--doc">Documentado</span></figcaption>
+</figure>
+
+
+<div data-calc="graphshard"></div>
+
+<p>Con 64 particiones y 200 amigos, el hash deja local 1 de cada 64 aristas y la consulta de amigos de Ana toca unas 61 particiones. Con una partición por comunidad que deje locales el 75&#8239;% (un supuesto: el número real depende del grafo), quedan 50 amigos remotos y la consulta toca unas 36. La cuenta de cuántas particiones distintas toca es la de sacar bolillas con reposición: <i>P</i> · (1 − (1 − 1/<i>P</i>)<sup><i>n</i></sup>).</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Partir por comunidad ahorra lecturas, pero las comunidades cambian (la gente se muda, cambia de trabajo) y hay que mover personas entre particiones; además, las comunidades grandes desbalancean la carga. Por eso muchos sistemas parten por hash y ponen un caché delante, como TAO, y resuelven los nodos calientes (una cuenta con un millón de seguidores) con réplicas de lectura de esa partición, el remedio de las claves calientes de <a href="m05-bases-de-datos.html#sharding">M05</a>.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> el hash reparte parejo y corta casi todas las aristas; por comunidad, las mantiene locales a cambio de rebalancear. Lo común es hash con caché y réplicas para los nodos calientes.</p>
+
+<h2 id="pipeline-pymk"><span class="sec-num">48.10</span>El pipeline de PYMK</h2>
+
+<p>Todo junto, con los números de Mercado Barrio:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f4811t f4811d">
+<title id="f4811t">El pipeline de PYMK de Mercado Barrio</title>
+<desc id="f4811d">Dos carriles. El carril por lotes, cada noche: lee el grafo, genera candidatos a dos saltos con tope y por PageRank personalizado, calcula features como Adamic-Adar y guarda unos 100 candidatos por persona. El carril en línea, por request: lee los candidatos precalculados, suma los de las amistades de hoy, calcula las features que cambian, corre el ranker, aplica filtros y el cupo, y devuelve 10 sugerencias en menos de 100 ms.</desc>
+<defs><marker id="f4811a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="24" text-anchor="start">Por lotes, cada noche</text>
+<rect class="dg-layer" x="20" y="36" width="166" height="56" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="103.0" y="60.0" text-anchor="middle">Grafo</text>
+<text class="dg-tiny" x="103.0" y="76.0" text-anchor="middle">4 000 M de aristas</text>
+<path class="dg-edge" d="M188 64 H202" marker-end="url(#f4811a)"/>
+<rect class="dg-layer" x="206" y="36" width="166" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="289.0" y="60.0" text-anchor="middle">Candidatos</text>
+<text class="dg-tiny" x="289.0" y="76.0" text-anchor="middle">2 saltos + PPR</text>
+<path class="dg-edge" d="M374 64 H388" marker-end="url(#f4811a)"/>
+<rect class="dg-layer" x="392" y="36" width="166" height="56" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="475.0" y="60.0" text-anchor="middle">Features</text>
+<text class="dg-tiny" x="475.0" y="76.0" text-anchor="middle">AA, en común</text>
+<path class="dg-edge" d="M560 64 H574" marker-end="url(#f4811a)"/>
+<rect class="dg-layer" x="578" y="36" width="166" height="56" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="661.0" y="60.0" text-anchor="middle">Guardar</text>
+<text class="dg-tiny" x="661.0" y="76.0" text-anchor="middle">100 por persona</text>
+<text class="dg-group" x="20" y="230" text-anchor="start">En línea, por request (presupuesto 100 ms)</text>
+<rect class="dg-layer" x="20" y="152" width="132" height="56" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="86.0" y="176.0" text-anchor="middle">Leer</text>
+<text class="dg-tiny" x="86.0" y="192.0" text-anchor="middle">precalculados</text>
+<path class="dg-edge" d="M154 180 H164" marker-end="url(#f4811a)"/>
+<rect class="dg-layer" x="168" y="152" width="132" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="234.0" y="176.0" text-anchor="middle">Sumar</text>
+<text class="dg-tiny" x="234.0" y="192.0" text-anchor="middle">amistades de hoy</text>
+<path class="dg-edge" d="M302 180 H312" marker-end="url(#f4811a)"/>
+<rect class="dg-layer" x="316" y="152" width="132" height="56" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="382.0" y="176.0" text-anchor="middle">Ranker</text>
+<text class="dg-tiny" x="382.0" y="192.0" text-anchor="middle">¿la acepta?</text>
+<path class="dg-edge" d="M450 180 H460" marker-end="url(#f4811a)"/>
+<rect class="dg-warnbox" x="464" y="152" width="132" height="56" rx="8"/>
+<text class="dg-small" x="530.0" y="176.0" text-anchor="middle">Filtros</text>
+<text class="dg-tiny" x="530.0" y="192.0" text-anchor="middle">bloqueos, menores</text>
+<path class="dg-edge" d="M598 180 H608" marker-end="url(#f4811a)"/>
+<rect class="dg-box dg-box--em" x="612" y="152" width="132" height="56" rx="8"/>
+<text class="dg-small" x="678.0" y="176.0" text-anchor="middle">Cupo</text>
+<text class="dg-tiny" x="678.0" y="192.0" text-anchor="middle">10 sugerencias</text>
+<path class="dg-feedback" d="M670 94 V120 H86 V148" marker-end="url(#f4811a)"/>
+<rect class="dg-box" x="20" y="248" width="730" height="72" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-tiny dg-mono" x="34" y="272" text-anchor="start" style="white-space:pre">Lotes: 20 000 000 personas × 40 000 aristas = 8 × 10¹¹ lecturas; a 50 ns, 40 000 s de CPU.</text>
+<text class="dg-tiny dg-mono" x="34" y="292" text-anchor="start" style="white-space:pre">Con 100 núcleos: unos 7 minutos. Guardar 100 candidatos de 12 bytes: 24 GB por noche.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.11.</b> Lo caro (el segundo salto sobre todo el grafo) va por lotes; lo que cambia en el día (una amistad nueva, un bloqueo) va en línea. Las cuentas usan el costo por arista del widget, que es un supuesto. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<ol class="steps">
+  <li><span class="step-title">Candidatos por lotes</span>Cada noche, dos saltos con tope de 1 000 por amigo y unas caminatas de PPR por persona. Son unas 8 × 10¹¹ lecturas de aristas: con el costo supuesto de 50 ns, 40 000 segundos de CPU, unos 7 minutos con 100 núcleos.</li>
+  <li><span class="step-title">Features</span>Vecinos comunes, Adamic-Adar, si se escribieron, si comparten escuela, cuántos días lleva cada uno en la plataforma. Las del par se calculan en el lote; las que cambian, en línea.</li>
+  <li><span class="step-title">Guardar</span>Los 100 mejores candidatos por persona, con 8 bytes de id y 4 de puntaje: 24 GB por noche, en Redis o en el KV.</li>
+  <li><span class="step-title">En línea</span>Leer los precalculados, sumar los amigos de amigos de las amistades de hoy (pocas, baratas), correr el ranker de aceptación (el multi-tarea de <a href="m46-ranking.html#que-predice">M46</a>, con "acepta" y "reporta" como tareas), filtrar y cortar en el cupo.</li>
+  <li><span class="step-title">Registrar</span>Cada sugerencia mostrada, con su posición y su propensión (<a href="m47-reranking-exploracion.html#sesgo-posicion">M47</a>), y lo que pasó: invitación, aceptada, ignorada, reportada.</li>
+</ol>
+
+<aside class="callout callout--prod">
+  <p class="callout-label">En producción real</p>
+  <p>El cupo diario no es un detalle. Sugerir 50 personas por día a alguien que ya tiene 800 amigos genera invitaciones que el otro ignora, y cada invitación ignorada es una notificación molesta para un tercero. Se limita cuántas sugerencias ve cada persona y cuántas invitaciones puede recibir alguien por día desde PYMK, y se baja el cupo cuando sube la tasa de ignoradas.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> los saltos van por lotes, lo del día va en línea, el ranker predice aceptación y reporte, y el cupo protege también a quien recibe la invitación.</p>
+
+<h2 id="danos"><span class="sec-num">48.11</span>Cuando recomendar amigos hace daño</h2>
+
+<p>En un feed, un error es un video que no te interesa. En PYMK, un error puede ser sugerirle a una persona que huyó de su ex la cuenta nueva de su ex, o a la inversa; sugerirle a un adulto desconocido el perfil de una menor; o mostrarle a alguien que su terapeuta tiene otros pacientes que conoce. Son daños que la persona que los sufre no causó y que el ranker no puede ver en las métricas de aceptación.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f4812t f4812d">
+<title id="f4812t">Reglas que no se negocian</title>
+<desc id="f4812d">Una pila de filtros duros por los que pasa cada sugerencia antes de mostrarse, en orden: bloqueos en cualquier dirección, invitaciones rechazadas o ignoradas antes, menores con adultos que no conocen, sugerencias que salen solo de una señal sensible como ubicación, salud o contactos de una profesión con secreto, y la opción de la persona de no aparecer en sugerencias. Al costado, la métrica de daño: reportes y bloqueos por cada mil sugerencias.</desc>
+<defs><marker id="f4812a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-warnbox" x="20" y="20" width="470" height="42" rx="8"/>
+<text class="dg-small" x="36" y="46" text-anchor="start">Bloqueo en cualquier dirección: nunca</text>
+<path class="dg-edge" d="M255 64 V70" marker-end="url(#f4812a)"/>
+<rect class="dg-warnbox" x="20" y="72" width="470" height="42" rx="8"/>
+<text class="dg-small" x="36" y="98" text-anchor="start">Rechazada o ignorada antes: no por 6 meses</text>
+<path class="dg-edge" d="M255 116 V122" marker-end="url(#f4812a)"/>
+<rect class="dg-warnbox" x="20" y="124" width="470" height="42" rx="8"/>
+<text class="dg-small" x="36" y="150" text-anchor="start">Menor con adulto sin amigos en común: nunca</text>
+<path class="dg-edge" d="M255 168 V174" marker-end="url(#f4812a)"/>
+<rect class="dg-warnbox" x="20" y="176" width="470" height="42" rx="8"/>
+<text class="dg-small" x="36" y="202" text-anchor="start">Solo por una señal sensible (lugar, salud): no</text>
+<path class="dg-edge" d="M255 220 V226" marker-end="url(#f4812a)"/>
+<rect class="dg-warnbox" x="20" y="228" width="470" height="42" rx="8"/>
+<text class="dg-small" x="36" y="254" text-anchor="start">La persona eligió no aparecer: no</text>
+<rect class="dg-layer" x="530" y="20" width="220" height="250" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="546" y="46" text-anchor="start">Métrica de daño</text>
+<text class="dg-tiny" x="546" y="76" text-anchor="start">reportes y bloqueos</text>
+<text class="dg-tiny" x="546" y="96" text-anchor="start">cada 1 000 sugerencias</text>
+<text class="dg-tiny" x="546" y="116" text-anchor="start">mostradas, por segmento</text>
+<text class="dg-tiny" x="546" y="136" text-anchor="start"></text>
+<text class="dg-tiny" x="546" y="156" text-anchor="start">Un ranker que sube las</text>
+<text class="dg-tiny" x="546" y="176" text-anchor="start">aceptadas y sube esta</text>
+<text class="dg-tiny" x="546" y="196" text-anchor="start">métrica no se lanza.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.12.</b> Los filtros de PYMK van antes del cupo y no los decide el ranker, como la capa de reglas de M47, pero con más en juego: un error no es un clic perdido sino revelarle a alguien dónde está otra persona. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>Las reglas van en la capa de filtros, como las de <a href="m47-reranking-exploracion.html#reglas">M47</a>, con tres diferencias. Se aplican en las dos direcciones: si Ana bloqueó a Luis, Luis tampoco ve a Ana. Se aplican también a la explicación: "tienen a Carla en común" puede revelar que Ana es amiga de Carla a alguien que no debería saberlo, así que las explicaciones respetan la privacidad de la lista de amigos de cada persona. Y tienen dueño fuera del equipo de ML (confianza y seguridad, legal), con una métrica de daño que puede frenar un lanzamiento aunque las aceptaciones suban. El tema vuelve, con otra cara, en <a href="m51-engagement.html#mecanismos">M51</a>.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> los filtros de PYMK son duros, en las dos direcciones y también sobre las explicaciones; una métrica de daño puede frenar un ranker que sube las aceptaciones.</p>
+
+<p>Para cerrar, el embudo de M42 visto desde el grafo:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f48zt f48zd">
+<title id="f48zt">El embudo con las piezas de PYMK resaltadas</title>
+<desc id="f48zd">El embudo de Mercado Barrio: catálogo, recuperación, filtros, ranking liviano, ranking pesado y re-ranking, con el bucle de impresiones, log y entrenamiento. Resaltados, la recuperación, el ranking pesado y el re-ranking, que en PYMK son los dos saltos, el ranker de aceptación y los filtros de privacidad.</desc>
+<defs><marker id="f48za" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="540" y="26" text-anchor="start">Cuántos quedan y la latencia acumulada</text>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="160.0" y="40" width="340" height="32" rx="6"/>
+<text class="dg-small" x="330" y="61" text-anchor="middle">Catálogo</text>
+<text class="dg-small" x="540" y="53" text-anchor="start">100 000 000 ítems</text>
+<text class="dg-tiny" x="540" y="69" text-anchor="start">productos y videos de reseña</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="200.0" y="88" width="260" height="32" rx="6"/>
+<text class="dg-small" x="330" y="109" text-anchor="middle">Recuperación</text>
+<text class="dg-small" x="540" y="101" text-anchor="start">10 000 candidatos  ·  25 ms</text>
+<text class="dg-tiny" x="540" y="117" text-anchor="start">varias fuentes en paralelo</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="210.0" y="136" width="240" height="32" rx="6"/>
+<text class="dg-small" x="330" y="157" text-anchor="middle">Filtros</text>
+<text class="dg-small" x="540" y="149" text-anchor="start">unos 9 000  ·  30 ms</text>
+<text class="dg-tiny" x="540" y="165" text-anchor="start">ya visto, bloqueado, sin stock</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="245.0" y="184" width="170" height="32" rx="6"/>
+<text class="dg-small" x="330" y="205" text-anchor="middle">Ranking liviano</text>
+<text class="dg-small" x="540" y="197" text-anchor="start">500  ·  63 ms</text>
+<text class="dg-tiny" x="540" y="213" text-anchor="start">features y un modelo barato</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="270.0" y="232" width="120" height="32" rx="6"/>
+<text class="dg-small" x="330" y="253" text-anchor="middle">Ranking pesado</text>
+<text class="dg-small" x="540" y="245" text-anchor="start">50  ·  113 ms</text>
+<text class="dg-tiny" x="540" y="261" text-anchor="start">un modelo grande, multi-tarea</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="288.0" y="280" width="84" height="32" rx="6"/>
+<text class="dg-small" x="330" y="301" text-anchor="middle">Re-ranking</text>
+<text class="dg-small" x="540" y="293" text-anchor="start">10 en pantalla  ·  118 ms</text>
+<text class="dg-tiny" x="540" y="309" text-anchor="start">diversidad, frescura, reglas</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="230" y="336" width="200" height="40" rx="8"/>
+<text class="dg-small" x="330.0" y="360.0" text-anchor="middle">Registro de impresiones</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="20" y="336" width="130" height="40" rx="8"/>
+<text class="dg-small" x="85.0" y="360.0" text-anchor="middle">Log de eventos</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="20" y="150" width="120" height="44" rx="8"/>
+<text class="dg-small" x="80.0" y="176.0" text-anchor="middle">Entrenamiento</text>
+</g>
+<path class="dg-edge" d="M330 312 V334" marker-end="url(#f48za)"/>
+<path class="dg-edge" d="M230 356 H152" marker-end="url(#f48za)"/>
+<text class="dg-tiny" x="191" y="389" text-anchor="middle">con clics y compras</text>
+<path class="dg-edge" d="M80 336 V196" marker-end="url(#f48za)"/>
+<path class="dg-feedback" d="M140 166 H176 V104 H198" marker-end="url(#f48za)"/>
+<path class="dg-feedback" d="M140 178 H200 V200 H243" marker-end="url(#f48za)"/>
+<path class="dg-feedback" d="M140 188 H186 V248 H268" marker-end="url(#f48za)"/>
+<text class="dg-tiny" x="88" y="230" text-anchor="start">modelos nuevos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 48.13.</b> Dónde estás. El grafo es una fuente de candidatos de la recuperación (la de "lo que compran tus contactos" en M45) y, en PYMK, todo el embudo: candidatos a dos saltos, un ranker que predice aceptaciones y una capa de filtros más estricta que la del feed.</figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Lo que viene</p>
+  <p>Ya tienes todas las piezas de un recomendador. <a href="m49-experimentos.html">M49</a> responde la pregunta que quedó abierta desde M42: cómo saber si un cambio mejoró algo, con experimentos A/B, CUPED, interleaving y evaluación sin lanzar.</p>
+</aside>
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m48"></div>
+
+<div data-exercise="m48-pymk"></div>
+
+<div data-checkpoint="m48"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m48.data.js"></script>
+<script src="../assets/js/data/exercises/m48.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/widgets/sim-graph.js"></script>
+</body>
+</html>

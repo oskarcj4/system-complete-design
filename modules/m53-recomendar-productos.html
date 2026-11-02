@@ -1,0 +1,1031 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M53. Caso de estudio: recomendar productos</title>
+<meta name="description" content="Almacén Sur, una tienda en línea: superficies, mapa, comprados juntos con co-ocurrencia y lift, parecidos, inicio con ALS implícito, ranker y re-ranking, sesión sin cuenta, stock, negocio, qué modelo según los datos, medición y factura.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/map.css">
+</head>
+<body data-root="../" data-module="m53">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la ruta del curso"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Ruta del curso">
+    <nav data-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Caso de estudio: recomendar productos</h1>
+        <p class="lead">Comprados juntos, más como esto y tu inicio: tres algoritmos para una tienda, con sus trade-offs.</p>
+        <dl class="tb-grid">
+          <div><dt>Plano</dt><dd>M53</dd></div>
+          <div><dt>Parte</dt><dd>VI. ML System Design</dd></div>
+          <div><dt>Duración</dt><dd>150 min</dd></div>
+          <div><dt>Requisitos previos</dt><dd>M42 a M50</dd></div>
+          <div><dt>Estado</dt><dd data-status="m53">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+  <h2 class="plain" id="obj">Al terminar podrás</h2>
+  <ul>
+    <li>Dimensionar las recomendaciones de una tienda y ver qué superficie carga más y cuál cuesta más.</li>
+    <li>Diseñar "comprados juntos" con co-ocurrencia y lift: pseudocódigo, complejidad, memoria y cuándo recalcular.</li>
+    <li>Diseñar "para ti" con ALS implícito, un ranker de p(compra) y un re-ranking con margen y diversidad.</li>
+    <li>Recomendar a quien entra sin cuenta con lo que miró en la sesión.</li>
+    <li>Separar filtros duros de features, y patrocinados de recomendaciones.</li>
+    <li>Elegir el modelo según los datos que hay, y medir un cambio en ingresos por sesión.</li>
+  </ul>
+</section>
+
+<p>Comprados juntos, más como esto y tu inicio: tres algoritmos para una tienda, con sus trade-offs. Este caso es <b>Almacén Sur</b>, una tienda en línea con 1 500 vendedores. Es distinto de Clip en casi todo: menos tráfico, decisiones más caras (una compra, no un deslizar) y señales mucho más raras. Es un diseño de referencia; lo que viene de Amazon y de la literatura lleva su badge.</p>
+
+<figure class="figure plate">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 380" role="img" aria-labelledby="f53at f53ad">
+<title id="f53at">Almacén Sur por dentro</title>
+<desc id="f53ad">Cuatro franjas. Arriba, las cuatro superficies: página de producto, carrito, inicio y correo. Debajo, lo que se sirve en línea: tablas ítem a ítem, recomendador de sesión, candidatos, ranker de árboles y re-ranking con stock, margen y patrocinados. Más abajo, lo que se calcula cada noche: co-ocurrencia con lift, ALS implícito y el entrenamiento del ranker. Al fondo, el log de eventos y el data lake.</desc>
+<defs><marker id="f53aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="14" y="52" text-anchor="start">Superficies</text>
+<rect class="dg-layer" x="140.0" y="28" width="138.5" height="44" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="209.2" y="54.0" text-anchor="middle">Página de producto</text>
+<rect class="dg-layer" x="292.5" y="28" width="138.5" height="44" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="361.8" y="54.0" text-anchor="middle">Carrito</text>
+<rect class="dg-layer" x="445.0" y="28" width="138.5" height="44" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="514.2" y="54.0" text-anchor="middle">Inicio</text>
+<rect class="dg-layer" x="597.5" y="28" width="138.5" height="44" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="666.8" y="54.0" text-anchor="middle">Correo</text>
+<text class="dg-group" x="14" y="140" text-anchor="start">En línea</text>
+<rect class="dg-layer" x="140.0" y="116" width="108.0" height="44" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="194.0" y="142.0" text-anchor="middle">Tablas ítem a ítem</text>
+<rect class="dg-layer" x="262.0" y="116" width="108.0" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="316.0" y="142.0" text-anchor="middle">Sesión</text>
+<rect class="dg-layer" x="384.0" y="116" width="108.0" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="438.0" y="142.0" text-anchor="middle">Candidatos</text>
+<rect class="dg-layer" x="506.0" y="116" width="108.0" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="560.0" y="142.0" text-anchor="middle">Ranker</text>
+<rect class="dg-layer" x="628.0" y="116" width="108.0" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="682.0" y="142.0" text-anchor="middle">Re-ranking</text>
+<text class="dg-group" x="14" y="228" text-anchor="start">Cada noche</text>
+<rect class="dg-layer" x="140.0" y="204" width="189.33333333333334" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="234.7" y="230.0" text-anchor="middle">Co-ocurrencia</text>
+<rect class="dg-layer" x="343.33333333333337" y="204" width="189.33333333333334" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="438.0" y="230.0" text-anchor="middle">ALS implícito</text>
+<rect class="dg-layer" x="546.6666666666667" y="204" width="189.33333333333334" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="641.3" y="230.0" text-anchor="middle">Ranker nuevo</text>
+<text class="dg-group" x="14" y="316" text-anchor="start">Datos</text>
+<rect class="dg-layer" x="140.0" y="292" width="291.0" height="44" rx="8" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="285.5" y="318.0" text-anchor="middle">Kafka</text>
+<rect class="dg-layer" x="445.0" y="292" width="291.0" height="44" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="590.5" y="318.0" text-anchor="middle">Data lake</text>
+<g class="pl-pin"><circle cx="142.0" cy="30" r="11"/><text x="142.0" y="34" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="142.0" cy="118" r="11"/><text x="142.0" y="122" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="264.0" cy="118" r="11"/><text x="264.0" y="122" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="508.0" cy="118" r="11"/><text x="508.0" y="122" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="630.0" cy="118" r="11"/><text x="630.0" y="122" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="142.0" cy="206" r="11"/><text x="142.0" y="210" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="345.33333333333337" cy="206" r="11"/><text x="345.33333333333337" y="210" text-anchor="middle">7</text></g>
+</svg>
+  </div>
+  <figcaption><b>Lámina 53.A.</b> Las piezas de Almacén Sur. Cuatro superficies, dos algoritmos que se calculan de noche y una request que casi siempre es leer una clave. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+<ol class="plate-key">
+  <li><b>Superficies</b><span>Cada lugar donde se recomienda pide algo distinto: complementos, parecidos o variedad. <a href="#superficies">53.2</a></span></li>
+  <li><b>Tablas ítem a ítem</b><span>Para cada producto, sus 20 complementos y sus 20 parecidos, calculados de noche. <a href="#comprados-juntos">53.4</a></span></li>
+  <li><b>Recomendador de sesión</b><span>Para quien entra sin cuenta: recomienda con lo que miró en los últimos minutos. <a href="#sesion">53.7</a></span></li>
+  <li><b>Ranker</b><span>Árboles que predicen la probabilidad de compra en 7 días. <a href="#inicio">53.6</a></span></li>
+  <li><b>Re-ranking</b><span>Stock, margen con un peso chico, categorías variadas, vendedores repartidos y un patrocinado marcado. <a href="#inicio-rerank">53.6</a></span></li>
+  <li><b>Co-ocurrencia con lift</b><span>El primer algoritmo en detalle: contar pares y comparar contra el azar. <a href="#comprados-juntos">53.4</a></span></li>
+  <li><b>ALS implícito</b><span>El segundo: factores de personas y productos, recalculados cada noche. <a href="#inicio">53.6</a></span></li>
+</ol>
+
+
+<h2 id="numeros"><span class="sec-num">53.1</span>Qué se construye y los números</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Dato</th><th class="r">Valor</th><th>De dónde sale</th></tr></thead>
+    <tbody>
+      <tr><td>Personas activas por día</td><td class="r">3 000 000</td><td>Supuesto del caso</td></tr>
+      <tr><td>Sesiones por día</td><td class="r">4 000 000</td><td>El 40&#8239;% sin cuenta</td></tr>
+      <tr><td>Productos activos</td><td class="r">2 000 000</td><td>De 1 500 vendedores</td></tr>
+      <tr><td>Páginas de producto por día</td><td class="r">24 000 000</td><td>4 M sesiones × 6</td></tr>
+      <tr><td>Pedidos por día</td><td class="r">120 000</td><td>Conversión del 3&#8239;% de las sesiones</td></tr>
+      <tr><td>Pedidos por año</td><td class="r">43 800 000</td><td>120 000 × 365, con 2.5 productos en promedio</td></tr>
+      <tr><td>Personas con historia en el año</td><td class="r">10 000 000</td><td>Las que entraron con cuenta al menos una vez</td></tr>
+      <tr><td>Interacciones en el año</td><td class="r">500 000 000</td><td>Vistas, carritos y compras con cuenta</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f531t f531d">
+<title id="f531t">Dos superficies, dos cargas</title>
+<desc id="f531d">Dos cadenas de cajas. Arriba, la página de producto: 4 millones de sesiones por 6 páginas dan 24 millones de páginas por día, 278 por segundo en promedio y 833 en el pico, cada una con una lectura de tabla. Abajo, el inicio: 3 millones de personas por 2 aperturas dan 6 millones por día, 69 por segundo y 208 en el pico; por 500 candidatos, 104 000 puntuaciones por segundo.</desc>
+<defs><marker id="f531a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="26" text-anchor="start">Página de producto</text>
+<rect class="dg-layer" x="20" y="36" width="130" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="85.0" y="60.0" text-anchor="middle">24 M</text>
+<text class="dg-tiny" x="85.0" y="76.0" text-anchor="middle">páginas/día</text>
+<path class="dg-edge" d="M152 64 H218" marker-end="url(#f531a)"/>
+<text class="dg-tiny dg-mono" x="185" y="54" text-anchor="middle" style="white-space:pre">÷ 86 400</text>
+<rect class="dg-layer" x="220" y="36" width="130" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="285.0" y="60.0" text-anchor="middle">278</text>
+<text class="dg-tiny" x="285.0" y="76.0" text-anchor="middle">por segundo</text>
+<path class="dg-edge" d="M352 64 H418" marker-end="url(#f531a)"/>
+<text class="dg-tiny dg-mono" x="385" y="54" text-anchor="middle" style="white-space:pre">× 3</text>
+<rect class="dg-layer" x="420" y="36" width="130" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="485.0" y="60.0" text-anchor="middle">833</text>
+<text class="dg-tiny" x="485.0" y="76.0" text-anchor="middle">en el pico</text>
+<path class="dg-edge" d="M552 64 H618" marker-end="url(#f531a)"/>
+<text class="dg-tiny dg-mono" x="585" y="54" text-anchor="middle" style="white-space:pre">× 1</text>
+<rect class="dg-layer" x="620" y="36" width="130" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="685.0" y="60.0" text-anchor="middle">833</text>
+<text class="dg-tiny" x="685.0" y="76.0" text-anchor="middle">lecturas/s</text>
+<text class="dg-group" x="20" y="140" text-anchor="start">Inicio</text>
+<rect class="dg-layer" x="20" y="150" width="130" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="85.0" y="174.0" text-anchor="middle">6 M</text>
+<text class="dg-tiny" x="85.0" y="190.0" text-anchor="middle">aperturas/día</text>
+<path class="dg-edge" d="M152 178 H218" marker-end="url(#f531a)"/>
+<text class="dg-tiny dg-mono" x="185" y="168" text-anchor="middle" style="white-space:pre">÷ 86 400</text>
+<rect class="dg-layer" x="220" y="150" width="130" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="285.0" y="174.0" text-anchor="middle">69</text>
+<text class="dg-tiny" x="285.0" y="190.0" text-anchor="middle">por segundo</text>
+<path class="dg-edge" d="M352 178 H418" marker-end="url(#f531a)"/>
+<text class="dg-tiny dg-mono" x="385" y="168" text-anchor="middle" style="white-space:pre">× 3</text>
+<rect class="dg-layer" x="420" y="150" width="130" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="485.0" y="174.0" text-anchor="middle">208</text>
+<text class="dg-tiny" x="485.0" y="190.0" text-anchor="middle">en el pico</text>
+<path class="dg-edge" d="M552 178 H618" marker-end="url(#f531a)"/>
+<text class="dg-tiny dg-mono" x="585" y="168" text-anchor="middle" style="white-space:pre">× 500</text>
+<rect class="dg-layer" x="620" y="150" width="130" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="685.0" y="174.0" text-anchor="middle">104 000</text>
+<text class="dg-tiny" x="685.0" y="190.0" text-anchor="middle">puntuaciones/s</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.1.</b> La página de producto recibe cuatro veces más tráfico que el inicio, pero es mucho más barata: una lectura de tabla contra 500 puntuaciones. El pico de 3 veces el promedio es un supuesto. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: lo raro de una compra</p>
+  <p>En Clip, cada persona produce 40 señales por día. En Almacén Sur, una compra cada muchas visitas: 120 000 pedidos entre 4 millones de sesiones es un 3&#8239;%. Por eso las señales se apilan de más débil a más fuerte (vista, carrito, compra) y por eso la ventana es de un año, no de horas.</p>
+  <pre data-lang="python"><code>pedidos_dia = 4e6 * 0.03            # 120 000
+pedidos_ano = pedidos_dia * 365      # 43.8 M
+pico_producto = 24e6 / 86_400 * 3    # 833 por segundo
+pico_inicio = 3e6 * 2 / 86_400 * 3   # 208 por segundo</code></pre>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> 833 páginas de producto por segundo en el pico, 208 inicios y una compra cada 33 sesiones.</p>
+
+<h2 id="superficies"><span class="sec-num">53.2</span>Las superficies</h2>
+
+<p>Una tienda no tiene un feed: tiene lugares donde recomendar, y cada uno responde otra pregunta.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="f532t f532d">
+<title id="f532t">Cuatro superficies, cuatro preguntas</title>
+<desc id="f532d">Cuatro tarjetas. Página de producto: qué se compra con esto (complementos) y qué se parece (sustitutos). Carrito: qué falta para completar lo que llevas. Inicio: qué te puede interesar hoy. Correo: qué vale la pena avisarte esta semana. Debajo de cada una, el algoritmo y el tiempo que tiene.</desc>
+<defs><marker id="f532a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="20" width="172" height="70" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="106.0" y="51.0" text-anchor="middle">Página de producto</text>
+<text class="dg-tiny" x="106.0" y="67.0" text-anchor="middle">¿qué va con esto?</text>
+<path class="dg-edge" d="M106 92 V118" marker-end="url(#f532a)"/>
+<rect class="dg-layer" x="20" y="120" width="172" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="106.0" y="144.0" text-anchor="middle">tablas ítem a ítem</text>
+<text class="dg-tiny" x="106.0" y="160.0" text-anchor="middle">&lt; 50 ms</text>
+<rect class="dg-layer" x="208" y="20" width="172" height="70" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="294.0" y="51.0" text-anchor="middle">Carrito</text>
+<text class="dg-tiny" x="294.0" y="67.0" text-anchor="middle">¿qué te falta?</text>
+<path class="dg-edge" d="M294 92 V118" marker-end="url(#f532a)"/>
+<rect class="dg-layer" x="208" y="120" width="172" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="294.0" y="144.0" text-anchor="middle">tablas, unidas y sin repetir</text>
+<text class="dg-tiny" x="294.0" y="160.0" text-anchor="middle">&lt; 50 ms</text>
+<rect class="dg-layer" x="396" y="20" width="172" height="70" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="482.0" y="51.0" text-anchor="middle">Inicio</text>
+<text class="dg-tiny" x="482.0" y="67.0" text-anchor="middle">¿qué te interesa hoy?</text>
+<path class="dg-edge" d="M482 92 V118" marker-end="url(#f532a)"/>
+<rect class="dg-layer" x="396" y="120" width="172" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="482.0" y="144.0" text-anchor="middle">ALS + ranker + re-ranking</text>
+<text class="dg-tiny" x="482.0" y="160.0" text-anchor="middle">&lt; 150 ms</text>
+<rect class="dg-layer" x="584" y="20" width="172" height="70" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="670.0" y="51.0" text-anchor="middle">Correo</text>
+<text class="dg-tiny" x="670.0" y="67.0" text-anchor="middle">¿qué vale avisarte?</text>
+<path class="dg-edge" d="M670 92 V118" marker-end="url(#f532a)"/>
+<rect class="dg-layer" x="584" y="120" width="172" height="56" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="670.0" y="144.0" text-anchor="middle">el mismo ranker, en lote</text>
+<text class="dg-tiny" x="670.0" y="160.0" text-anchor="middle">horas</text>
+<text class="dg-tiny" x="20" y="212" text-anchor="start">La misma tienda, cuatro problemas: no hay un recomendador, hay uno por superficie que comparten tablas y features.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.2.</b> Cada superficie tiene su pregunta, su algoritmo y su presupuesto de tiempo. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Página de producto.</b> Dos cajas: "comprados juntos" (complementos) y "parecidos" (sustitutos). Es la superficie más vista y la que más vende por impresión.</li>
+  <li><b>Carrito.</b> Los complementos de todo el carrito juntos, sin lo que ya está y sin lo que lo reemplaza: si llevas una carpa, ninguna otra carpa.</li>
+  <li><b>Inicio.</b> El único lugar sin un producto de partida: "para ti", con candidatos, ranking y re-ranking.</li>
+  <li><b>Correo.</b> El mismo ranker del inicio, en lote, con un tope de frecuencia y una baja visible. Un correo malo cuesta más que una caja mala: la persona se da de baja.</li>
+</ul>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> cuatro superficies con cuatro preguntas; comparten tablas y features.</p>
+
+<h2 id="arquitectura"><span class="sec-num">53.3</span>La arquitectura de Almacén Sur</h2>
+
+<p>Cinco franjas: personas, entrada, una request, tablas e índices, y el lote de cada noche. Elige un escenario para seguir un viaje paso a paso.</p>
+
+<div data-map="m53-tienda"></div>
+
+<p>La diferencia con Clip está en la última franja: casi todo se calcula de noche. Los pares que se compran juntos no cambian en una hora; el stock, sí, y por eso es la única pieza que se actualiza en segundos (escenario "Se agota un producto").</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> 18 piezas y siete viajes; lo caro corre de noche y servir es leer.</p>
+
+<h2 id="comprados-juntos"><span class="sec-num">53.4</span>Comprados juntos: co-ocurrencia con lift</h2>
+
+<p>El primer algoritmo en detalle. La idea es el <a href="m44-modelos-clasicos.html#item-item">ítem a ítem</a> de M44 con pedidos en lugar de vistas: dos productos van juntos si aparecen en los mismos pedidos más de lo que el azar explicaría.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f534t f534d">
+<title id="f534t">De pedidos a pares</title>
+<desc id="f534d">A la izquierda, tres pedidos: carpa, bolsa y pilas; carpa y pilas; bolsa, pilas y linterna. En el medio, los pares que salen de cada pedido. A la derecha, la tabla de conteos de pares: carpa y pilas 2, bolsa y pilas 2, carpa y bolsa 1, bolsa y linterna 1, pilas y linterna 1. Las pilas están en todos los pares altos porque están en todos los pedidos.</desc>
+<defs><marker id="f534a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="20" width="180" height="56" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="110.0" y="44.0" text-anchor="middle">Pedido 1</text>
+<text class="dg-tiny" x="110.0" y="60.0" text-anchor="middle">carpa · bolsa · pilas</text>
+<path class="dg-edge" d="M202 48 H238" marker-end="url(#f534a)"/>
+<text class="dg-tiny dg-mono" x="246" y="40" text-anchor="start" style="white-space:pre">carpa+bolsa  carpa+pilas</text>
+<text class="dg-tiny dg-mono" x="246" y="58" text-anchor="start" style="white-space:pre">bolsa+pilas</text>
+<rect class="dg-layer" x="20" y="100" width="180" height="56" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="110.0" y="124.0" text-anchor="middle">Pedido 2</text>
+<text class="dg-tiny" x="110.0" y="140.0" text-anchor="middle">carpa · pilas</text>
+<path class="dg-edge" d="M202 128 H238" marker-end="url(#f534a)"/>
+<text class="dg-tiny dg-mono" x="246" y="120" text-anchor="start" style="white-space:pre">carpa+pilas</text>
+<rect class="dg-layer" x="20" y="180" width="180" height="56" rx="8" style="--c: var(--l-client)"/>
+<text class="dg-small" x="110.0" y="204.0" text-anchor="middle">Pedido 3</text>
+<text class="dg-tiny" x="110.0" y="220.0" text-anchor="middle">bolsa · pilas · linterna</text>
+<path class="dg-edge" d="M202 208 H238" marker-end="url(#f534a)"/>
+<text class="dg-tiny dg-mono" x="246" y="200" text-anchor="start" style="white-space:pre">bolsa+pilas  bolsa+linterna</text>
+<text class="dg-tiny dg-mono" x="246" y="218" text-anchor="start" style="white-space:pre">pilas+linterna</text>
+<path class="dg-frame" d="M480 20 V250"/>
+<text class="dg-group" x="500" y="30" text-anchor="start">Conteo de cada par</text>
+<text class="dg-small dg-mono" x="500" y="66" text-anchor="start" style="white-space:pre">carpa + pilas</text>
+<rect class="dg-layer" x="650" y="52" width="80" height="20" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="736" y="66" text-anchor="start">2</text>
+<text class="dg-small dg-mono" x="500" y="102" text-anchor="start" style="white-space:pre">bolsa + pilas</text>
+<rect class="dg-layer" x="650" y="88" width="80" height="20" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="736" y="102" text-anchor="start">2</text>
+<text class="dg-small dg-mono" x="500" y="138" text-anchor="start" style="white-space:pre">carpa + bolsa</text>
+<rect class="dg-layer" x="650" y="124" width="40" height="20" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="696" y="138" text-anchor="start">1</text>
+<text class="dg-small dg-mono" x="500" y="174" text-anchor="start" style="white-space:pre">bolsa + linterna</text>
+<rect class="dg-layer" x="650" y="160" width="40" height="20" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="696" y="174" text-anchor="start">1</text>
+<text class="dg-small dg-mono" x="500" y="210" text-anchor="start" style="white-space:pre">pilas + linterna</text>
+<rect class="dg-layer" x="650" y="196" width="40" height="20" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="696" y="210" text-anchor="start">1</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.3.</b> Contar pares es la parte fácil. El problema se ve ya con tres pedidos: el conteo premia lo que está en todos los pedidos, no lo que va con la carpa.</figcaption>
+</figure>
+
+
+<p>Contar no alcanza. Smith y Linden contaron en 2017 que el "quien compró X también compró Y" ingenuo recomienda lo popular, y que hay que comparar cuántos compraron los dos contra cuántos se esperaría que lo hicieran por casualidad <span class="badge badge--doc">Documentado</span>. Esa comparación es el <dfn data-term="lift">lift</dfn>: cuántas veces más aparecen juntos de lo esperado.</p>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: lift con un ejemplo resuelto</p>
+  <p>Un millón de pedidos. La carpa aparece en 2 000, la bolsa de dormir en 1 500 y las pilas en 50 000. La carpa y la bolsa van juntas en 300 pedidos; la carpa y las pilas, en 400.</p>
+  <ul>
+    <li><b>Por conteo:</b> pilas 400, bolsa 300. Ganan las pilas.</li>
+    <li><b>Esperado por azar:</b> si fueran independientes, carpa y pilas irían juntas en 2 000 × 50 000 ÷ 1 000 000 = 100 pedidos; carpa y bolsa, en 2 000 × 1 500 ÷ 1 000 000 = 3.</li>
+    <li><b>Lift</b> = observado ÷ esperado: pilas 400 ÷ 100 = 4; bolsa 300 ÷ 3 = 100. Gana la bolsa, por mucho.</li>
+  </ul>
+  <p>El lift tiene su propia trampa: con pocos datos explota. Un producto raro que está en 3 pedidos, 2 de ellos con la carpa, tiene un lift de 2 × 1 000 000 ÷ (2 000 × 3) = 333. Dos arreglos: un <b>soporte mínimo</b> (al menos 20 pedidos juntos) y un <b>encogimiento</b> que multiplica por c ÷ (c + 10). La bolsa queda en 300 ÷ 310 × 100 = 96.8; el raro, si pasara el soporte, en 2 ÷ 12 × 333 = 55.6.</p>
+  <pre data-lang="python"><code>N, c_carpa, c_bolsa, c_pilas = 1e6, 2_000, 1_500, 50_000
+lift = lambda c_ij, ci, cj: c_ij * N / (ci * cj)
+lift(300, c_carpa, c_bolsa)                # 100.0
+lift(400, c_carpa, c_pilas)                # 4.0
+300 / (300 + 10) * 100                     # 96.77</code></pre>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 166" role="img" aria-labelledby="f534bt f534bd">
+<title id="f534bt">Conteo contra lift</title>
+<desc id="f534bd">Cuatro barras para la carpa, en un millón de pedidos. Conteo: pilas 400, bolsa 300. Lift: pilas 4, bolsa 100. El conteo pone primero a las pilas; el lift, a la bolsa de dormir.</desc>
+<defs><marker id="f534ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-tiny" x="210" y="33" text-anchor="end">conteo: pilas</text>
+<rect class="dg-layer" x="220" y="16" width="400.0" height="24" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="628.0" y="33" text-anchor="start">400</text>
+<text class="dg-tiny" x="210" y="67" text-anchor="end">conteo: bolsa de dormir</text>
+<rect class="dg-layer" x="220" y="50" width="300.0" height="24" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="528.0" y="67" text-anchor="start">300</text>
+<text class="dg-tiny" x="210" y="101" text-anchor="end">lift × 4: pilas</text>
+<rect class="dg-layer" x="220" y="84" width="16.0" height="24" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="244.0" y="101" text-anchor="start">16</text>
+<text class="dg-tiny" x="210" y="135" text-anchor="end">lift × 4: bolsa de dormir</text>
+<rect class="dg-layer" x="220" y="118" width="400.0" height="24" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="628.0" y="135" text-anchor="start">400</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.4.</b> El ejemplo resuelto de abajo en barras. Para dibujarlas en la misma escala, el lift va multiplicado por 4: pilas 4 y bolsa 100. El conteo y el lift ordenan al revés.</figcaption>
+</figure>
+
+
+<h3 id="cj-algoritmo">El algoritmo</h3>
+
+<ol class="steps">
+  <li><span class="step-title">Limpiar</span>Para cada pedido, quita repetidos y corta en 50 productos.</li>
+  <li><span class="step-title">Contar</span>Suma 1 a cada producto y a cada par del pedido.</li>
+  <li><span class="step-title">Filtrar</span>Descarta los pares con menos de 20 pedidos.</li>
+  <li><span class="step-title">Puntuar</span>Calcula el lift de cada par y encógelo según su conteo.</li>
+  <li><span class="step-title">Quedarse con k</span>Para cada producto, guarda los 20 mejores.</li>
+</ol>
+
+<pre data-lang="python"><code>from collections import Counter, defaultdict
+from itertools import combinations
+import heapq
+
+def comprados_juntos(pedidos, k=20, soporte=20, m=10, tope=50):
+    N = len(pedidos)
+    c_i, c_ij = Counter(), Counter()
+    for items in pedidos:
+        items = sorted(set(items))[:tope]          # (1) sin repetidos, con tope
+        c_i.update(items)
+        c_ij.update(combinations(items, 2))         # (2) cada par i &lt; j una vez
+    vecinos = defaultdict(list)
+    for (i, j), c in c_ij.items():
+        if c &lt; soporte:                            # (3) soporte mínimo
+            continue
+        lift = c * N / (c_i[i] * c_i[j])            # (4) observado ÷ esperado
+        score = c / (c + m) * lift                  # (5) encoge lo que tiene pocos datos
+        vecinos[i].append((score, j))
+        vecinos[j].append((score, i))
+    return {i: heapq.nlargest(k, v) for i, v in vecinos.items()}   # (6) top-k</code></pre>
+
+<ol class="code-key">
+  <li>Un pedido de 50 productos genera 1 225 pares; uno de 500, 124 750. Los pedidos enormes son de empresas o de pruebas y no dicen qué va con qué: el tope evita que un solo pedido pese como miles.</li>
+  <li>Cada par se cuenta una vez por pedido, con el menor primero, para que (a, b) y (b, a) sean la misma clave.</li>
+  <li>El soporte mínimo: sin él, los pares raros dominan por lift.</li>
+  <li>Observado por N sobre el producto de los conteos: lo mismo que observado ÷ esperado.</li>
+  <li>c ÷ (c + m) va de 0 a 1: con pocos pedidos juntos, el lift se cree poco.</li>
+  <li><code>nlargest</code> con un montículo de tamaño k: no hace falta ordenar todos los vecinos.</li>
+</ol>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Aspecto</th><th>Valor en Almacén Sur</th><th>Cuenta</th></tr></thead>
+    <tbody>
+      <tr><td>Tiempo</td><td>O(Σ n<sub>b</sub>²) para contar, O(P log k) para el top-k</td><td>Con un promedio supuesto de 3 pares por pedido: 43.8 M × 3 = 131 M sumas; minutos en una máquina</td></tr>
+      <tr><td>Memoria del conteo</td><td>O(P), los pares distintos</td><td>Unos 60 M pares distintos (supuesto) × 12 B = 720 MB</td></tr>
+      <tr><td>Salida</td><td>2 M × 20 vecinos</td><td>× 8 B (id y puntaje) = 320 MB por tabla</td></tr>
+      <tr><td>Cuándo se recalcula</td><td>Cada noche, con el último año</td><td>Los pares cambian por temporada, no por hora</td></tr>
+      <tr><td>Servir</td><td>Una lectura por página</td><td>833 por segundo en el pico</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 330" role="img" aria-labelledby="f534ct f534cd">
+<title id="f534ct">Comprados juntos con lift</title>
+<desc id="f534cd">Ficha de Comprados juntos con lift. Qué entra: Los pedidos del último año: listas de productos comprados juntos. Qué hace: Cuenta cada par, lo compara contra lo que se esperaría por azar y se queda con los 20 mejores de cada producto. Qué sale: Una tabla: producto → 20 complementos con su puntaje. Ejemplo: carpa: 2 000 · bolsa: 1 500 · juntos: 300 esperado: 2 000 × 1 500 ÷ 10⁶ = 3 lift = 300 ÷ 3 = 100 Qué falla sin él: La caja de "comprados juntos" muestra pilas y bolsas plásticas en todos los productos: lo que se compra con todo. Dónde vive: En el lote nocturno (53.4) y en las tablas ítem a ítem que lee la API (53.3).</desc>
+<defs><marker id="f534ca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="98" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Los pedidos del último año:</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">listas de productos comprados</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">juntos.</text>
+<rect class="dg-layer" x="279" y="16" width="212" height="98" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Cuenta cada par, lo compara</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">contra lo que se esperaría por</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">azar y se queda con los 20</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">mejores de cada producto.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="98" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Una tabla: producto → 20</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">complementos con su puntaje.</text>
+<path class="dg-edge" d="M234 65.0 H275" marker-end="url(#f534ca)"/>
+<path class="dg-edge" d="M493 65.0 H534" marker-end="url(#f534ca)"/>
+<rect class="dg-box" x="20" y="128" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="148" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="168" text-anchor="start" style="white-space:pre">carpa: 2 000 · bolsa: 1 500 · juntos: 300</text>
+<text class="dg-tiny dg-mono" x="32" y="184" text-anchor="start" style="white-space:pre">esperado: 2 000 × 1 500 ÷ 10⁶ = 3</text>
+<text class="dg-tiny dg-mono" x="32" y="200" text-anchor="start" style="white-space:pre">lift = 300 ÷ 3 = 100</text>
+<rect class="dg-warnbox" x="20" y="228" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="248" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="268" text-anchor="start">La caja de "comprados juntos" muestra pilas y bolsas</text>
+<text class="dg-tiny" x="32" y="284" text-anchor="start">plásticas en todos los productos: lo que se compra con</text>
+<text class="dg-tiny" x="32" y="300" text-anchor="start">todo.</text>
+<rect class="dg-box" x="393" y="228" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="248" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="268" text-anchor="start">En el lote nocturno (53.4) y en las tablas ítem a ítem</text>
+<text class="dg-tiny" x="405" y="284" text-anchor="start">que lee la API (53.3).</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.5.</b> La ficha del primer algoritmo. Linden, Smith y York lo publicaron en 2003 como item-to-item collaborative filtering <span class="badge badge--doc">Documentado</span>.</figcaption>
+</figure>
+
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>Es barato, se explica solo ("quienes compraron esto también compraron") y encuentra complementos. A cambio, un producto nuevo no tiene pares durante semanas (para eso está 53.5), y un año de ventana mezcla temporadas: en diciembre, la carpa va con regalos que en marzo no. Un decaimiento que pesa más lo reciente (por ejemplo, la mitad del peso cada 90 días) corrige lo segundo sin perder soporte.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> contar pares, comparar contra el azar con lift, soporte mínimo y encogimiento; minutos de cómputo por noche y una lectura por página.</p>
+
+<h2 id="similares"><span class="sec-num">53.5</span>Más como esto: parecidos</h2>
+
+<p>La segunda caja de la página de producto responde otra pregunta. Lo que se mira en la misma sesión son <b>sustitutos</b>: quien compara carpas mira carpas. Lo que se compra junto son <b>complementos</b>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="f535t f535d">
+<title id="f535t">Complementos y sustitutos</title>
+<desc id="f535d">Una carpa en el centro. A la izquierda, lo que se compra con ella: bolsa de dormir, linterna y esterilla, complementos que salen de los pedidos. A la derecha, lo que se mira con ella: otras tres carpas, sustitutos que salen de las sesiones. Abajo, para un producto nuevo sin pedidos ni sesiones, los parecidos por contenido: texto e imagen.</desc>
+<defs><marker id="f535a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box dg-box--em" x="310" y="110" width="150" height="56" rx="8"/>
+<text class="dg-small" x="385.0" y="134.0" text-anchor="middle">Carpa 4 personas</text>
+<text class="dg-tiny" x="385.0" y="150.0" text-anchor="middle">p_carpa</text>
+<rect class="dg-layer" x="20" y="40" width="160" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="100.0" y="66.0" text-anchor="middle">Bolsa de dormir</text>
+<path class="dg-edge" d="M182 62 L308 138"/>
+<rect class="dg-layer" x="20" y="110" width="160" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="100.0" y="136.0" text-anchor="middle">Linterna</text>
+<path class="dg-edge" d="M182 132 L308 138"/>
+<rect class="dg-layer" x="20" y="180" width="160" height="44" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="100.0" y="206.0" text-anchor="middle">Esterilla</text>
+<path class="dg-edge" d="M182 202 L308 138"/>
+<rect class="dg-layer" x="590" y="40" width="160" height="44" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="670.0" y="66.0" text-anchor="middle">Carpa 3 personas</text>
+<path class="dg-edge" d="M462 138 L588 62"/>
+<rect class="dg-layer" x="590" y="110" width="160" height="44" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="670.0" y="136.0" text-anchor="middle">Carpa 4 personas B</text>
+<path class="dg-edge" d="M462 138 L588 132"/>
+<rect class="dg-layer" x="590" y="180" width="160" height="44" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="670.0" y="206.0" text-anchor="middle">Carpa con toldo</text>
+<path class="dg-edge" d="M462 138 L588 202"/>
+<text class="dg-small" x="100" y="30" text-anchor="middle">comprados juntos (pedidos)</text>
+<text class="dg-small" x="670" y="30" text-anchor="middle">vistos juntos (sesiones)</text>
+<rect class="dg-layer" x="260" y="230" width="250" height="50" rx="8" style="--c: var(--l-cache)"/>
+<text class="dg-small" x="385.0" y="251.0" text-anchor="middle">Producto nuevo: parecidos por contenido</text>
+<text class="dg-tiny" x="385.0" y="267.0" text-anchor="middle">texto e imagen (53.5)</text>
+<path class="dg-edge" d="M385 228 V168" marker-end="url(#f535a)"/>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.6.</b> Lo que se compra junto completa; lo que se mira junto compite. La página de producto muestra las dos cajas con títulos distintos, y mezclarlas confunde: nadie quiere comprar dos carpas. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<ul>
+  <li><b>Vistos juntos.</b> El mismo algoritmo de 53.4 con sesiones en lugar de pedidos. Hay 40 veces más páginas vistas que productos comprados, así que tiene datos para muchos más productos.</li>
+  <li><b>Por contenido.</b> Para lo que no tiene sesiones: un embedding del texto (título, descripción) y otro de la imagen, y los vecinos en el índice (<a href="m44-modelos-clasicos.html#contenido">M44</a>, <a href="m45-recuperacion.html#hnsw">M45</a>). Un producto publicado hoy tiene parecidos desde su primera vista.</li>
+  <li><b>La mezcla.</b> Vistos juntos cuando hay soporte, contenido cuando no; el mismo producto nunca aparece en las dos cajas.</li>
+</ul>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> vistos juntos para sustitutos, contenido para lo nuevo, y dos cajas con títulos distintos.</p>
+
+<h2 id="inicio"><span class="sec-num">53.6</span>Tu inicio: ALS implícito, ranker y re-ranking</h2>
+
+<p>El segundo algoritmo en detalle. El inicio no tiene un producto de partida: hay que partir de la persona. Almacén Sur usa el embudo de la parte: candidatos con ALS implícito, un ranker de árboles y un re-ranking.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="f536t f536d">
+<title id="f536t">ALS implícito en una figura</title>
+<desc id="f536d">A la izquierda, la matriz de interacciones de personas por productos, casi vacía, con conteos. En el medio, su aproximación como el producto de dos matrices finas: una fila de 64 números por persona y una por producto. A la derecha, cómo se usa: el producto punto del vector de Sofía con el de cada producto da su puntaje.</desc>
+<defs><marker id="f536a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="20" y="26" text-anchor="start">R: 10 M personas × 2 M productos</text>
+<rect class="dg-box" x="20" y="40" width="24" height="24" rx="3"/>
+<rect class="dg-layer" x="46" y="40" width="24" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="58" y="56" text-anchor="middle">3</text>
+<rect class="dg-box" x="72" y="40" width="24" height="24" rx="3"/>
+<rect class="dg-layer" x="98" y="40" width="24" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="110" y="56" text-anchor="middle">1</text>
+<rect class="dg-box" x="124" y="40" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="150" y="40" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="176" y="40" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="202" y="40" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="20" y="66" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="46" y="66" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="72" y="66" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="98" y="66" width="24" height="24" rx="3"/>
+<rect class="dg-layer" x="124" y="66" width="24" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="136" y="82" text-anchor="middle">1</text>
+<rect class="dg-box" x="150" y="66" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="176" y="66" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="202" y="66" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="20" y="92" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="46" y="92" width="24" height="24" rx="3"/>
+<rect class="dg-layer" x="72" y="92" width="24" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="84" y="108" text-anchor="middle">2</text>
+<rect class="dg-box" x="98" y="92" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="124" y="92" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="150" y="92" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="176" y="92" width="24" height="24" rx="3"/>
+<rect class="dg-layer" x="202" y="92" width="24" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="214" y="108" text-anchor="middle">1</text>
+<rect class="dg-box" x="20" y="118" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="46" y="118" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="72" y="118" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="98" y="118" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="124" y="118" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="150" y="118" width="24" height="24" rx="3"/>
+<rect class="dg-layer" x="176" y="118" width="24" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="188" y="134" text-anchor="middle">1</text>
+<rect class="dg-box" x="202" y="118" width="24" height="24" rx="3"/>
+<rect class="dg-layer" x="20" y="144" width="24" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="32" y="160" text-anchor="middle">1</text>
+<rect class="dg-box" x="46" y="144" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="72" y="144" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="98" y="144" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="124" y="144" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="150" y="144" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="176" y="144" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="202" y="144" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="20" y="170" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="46" y="170" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="72" y="170" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="98" y="170" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="124" y="170" width="24" height="24" rx="3"/>
+<rect class="dg-layer" x="150" y="170" width="24" height="24" rx="3" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="162" y="186" text-anchor="middle">4</text>
+<rect class="dg-box" x="176" y="170" width="24" height="24" rx="3"/>
+<rect class="dg-box" x="202" y="170" width="24" height="24" rx="3"/>
+<text class="dg-big" x="250" y="120" text-anchor="middle">≈</text>
+<text class="dg-small" x="290" y="26" text-anchor="start">X: personas × 64</text>
+<rect class="dg-layer" x="290" y="40" width="64" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<rect class="dg-layer" x="290" y="66" width="64" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<rect class="dg-layer" x="290" y="92" width="64" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<rect class="dg-layer" x="290" y="118" width="64" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<rect class="dg-layer" x="290" y="144" width="64" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<rect class="dg-layer" x="290" y="170" width="64" height="24" rx="3" style="--c: var(--l-gpu)"/>
+<text class="dg-big" x="372" y="120" text-anchor="middle">×</text>
+<text class="dg-small" x="392" y="26" text-anchor="start">Yᵀ: 64 × productos</text>
+<rect class="dg-layer" x="392" y="40" width="24" height="64" rx="3" style="--c: var(--l-gpu)"/>
+<rect class="dg-layer" x="418" y="40" width="24" height="64" rx="3" style="--c: var(--l-gpu)"/>
+<rect class="dg-layer" x="444" y="40" width="24" height="64" rx="3" style="--c: var(--l-gpu)"/>
+<rect class="dg-layer" x="470" y="40" width="24" height="64" rx="3" style="--c: var(--l-gpu)"/>
+<rect class="dg-layer" x="496" y="40" width="24" height="64" rx="3" style="--c: var(--l-gpu)"/>
+<rect class="dg-layer" x="522" y="40" width="24" height="64" rx="3" style="--c: var(--l-gpu)"/>
+<rect class="dg-layer" x="548" y="40" width="24" height="64" rx="3" style="--c: var(--l-gpu)"/>
+<rect class="dg-layer" x="574" y="40" width="24" height="64" rx="3" style="--c: var(--l-gpu)"/>
+<path class="dg-frame" d="M620 20 V250"/>
+<text class="dg-group" x="640" y="40" text-anchor="start">Puntaje</text>
+<text class="dg-small dg-mono" x="640" y="66" text-anchor="start" style="white-space:pre">x_sofía · y_bolsa</text>
+<text class="dg-small dg-mono" x="640" y="90" text-anchor="start" style="white-space:pre">= 0.82</text>
+<text class="dg-group" x="640" y="130" text-anchor="start">Confianza</text>
+<text class="dg-small dg-mono" x="640" y="156" text-anchor="start" style="white-space:pre">c = 1 + α · conteo</text>
+<text class="dg-small dg-mono" x="640" y="180" text-anchor="start" style="white-space:pre">α = 40</text>
+<text class="dg-tiny" x="20" y="230" text-anchor="start">Los huecos no son "no le gusta": son preferencia 0 con confianza 1, la más baja.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.7.</b> El ALS implícito de <a href="m44-modelos-clasicos.html#implicito">M44</a> con los tamaños de Almacén Sur. Hu, Koren y Volinsky lo propusieron en 2008 <span class="badge badge--doc">Documentado</span>.</figcaption>
+</figure>
+
+
+<h3 id="inicio-als">Candidatos con ALS implícito</h3>
+
+<p>La confianza y la preferencia se explicaron en <a href="m44-modelos-clasicos.html#implicito">M44</a>: no se repiten. Lo que se agrega acá es el algoritmo de cálculo, sus costos y cómo se usa en la request.</p>
+
+<pre data-lang="python"><code>import numpy as np
+
+def als_implicito(R, k=64, alfa=40, lam=0.1, vueltas=15):
+    U, I = R.shape                                   # R: dispersa, conteos
+    X = np.random.normal(0, 0.01, (U, k))
+    Y = np.random.normal(0, 0.01, (I, k))
+    for _ in range(vueltas):
+        X = resolver(R, Y, alfa, lam)                # (1) fija Y, resuelve X
+        Y = resolver(R.T.tocsr(), X, alfa, lam)      # (2) fija X, resuelve Y
+    return X, Y
+
+def resolver(R, Y, alfa, lam):
+    k = Y.shape[1]
+    YtY = Y.T @ Y                                    # (3) k × k, una vez por vuelta
+    X = np.zeros((R.shape[0], k))
+    for u in range(R.shape[0]):
+        idx = R.indices[R.indptr[u]:R.indptr[u + 1]]
+        c = 1 + alfa * R.data[R.indptr[u]:R.indptr[u + 1]]
+        Yu = Y[idx]
+        A = YtY + Yu.T @ ((c - 1)[:, None] * Yu) + lam * np.eye(k)   # (4)
+        X[u] = np.linalg.solve(A, Yu.T @ c)          # (5) preferencia 1 en lo tocado
+    return X</code></pre>
+
+<ol class="code-key">
+  <li>Con los productos fijos, cada persona es un problema de mínimos cuadrados independiente: se pueden repartir entre máquinas.</li>
+  <li>Lo mismo al revés. Alternar es lo que le da el nombre: <i>alternating least squares</i>.</li>
+  <li>El truco que lo hace posible: la suma sobre todos los productos, incluidos los no tocados, es Yᵀ Y, que se calcula una vez por vuelta y no una vez por persona.</li>
+  <li>La corrección solo por los productos que la persona tocó: (c − 1) es cero en los demás.</li>
+  <li>Un sistema de k × k por persona: 64 × 64.</li>
+</ol>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: cuánto cuesta una noche de ALS</p>
+  <p>Por vuelta, armar las matrices cuesta del orden de nnz × k² y resolverlas, (U + I) × k³. Con 500 M interacciones, 10 M personas, 2 M productos y k = 64:</p>
+  <pre data-lang="python"><code>nnz, U, I, k = 500e6, 10e6, 2e6, 64
+por_vuelta = nnz * k**2 + (U + I) * k**3   # 2.05e12 + 3.15e12 = 5.2e12 FLOP
+total = 15 * por_vuelta                    # 7.8e13 FLOP
+segundos = total / 1e11                    # 780 s con 1e11 FLOP/s efectivos (supuesto)
+memoria = (U + I) * k * 4                  # 3.07e9 B = 3.07 GB</code></pre>
+  <p>Unos 13 minutos en una máquina. Cabe de sobra en una noche, y por eso no hace falta nada más complicado.</p>
+</aside>
+
+<p>En la request, el vector de Sofía (calculado anoche, en el feature store) busca sus 300 vecinos en el índice; las tablas suman 150 complementos de sus últimas compras y lo popular de sus categorías, 50.</p>
+
+<h3 id="inicio-ranker">El ranker: p(compra)</h3>
+
+<p>Un GBDT, como en <a href="m46-ranking.html#arboles">M46</a>, que predice si la persona compra el producto en los 7 días siguientes a la impresión. Árboles y no una red: con 104 000 puntuaciones por segundo y features mayormente numéricas (precio, margen, valoraciones, ventas de la semana, rango de precio de la persona), los árboles en CPU alcanzan y se explican. Una feature que importa: "compró en esta categoría hace N días", porque lo duradero ya comprado no se vuelve a comprar (escenario "Sofía compra").</p>
+
+<h3 id="inicio-rerank">El re-ranking: margen, diversidad y vendedores</h3>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="f537t f537d">
+<title id="f537t">El peso del margen</title>
+<desc id="f537d">Dos productos con el mismo precio. A: probabilidad de compra 4 por ciento y margen 10 por ciento. B: probabilidad 3 por ciento y margen 40 por ciento. Con beta 1, A puntúa 0.044 y B 0.042: gana A. Con beta 3, A puntúa 0.052 y B 0.066: gana B.</desc>
+<defs><marker id="f537a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small dg-mono" x="20" y="26" text-anchor="start" style="white-space:pre">puntaje = p(compra) × (1 + β · margen)</text>
+<text class="dg-group" x="20" y="80" text-anchor="start">β = 1</text>
+<text class="dg-small" x="110" y="67" text-anchor="start">A</text>
+<rect class="dg-layer" x="130" y="52" width="264.0" height="22" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="402.0" y="68" text-anchor="start">0.044  gana</text>
+<text class="dg-small" x="110" y="99" text-anchor="start">B</text>
+<rect class="dg-layer" x="130" y="84" width="252.00000000000003" height="22" rx="4" style="--c: var(--l-edge)"/>
+<text class="dg-tiny" x="390.0" y="100" text-anchor="start">0.042</text>
+<text class="dg-group" x="20" y="170" text-anchor="start">β = 3</text>
+<text class="dg-small" x="110" y="157" text-anchor="start">A</text>
+<rect class="dg-layer" x="130" y="142" width="312.0" height="22" rx="4" style="--c: var(--l-edge)"/>
+<text class="dg-tiny" x="450.0" y="158" text-anchor="start">0.052</text>
+<text class="dg-small" x="110" y="189" text-anchor="start">B</text>
+<rect class="dg-layer" x="130" y="174" width="396.0" height="22" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="534.0" y="190" text-anchor="start">0.066  gana</text>
+<text class="dg-tiny" x="20" y="228" text-anchor="start">A: p = 0.040, margen 10 %.   B: p = 0.030, margen 40 %.   Mismo precio: 50 USD.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.8.</b> Un peso que da vuelta el orden. Con β grande, la lista muestra lo que conviene a la tienda aunque se compre menos; el β se elige con un A/B, no en una reunión. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<pre data-lang="python"><code>from collections import Counter
+
+def rerankear(cands, n=24, beta=1.0, lam=0.7, max_vendedor=3):
+    # cands: [{id, p, margen, cat, vendedor}] ya filtrados por stock y zona
+    for c in cands:
+        c["s"] = c["p"] * (1 + beta * c["margen"])  # (1) margen con peso chico
+    lista, por_vendedor = [], Counter()
+    while len(lista) &lt; n and cands:
+        def valor(c):                                 # (2) MMR por categoría
+            parecido = max((1.0 if c["cat"] == e["cat"] else 0.0 for e in lista), default=0.0)
+            return lam * c["s"] - (1 - lam) * parecido * c["s"]
+        mejor = max(cands, key=valor)
+        cands.remove(mejor)
+        if por_vendedor[mejor["vendedor"]] &gt;= max_vendedor:   # (3) reparte vendedores
+            continue
+        por_vendedor[mejor["vendedor"]] += 1
+        lista.append(mejor)
+    return lista</code></pre>
+
+<ol class="code-key">
+  <li>El margen entra multiplicando, con un β chico: con β = 1, un margen del 40&#8239;% sube el puntaje un 40&#8239;%, no lo reemplaza.</li>
+  <li>El <a href="m47-reranking-exploracion.html#diversidad">MMR de M47</a> con un parecido simple: misma categoría o no.</li>
+  <li>Un máximo por vendedor, la regla más simple de <a href="m47-reranking-exploracion.html#equidad">exposición justa</a>.</li>
+</ol>
+
+<p>Complejidad: O(n × k) con n candidatos que llegan al re-ranking (los 50 mejores del ranker) y k = 24 lugares: 1 200 comparaciones, menos de 2 ms.</p>
+
+<aside class="callout callout--tradeoff">
+  <p class="callout-label">Trade-off</p>
+  <p>ALS es barato, estable y bueno para los gustos de largo plazo. A cambio, no ve el contexto (la hora, la sesión) ni los productos nuevos, que no tienen factores hasta la noche siguiente con interacciones. Por eso es una fuente de candidatos y no la lista final: el ranker agrega el contexto, las tablas agregan las compras recientes y el contenido cubre lo nuevo.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> ALS en 13 minutos por noche con 3 GB de factores; un GBDT de p(compra); y un re-ranking con margen multiplicando, MMR y un tope por vendedor.</p>
+
+<h2 id="sesion"><span class="sec-num">53.7</span>Sin cuenta: recomendar con la sesión</h2>
+
+<p>El 40&#8239;% de las sesiones no tiene cuenta. No hay historia, pero hay algo mejor que nada: lo que mira ahora.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="f538t f538d">
+<title id="f538t">Recomendar con tres vistas</title>
+<desc id="f538d">Una línea de tiempo de una sesión anónima con tres vistas: carpa 1, carpa 2 y carpa 3. Cada vista aporta sus vistos juntos con un peso: 0.25, 0.5 y 1, más peso a la última. A la derecha, la lista mezclada.</desc>
+<defs><marker id="f538a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="sim-axis" d="M20 60 H560"/>
+<rect class="dg-box dg-box--em" x="94" y="54" width="12" height="12" rx="6"/>
+<text class="dg-small" x="100" y="44" text-anchor="middle">carpa 1</text>
+<rect class="dg-layer" x="30" y="90" width="140" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="100.0" y="111.0" text-anchor="middle">vistos juntos</text>
+<text class="dg-tiny" x="100.0" y="127.0" text-anchor="middle">peso 0.25</text>
+<path class="dg-feedback" d="M100 66 V88"/>
+<path class="dg-edge" d="M100 142 C 100 180, 560 180, 588 150" marker-end="url(#f538a)"/>
+<rect class="dg-box dg-box--em" x="274" y="54" width="12" height="12" rx="6"/>
+<text class="dg-small" x="280" y="44" text-anchor="middle">carpa 2</text>
+<rect class="dg-layer" x="210" y="90" width="140" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="280.0" y="111.0" text-anchor="middle">vistos juntos</text>
+<text class="dg-tiny" x="280.0" y="127.0" text-anchor="middle">peso 0.5</text>
+<path class="dg-feedback" d="M280 66 V88"/>
+<path class="dg-edge" d="M280 142 C 280 180, 560 180, 588 150" marker-end="url(#f538a)"/>
+<rect class="dg-box dg-box--em" x="454" y="54" width="12" height="12" rx="6"/>
+<text class="dg-small" x="460" y="44" text-anchor="middle">carpa 3</text>
+<rect class="dg-layer" x="390" y="90" width="140" height="50" rx="8" style="--c: var(--l-db)"/>
+<text class="dg-small" x="460.0" y="111.0" text-anchor="middle">vistos juntos</text>
+<text class="dg-tiny" x="460.0" y="127.0" text-anchor="middle">peso 1</text>
+<path class="dg-feedback" d="M460 66 V88"/>
+<path class="dg-edge" d="M460 142 C 460 180, 560 180, 588 150" marker-end="url(#f538a)"/>
+<rect class="dg-layer" x="590" y="90" width="160" height="60" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="670.0" y="116.0" text-anchor="middle">12 recomendaciones</text>
+<text class="dg-tiny" x="670.0" y="132.0" text-anchor="middle">suma con pesos</text>
+<text class="dg-tiny" x="20" y="212" text-anchor="start">Más peso a lo último: la intención de una sesión cambia rápido, y la última vista es la mejor pista.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.9.</b> Un recomendador de sesión simple, ítem a ítem con pesos que decaen. GRU4Rec mostró en 2016 que una red recurrente sobre la secuencia de la sesión supera a esta línea base <span class="badge badge--doc">Documentado</span>; es el siguiente paso cuando la versión simple ya está medida.</figcaption>
+</figure>
+
+
+<p>La <dfn data-term="recomendacion-sesion">recomendación por sesión</dfn> usa solo lo que pasó en la visita actual. La versión de Almacén Sur suma los vistos juntos de las últimas vistas, con más peso a la última. La versión siguiente es un modelo de secuencias como los de <a href="m46-ranking.html#secuencias">M46</a>: Hidasi y colaboradores presentaron GRU4Rec en 2016, una red recurrente que lee la sesión en orden y predice el producto siguiente <span class="badge badge--doc">Documentado</span>. Vale la pena cuando la versión simple ya está medida y hay muchas sesiones; antes, no.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> tres vistas con pesos que decaen ya recomiendan; los modelos de secuencia son el paso siguiente.</p>
+
+<h2 id="stock-precio"><span class="sec-num">53.8</span>Stock, zona y precio</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="f539t f539d">
+<title id="f539t">Filtro duro o feature</title>
+<desc id="f539d">Dos columnas. Filtros duros, que se aplican al servir y quitan productos: sin stock, no envía a tu zona, restringido por edad, ya comprado si es duradero. Features, que el ranker pesa: precio contra tu rango, envío gratis, valoraciones, ventas de la semana.</desc>
+<defs><marker id="f539a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="28" text-anchor="start">Filtro duro: sale de la lista</text>
+<rect class="dg-bad" x="20" y="40" width="340" height="40" rx="8"/>
+<text class="dg-small" x="190.0" y="64.0" text-anchor="middle">sin stock</text>
+<rect class="dg-bad" x="20" y="90" width="340" height="40" rx="8"/>
+<text class="dg-small" x="190.0" y="114.0" text-anchor="middle">no envía a tu zona</text>
+<rect class="dg-bad" x="20" y="140" width="340" height="40" rx="8"/>
+<text class="dg-small" x="190.0" y="164.0" text-anchor="middle">restringido por edad</text>
+<rect class="dg-bad" x="20" y="190" width="340" height="40" rx="8"/>
+<text class="dg-small" x="190.0" y="214.0" text-anchor="middle">duradero ya comprado</text>
+<text class="dg-group" x="410" y="28" text-anchor="start">Feature: el ranker decide cuánto pesa</text>
+<rect class="dg-layer" x="410" y="40" width="340" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="580.0" y="64.0" text-anchor="middle">precio contra tu rango</text>
+<rect class="dg-layer" x="410" y="90" width="340" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="580.0" y="114.0" text-anchor="middle">envío gratis</text>
+<rect class="dg-layer" x="410" y="140" width="340" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="580.0" y="164.0" text-anchor="middle">valoraciones</text>
+<rect class="dg-layer" x="410" y="190" width="340" height="40" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="580.0" y="214.0" text-anchor="middle">ventas de la semana</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.10.</b> La regla para decidir: si mostrarlo está mal siempre, es un filtro; si depende de la persona, es una feature. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<p>El stock es el ejemplo más claro de filtro duro: un producto agotado con mucho puntaje se seguiría mostrando si fuera una feature. Se aplica al servir, contra una caché que se actualiza en segundos, y el pago lo vuelve a comprobar: la caché puede estar vieja, el pago no. El precio, en cambio, es una feature: un producto caro no está mal para todos, depende del rango de precio de cada persona.</p>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> si está mal siempre, filtro al servir; si depende de la persona, feature del ranker.</p>
+
+<h2 id="negocio"><span class="sec-num">53.9</span>Negocio: margen, patrocinados y vendedores</h2>
+
+<ul>
+  <li><b>Margen.</b> Un peso chico multiplicando, elegido con un A/B que mira ingresos y margen por sesión, con la conversión como métrica de protección (53.6).</li>
+  <li><b>Patrocinados.</b> Un lugar de cada 12 como máximo, solo entre productos que ya pasaron el umbral de relevancia, y siempre con la etiqueta "Patrocinado". En la Unión Europea, el artículo 26 del <span data-term="dsa">DSA</span> obliga a las plataformas a que cada anuncio se identifique como tal, junto con quién lo paga <span class="badge badge--doc">Documentado</span>. Un patrocinado sin relevancia vende una vez y enseña a ignorar la caja.</li>
+  <li><b>Vendedores.</b> Sin tope, el vendedor más grande ocupa la lista, y los chicos se van. Un máximo de 3 por lista y la exposición de <a href="m47-reranking-exploracion.html#equidad">M47</a> lo reparten; los vendedores nuevos reciben una pequeña exploración, como los videos de Clip en <a href="m52-feed-video.html#nuevo-video">M52</a>.</li>
+</ul>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> margen con peso chico, patrocinados relevantes y marcados, y un tope por vendedor.</p>
+
+<h2 id="estadistica"><span class="sec-num">53.10</span>Qué modelo según los datos</h2>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="f5310t f5310d">
+<title id="f5310t">Qué modelo con cuántos datos</title>
+<desc id="f5310d">Una escalera de cinco escalones de izquierda a derecha, de menos a más datos: popularidad por categoría desde el primer día; co-ocurrencia con lift desde miles de pedidos al mes; ALS o BPR con personas que tienen cinco o más interacciones; dos torres con millones de interacciones y contenido; ranker de árboles con decenas de millones de impresiones con etiqueta.</desc>
+<defs><marker id="f5310a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" x="20" y="190" width="140" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="90.0" y="212.0" text-anchor="middle">Popularidad</text>
+<text class="dg-tiny" x="90.0" y="228.0" text-anchor="middle">día 1</text>
+<rect class="dg-layer" x="170" y="152" width="140" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="240.0" y="174.0" text-anchor="middle">Co-ocurrencia</text>
+<text class="dg-tiny" x="240.0" y="190.0" text-anchor="middle">10³+ pedidos al mes</text>
+<rect class="dg-layer" x="320" y="114" width="140" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="390.0" y="136.0" text-anchor="middle">ALS o BPR</text>
+<text class="dg-tiny" x="390.0" y="152.0" text-anchor="middle">5+ por persona</text>
+<rect class="dg-layer" x="470" y="76" width="140" height="52" rx="8" style="--c: var(--l-service)"/>
+<text class="dg-small" x="540.0" y="98.0" text-anchor="middle">Dos torres</text>
+<text class="dg-tiny" x="540.0" y="114.0" text-anchor="middle">10⁶+ interacciones</text>
+<rect class="dg-layer" x="620" y="38" width="140" height="52" rx="8" style="--c: var(--l-gpu)"/>
+<text class="dg-small" x="690.0" y="60.0" text-anchor="middle">Ranker de árboles</text>
+<text class="dg-tiny" x="690.0" y="76.0" text-anchor="middle">10⁷+ impresiones</text>
+<path class="dg-edge" d="M20 248 H740" marker-end="url(#f5310a)"/>
+<text class="dg-tiny" x="740" y="240" text-anchor="end">más datos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.11.</b> Cada escalón necesita más datos que el anterior, y cada uno se compara contra el de abajo antes de reemplazarlo: la línea base de <a href="m42-ml-system-design.html#sin-ml">M42</a>. Los umbrales son órdenes de magnitud, no reglas. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Modelo</th><th>Qué datos pide</th><th>Lo bueno</th><th>Dónde falla</th></tr></thead>
+    <tbody>
+      <tr><td>Popularidad por categoría</td><td>Conteos</td><td>Funciona el primer día</td><td>Igual para todos</td></tr>
+      <tr><td>Co-ocurrencia con lift</td><td>Pedidos con 2 o más productos; 20 por par</td><td>Complementos, se explica</td><td>Productos nuevos</td></tr>
+      <tr><td>ALS implícito</td><td>Personas con varias interacciones</td><td>Gustos de largo plazo, barato</td><td>Sin contexto ni productos nuevos</td></tr>
+      <tr><td><a href="m44-modelos-clasicos.html#bpr">BPR</a></td><td>Lo mismo que ALS</td><td>Optimiza el orden directamente</td><td>Muestreo de negativos</td></tr>
+      <tr><td>Dos torres</td><td>Millones de interacciones y contenido</td><td>Productos nuevos por su contenido</td><td>Más caro de entrenar y operar</td></tr>
+      <tr><td>GBDT de ranking</td><td>Decenas de millones de impresiones con etiqueta</td><td>Contexto y features numéricas</td><td>Necesita impresiones registradas</td></tr>
+      <tr><td>Secuencias (GRU4Rec)</td><td>Muchas sesiones</td><td>Sesiones sin cuenta</td><td>Más caro de servir</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> cada escalón pide más datos y se compara contra el de abajo antes de reemplazarlo.</p>
+
+<h2 id="evaluar"><span class="sec-num">53.11</span>Medir: ingresos por sesión</h2>
+
+<p>Offline, cada algoritmo se mide con el método de <a href="m49-experimentos.html#offline">M49</a>: se separa por tiempo, se entrena hasta el día D y se mira si la compra siguiente de cada persona está en sus 20 primeros (recall en 20). Sirve para descartar; no para lanzar. Online, la métrica de la tienda son los <b>ingresos por sesión</b>, con la conversión y el margen como métricas de protección. Para comparar dos rankers rápido, el <a href="m49-experimentos.html#interleaving">interleaving</a> necesita mucho menos tráfico.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 98" role="img" aria-labelledby="f5311t f5311d">
+<title id="f5311t">Días para detectar un 1 % en ingresos por sesión</title>
+<desc id="f5311d">Dos barras: sin CUPED, 8.7 días; con CUPED reduciendo la varianza 40 por ciento, 5.2 días.</desc>
+<defs><marker id="f5311a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-tiny" x="250" y="33" text-anchor="end">sin CUPED</text>
+<rect class="dg-layer" x="260" y="16" width="330.6" height="24" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="598.6" y="33" text-anchor="start">8.7 días</text>
+<text class="dg-tiny" x="250" y="67" text-anchor="end">con CUPED (−40 % de varianza)</text>
+<rect class="dg-layer" x="260" y="50" width="197.6" height="24" rx="4" style="--c: var(--l-service)"/>
+<text class="dg-tiny" x="465.6" y="67" text-anchor="start">5.2 días</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.12.</b> Los ingresos por sesión tienen mucha varianza: la mayoría de las sesiones no compra nada y unas pocas compran mucho. La cuenta está abajo. La reducción del 40&#8239;% es un supuesto. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+</figure>
+
+
+<aside class="callout callout--def">
+  <p class="callout-label">Matemática de por medio: cuántos días</p>
+  <p>Ingresos por sesión: media 2.40 USD y desviación estándar 25 USD (supuestos: el 97&#8239;% de las sesiones aporta 0). Detectar un 1&#8239;% es δ = 0.024 USD. Con la regla de <a href="m49-experimentos.html#potencia">M49</a>, n = 16 σ² ÷ δ² por grupo:</p>
+  <pre data-lang="python"><code>sigma, delta = 25, 0.024
+n = 16 * sigma**2 / delta**2    # 17.4 M sesiones por grupo
+dias = n / 2e6                  # 8.7 días con la mitad del tráfico en cada grupo
+dias_cuped = dias * 0.6         # 5.2 días si CUPED quita el 40 % de la varianza</code></pre>
+  <p>Con <a href="m49-experimentos.html#cuped">CUPED</a> usando el gasto de las semanas anteriores, el mismo experimento termina en 5 días.</p>
+</aside>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> recall offline para descartar, ingresos por sesión online para decidir, y CUPED para que no tarde semanas.</p>
+
+<h2 id="fallas"><span class="sec-num">53.12</span>Qué pasa cuando algo falla</h2>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Falla</th><th>Qué ve Sofía</th><th>Qué hace el sistema</th></tr></thead>
+    <tbody>
+      <tr><td>Se caen las tablas</td><td>"Parecidos" en lugar de "comprados juntos"</td><td>Vecinos del índice vectorial, respuesta marcada. Escenario "Se caen las tablas".</td></tr>
+      <tr><td>El lote de la noche falla</td><td>Nada</td><td>No publica; quedan las tablas, los vectores y el ranker de ayer.</td></tr>
+      <tr><td>El lote produce algo raro</td><td>Nada, si la validación lo frena</td><td>Comprueba tamaños, solapamiento con ayer y métricas offline antes de cambiar el puntero.</td></tr>
+      <tr><td>Stock viejo en la caché</td><td>Un producto que al pagar no está</td><td>El pago comprueba el stock real; se alerta si la caché se atrasa más de un minuto.</td></tr>
+      <tr><td>Cae el ranker</td><td>Un inicio algo peor</td><td>Orden por el puntaje de ALS.</td></tr>
+      <tr><td>Se cae la subasta</td><td>Ningún patrocinado</td><td>La lista sale sin él; nunca se rellena sin subasta.</td></tr>
+      <tr><td>Un bot mira miles de productos</td><td>Nada</td><td>Se filtra antes del lote; si no, ensucia los vistos juntos.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="more-link"><b>Lo que ahora sabes:</b> casi todo tiene la versión de ayer como respaldo; el stock es la excepción y la cubre el pago.</p>
+
+<h2 id="implementalo"><span class="sec-num">53.13</span>Impleméntalo tú mismo: Almacén Sur en AWS</h2>
+
+<p>La factura con precios de lista de AWS en us-east-1.</p>
+
+<div data-calc="bom" data-preset="m53"></div>
+
+<p>En producción, unos 5 300 dólares por mes. Es la diferencia más grande con <a href="m52-feed-video.html#implementalo">Clip</a>: una tienda grande se recomienda con tablas que se leen con una clave y árboles en CPU. Las guías ML02 y ML03 construyen los dos algoritmos de este módulo, en Python, y los miden contra la línea base de <a href="../proyectos/ml01-linea-base.html">ML01</a>.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="f53zt f53zd">
+<title id="f53zt">El embudo de Almacén Sur</title>
+<desc id="f53zd">El embudo de Mercado Barrio: catálogo, recuperación, filtros, ranking liviano, ranking pesado y re-ranking, con el bucle de impresiones, log y entrenamiento. Todas las etapas resaltadas: el caso de estudio las recorre todas.</desc>
+<defs><marker id="f53za" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="540" y="26" text-anchor="start">Cuántos quedan y la latencia acumulada</text>
+<g>
+<rect class="dg-box dg-box--em" x="160.0" y="40" width="340" height="32" rx="6"/>
+<text class="dg-small" x="330" y="61" text-anchor="middle">Catálogo</text>
+<text class="dg-small" x="540" y="53" text-anchor="start">100 000 000 ítems</text>
+<text class="dg-tiny" x="540" y="69" text-anchor="start">productos y videos de reseña</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="200.0" y="88" width="260" height="32" rx="6"/>
+<text class="dg-small" x="330" y="109" text-anchor="middle">Recuperación</text>
+<text class="dg-small" x="540" y="101" text-anchor="start">10 000 candidatos  ·  25 ms</text>
+<text class="dg-tiny" x="540" y="117" text-anchor="start">varias fuentes en paralelo</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="210.0" y="136" width="240" height="32" rx="6"/>
+<text class="dg-small" x="330" y="157" text-anchor="middle">Filtros</text>
+<text class="dg-small" x="540" y="149" text-anchor="start">unos 9 000  ·  30 ms</text>
+<text class="dg-tiny" x="540" y="165" text-anchor="start">ya visto, bloqueado, sin stock</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="245.0" y="184" width="170" height="32" rx="6"/>
+<text class="dg-small" x="330" y="205" text-anchor="middle">Ranking liviano</text>
+<text class="dg-small" x="540" y="197" text-anchor="start">500  ·  63 ms</text>
+<text class="dg-tiny" x="540" y="213" text-anchor="start">features y un modelo barato</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="270.0" y="232" width="120" height="32" rx="6"/>
+<text class="dg-small" x="330" y="253" text-anchor="middle">Ranking pesado</text>
+<text class="dg-small" x="540" y="245" text-anchor="start">50  ·  113 ms</text>
+<text class="dg-tiny" x="540" y="261" text-anchor="start">un modelo grande, multi-tarea</text>
+</g>
+<g>
+<rect class="dg-box dg-box--em" x="288.0" y="280" width="84" height="32" rx="6"/>
+<text class="dg-small" x="330" y="301" text-anchor="middle">Re-ranking</text>
+<text class="dg-small" x="540" y="293" text-anchor="start">10 en pantalla  ·  118 ms</text>
+<text class="dg-tiny" x="540" y="309" text-anchor="start">diversidad, frescura, reglas</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="230" y="336" width="200" height="40" rx="8"/>
+<text class="dg-small" x="330.0" y="360.0" text-anchor="middle">Registro de impresiones</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="20" y="336" width="130" height="40" rx="8"/>
+<text class="dg-small" x="85.0" y="360.0" text-anchor="middle">Log de eventos</text>
+</g>
+<g style="opacity: 0.45">
+<rect class="dg-box" x="20" y="150" width="120" height="44" rx="8"/>
+<text class="dg-small" x="80.0" y="176.0" text-anchor="middle">Entrenamiento</text>
+</g>
+<path class="dg-edge" d="M330 312 V334" marker-end="url(#f53za)"/>
+<path class="dg-edge" d="M230 356 H152" marker-end="url(#f53za)"/>
+<text class="dg-tiny" x="191" y="389" text-anchor="middle">con clics y compras</text>
+<path class="dg-edge" d="M80 336 V196" marker-end="url(#f53za)"/>
+<path class="dg-feedback" d="M140 166 H176 V104 H198" marker-end="url(#f53za)"/>
+<path class="dg-feedback" d="M140 178 H200 V200 H243" marker-end="url(#f53za)"/>
+<path class="dg-feedback" d="M140 188 H186 V248 H268" marker-end="url(#f53za)"/>
+<text class="dg-tiny" x="88" y="230" text-anchor="start">modelos nuevos</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 53.13.</b> Dónde estás: en el segundo caso, todas las etapas. En la página de producto, la recuperación es una tabla y el resto casi desaparece; en el inicio, el embudo completo.</figcaption>
+</figure>
+
+
+<h2 id="comprueba">Comprueba lo aprendido</h2>
+
+<div data-quiz="m53"></div>
+
+<div data-exercise="m53-catalogo"></div>
+
+<div data-checkpoint="m53"></div>
+
+    </article>
+
+    <nav class="pager content" data-pager aria-label="Módulo anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/quizzes/m53.data.js"></script>
+<script src="../assets/js/data/exercises/m53.data.js"></script>
+<script src="../assets/js/data/maps/m53-tienda.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/map/map-engine.js"></script>
+<script src="../assets/js/map/flow-sim.js"></script>
+<script src="../assets/js/widgets/sim-infra.js"></script>
+</body>
+</html>

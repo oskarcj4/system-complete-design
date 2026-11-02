@@ -1,0 +1,140 @@
+SD.defineQuiz('m53', {
+  title: 'Quiz: recomendar productos', pass: 0.7,
+  questions: [
+    { id: 'pico', type: 'single', fixed: true,
+      prompt: '4 millones de sesiones por día con 6 páginas de producto cada una, y un pico de 3 veces el promedio. ¿Cuántas páginas de producto por segundo en el pico?',
+      options: ['278', '833', '2 500', '24 000'],
+      answer: 1,
+      explain: '24 M ÷ 86 400 = 278 por segundo; × 3 = 833. Vuelve a 53.1.' },
+    { id: 'superficie', type: 'single',
+      prompt: '¿Por qué la página de producto, con cuatro veces más tráfico que el inicio, es más barata de servir?',
+      options: [
+        'Porque se sirve con una lectura de una tabla calculada de noche, sin modelo en línea',
+        'Porque la página de producto se guarda entera en la CDN y nunca llega al servidor de recomendaciones',
+        'Porque muestra menos productos que el inicio, y el costo depende solo de cuántos se muestran',
+        'Porque usa un modelo más chico que el del inicio, que cabe en la memoria del navegador'
+      ],
+      answer: 0,
+      explain: 'Las tablas ítem a ítem se calculan de noche; servir es leer una clave. El inicio, en cambio, puntúa 500 candidatos por request. Vuelve a 53.1 y 53.4.' },
+    { id: 'lift-calc', type: 'single', fixed: true,
+      prompt: 'En un millón de pedidos, la carpa está en 2 000 y la bolsa de dormir en 1 500; juntas, en 300. ¿Cuál es el lift del par?',
+      options: ['0.15', '3', '100', '300'],
+      answer: 2,
+      explain: 'Esperado por azar: 2 000 × 1 500 ÷ 1 000 000 = 3. Lift = 300 ÷ 3 = 100. 0.15 es P(bolsa | carpa), que todavía premia lo popular. Vuelve a 53.4.' },
+    { id: 'conteo', type: 'single',
+      prompt: '¿Qué problema tiene ordenar "comprados juntos" por conteo de pares?',
+      options: [
+        'Que recomienda lo que se compra con todo, como pilas y bolsas, en lugar de lo que va con ese producto',
+        'Que el conteo de pares no entra en memoria para catálogos de más de mil productos',
+        'Que cuenta cada par dos veces, una en cada orden, y duplica todos los puntajes de la tabla, así que el orden final sale al revés',
+        'Que solo funciona con datos explícitos como estrellas, y una tienda tiene sobre todo compras'
+      ],
+      answer: 0,
+      explain: 'Un producto que está en el 5&#8239;% de los pedidos aparece con todo. El lift compara contra lo esperado y lo corrige. Vuelve a 53.4.' },
+    { id: 'raro', type: 'multi',
+      prompt: 'Un producto raro está en 3 pedidos, 2 con la carpa, y su lift sale 333. ¿Qué lo corrige? Elige todas las que correspondan.',
+      options: [
+        'Un soporte mínimo de pedidos juntos por par',
+        'Multiplicar el lift por c ÷ (c + m), que encoge lo que tiene pocos datos',
+        'Ordenar por conteo en lugar de lift',
+        'Cortar cada pedido en 50 productos'
+      ],
+      answer: [0, 1],
+      explain: 'El soporte mínimo descarta el par; el encogimiento lo baja. Volver al conteo trae de vuelta las pilas, y el tope de 50 es para los pedidos enormes, no para los pares raros. Vuelve a 53.4.' },
+    { id: 'tope', type: 'single',
+      prompt: '¿Para qué sirve cortar cada pedido en 50 productos antes de contar pares?',
+      options: [
+        'Para que un pedido enorme, que genera decenas de miles de pares, no pese como miles de pedidos normales',
+        'Para que la tabla final tenga exactamente 50 vecinos por producto, como pide la caja de la página de producto en el celular y en la web',
+        'Para que el lift no supere 50, que es el máximo que la página puede mostrar',
+        'Para respetar el límite de 50 productos por pedido que impone el carrito de la tienda'
+      ],
+      answer: 0,
+      explain: 'n productos generan n(n − 1)/2 pares: 500 productos son 124 750 pares. Esos pedidos son de empresas o pruebas y no dicen qué va con qué. Vuelve a 53.4.' },
+    { id: 'complejidad', type: 'single',
+      prompt: '¿De qué depende el tiempo de contar pares?',
+      options: [
+        'Del número de personas al cuadrado, como el filtrado usuario a usuario',
+        'De la suma, sobre los pedidos, del tamaño de cada pedido al cuadrado',
+        'Del catálogo al cuadrado: 2 millones por 2 millones de pares posibles',
+        'Solo del número de pedidos, porque cada pedido se lee una vez'
+      ],
+      answer: 1,
+      explain: 'Cada pedido de n productos aporta n(n − 1)/2 pares: O(Σ n<sub>b</sub>²). No depende del catálogo al cuadrado porque solo se cuentan los pares que aparecen. Vuelve a 53.4.' },
+    { id: 'sustitutos', type: 'single',
+      prompt: '¿Qué devuelve "vistos juntos" para una carpa, y en qué caja va?',
+      options: [
+        'Complementos como la bolsa de dormir, en la caja de comprados juntos',
+        'Otras carpas, sustitutos, en la caja de parecidos',
+        'Lo más vendido de la categoría, en la caja de populares',
+        'Productos del mismo vendedor, en la caja de la tienda'
+      ],
+      answer: 1,
+      explain: 'Quien compara carpas mira carpas: lo que se mira junto compite; lo que se compra junto completa. Vuelve a 53.5.' },
+    { id: 'nuevo', type: 'single',
+      prompt: 'Un producto se publicó hoy. ¿De dónde salen sus parecidos?',
+      options: [
+        'De la tabla de comprados juntos, que lo incluye apenas alguien lo compra',
+        'Del embedding de su texto y su imagen, con los vecinos en el índice',
+        'Del vector de ALS, que se calcula para cada producto apenas se publica',
+        'De ninguna parte: un producto nuevo no se recomienda hasta el lote de la noche'
+      ],
+      answer: 1,
+      explain: 'Sin pedidos ni sesiones, el contenido es lo único que hay. ALS no tiene factores para un producto sin interacciones. Vuelve a 53.5.' },
+    { id: 'yty', type: 'single',
+      prompt: 'En ALS implícito, ¿qué permite no sumar sobre los 2 millones de productos para cada persona?',
+      options: [
+        'Que YᵀY se calcula una vez por vuelta y solo se corrige por los productos que la persona tocó',
+        'Que ALS ignora los productos no tocados, que no tienen ninguna influencia en la solución',
+        'Que cada persona usa una muestra aleatoria de 100 productos en lugar del catálogo entero',
+        'Que el índice HNSW devuelve los productos cercanos y solo esos entran a la suma'
+      ],
+      answer: 0,
+      explain: 'Los no tocados sí cuentan (preferencia 0, confianza 1), pero su suma es YᵀY, común a todas las personas. Vuelve a 53.6.' },
+    { id: 'als-costo', type: 'single', fixed: true,
+      prompt: 'Con 10 M personas, 2 M productos y 64 factores en float32, ¿cuánto ocupan los factores de ALS?',
+      options: ['512 MB', '3.07 GB', '30.7 GB', '5.1 TB'],
+      answer: 1,
+      explain: '(10 M + 2 M) × 64 × 4 B = 3.07 × 10⁹ B. 512 MB son solo los de los productos. Vuelve a 53.6.' },
+    { id: 'margen', type: 'single', fixed: true,
+      prompt: 'Puntaje = p × (1 + β · margen). A: p = 0.040, margen 10&#8239;%. B: p = 0.030, margen 40&#8239;%. ¿Con qué β gana B?',
+      options: ['β = 0', 'β = 0.5', 'β = 1', 'β = 3'],
+      answer: 3,
+      explain: 'Con β = 1: A 0.044, B 0.042. Con β = 3: A 0.052, B 0.066. El cruce está cerca de β = 1.25. Vuelve a 53.6.' },
+    { id: 'filtro', type: 'single',
+      prompt: '¿Por qué el stock es un filtro duro y el precio una feature?',
+      options: [
+        'Porque mostrar un producto agotado está mal para todos; un precio alto solo está mal para algunos',
+        'Porque el stock cambia de noche y el precio en segundos, y los filtros solo pueden leer datos que se calcularon en el lote de la noche',
+        'Porque el ranker de árboles no acepta features booleanas como el stock, solo números',
+        'Porque el precio lo decide el vendedor y el stock lo decide la tienda'
+      ],
+      answer: 0,
+      explain: 'La regla: si está mal siempre, filtro al servir; si depende de la persona, feature. Vuelve a 53.8.' },
+    { id: 'patrocinado', type: 'multi',
+      prompt: '¿Qué reglas siguen los patrocinados de Almacén Sur? Elige todas las que correspondan.',
+      options: [
+        'Solo compiten productos que ya pasaron el umbral de relevancia',
+        'Llevan siempre la etiqueta "Patrocinado"',
+        'Si la subasta se cae, la lista sale sin patrocinado',
+        'Ocupan los tres primeros lugares de cada lista'
+      ],
+      answer: [0, 1, 2],
+      explain: 'Un lugar de cada 12 como máximo, relevante y marcado. El DSA obliga a identificar cada anuncio. Vuelve a 53.9.' },
+    { id: 'muestra', type: 'single', fixed: true,
+      prompt: 'Ingresos por sesión con σ = 25 USD; quieres detectar δ = 0.024 USD. Con n = 16 σ² ÷ δ², ¿cuántas sesiones por grupo?',
+      options: ['17 400', '1.7 M', '17.4 M', '174 M'],
+      answer: 2,
+      explain: '16 × 625 ÷ 0.000576 = 17.4 M. Con 2 M sesiones por grupo y día, 8.7 días. Vuelve a 53.11.' },
+    { id: 'lote-falla', type: 'single',
+      prompt: 'El lote de la noche produce tablas con la mitad de productos que ayer. ¿Qué pasa?',
+      options: [
+        'La validación lo frena y queda la versión de ayer, que sirve igual',
+        'Se publican igual, porque son más frescas que las de ayer',
+        'La página de producto deja de mostrar recomendaciones hasta mañana',
+        'Se mezclan las dos versiones, la de hoy para unos productos y la de ayer para otros'
+      ],
+      answer: 0,
+      explain: 'Las tablas se escriben con versión y se cambia el puntero solo si pasan las comprobaciones de tamaño y solapamiento. Vuelve a 53.12 y al escenario "El lote de cada noche".' }
+  ]
+});
