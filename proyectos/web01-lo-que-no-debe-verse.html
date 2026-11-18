@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WEB01. Lo que no debe verse</title>
+<meta name="description" content="Una sola salida para las respuestas de la API, los errores al registro con una referencia, el arranque que se niega con la clave del ejemplo y Apache sin entregar .git, notas ni código interno.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="web01" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Lo que no debe verse</h1>
+        <p class="lead">Lo que tu servidor entrega sin que nadie lo pida: archivos ocultos, mensajes de error, versiones. Se cierra con una respuesta central, un registro fuera de htdocs y reglas de Apache que miran toda la ruta.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>WEB01</dd></div>
+          <div><dt>Plan</dt><dd>Seguridad web</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>3 a 4 h</dd></div>
+          <div><dt>Módulos</dt><dd>M73, M78, M83</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="web01">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Hacer que toda respuesta de la API salga por un solo lugar, con <code>Content-Type: application/json</code>, el código HTTP que le corresponde y sin el texto de ninguna excepción.</li>
+<li>Mandar el detalle de cada error a un registro fuera de <code>htdocs</code> con un identificador que el cliente puede citar, y encontrarlo después.</li>
+<li>Impedir que el backend arranque con la clave del ejemplo o sin las variables que necesita.</li>
+<li>Cerrar desde Apache lo que no es de la web (<code>.git/</code>, notas, documentación, <code>core/</code> y <code>models/</code>) y sacar el <code>.env</code> del alcance del servidor.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>Un atacante empieza mirando, no atacando. Pide <code>/.git/config</code>, <code>/env.md</code>, <code>/README.md</code>; provoca un error para ver si el mensaje trae una ruta o una consulta; mira la cabecera <code>X-Powered-By</code> para saber qué versión de PHP buscar. Nada de eso es un ataque todavía, y por eso pasa desapercibido. Esta guía cierra lo que tu servidor entrega sin que nadie lo pida.</p>
+<p>En WEB00, el script <code>lab/verificar.ps1</code> dejó una lista de rutas marcadas <code>REVISAR</code>. Ahora toca cerrarlas, y de paso arreglar la forma en que la API responde: hoy cada endpoint se acuerda de poner su <code>Content-Type</code>, los errores salen con HTTP 200 y <code>Response::debugError</code> sigue a un comentario de distancia de devolverle al cliente el mensaje de una excepción de PDO.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="fw1at fw1ad">
+<title id="fw1at">Una respuesta, un solo camino</title>
+<desc id="fw1ad">A la izquierda, un endpoint. Si todo va bien llama a Response::success; si algo falla, una excepción llega a Response::serverError. Ese método escribe el detalle en el registro del servidor, fuera de htdocs, y le devuelve al cliente un 500 con un identificador corto. El cliente nunca ve el mensaje de la excepción.</desc>
+<defs><marker id="fw1aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw1af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker></defs>
+<path class="dg-edge" d="M180 135 L250 58" marker-end="url(#fw1aa)"/>
+<rect x="181" y="78" width="68" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="215" y="90" text-anchor="middle">todo bien</text>
+<path class="dg-edge" stroke-dasharray="6 4" style="stroke:var(--fail)" d="M180 135 L250 208" marker-end="url(#fw1af)"/>
+<rect x="181" y="154" width="68" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="215" y="166" text-anchor="middle">excepción</text>
+<path class="dg-edge" d="M440 58 L540 135" marker-end="url(#fw1aa)"/>
+<path class="dg-edge" d="M440 208 L540 135" marker-end="url(#fw1aa)"/>
+<rect x="434" y="154" width="111" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="490" y="166" text-anchor="middle">500 + referencia</text>
+<path class="dg-edge" stroke-dasharray="6 4" d="M440 208 L540 260" marker-end="url(#fw1aa)"/>
+<rect x="413" y="216" width="155" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="490" y="228" text-anchor="middle">mensaje, archivo, línea</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="30" y="105" width="150" height="60" rx="8"/>
+<text class="dg-label" x="105.0" y="133.0" text-anchor="middle">Endpoint</text>
+<text class="dg-tiny" x="105.0" y="148.0" text-anchor="middle">oportunidades.php</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="250" y="30" width="190" height="56" rx="8"/>
+<text class="dg-label" x="345.0" y="56.0" text-anchor="middle">Response::success</text>
+<text class="dg-tiny" x="345.0" y="71.0" text-anchor="middle">200 + JSON</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="250" y="180" width="190" height="56" rx="8"/>
+<text class="dg-label" x="345.0" y="206.0" text-anchor="middle">Response::serverError</text>
+<text class="dg-tiny" x="345.0" y="221.0" text-anchor="middle">id corto</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="540" y="105" width="190" height="60" rx="8"/>
+<text class="dg-label" x="635.0" y="133.0" text-anchor="middle">Cliente</text>
+<text class="dg-tiny" x="635.0" y="148.0" text-anchor="middle">JSON, Content-Type fijo</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="540" y="235" width="190" height="50" rx="8"/>
+<text class="dg-label" x="635.0" y="258.0" text-anchor="middle">C:/xampp/logs</text>
+<text class="dg-tiny" x="635.0" y="273.0" text-anchor="middle">detalle + id</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB01.1.</b> El detalle se separa de la respuesta. El identificador es lo único que viaja por los dos caminos: con él, la persona que reporta el error y la que lo arregla hablan de la misma línea del registro.</figcaption>
+</figure>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 180" role="img" aria-labelledby="fw1bt fw1bd">
+<title id="fw1bt">Cuatro barreras para un archivo que no debe salir</title>
+<desc id="fw1bd">Cuatro cajas en fila. Primero, el archivo vive fuera de htdocs, así que Apache no tiene cómo servirlo. Segundo, el .htaccess niega por regla toda ruta con un segmento que empieza por punto. Tercero, un FilesMatch que funciona aunque mod_rewrite no esté. Cuarto, PHP se niega a arrancar con la clave del ejemplo.</desc>
+<defs><marker id="fw1ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw1bf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker></defs>
+<path class="dg-edge" stroke-dasharray="6 4" d="M190 95 L210 95" marker-end="url(#fw1ba)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M380 95 L400 95" marker-end="url(#fw1ba)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M570 95 L590 95" marker-end="url(#fw1ba)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="60" width="170" height="70" rx="8"/>
+<text class="dg-label" x="105.0" y="93.0" text-anchor="middle">Fuera de htdocs</text>
+<text class="dg-tiny" x="105.0" y="108.0" text-anchor="middle">C:/xampp/secretos</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="210" y="60" width="170" height="70" rx="8"/>
+<text class="dg-label" x="295.0" y="93.0" text-anchor="middle">.htaccess</text>
+<text class="dg-tiny" x="295.0" y="108.0" text-anchor="middle">RewriteRule (^|/)\.</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="400" y="60" width="170" height="70" rx="8"/>
+<text class="dg-label" x="485.0" y="93.0" text-anchor="middle">FilesMatch</text>
+<text class="dg-tiny" x="485.0" y="108.0" text-anchor="middle">sin mod_rewrite</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="590" y="60" width="160" height="70" rx="8"/>
+<text class="dg-label" x="670.0" y="93.0" text-anchor="middle">Env::exigir()</text>
+<text class="dg-tiny" x="670.0" y="108.0" text-anchor="middle">en PHP</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB01.2.</b> Defensa en profundidad para el <code>.env</code>. En WEB00 viste que la única barrera era el <code>.htaccess</code>, y que sin él el archivo salía entero. Aquí cada barrera cubre el error de la anterior.</figcaption>
+</figure>
+<h2 id="endpoints">Los endpoints</h2>
+<p>Ningún endpoint cambia de función. Lo que cambia es el código HTTP con que responden los errores, y eso sí lo nota quien llama a la API:</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Situación</th><th><code>code</code> en el JSON</th><th>HTTP antes</th><th>HTTP después</th></tr></thead>
+<tbody>
+<tr><td>Éxito</td><td class="r">1</td><td class="r">200</td><td class="r">200</td></tr>
+<tr><td>Datos inválidos (<code>Response::error</code> sin código HTTP)</td><td class="r">-1</td><td class="r">200</td><td class="r">400</td></tr>
+<tr><td>Sin sesión (<code>Usuario no autenticado</code>)</td><td class="r">-2</td><td class="r">200</td><td class="r">401</td></tr>
+<tr><td>Sesión válida, rol insuficiente (<code>Usuario no autorizado</code>)</td><td class="r">-1</td><td class="r">200</td><td class="r">403</td></tr>
+<tr><td>Método no soportado</td><td class="r">-3</td><td class="r">200</td><td class="r">405</td></tr>
+<tr><td>Parámetros inválidos</td><td class="r">-4</td><td class="r">200</td><td class="r">422</td></tr>
+<tr><td>Excepción no prevista</td><td class="r">-1 o -999</td><td class="r">200 o 400</td><td class="r">500, con referencia</td></tr>
+</tbody>
+</table>
+</div>
+<p>El frontend no se rompe: <code>apiFetch</code> en <code>frontend/src/api/generic-api.js</code> ya trata como error tanto un <code>!res.ok</code> como un <code>code</code> distinto de 1, y lee el JSON en los dos casos. Lo que sí cambia es que DevTools muestra en rojo las respuestas 4xx, como debe ser.</p>
+<h2 id="dependencias">Qué necesitas</h2>
+<p>El laboratorio de <a href="web00-laboratorio.html">WEB00</a> andando, con su <code>lab/verificar.ps1</code> y el archivo de cookies <code>lab/jar.txt</code> de una sesión de <code>estudiante</code>. No se instala nada nuevo: todo es PHP 8.3 y configuración de Apache.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<p>Dos cambios de configuración fuera del repositorio, que hace quien administra el servidor: que PHP no anuncie su versión y que Apache diga lo mínimo de sí mismo.</p>
+<pre data-lang="shell" data-file="C:/xampp/php/php.ini"><code>; C:\xampp\php\php.ini
+expose_php = Off
+display_errors = Off
+display_startup_errors = Off
+log_errors = On</code></pre>
+<pre data-lang="shell" data-file="C:/xampp/apache/conf/extra/httpd-default.conf"><code># C:\xampp\apache\conf\extra\httpd-default.conf
+ServerTokens Prod
+ServerSignature Off</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd><code>expose_php = Off</code> quita la cabecera <code>X-Powered-By: PHP/8.3.x</code>; <code>ServerTokens Prod</code> deja <code>Server: Apache</code> sin versión ni sistema; <code>display_errors = Off</code> en el <code>php.ini</code> además de en el código.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Creer que esconder la versión es seguridad: no lo es, y la guía no lo vende así. Lo que hace es que un escáner no te encuentre por una búsqueda de "PHP 8.3.x" con una CVE conocida. La defensa real es actualizar (XAMPP trae parches de PHP con cada versión).</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Editar el <code>php.ini</code> equivocado: XAMPP puede tener más de uno. <code>C:\xampp\php\php.exe --ini</code> dice cuál carga la línea de comandos, y una página con <code>phpinfo()</code> cuál carga Apache; borra esa página en cuanto la mires.</dd></div>
+</dl>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<h3 id="paso-response">Paso 1. Una sola salida para todas las respuestas</h3>
+<p><code>core/response.php</code> se reescribe entero. Conserva los nombres de los métodos y el orden de los parámetros que ya usan los endpoints y los modelos, así que nada más cambia de firma. Lo nuevo:</p>
+<div class="pseudo"><ol>
+<li>Si quien llama no da un código HTTP, se deduce del <code>code</code> de la API con una tabla fija.</li>
+<li>Antes de escribir el cuerpo, se fijan siempre <code>Content-Type</code>, <code>nosniff</code> y <code>Cache-Control: no-store</code>.</li>
+<li>El JSON se codifica sin escapar los acentos y reemplazando los bytes UTF-8 inválidos en vez de fallar.</li>
+<li><code>debugError</code> desaparece. En su lugar, <code>serverError</code> registra el detalle con un id y responde 500 con ese id.</li>
+</ol></div>
+<pre data-lang="php" data-file="api/core/response.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+/**
+ * Toda respuesta de la API sale por aquí: siempre JSON, siempre con el código HTTP
+ * que corresponde y nunca con el texto de una excepción.
+ */
+class Response
+{
+    # code de la API -&gt; código HTTP, cuando quien llama no indica uno
+    private const HTTP_POR_CODIGO = [
+        1  =&gt; 200,
+        -1 =&gt; 400,
+        -2 =&gt; 401,
+        -3 =&gt; 405,
+        -4 =&gt; 422,
+    ];
+
+    public static function json(int $code, string $message = "", mixed $data = [], ?int $httpCode = null): never
+    {
+        $httpCode ??= self::HTTP_POR_CODIGO[$code] ?? 400;
+        if (!headers_sent()) {
+            http_response_code($httpCode);
+            header('Content-Type: application/json; charset=utf-8');
+            header('X-Content-Type-Options: nosniff');
+            header('Cache-Control: no-store');
+        }
+        echo json_encode(
+            ["code" =&gt; $code, "message" =&gt; $message, "data" =&gt; $data],
+            JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE
+        );
+        exit;
+    }
+
+    public static function success(mixed $data = [], string $message = "Operación exitosa"): never
+    {
+        self::json(1, $message, $data, 200);
+    }
+
+    public static function error(string $message = "Ocurrió un error", int $code = -1, ?int $httpCode = null): never
+    {
+        self::json($code, $message, [], $httpCode);
+    }
+
+    public static function invalidAccess(): never
+    {
+        self::json(-2, "No tienes permisos para acceder a este recurso", [], 403);
+    }
+
+    public static function invalidMethod(): never
+    {
+        self::json(-3, "Método no soportado", [], 405);
+    }
+
+    public static function invalidParams(): never
+    {
+        self::json(-4, "Parámetros inválidos", [], 422);
+    }
+
+    /** El detalle va al registro del servidor; el cliente recibe solo un id para citarlo. */
+    public static function serverError(Throwable $e): never
+    {
+        $id = bin2hex(random_bytes(6));
+        error_log(sprintf(
+            '[api %s] %s: %s en %s:%d',
+            $id, $e::class, $e-&gt;getMessage(), $e-&gt;getFile(), $e-&gt;getLine()
+        ));
+        self::json(-1, "Error interno. Referencia: $id", [], 500);
+    }
+}</code></pre>
+<aside class="callout callout--def">
+<p class="callout-label">PHP de por medio</p>
+<p><code>never</code> es el tipo de retorno de una función que no vuelve nunca (aquí, porque termina con <code>exit</code>). PHP 8.1 lo agregó, y sirve para que el analizador sepa que después de <code>Response::error(...)</code> no sigue nada. <code>??=</code> asigna solo si la variable es <code>null</code>. Y llamar a un método estático desde un objeto, como hacen los modelos con <code>$this-&gt;response-&gt;error(...)</code>, es válido en PHP: por eso esos modelos no cambian.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un solo lugar fija el tipo, el código HTTP y el formato; el código HTTP se deduce del <code>code</code> que la API ya usaba, para no tocar los 26 archivos que llaman a <code>Response</code>.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Agregar <code>header('Content-Type…')</code> a cada endpoint, que es lo que hay hoy: funciona hasta que alguien crea el endpoint 15 y se olvida. Tampoco conviene quitar el <code>code</code> del JSON y usar solo el HTTP: el frontend lo lee y la guía no lo rompe.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que algún archivo llame a <code>Response::json</code> con un <code>code</code> que no es entero. El archivo nuevo usa <code>declare(strict_types=1)</code>, pero esa directiva solo afecta a las llamadas que salen de él: un endpoint sin <code>strict_types</code> que pase <code>"-1"</code> se convierte a entero sin error. Si algo pasa un texto que no es número, PHP lanza <code>TypeError</code> y lo atrapa el manejador del paso 2.</dd></div>
+</dl>
+<aside class="callout callout--try">
+<p class="callout-label">Pruébalo ahora</p>
+<p>Corre <code>C:\xampp\php\php.exe -l api\core\response.php</code> (tiene que decir <code>No syntax errors detected</code>) y después:</p>
+<pre data-lang="shell"><code>curl.exe -s -i -X PATCH http://localhost/SistemaControlPracticas/api/endpoints/login.php</code></pre>
+<p>La primera línea tiene que ser <code>HTTP/1.1 405 Method Not Allowed</code> y entre las cabeceras debe aparecer <code>Content-Type: application/json; charset=utf-8</code>.</p>
+</aside>
+<h3 id="paso-errores">Paso 2. Los errores, al registro</h3>
+<p>Tres piezas: un archivo que configura PHP para no mostrar nada y registrar todo, un manejador para las excepciones que nadie atrapa y un script que cambia los <code>catch</code> que hoy tragan la excepción y responden <code>"Error"</code>.</p>
+<pre data-lang="php" data-file="api/core/errores.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/response.php';
+
+# Hacia afuera, nada; hacia adentro, todo. El registro vive fuera de htdocs.
+ini_set('display_errors', '0');
+ini_set('display_startup_errors', '0');
+ini_set('log_errors', '1');
+ini_set('error_log', (string)Env::get('LOG_FILE', dirname(__DIR__, 4) . '/logs/practicas-api.log'));
+error_reporting(E_ALL);
+
+# Una excepción que ningún catch atrapó termina aquí y no en la pantalla de PHP.
+set_exception_handler(function (Throwable $e): void {
+    Response::serverError($e);
+});</code></pre>
+<p><code>dirname(__DIR__, 4)</code> sube cuatro carpetas desde <code>api/core</code>: <code>api</code>, <code>SistemaControlPracticas</code>, <code>htdocs</code> y <code>C:/xampp</code>. El registro queda en <code>C:/xampp/logs/practicas-api.log</code>, junto a los de Apache y lejos de cualquier URL. En un servidor con otra estructura, pon <code>LOG_FILE</code> en el <code>.env</code>.</p>
+<p>Ahora el script que cambia los <code>catch</code>. Busca la forma que se repite en endpoints, modelos y <code>connection.php</code>, un <code>Response::error(...)</code> seguido del <code>//Response::debugError(...)</code> comentado, y la reemplaza por <code>Response::serverError(...)</code> con la misma variable:</p>
+<pre data-lang="shell" data-file="lab/migrar-errores.ps1"><code>param([string]$Api = "C:\xampp\htdocs\SistemaControlPracticas\api")
+
+# (1) Un mensaje genérico ("Error" u "Ocurrio un error") seguido de //Response::debugError($e);
+$generico = 'Response::error\("(?:Error|Ocurri[oó] un error)"(?:,\s*-?\d+)*\);\s*//\s*Response::debugError\((\$\w+)\);'
+# (2) Cualquier otro comentario de debugError (detrás de un mensaje útil, que se conserva)
+$suelto = '\r?\n[ \t]*//\s*Response::debugError\(\$\w+\);'
+
+Get-ChildItem "$Api\endpoints", "$Api\models", "$Api\core" -Filter *.php | ForEach-Object {
+  $texto = Get-Content $_.FullName -Raw
+  $n = ([regex]::Matches($texto, $generico)).Count
+  $m = ([regex]::Matches($texto, $suelto)).Count - $n
+  if ($n + $m -gt 0) {
+    $texto = [regex]::Replace($texto, $generico, 'Response::serverError($1);')
+    $texto = [regex]::Replace($texto, $suelto, '')
+    Set-Content -Path $_.FullName -Value $texto -NoNewline -Encoding utf8NoBOM
+    "{0,-40} {1} a serverError, {2} comentario(s) quitado(s)" -f $_.Name, $n, $m
+  }
+}</code></pre>
+<p>Córrelo con <code>pwsh .\lab\migrar-errores.ps1</code> sobre una rama limpia y revisa el resultado con <code>git diff --stat</code> y <code>git diff api/models/carreras.php</code>: cada cambio tiene que ser una línea <code>Response::error("Error", -1, 500)</code> que pasa a <code>Response::serverError($e)</code>, y el comentario desaparece. Los <code>catch (StorageException $e)</code> de <code>postulaciones.php</code> y <code>solicitudes_publicacion.php</code> conservan su mensaje ("No se pudo guardar el archivo"), que sí le sirve a quien sube el CV: solo pierden el comentario. Al escribir esta guía, el repositorio tenía 92 de esos comentarios; las dos columnas del script, sumadas, deben dar el número que tengas tú (<code>Select-String -Path api\*\*.php -Pattern "debugError" | Measure-Object</code>). Los <code>catch</code> que no tenían el comentario (por ejemplo el de <code>cambio_contrasena.php</code>, que responde <code>"Ocurrio un error"</code>) quedan igual: cámbialos a mano a <code>Response::serverError($e);</code>, y lista los que quedan con:</p>
+<pre data-lang="shell"><code>Select-String -Path api\endpoints\*.php, api\models\*.php, api\core\*.php -Pattern 'catch' -Context 0,2 |
+  Where-Object { $_.Context.PostContext -notmatch 'serverError' }</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Separar lo que ve el cliente (un mensaje genérico y un id) de lo que ve quien opera (mensaje, clase, archivo y línea), y hacer la migración con un script que se revisa con <code>git diff</code>.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Dejar <code>debugError</code> "para desarrollo": es una línea comentada de distancia de estar en producción, y alguien la descomenta un viernes para entender un error. Tampoco se usa <code>set_error_handler</code> para convertir cada <em>warning</em> en excepción: es más estricto, pero cambiaría el comportamiento de código que hoy funciona con avisos silenciosos, y esta guía no reescribe tu lógica.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el registro no se pueda escribir (la carpeta no existe o Apache no tiene permiso): PHP no avisa al cliente, y simplemente no queda nada. Comprueba en la falla provocada 2 que la línea aparece. Y que el script de migración no encuentre nada porque el comentario tenga otra forma; el <code>Select-String</code> de arriba te lista lo que falta.</dd></div>
+</dl>
+<h3 id="paso-env">Paso 3. El arranque que se niega</h3>
+<p><code>env.php</code> suma un método, <code>exigir</code>, que corta el arranque si una variable falta, está vacía o trae un valor de ejemplo. <code>configuration.php</code> lo llama antes de definir ninguna constante, y además busca primero el <code>.env</code> fuera de <code>htdocs</code>.</p>
+<pre data-lang="php" data-file="api/core/env.php (métodos nuevos)"><code>    /**
+     * Corta el arranque si una variable falta, está vacía o trae un valor de ejemplo.
+     * Se agrega a la clase Env, después del método get().
+     */
+    public static function exigir(array $claves, int $largoMinimoClave = 32): void
+    {
+        $deEjemplo = ['clave_secreta_cambiar', 'changeme', 'PEGA_AQUI_64_CARACTERES_HEX'];
+        foreach ($claves as $clave) {
+            $valor = (string)self::get($clave, '');
+            if ($valor === '' || in_array($valor, $deEjemplo, true)) {
+                self::fallar("$clave falta o tiene un valor de ejemplo");
+            }
+        }
+        if (strlen((string)self::get('COOKIE_KEY', '')) &lt; $largoMinimoClave) {
+            self::fallar("COOKIE_KEY tiene menos de $largoMinimoClave caracteres");
+        }
+    }
+
+    private static function fallar(string $motivo): never
+    {
+        error_log("[config] $motivo");
+        http_response_code(500);
+        header('Content-Type: application/json; charset=utf-8');
+        echo '{"code":-1,"message":"Servidor mal configurado","data":[]}';
+        exit;
+    }</code></pre>
+<pre data-lang="php" data-file="api/core/configuration.php"><code>&lt;?php
+require_once(__DIR__ . "/env.php");
+
+# El .env vive fuera de htdocs si existe; si no, en api/core (laboratorio)
+$envFuera = dirname(__DIR__, 4) . '/secretos/practicas.env';
+Env::load(is_file($envFuera) ? $envFuera : __DIR__ . '/.env');
+Env::exigir(['COOKIE_NAME', 'COOKIE_KEY', 'DATABASE', 'HOST_DB']);
+
+require_once(__DIR__ . "/errores.php");
+
+#   SECURITY &amp; SESSIONS (WEB02 quita esta sesión de PHP, que no se usa)
+ini_set('session.cookie_secure', '1');
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Strict');
+
+if (session_status() === PHP_SESSION_NONE) {
+    # Nombre neutro: el predeterminado (PHPSESSID) delata que el backend es PHP
+    session_name('sid');
+    session_start();
+}
+
+#   ENVIRONMENT DEFINITIONS
+define('COOKIE_NAME', Env::get('COOKIE_NAME'));
+define('COOKIE_KEY', Env::get('COOKIE_KEY'));
+define('COOKIE_LIFETIME', Env::get('COOKIE_LIFETIME'));
+define('COOKIE_DOMAIN', Env::get('COOKIE_DOMAIN'));
+define('COOKIE_SECURE', Env::get('COOKIE_SECURE'));
+define('COOKIE_HTTPONLY', Env::get('COOKIE_HTTPONLY'));
+define('COOKIE_SAMESITE', Env::get('COOKIE_SAMESITE'));
+
+define("HOST_DB", Env::get('HOST_DB'));
+define("USER_DB", Env::get('USER_DB'));
+define("PASSWORD_DB", Env::get('PASSWORD_DB'));
+define("DATABASE", Env::get('DATABASE'));
+define("CHARSET", Env::get('CHARSET'));</code></pre>
+<p>Para sacar el <code>.env</code> de <code>htdocs</code>, crea la carpeta y muévelo; con eso, el archivo ya no tiene URL:</p>
+<pre data-lang="shell"><code>New-Item -ItemType Directory -Force C:\xampp\secretos | Out-Null
+Move-Item C:\xampp\htdocs\SistemaControlPracticas\api\core\.env C:\xampp\secretos\practicas.env</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Fallar cerrado: un backend mal configurado no responde nada útil en vez de responder con una clave débil. Y el archivo de secretos fuera de la carpeta que Apache sirve.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Un valor por defecto para <code>COOKIE_KEY</code> en el código ("por si falta"): es la forma clásica de terminar con la misma clave en todas las instalaciones. Tampoco se exige <code>PASSWORD_DB</code>, porque el MariaDB de XAMPP viene con <code>root</code> sin clave y el laboratorio lo usa; en producción, súmala a la lista.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que <code>exigir</code> corte también la línea de comandos y algún script tuyo deje de andar: es lo esperado si ese script usaba la clave del ejemplo. Y que el <code>.env</code> quede en los dos lugares: el código usa el de afuera, pero el de adentro sigue ahí para quien lo pida si el <code>.htaccess</code> falla. Bórralo.</dd></div>
+</dl>
+<h3 id="paso-htaccess">Paso 4. Lo que Apache no tiene que entregar</h3>
+<p>El <code>.htaccess</code> raíz se reescribe con reglas que miran <em>cualquier</em> segmento de la ruta, no solo el final, y con un respaldo que funciona aunque <code>mod_rewrite</code> no esté cargado. Las reglas del frontend del final quedan como estaban.</p>
+<pre data-lang="shell" data-file=".htaccess"><code>Options -Indexes
+
+&lt;IfModule mod_rewrite.c&gt;
+  RewriteEngine On
+
+  # (1) .well-known queda abierto (certificados ACME); todo otro segmento con punto, no
+  RewriteRule ^\.well-known/ - [L]
+  RewriteRule (^|/)\. - [F,L]
+
+  # (2) Carpetas que no son de la web
+  RewriteRule ^(database|docs|lab)(/|$) - [F,L,NC]
+  RewriteRule ^frontend/node_modules(/|$) - [F,L,NC]
+  RewriteRule ^api/(core|models)(/|$) - [F,L,NC]
+
+  # (3) Archivos que no son de la web, estén donde estén
+  RewriteRule \.(sql|env|log|lock|md|bak|old|swp|drawio)$ - [F,L,NC]
+  RewriteRule (^|/)(package(-lock)?\.json|pnpm-lock\.yaml|vite\.config\.js)$ - [F,L,NC]
+
+  # (4) Lo que ya estaba: estáticos y el frontend
+  RewriteCond %{REQUEST_FILENAME} -f
+  RewriteRule \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|webp)$ - [L,NC]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^$ frontend/ [L]
+&lt;/IfModule&gt;
+
+# (5) Respaldo sin mod_rewrite: ningún archivo que empiece con punto
+&lt;FilesMatch "^\."&gt;
+  Require all denied
+&lt;/FilesMatch&gt;</code></pre>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Marca</th><th>Qué cierra</th><th>Ejemplo que ahora da 403</th></tr></thead>
+<tbody>
+<tr><td>(1)</td><td>Carpetas y archivos ocultos en cualquier nivel</td><td><code>/.git/config</code>, <code>/frontend/.oxlintrc.json</code></td></tr>
+<tr><td>(2)</td><td>Carpetas del repositorio que no son la aplicación; <code>core/</code> y <code>models/</code> con la ruta real, <code>api/core</code></td><td><code>/database/seed.sql</code>, <code>/api/core/auth.php</code></td></tr>
+<tr><td>(3)</td><td>Extensiones de notas, respaldos y volcados, y los manifiestos del frontend</td><td><code>/env.md</code>, <code>/README.md</code>, <code>/frontend/package.json</code></td></tr>
+<tr><td>(5)</td><td>Lo mismo que (1), si <code>mod_rewrite</code> no está</td><td><code>/.htaccess</code>, <code>/.gitignore</code></td></tr>
+</tbody>
+</table>
+</div>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Reglas por segmento y por carpeta, más un respaldo con <code>FilesMatch</code>. La regla vieja para <code>core</code> y <code>models</code> no coincidía nunca, porque el <code>.htaccess</code> vive en la raíz del proyecto y la ruta que ve es <code>api/core/…</code>, no <code>core/…</code>.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Mover <code>.git</code> fuera de <code>htdocs</code> con <code>git --git-dir</code>: funciona, pero complica cada comando de Git del equipo. La forma de producción es otra: desplegar solo <code>api/</code>, <code>uploads/</code> y <code>frontend/dist</code>, sin el repositorio. Esta guía cierra el laboratorio y lo deja dicho en Limitaciones.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que una regla bloquee algo que sí se usa: la (3) cierra <code>.md</code> en todo el sitio; si algún día sirves documentación en Markdown, ponla en otra carpeta con su propia regla. Y que <code>RewriteRule (^|/)\.</code> no cubra <code>uploads/</code>, que tiene su propio <code>.htaccess</code> con <code>RewriteEngine Off</code>: ahí manda <code>Require all denied</code> más la lista de extensiones que ya trae.</dd></div>
+</dl>
+<h3 id="paso-middleware">Paso 5. 401 y 403 no son lo mismo</h3>
+<p>Con la tabla del paso 1, <code>Usuario no autenticado</code> (<code>code</code> -2) ya sale como 401. Falta el otro caso: alguien con sesión válida pero sin el rol. Hoy <code>requireAuth</code> responde <code>Response::error("Usuario no autorizado")</code>, que la tabla convertiría en 400. Cambia esa línea en <code>api/core/auth-middleware.php</code>:</p>
+<pre data-lang="php" data-file="api/core/auth-middleware.php (al final de requireAuth)"><code>    if (!$esValido) {
+        Response::error("Usuario no autorizado", -1, 403);
+    }</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>401 cuando falta la sesión ("identifícate"), 403 cuando sobra la sesión pero falta el permiso ("tú no"). Un cliente que recibe 401 puede mandar al login; con 403 no tiene sentido.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Responder 404 a quien no tiene el rol, para no revelar que el endpoint existe. Es válido para recursos de otros usuarios (lo hace WEB06 con BOLA), pero para un endpoint conocido como <code>bitacora.php</code> solo confunde al frontend.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el frontend muestre "Sesión expirada" ante un 403 porque trata igual cualquier error; revisa <code>error.status</code> en <code>apiFetch</code> si quieres distinguirlos.</dd></div>
+</dl>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="web01-exposicion"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-pruebas">Las pruebas</h3>
+<p>Un script nuevo mide los códigos HTTP y el tipo de cada respuesta, y el de WEB00 vuelve a medir las rutas. Los dos marcan <code>ok</code> o <code>REVISAR</code> contra lo que el diseño espera.</p>
+<pre data-lang="shell" data-file="lab/web01.ps1"><code>param([string]$Base = "http://localhost/SistemaControlPracticas/api/endpoints", [string]$Jar = "lab\jar.txt")
+
+function Ver($nombre, $metodo, $url, $esperado, [switch]$ConSesion) {
+  $opciones = @("-s", "-o", "NUL", "-X", $metodo, "-w", "%{http_code} %{content_type}")
+  if ($ConSesion) { $opciones += @("-b", $Jar) }
+  $codigo, $tipo = (&amp; curl.exe @opciones $url) -split ' ', 2
+  $ok = ([int]$codigo -eq $esperado) -and ($tipo -like 'application/json*')
+  "{0} {1,-38} -&gt; {2} {3}" -f $(if ($ok) { 'ok     ' } else { 'REVISAR' }), $nombre, $codigo, $tipo
+}
+
+Ver "GET login.php sin sesion"          GET   "$Base/login.php"       401
+Ver "PATCH login.php"                   PATCH "$Base/login.php"       405
+Ver "GET bitacora.php sin sesion"       GET   "$Base/bitacora.php"    401
+Ver "GET bitacora.php como estudiante"  GET   "$Base/bitacora.php"    403 -ConSesion
+Ver "GET oportunidades.php con sesion"  GET   "$Base/oportunidades.php" 200 -ConSesion
+
+""
+"Cabeceras que no deben estar:"
+&amp; curl.exe -s -D - -o NUL "$Base/login.php" | Select-String -Pattern '^(X-Powered-By|Server):'</code></pre>
+<p>Antes de correrlo, renueva la sesión de <code>lab/jar.txt</code> con el POST del <a href="web00-laboratorio.html#paso-login">paso 7 de WEB00</a> (dura <code>COOKIE_LIFETIME</code> segundos). Con todo aplicado, las cinco líneas deben decir <code>ok</code>, y en las cabeceras <code>Server</code> debe valer solo <code>Apache</code> y no debe aparecer <code>X-Powered-By</code>. <code>pwsh .\lab\verificar.ps1</code> debe dar todas las filas <code>ok</code>. Anota cualquier <code>REVISAR</code>: es un endpoint que responde por otro camino y que el paso 2 no alcanzó.</p>
+<h3 id="comprueba-fallas">Fallas provocadas</h3>
+<p><b>Falla 1. La clave del ejemplo.</b> Pon <code>COOKIE_KEY=clave_secreta_cambiar</code> en <code>C:\xampp\secretos\practicas.env</code> y pide cualquier endpoint. Tiene que responder 500 con <code>Servidor mal configurado</code>, y el registro tiene que tener la línea <code>[config] COOKIE_KEY falta o tiene un valor de ejemplo</code>. Importa porque una clave conocida convierte la cookie firmada en una cookie que cualquiera fabrica: es preferible un servidor caído a uno que acepta un administrador inventado.</p>
+<p><b>Falla 2. Una excepción con referencia.</b> Cambia <code>PASSWORD_DB</code> a un valor incorrecto y repite el login. La respuesta tiene que ser 500 con <code>Error interno. Referencia: </code> seguido de doce caracteres hexadecimales, y el mensaje no debe decir nada de MariaDB. Busca la referencia en el registro:</p>
+<pre data-lang="shell"><code>Select-String -Path C:\xampp\logs\practicas-api.log -Pattern "REFERENCIA_QUE_TE_DIO"</code></pre>
+<p>La línea que aparece trae la clase (<code>PDOException</code>), el mensaje real de la base y el archivo y la línea. Eso es lo que antes podía llegar al cliente. Restaura la clave.</p>
+<p><b>Falla 3. Sin <code>mod_rewrite</code>.</b> Repite la falla 1 de WEB00 (renombrar el <code>.htaccess</code>) y corre <code>verificar.ps1</code>. Ahora el <code>.env</code> ya no está en <code>htdocs</code>, así que su ruta da 404 aunque el <code>.htaccess</code> falte. Las rutas de <code>.git/</code> sí vuelven a salir: lo único que las cubre es el respaldo <code>FilesMatch</code>, que también vive en ese archivo, y por eso en producción el repositorio no se despliega. Devuelve el nombre.</p>
+<h2 id="limites">Limitaciones</h2>
+<ul>
+<li><b>El repositorio sigue en el servidor.</b> El <code>.htaccess</code> cierra <code>.git/</code>, pero la forma correcta de producción es desplegar solo lo necesario (<code>api/</code>, <code>uploads/</code> y <code>frontend/dist</code>) y nunca el directorio de Git.</li>
+<li><b>El registro no rota.</b> <code>practicas-api.log</code> crece sin límite. En un servidor Linux, <code>logrotate</code>; en el laboratorio, bórralo cuando quieras.</li>
+<li><b>Ocultar la versión no es parchear.</b> <code>expose_php</code> y <code>ServerTokens</code> reducen lo que se anuncia, no lo que es vulnerable.</li>
+<li><b>Nada se ejecutó al escribir esta guía.</b> Los códigos esperados salen de leer el código; si tu script marca <code>REVISAR</code>, el código real manda y la guía se corrige.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="web01">
+<p class="pj-repo-head">Trabaja en la rama <code>web01-lo-que-no-debe-verse</code>. Antes del commit, comprueba con <code>git status</code> que no aparezcan <code>api/core/.env</code> ni nada de <code>lab/</code> con cookies.</p>
+<ul class="pj-checks">
+<li data-check="response"><code>core/response.php</code> nuevo y <code>php -l</code> sin errores.</li>
+<li data-check="errores">Corriste <code>migrar-errores.ps1</code> y revisaste el <code>git diff</code>.</li>
+<li data-check="env">El <code>.env</code> está en <code>C:\xampp\secretos</code> y el de <code>api/core</code> ya no existe.</li>
+<li data-check="htaccess"><code>verificar.ps1</code> da todas las filas <code>ok</code>.</li>
+<li data-check="codigos"><code>web01.ps1</code> da 401, 405, 401, 403 y 200.</li>
+<li data-check="fallas">Provocaste las tres fallas y encontraste la referencia en el registro.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<p>Esta guía funciona sola. Si quieres juntarla con otras:</p>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con WEB00, el laboratorio</p>
+<p><code>lab/verificar.ps1</code> es el mismo script; la guía cambió el servidor, no la prueba. Esa es la idea de toda la serie.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M78, cabeceras</p>
+<p><code>nosniff</code> ya sale en cada respuesta de la API. El resto de las cabeceras (CSP, HSTS, <code>frame-ancestors</code>) las pone WEB09; la teoría está en <a href="../modules/m78-csp-cabeceras.html#cabeceras">M78</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M11, observabilidad</p>
+<p>El id de la referencia es la versión mínima de un <em>request id</em>. Si un día pones un proxy delante, pasa su id en una cabecera y úsalo en lugar de generar uno.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con A14</p>
+<p>Las líneas de <code>practicas-api.log</code> son las que A14 llevaría a Loki para alertar por un salto de errores 500.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/web01.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

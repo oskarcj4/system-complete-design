@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WEB06. Control de acceso</title>
+<meta name="description" content="Dos huecos que sobreviven a una API bien autorizada: una búsqueda vacía que entrega todos los usuarios y una oferta cancelada que se reabre sin permiso, más una matriz de curl con cuatro sesiones.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="web06" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Control de acceso</h1>
+        <p class="lead">Tu API ya autoriza rama por rama. Los huecos que quedan tienen la misma forma: la regla existe, pero se aplica sobre algo distinto de lo que se ejecuta.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>WEB06</dd></div>
+          <div><dt>Plan</dt><dd>Seguridad web</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>3 h</dd></div>
+          <div><dt>Módulos</dt><dd>M80</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="web06">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Leer cómo autoriza hoy tu API (rama por rama, con el dueño del recurso) y reconocer por qué está bien hecho.</li>
+<li>Encontrar los dos huecos que sobreviven: una búsqueda vacía en <code>usuarios.php</code> que entrega la lista completa de usuarios con su correo, y una oferta cancelada que se reabre después de perder el permiso de publicar.</li>
+<li>Cerrarlos con una sola idea: autorizar la acción que se va a ejecutar, decidida una vez con los mismos valores, y pedir el mismo permiso en todo camino que produce el mismo efecto.</li>
+<li>Dejar una matriz de <code>curl</code> con cuatro sesiones que prueba quién puede qué, para que el próximo hueco lo encuentre un script y no una lectura.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>La auditoría de octubre encontró el control de acceso roto de punta a punta: endpoints que autorizaban con el rol del propio usuario y un <code>creado_por</code> que venía del cuerpo. La re-auditoría encontró otra cosa. Hoy cada endpoint pide sesión, cada rama de cada <code>switch</code> pregunta quién es el dueño antes de consultar (<code>duenosPostulacion</code>, <code>creadorOportunidad</code>, <code>duenoSolicitud</code>), <code>creado_por</code> sale de la cookie y la institución de una oferta la fija el servidor. Es el patrón que recomienda <a href="../modules/m80-control-acceso.html">M80</a>, y está bien.</p>
+<p>Leyendo con cuidado, quedan dos huecos. Ninguno es obvio, y los dos tienen la misma forma: la regla existe, pero se aplica sobre algo distinto de lo que se ejecuta.</p>
+<ul>
+<li><b>H1. La búsqueda vacía.</b> <code>usuarios.php</code> deja pasar a cualquier sesión si la request "es una búsqueda", y lo decide con <code>isset($_GET['q'])</code>. El <code>switch</code>, en cambio, busca solo si el término no está vacío. Con <code>?q=</code>, la autorización ve una búsqueda y el <code>switch</code> ejecuta <code>findAll()</code>: la lista de todos los usuarios con su correo, para un estudiante. Con <code>?q=&amp;rol_id=2</code>, la lista de administradores. Es una <dfn data-term="bola">BOLA</dfn> sobre la tabla entera.</li>
+<li><b>H2. Reabrir es volver a publicar.</b> Publicar una oferta exige permiso (<code>autorizado_publicar</code> o el rol de reclutador). Editarla solo exige ser su creador. Cuando un administrador le quita el permiso a alguien y cancela sus ofertas, esa persona sigue siendo la creadora y el botón "Reabrir" de "Mis ofertas" las devuelve al feed. Es una <dfn data-term="bfla">BFLA</dfn>: la función "publicar" tiene dos puertas y solo una tiene cerradura.</li>
+</ul>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="fw6at fw6ad">
+<title id="fw6at">La autorización y el switch leen distinto</title>
+<desc id="fw6ad">Una request GET usuarios.php?q= vacío entra por la izquierda. Arriba, la autorización pregunta si está q con isset, contesta que sí, que es una búsqueda, y deja pasar. Abajo, el switch pregunta si el término no está vacío, contesta que no, sigue por id, email y rol_id, que tampoco están, y ejecuta findAll con el correo de todos. Después de la guía, una sola función decide la acción y las dos partes usan su resultado.</desc>
+<defs><marker id="fw6aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="12" y="96" width="150" height="58" rx="8"/>
+<text class="dg-label" x="87" y="121" text-anchor="middle">GET usuarios.php</text><text class="dg-tiny dg-mono" x="87" y="138" text-anchor="middle">?q=</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="220" y="24" width="250" height="62" rx="8"/>
+<text class="dg-label" x="345" y="48" text-anchor="middle">Autorización</text><text class="dg-tiny dg-mono" x="345" y="66" text-anchor="middle">isset($_GET['q']): es búsqueda</text>
+<rect x="520" y="24" width="236" height="62" rx="8" class="dg-ok"/>
+<text class="dg-small" x="638" y="50" text-anchor="middle">pasa: cualquier sesión</text><text class="dg-tiny" x="638" y="68" text-anchor="middle">puede buscar</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="220" y="164" width="250" height="62" rx="8"/>
+<text class="dg-label" x="345" y="188" text-anchor="middle">switch</text><text class="dg-tiny dg-mono" x="345" y="206" text-anchor="middle">$termino !== '' es falso</text>
+<rect x="520" y="164" width="236" height="62" rx="8" class="dg-bad"/>
+<text class="dg-small" x="638" y="190" text-anchor="middle">findAll(): todos los usuarios</text><text class="dg-tiny" x="638" y="208" text-anchor="middle">con su correo</text>
+<path class="dg-edge" d="M162 112 L218 62" marker-end="url(#fw6aa)"/>
+<path class="dg-edge" d="M162 138 L218 190" marker-end="url(#fw6aa)"/>
+<path class="dg-edge" d="M470 55 L518 55" marker-end="url(#fw6aa)"/>
+<path class="dg-edge" d="M470 195 L518 195" marker-end="url(#fw6aa)"/>
+<path class="dg-feedback" d="M345 88 L345 162"/>
+<rect x="352" y="113" width="150" height="20" rx="4" fill="var(--paper)"/><text class="dg-tiny" x="358" y="127">leen la misma request distinto</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB06.1.</b> H1 en un dibujo. La autorización y la consulta son dos <code>if</code> separados que reconstruyen, cada uno a su manera, qué pidió el cliente. El arreglo del paso 2 hace que lo decida una sola función, y que las dos partes usen su respuesta.</figcaption>
+</figure>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 342" role="img" aria-labelledby="fw6st fw6sd">
+<title id="fw6st">Una oferta que vuelve sola</title>
+<desc id="fw6sd">Un administrador le quita el permiso de publicar a una estudiante y cancela sus ofertas. La estudiante abre Mis ofertas y aprieta Reabrir. El PUT a oportunidades.php solo comprueba que sea la creadora, así que la oferta vuelve a estar activa y aparece en el feed. Después de la guía, el PUT que deja una oferta activa pide el mismo permiso que publicar y responde 403.</desc>
+<defs><marker id="fw6s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw6s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fw6s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fw6s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Administrador</text>
+<path class="dg-frame" d="M70.0 40 V332"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">API (PHP)</text>
+<path class="dg-frame" d="M280.0 40 V332"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M490.0 40 V332"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Estudiante</text>
+<path class="dg-frame" d="M700.0 40 V332"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#fw6s-a)"/>
+<rect x="-12.5" y="55" width="375.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">PUT usuarios.php permiso_publicar (autorizar 0, cerrar)</text>
+<path class="dg-edge" d="M283.0 106 L485.0 106" marker-end="url(#fw6s-a)"/>
+<rect x="237.1" y="89" width="295.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">autorizado_publicar = 0; ofertas: cancelada</text>
+<path class="dg-edge" d="M697.0 140 L285.0 140" marker-end="url(#fw6s-a)"/>
+<rect x="358.6" y="123" width="262.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="134" text-anchor="middle">PUT oportunidades.php (estado: activa)</text>
+<rect x="290.0" y="160" width="230" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="300.0" y="176">hoy: ¿es la creadora? sí, pasa</text>
+<path class="dg-edge" d="M283.0 208 L485.0 208" marker-end="url(#fw6s-a)"/>
+<rect x="260.2" y="191" width="249.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="202" text-anchor="middle">UPDATE estado_oportunidad = &#x27;activa&#x27;</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M283.0 242 L695.0 242" marker-end="url(#fw6s-r)"/>
+<rect x="388.3" y="225" width="203.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="236" text-anchor="middle">200: la oferta vuelve al feed</text>
+<rect x="290.0" y="262" width="251" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="300.0" y="278">después: ¿puede publicar? no, 403</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB06.2.</b> H2. La regla "para publicar hay que tener permiso" está en <code>add()</code>; reabrir produce el mismo efecto (una oferta activa en el feed de todos) por otro método. El arreglo del paso 4 pide el mismo permiso en las dos puertas, con la misma función.</figcaption>
+</figure>
+<h2 id="endpoints">Los endpoints</h2>
+<p>No cambia ninguna ruta. Cambia quién recibe qué en estas combinaciones:</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Request</th><th>Sesión</th><th>Hoy (leído del código)</th><th>Después</th></tr></thead>
+<tbody>
+<tr><td><code>GET usuarios.php?q=</code></td><td>estudiante</td><td>200, todos los usuarios con correo</td><td>403</td></tr>
+<tr><td><code>GET usuarios.php?buscar=&amp;rol_id=2</code></td><td>estudiante</td><td>200, los administradores</td><td>403</td></tr>
+<tr><td><code>GET usuarios.php?q=&amp;email=…</code></td><td>estudiante</td><td>200, la ficha completa de esa cuenta</td><td>403</td></tr>
+<tr><td><code>GET usuarios.php?q=Prueba</code></td><td>estudiante</td><td>200, búsqueda con datos públicos</td><td>200, igual</td></tr>
+<tr><td><code>PUT oportunidades.php</code> con <code>estado_oportunidad: activa</code></td><td>creadora sin permiso</td><td>200</td><td>403</td></tr>
+<tr><td><code>PUT oportunidades.php</code> con <code>cerrada</code> o <code>cancelada</code></td><td>creadora sin permiso</td><td>200</td><td>200, igual</td></tr>
+</tbody>
+</table>
+</div>
+<p>La última fila es a propósito: cerrar o cancelar reduce lo que se expone, y quien perdió el permiso tiene que poder hacerlo.</p>
+<h2 id="dependencias">Qué necesitas</h2>
+<p>El laboratorio de <a href="web00-laboratorio.html">WEB00</a> y la PHP de XAMPP para las pruebas de reglas (<code>C:\xampp\php\php.exe</code>). No se instala nada. Si hiciste WEB03, las requests de <code>curl</code> pasan la comprobación de origen porque no mandan <code>Origin</code> ni <code>Sec-Fetch-Site</code>: no son un navegador.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<h3 id="infra-sesiones">Cuatro sesiones</h3>
+<p>La matriz necesita una sesión por rol y una segunda estudiante, la "ajena", para probar que una no ve lo de la otra. Las tres primeras vienen de la semilla (contraseña <code>Password123</code>):</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Archivo</th><th>Cuenta</th><th>id</th><th>Para qué</th></tr></thead>
+<tbody>
+<tr><td><code>lab/login.json</code> (WEB00)</td><td><code>estudiante</code></td><td class="r">3</td><td>La dueña de una postulación</td></tr>
+<tr><td><code>lab/reclutador.json</code> (WEB05)</td><td><code>reclutador</code></td><td class="r">2</td><td>El creador de la oferta</td></tr>
+<tr><td><code>lab/admin.json</code></td><td><code>admin</code></td><td class="r">1</td><td>El que puede todo</td></tr>
+<tr><td><code>lab/estudiante2.json</code></td><td><code>estudiante2</code></td><td class="r">la que toque</td><td>La ajena, y la del caso H2</td></tr>
+</tbody>
+</table>
+</div>
+<pre data-lang="json" data-file="lab/admin.json"><code>{"identificador": "admin", "contrasena": "Password123"}</code></pre>
+<pre data-lang="json" data-file="lab/estudiante2.json"><code>{"identificador": "estudiante2", "contrasena": "Password123"}</code></pre>
+<p>La cuenta <code>estudiante2</code> la creas desde la pantalla de registro del frontend, con usuario <code>estudiante2</code>, la contraseña de arriba y la misma institución y carrera que <code>estudiante</code>. Después, para que la matriz tenga qué mirar:</p>
+<ol class="steps">
+<li><span class="step-title">Una oferta del reclutador</span>Si hiciste WEB05 ya la tienes; si no, publica una como <code>reclutador</code>.</li>
+<li><span class="step-title">Una postulación de <code>estudiante</code></span>A esa oferta, con un PDF cualquiera.</li>
+</ol>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una segunda cuenta del mismo rol, creada por el registro público.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Probar el acceso ajeno con la cuenta del administrador: el administrador puede todo, así que un 200 suyo no prueba nada. La <dfn data-term="bola">BOLA</dfn> se ve solo entre dos cuentas del mismo rol.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el registro pida un carné con un formato que no adivinas. Copia el formato del de la semilla (<code>0900-20-0001</code>) y cambia el último número.</dd></div>
+</dl>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<h3 id="paso-reglas">Paso 1. Las reglas de <code>GET usuarios.php</code>, sin base</h3>
+<p>Dos funciones puras: una decide <em>qué consulta</em> hace la request, con el mismo orden que el <code>switch</code>; la otra decide <em>quién</em> puede hacerla. Como no tocan la base, se prueban con PHP solo.</p>
+<div class="pseudo"><ol>
+<li>El término de búsqueda es <code>q</code> si trae texto, si no <code>buscar</code>. Un valor que no es texto (<code>?q[]=x</code>) cuenta como vacío.</li>
+<li>La acción sale en el orden del <code>switch</code>: publicadores, perfil, buscar (solo con término), id, email, rol, todos.</li>
+<li>Perfil y búsqueda devuelven datos públicos: cualquier sesión. Un id: el admin o el propio. El resto (publicadores, email, rol, todos): solo el admin.</li>
+</ol></div>
+<pre data-lang="php" data-file="api/core/reglas-usuarios.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+/** El término de búsqueda: q si trae texto, si no buscar. Lo que no es texto cuenta como vacío. */
+function terminoBusqueda(array $q): string
+{
+    foreach (['q', 'buscar'] as $clave) {
+        $v = $q[$clave] ?? '';
+        if (is_string($v) &amp;&amp; trim($v) !== '') {
+            return trim($v);
+        }
+    }
+    return '';
+}
+
+/**
+ * Qué consulta hace un GET a usuarios.php. Se decide UNA vez, y la usan la autorización
+ * y el switch. El orden es el del switch de siempre.
+ */
+function accionGetUsuarios(array $q): string
+{
+    if (isset($q['publicadores']))        return 'publicadores';
+    if (isset($q['perfil']))              return 'perfil';
+    if (terminoBusqueda($q) !== '')       return 'buscar';
+    if ((int)($q['id'] ?? 0) &gt; 0)         return 'id';
+    if (is_string($q['email'] ?? null) &amp;&amp; trim($q['email']) !== '') return 'email';
+    if ((int)($q['rol_id'] ?? 0) &gt; 0)     return 'rol';
+    return 'todos';
+}
+
+/** Quién puede cada acción. Perfil y búsqueda usan SELECT_USUARIO_PUBLICO para quien no es admin. */
+function puedeGetUsuarios(string $accion, bool $esAdmin, int $propio, int $id): bool
+{
+    return match ($accion) {
+        'perfil', 'buscar' =&gt; true,
+        'id'               =&gt; $esAdmin || $id === $propio,
+        default            =&gt; $esAdmin,
+    };
+}</code></pre>
+<p>Fíjate en el <code>default</code> de <code>puedeGetUsuarios</code>: lo que no está nombrado es solo del administrador. Si mañana alguien agrega una acción y se olvida de la regla, la acción nueva queda cerrada, no abierta. Es fallar cerrado, la misma idea que <a href="web01-lo-que-no-debe-verse.html">WEB01</a> aplicó a los errores.</p>
+<pre data-lang="php" data-file="tests/usuarios_reglas_test.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../api/core/reglas-usuarios.php';
+
+$fallos = 0;
+function caso(string $nombre, bool $esperado, bool $obtenido): void
+{
+    global $fallos;
+    $ok = $esperado === $obtenido;
+    if (!$ok) {
+        $fallos++;
+    }
+    printf("%s %s\n", $ok ? 'ok    ' : 'FALLA ', $nombre);
+}
+
+# La estudiante de la semilla es el id 3; el admin, el 1.
+$estudiante = fn(array $q): bool =&gt; puedeGetUsuarios(accionGetUsuarios($q), false, 3, (int)($q['id'] ?? 0));
+$admin      = fn(array $q): bool =&gt; puedeGetUsuarios(accionGetUsuarios($q), true, 1, (int)($q['id'] ?? 0));
+
+caso('H1: ?q= vacío no es una búsqueda',            false, $estudiante(['q' =&gt; '']));
+caso('H1: ?buscar= con rol_id no lista un rol',     false, $estudiante(['buscar' =&gt; '', 'rol_id' =&gt; '2']));
+caso('H1: ?q= con email no da la ficha',            false, $estudiante(['q' =&gt; '', 'email' =&gt; 'admin@practicas.local']));
+caso('?q= con espacios tampoco',                    false, $estudiante(['q' =&gt; '   ']));
+caso('?q[]= (no es texto) tampoco',                 false, $estudiante(['q' =&gt; ['x']]));
+caso('una búsqueda con término sí',                 true,  $estudiante(['q' =&gt; 'Prueba']));
+caso('buscar con término y q vacío sí',             true,  $estudiante(['q' =&gt; '', 'buscar' =&gt; 'Prueba']));
+caso('un perfil público sí',                        true,  $estudiante(['perfil' =&gt; '2']));
+caso('su propio id sí',                             true,  $estudiante(['id' =&gt; '3']));
+caso('el id de otra persona no',                    false, $estudiante(['id' =&gt; '1']));
+caso('los publicadores no',                         false, $estudiante(['publicadores' =&gt; '1']));
+caso('sin parámetros no',                           false, $estudiante([]));
+caso('el admin, sin parámetros, sí',                true,  $admin([]));
+caso('el admin, cualquier id, sí',                  true,  $admin(['id' =&gt; '3']));
+caso('una acción que nadie nombró: solo el admin',  false, puedeGetUsuarios('nueva', false, 3, 0));
+
+echo $fallos === 0 ? "Todo bien\n" : "$fallos casos fallaron\n";
+exit($fallos === 0 ? 0 : 1);</code></pre>
+<pre data-lang="shell"><code>C:\xampp\php\php.exe tests\usuarios_reglas_test.php</code></pre>
+<p>Tiene que terminar con <code>Todo bien</code>. Las tres primeras líneas son H1: con las reglas de hoy, escritas como función, darían <code>true</code>.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Decidir la acción una vez, en una función pura, y que la autorización y la consulta usen el mismo resultado.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Arreglar solo el <code>isset</code> (cambiarlo por <code>!== ''</code>): cierra este caso y deja la forma del bug, dos <code>if</code> que reconstruyen la request cada uno a su manera. El próximo parámetro nuevo lo vuelve a abrir.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el orden de <code>accionGetUsuarios</code> se aparte del <code>switch</code>. Por eso el paso 2 cambia el <code>switch</code> para que use la acción y no sus propios <code>if</code>: ya no hay dos órdenes que mantener.</dd></div>
+</dl>
+<h3 id="paso-usuarios">Paso 2. <code>usuarios.php</code> usa la acción</h3>
+<p>Dos cambios en <code>api/endpoints/usuarios.php</code>, sin tocar la cabecera ni el <code>catch</code> (que WEB01 y WEB04 ya cambiaron). Primero, el <code>require</code>, debajo de los demás:</p>
+<pre data-lang="php"><code>require_once __DIR__ . "/../core/reglas-usuarios.php";</code></pre>
+<p>Segundo, dentro de <code>if ($auth_data !== null) {</code>, reemplaza las dos primeras reglas (la del <code>GET</code> y la de los publicadores) por esto. Lo que había:</p>
+<pre data-lang="php"><code>    $esBusqueda = isset($_GET['q']) || isset($_GET['buscar']) || isset($_GET['perfil']);
+
+    if ($method === 'GET' &amp;&amp; !$esAdmin &amp;&amp; (int)($_GET['id'] ?? 0) !== $propioId &amp;&amp; !$esBusqueda) {
+        Response::invalidAccess();
+    }
+    # Permisos de publicación: solo admin
+    if (!$esAdmin &amp;&amp; (isset($_GET['publicadores']) || ($method === 'PUT' &amp;&amp; inputString($data, 'accion') === 'permiso_publicar'))) {
+        Response::invalidAccess();
+    }</code></pre>
+<p>Lo que queda:</p>
+<pre data-lang="php"><code>    # GET: la acción se decide una vez y la usan esta regla y el switch (reglas-usuarios.php)
+    $accionGet = $method === 'GET' ? accionGetUsuarios($_GET) : null;
+    if ($accionGet !== null &amp;&amp; !puedeGetUsuarios($accionGet, $esAdmin, $propioId, (int)($_GET['id'] ?? 0))) {
+        Response::invalidAccess();
+    }
+    # Permisos de publicación: solo admin
+    if (!$esAdmin &amp;&amp; $method === 'PUT' &amp;&amp; inputString($data, 'accion') === 'permiso_publicar') {
+        Response::invalidAccess();
+    }</code></pre>
+<p>Y el <code>case 'GET'</code> del <code>switch</code> pasa a elegir por la acción, no por sus propios <code>if</code>:</p>
+<pre data-lang="php" data-file="api/endpoints/usuarios.php (case GET)"><code>        case 'GET':
+            match ($accionGet) {
+                'publicadores' =&gt; $usuario-&gt;findPublicadores(),
+                'perfil'       =&gt; $usuario-&gt;findPerfil((int)$_GET['perfil']),
+                'buscar'       =&gt; $usuario-&gt;search(terminoBusqueda($_GET), $esAdmin),
+                'id'           =&gt; $usuario-&gt;findById((int)$_GET['id']),
+                'email'        =&gt; $usuario-&gt;findByEmail(trim((string)$_GET['email'])),
+                'rol'          =&gt; $usuario-&gt;findByRol((int)$_GET['rol_id']),
+                'todos'        =&gt; $usuario-&gt;findAll(),
+            };
+            break;</code></pre>
+<pre data-lang="shell"><code>C:\xampp\php\php.exe -l api\endpoints\usuarios.php</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>La misma variable <code>$accionGet</code> en la regla y en la consulta.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Reescribir el endpoint entero: el resto (registro público, edición del propio perfil, las protecciones del administrador sobre sí mismo) está bien y no se toca.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Un <code>match</code> sin brazo para un valor lanza <code>UnhandledMatchError</code>. No pasa aquí porque <code>accionGetUsuarios</code> solo devuelve esos siete; si algún día devuelve otro, el <code>catch</code> de WEB01 lo convierte en un 500 con referencia, que es fallar cerrado.</dd></div>
+</dl>
+<h3 id="paso-publicar">Paso 3. Una sola regla para "puede publicar"</h3>
+<p>La regla hoy vive dentro de <code>Oportunidades::add()</code>, como una consulta. Para pedirla también al reabrir, pasa a <code>core/permisos.php</code> como función, y <code>add()</code> la usa. Agrega al final de <code>api/core/permisos.php</code>:</p>
+<pre data-lang="php" data-file="api/core/permisos.php (al final)"><code>/**
+ * ¿Puede este usuario tener ofertas activas en el feed? Es la regla de publicar:
+ * cuenta activa y, o permiso explícito (autorizado_publicar), o rol de administrador o reclutador.
+ * La usan publicar (Oportunidades::add) y reabrir (PUT oportunidades.php).
+ */
+function puedePublicar(PDO $connection, int $usuario_id): bool
+{
+    $fila = filaUnica($connection,
+        "SELECT u.autorizado_publicar,
+                EXISTS (SELECT 1 FROM asignaciones_roles ar
+                        INNER JOIN roles r ON r.id = ar.id_rol
+                        WHERE ar.id_usuario = u.id AND ar.estado = 1
+                          AND r.nombre IN ('administrador', 'reclutador')) AS publica_por_rol
+           FROM usuarios u
+          WHERE u.id = ? AND u.estado = 1 AND u.estado_cuenta = 'activo'",
+        [$usuario_id]);
+
+    return $fila !== null
+        &amp;&amp; ((int)$fila['autorizado_publicar'] === 1 || (int)$fila['publica_por_rol'] === 1);
+}</code></pre>
+<p>En <code>api/models/oportunidades.php</code>, que hoy no incluye nada, agrega debajo de <code>&lt;?php</code>:</p>
+<pre data-lang="php"><code>require_once __DIR__ . "/../core/permisos.php";</code></pre>
+<p>Y en <code>add()</code>, dentro del <code>try</code>, la consulta y sus dos <code>if</code> (desde <code>$stmt = $this-&gt;connection-&gt;prepare("SELECT u.autorizado_publicar,</code> hasta el <code>if</code> que responde "El usuario no está autorizado para publicar oportunidades") se cambian por:</p>
+<pre data-lang="php" data-file="api/models/oportunidades.php (add)"><code>            if (!puedePublicar($this-&gt;connection, $creado_por)) {
+                $this-&gt;response-&gt;error("El usuario no está autorizado para publicar oportunidades", -1, 403);
+            }</code></pre>
+<p>Un detalle cambia: antes, un creador inexistente o suspendido recibía un 404 "El creador no existe o no está activo"; ahora recibe el mismo 403. <code>creado_por</code> sale de la sesión, y <code>refrescarAuthDesdeBD</code> ya corta a una cuenta suspendida antes de llegar aquí, así que ese 404 no lo veía nadie.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una función con nombre de regla de negocio, en el archivo de permisos, que usan las dos puertas.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Copiar la consulta en el endpoint: dos copias de la misma regla son exactamente el bug H2, una con un cambio que la otra no tiene.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que <code>permisos.php</code> se incluya dos veces. Todos usan <code>require_once</code>, así que PHP lo carga una sola vez; con <code>require</code> a secas, la segunda vez fallaría por funciones repetidas.</dd></div>
+</dl>
+<h3 id="paso-reabrir">Paso 4. Reabrir pide permiso</h3>
+<p>En <code>api/endpoints/oportunidades.php</code>, el <code>case 'PUT'</code> empieza así:</p>
+<pre data-lang="php"><code>        case 'PUT':
+            # Solo el creador de la oferta o un admin
+            exigirPermiso(esAdmin($auth_data) || creadorOportunidad($connection, (int)inputString($data, 'id', '0')) === (int)$auth_data['id']);</code></pre>
+<p>Debajo de esa línea, agrega la segunda puerta:</p>
+<pre data-lang="php" data-file="api/endpoints/oportunidades.php (case PUT)"><code>            # Dejar una oferta activa es publicarla: pide el mismo permiso que publicar (puedePublicar).
+            # Cerrarla o cancelarla no lo pide: quien perdió el permiso tiene que poder bajar lo suyo.
+            if (!esAdmin($auth_data) &amp;&amp; inputString($data, 'estado_oportunidad', 'activa') === 'activa') {
+                exigirPermiso(puedePublicar($connection, (int)$auth_data['id']));
+            }</code></pre>
+<p>El valor por defecto <code>'activa'</code> es el mismo que usa <code>Oportunidades::update()</code>: un <code>PUT</code> sin el campo deja la oferta activa, así que también pide permiso.</p>
+<pre data-lang="shell"><code>C:\xampp\php\php.exe -l api\endpoints\oportunidades.php
+C:\xampp\php\php.exe -l api\models\oportunidades.php
+C:\xampp\php\php.exe -l api\core\permisos.php</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Pedir el permiso según el <em>efecto</em> del cambio (la oferta queda activa), no según el botón que lo dispara.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Esconder el botón "Reabrir" en el frontend para quien no tiene permiso: es una mejora de la interfaz, no una defensa. La falla 3 lo prueba con <code>curl</code>.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que editar el texto de una oferta activa también pida el permiso. Es lo correcto: quien perdió el permiso no debería seguir cambiando lo que ven todos. Si el producto quiere otra cosa, es una decisión de negocio que se escribe en esta misma línea.</dd></div>
+</dl>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="web06-acceso"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-matriz">La matriz de acceso</h3>
+<p>Cuatro sesiones contra 18 combinaciones de método, ruta y cuenta. Cada fila dice qué estado HTTP espera; el script entra con las cuatro, busca los ids que necesita (la oferta del reclutador y la postulación de <code>estudiante</code>) y lee el token CSRF de cada sesión para las escrituras. Así, un 403 es de autorización y no del token.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 236" role="img" aria-labelledby="fw6mt fw6md">
+<title id="fw6mt">La matriz, por familias</title>
+<desc id="fw6md">Una rejilla con cuatro columnas de sesión, sin sesión, estudiante, estudiante2 y reclutador, y administrador, y cuatro familias de filas: datos de personas, datos ajenos del mismo rol, funciones de administrador y escrituras sobre lo ajeno. Sin sesión todo da 401. Estudiante y estudiante2 ven lo propio y reciben 403 en lo ajeno y en lo de administrador. El administrador recibe 200.</desc>
+<g class="dg-small"><text x="20" y="30">Familia</text><text x="250" y="30">Sin sesión</text><text x="380" y="30">Estudiantes</text><text x="510" y="30">Reclutador</text><text x="640" y="30">Admin</text></g>
+<path class="dg-frame" d="M14 42 H756"/>
+<text class="dg-label" x="20" y="72">Personas</text><text class="dg-tiny" x="20" y="88">usuarios.php (H1)</text>
+<rect x="245" y="54" width="115" height="40" rx="6" class="dg-box"/><text class="dg-tiny" x="302" y="78" text-anchor="middle">401</text>
+<rect x="375" y="54" width="115" height="40" rx="6" class="dg-ok"/><text class="dg-tiny" x="432" y="71" text-anchor="middle">propio y público;</text><text class="dg-tiny" x="432" y="86" text-anchor="middle">lista: 403</text>
+<rect x="505" y="54" width="115" height="40" rx="6" class="dg-ok"/><text class="dg-tiny" x="562" y="78" text-anchor="middle">igual</text>
+<rect x="635" y="54" width="115" height="40" rx="6" class="dg-ok"/><text class="dg-tiny" x="692" y="78" text-anchor="middle">200</text>
+<text class="dg-label" x="20" y="122">Lo ajeno</text><text class="dg-tiny" x="20" y="138">postulaciones, historial</text>
+<rect x="245" y="104" width="115" height="40" rx="6" class="dg-box"/><text class="dg-tiny" x="302" y="128" text-anchor="middle">401</text>
+<rect x="375" y="104" width="115" height="40" rx="6" class="dg-ok"/><text class="dg-tiny" x="432" y="121" text-anchor="middle">lo suyo 200;</text><text class="dg-tiny" x="432" y="136" text-anchor="middle">la otra: 403</text>
+<rect x="505" y="104" width="115" height="40" rx="6" class="dg-ok"/><text class="dg-tiny" x="562" y="121" text-anchor="middle">las de su</text><text class="dg-tiny" x="562" y="136" text-anchor="middle">oferta: 200</text>
+<rect x="635" y="104" width="115" height="40" rx="6" class="dg-ok"/><text class="dg-tiny" x="692" y="128" text-anchor="middle">200</text>
+<text class="dg-label" x="20" y="172">Funciones</text><text class="dg-tiny" x="20" y="188">bitácora, estadísticas</text>
+<rect x="245" y="154" width="115" height="40" rx="6" class="dg-box"/><text class="dg-tiny" x="302" y="178" text-anchor="middle">401</text>
+<rect x="375" y="154" width="115" height="40" rx="6" class="dg-ok"/><text class="dg-tiny" x="432" y="178" text-anchor="middle">403</text>
+<rect x="505" y="154" width="115" height="40" rx="6" class="dg-ok"/><text class="dg-tiny" x="562" y="178" text-anchor="middle">403</text>
+<rect x="635" y="154" width="115" height="40" rx="6" class="dg-ok"/><text class="dg-tiny" x="692" y="178" text-anchor="middle">200</text>
+<text class="dg-label" x="20" y="218">Escribir</text><text class="dg-tiny" x="20" y="232">lo de otro, catálogos</text>
+<rect x="375" y="200" width="115" height="30" rx="6" class="dg-ok"/><text class="dg-tiny" x="432" y="219" text-anchor="middle">403</text>
+<rect x="505" y="200" width="115" height="30" rx="6" class="dg-ok"/><text class="dg-tiny" x="562" y="219" text-anchor="middle">403</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB06.3.</b> Lo que la matriz prueba, agrupado. Las celdas verdes son el comportamiento correcto, sea 200 o 403: lo que importa es que coincida con la regla. <a href="../modules/m80-control-acceso.html">M80</a> tiene el simulador con las mismas cuatro comprobaciones.</figcaption>
+</figure>
+<pre data-lang="shell" data-file="lab/web06.ps1"><code>param([string]$Base = "http://localhost/SistemaControlPracticas/api/endpoints")
+
+$sesiones = @{ estudiante = "lab\login.json"; estudiante2 = "lab\estudiante2.json"; reclutador = "lab\reclutador.json"; admin = "lab\admin.json" }
+$token = @{}
+foreach ($s in $sesiones.Keys) {
+    &amp; curl.exe -s -o NUL -c "lab\jar-$s.txt" -H "Content-Type: application/json" --data-binary "@$($sesiones[$s])" "$Base/login.php"
+    $token[$s] = (&amp; curl.exe -s -b "lab\jar-$s.txt" "$Base/login.php" | ConvertFrom-Json).data.csrfToken
+    if (-not $token[$s]) { Write-Host "No entró $s. Revisa $($sesiones[$s]) y el límite de intentos de WEB02."; exit 1 }
+}
+
+# Los ids que hacen falta, leídos de la API con la sesión que puede verlos
+$oferta = @((&amp; curl.exe -s -b "lab\jar-reclutador.txt" "$Base/oportunidades.php?creado_por=2" | ConvertFrom-Json).data)[0].id
+$postu  = @((&amp; curl.exe -s -b "lab\jar-estudiante.txt" "$Base/postulaciones.php?estudiante_id=3" | ConvertFrom-Json).data)[0].id
+if (-not $oferta -or -not $postu) { Write-Host "Falta la oferta del reclutador o la postulación de estudiante (la infraestructura)."; exit 1 }
+
+function Fila([string]$Quien, [string]$Metodo, [string]$Ruta, [string]$Esperado, [string]$Cuerpo = "") {
+    $a = @("-s", "-o", "NUL", "-w", "%{http_code}", "-X", $Metodo)
+    if ($Quien -ne "anonimo") { $a += @("-b", "lab\jar-$Quien.txt", "-H", "X-CSRF-Token: $($token[$Quien])") }
+    if ($Cuerpo) { $a += @("-H", "Content-Type: application/json", "--data-binary", $Cuerpo) }
+    $obtenido = &amp; curl.exe @a "$Base/$Ruta"
+    $marca = if ($obtenido -eq $Esperado) { "ok " } else { "MAL" }
+    "{0}  {1,-12} {2,-6} {3,-52} esperado {4}  obtenido {5}" -f $marca, $Quien, $Metodo, $Ruta, $Esperado, $obtenido
+}
+
+Fila anonimo     GET    "usuarios.php"                                 401
+Fila estudiante  GET    "usuarios.php?q="                              403
+Fila estudiante  GET    "usuarios.php?buscar=&amp;rol_id=2"                403
+Fila estudiante  GET    "usuarios.php?q=&amp;email=admin@practicas.local"  403
+Fila estudiante  GET    "usuarios.php?q=Prueba"                        200
+Fila estudiante  GET    "usuarios.php?id=3"                            200
+Fila estudiante  GET    "usuarios.php?id=1"                            403
+Fila admin       GET    "usuarios.php"                                 200
+Fila estudiante  GET    "bitacora.php"                                 403
+Fila reclutador  GET    "estadisticas.php"                             403
+Fila estudiante  GET    "postulaciones.php"                            403
+Fila estudiante  GET    "postulaciones.php?estudiante_id=3"            200
+Fila estudiante2 GET    "postulaciones.php?estudiante_id=3"            403
+Fila estudiante2 GET    "postulaciones.php?id=$postu"                  403
+Fila reclutador  GET    "postulaciones.php?oportunidad_id=$oferta"     200
+Fila estudiante2 GET    "historial_estado_postulacion.php?postulacion_id=$postu" 403
+Fila estudiante  DELETE "oportunidades.php?id=$oferta"                 403
+Fila reclutador  POST   "carreras.php"                                 403 '{"nombre":"Matriz","institucion_id":1}'</code></pre>
+<pre data-lang="shell"><code>powershell -ExecutionPolicy Bypass -File lab\web06.ps1</code></pre>
+<p>Con la guía aplicada, las 18 filas dicen <code>ok</code>. Córrelo antes del paso 2 y guarda la salida: leyendo el código de hoy, el diseño espera <code>MAL</code> en exactamente tres filas, las de H1, con <code>200</code> en lugar de <code>403</code>. Las otras quince ya dan <code>ok</code> hoy, y eso también es un resultado: es lo que la re-auditoría leyó, ahora comprobado. La matriz no cubre H2 porque necesita quitar un permiso; ese caso va aparte.</p>
+<aside class="callout callout--def">
+<p class="callout-label">Los archivos de cookies</p>
+<p><code>lab\jar-*.txt</code> tienen sesiones vivas de tus cuatro cuentas de laboratorio. <code>lab/</code> está negado en el <code>.htaccess</code> desde WEB01 y no va al repositorio; agrega <code>lab/jar-*.txt</code> a <code>.gitignore</code> si no lo hiciste.</p>
+</aside>
+<h3 id="comprueba-h2">El caso de la oferta cancelada</h3>
+<p>H2 necesita una secuencia con dos personas, y se hace desde el frontend, que es por donde pasa de verdad:</p>
+<ol class="steps">
+<li><span class="step-title">Dar el permiso</span>Como <code>admin</code>, en el panel de administración, autoriza a <code>estudiante2</code> a publicar.</li>
+<li><span class="step-title">Publicar</span>Como <code>estudiante2</code>, publica una oferta.</li>
+<li><span class="step-title">Quitar el permiso</span>Como <code>admin</code>, quítale el permiso con la opción de cancelar sus ofertas.</li>
+<li><span class="step-title">Reabrir</span>Como <code>estudiante2</code>, en "Mis ofertas", aprieta "Reabrir" en la oferta cancelada.</li>
+<li><span class="step-title">Mirar el feed</span>Como <code>estudiante</code>, busca la oferta en el feed.</li>
+</ol>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Paso</th><th>Lo que espera el diseño antes</th><th>Después</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>4. Reabrir</td><td>Mensaje de éxito; Network: <code>PUT oportunidades.php</code> 200</td><td>Mensaje de error; Network: 403</td><td>&nbsp;</td></tr>
+<tr><td>5. El feed</td><td>La oferta aparece</td><td>No aparece</td><td>&nbsp;</td></tr>
+<tr><td>Extra: "Cerrar convocatoria" sobre otra oferta suya</td><td>200</td><td>200: bajar lo propio sigue permitido</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-fallas">Fallas provocadas</h3>
+<p><b>Falla 1. Fallar abierto.</b> En <code>puedeGetUsuarios</code>, cambia <code>default =&gt; $esAdmin</code> por <code>default =&gt; true</code>. Corre la prueba: fallan los casos de publicadores, sin parámetros y "una acción que nadie nombró", y en la matriz dan <code>MAL</code> las filas 2 a 4. Es la diferencia entre una lista de lo prohibido y una de lo permitido. Vuelve la línea.</p>
+<p><b>Falla 2. La BOLA de manual.</b> En <code>postulaciones.php</code>, en la rama <code>elseif ($estudiante_id &gt; 0)</code>, comenta el <code>exigirPermiso(...)</code>. La fila <code>estudiante2 GET postulaciones.php?estudiante_id=3</code> da <code>200</code>: una estudiante lee las postulaciones de otra, con sus CV, cambiando un número en la URL. Es la falla que <a href="../modules/m80-control-acceso.html">M80</a> llama IDOR, y por eso cada rama lleva su comprobación. Vuelve la línea.</p>
+<p><b>Falla 3. La defensa en el botón.</b> Comenta el bloque del paso 4 en <code>oportunidades.php</code> y, en su lugar, imagina que el frontend escondió "Reabrir" a quien no tiene permiso. Repite el caso H2 hasta el paso 3 y, en vez del botón, manda el <code>PUT</code> desde la consola de DevTools de la pestaña de <code>estudiante2</code> (el mismo origen, así que van la cookie y el token):</p>
+<pre data-lang="javascript"><code>// En la consola de la pestaña de estudiante2 (localhost:5173).
+// YO es su id de usuario y OFERTA el de su oferta cancelada: los dos se ven en Network al abrir "Mis ofertas".
+const YO = 0, OFERTA = 0;
+const { apiFetch } = await import("/src/api/generic-api.js");
+const o = (await apiFetch(`oportunidades.php?creado_por=${YO}`)).data.find((x) =&gt; Number(x.id) === OFERTA);
+await apiFetch("oportunidades.php", { method: "PUT", body: { ...o, estado_oportunidad: "activa",
+  fecha_publicacion: String(o.fecha_publicacion).slice(0, 10), fecha_cierre: String(o.fecha_cierre).slice(0, 10) } });</code></pre>
+<p>Sin el bloque, el diseño espera que responda sin error y que la oferta vuelva al feed: el botón no estaba, y no importó. Vuelve a poner el bloque y repite: el <code>await</code> lanza un error con el mensaje del 403. El servidor es la única autoridad. El <code>import</code> trae el mismo módulo que usa la página (Vite lo sirve en esa ruta en desarrollo), así que comparte el token en memoria; es lo mismo que <a href="web05-xss.html">WEB05</a> mostró que puede hacer un script inyectado.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>1. <code>default =&gt; true</code>: casos que fallan en la prueba</td><td>&nbsp;</td></tr>
+<tr><td>2. Sin <code>exigirPermiso</code>: la fila de <code>estudiante2</code></td><td>&nbsp;</td></tr>
+<tr><td>3. Sin el bloque, desde la consola</td><td>&nbsp;</td></tr>
+<tr><td>3. Con el bloque, desde la consola</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="limites">Limitaciones</h2>
+<ul>
+<li><b>La matriz prueba lo que nombra.</b> Dieciocho filas no son todas las combinaciones (14 endpoints, cuatro métodos, varias ramas, cuatro sesiones). Cubren una de cada familia; un hueco en una rama sin fila sigue sin verse. Cuando agregues una rama, agrega su fila.</li>
+<li><b>La búsqueda pública sigue enumerando nombres.</b> Con <code>?q=a</code>, una sesión recibe los usuarios cuyo nombre tiene una "a", con datos públicos. Es lo que pide el producto (buscar personas); si no lo fuera, el límite está en <code>search()</code>, con un mínimo de caracteres y un tope de resultados.</li>
+<li><b>Otras reglas de negocio no se revisaron.</b> Por ejemplo, si un estudiante puede cambiar su propia carrera para ver ofertas de otra. Eso no es control de acceso a un recurso; es una pregunta para quien define el sistema.</li>
+<li><b>Las carreras al postularse.</b> Dos postulaciones a la misma oferta en el mismo instante son otra clase de falla, de concurrencia: WEB10.</li>
+<li><b>Costo.</b> <code>puedePublicar</code> suma una consulta por <code>PUT</code> que deja una oferta activa, con un índice por clave primaria; no hay nada que medir.</li>
+<li><b>Nada se ejecutó al escribir esta guía.</b> Los estados esperados salen de leer los <code>switch</code>; la salida de la matriz y las tablas son tuyas.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="web06">
+<p class="pj-repo-head">Trabaja en la rama <code>web06-acceso</code>. Los archivos <code>lab\jar-*.txt</code> no van al repositorio.</p>
+<ul class="pj-checks">
+<li data-check="reglas"><code>core/reglas-usuarios.php</code> existe y <code>tests\usuarios_reglas_test.php</code> da <code>Todo bien</code>.</li>
+<li data-check="usuarios"><code>usuarios.php</code> decide la acción una vez y su <code>case 'GET'</code> usa <code>$accionGet</code>.</li>
+<li data-check="publicar"><code>puedePublicar</code> está en <code>permisos.php</code> y la usan <code>add()</code> y el <code>PUT</code>.</li>
+<li data-check="matriz"><code>web06.ps1</code> da 18 <code>ok</code>, y guardaste la salida de antes con sus tres <code>MAL</code>.</li>
+<li data-check="h2">Repetiste el caso de la oferta cancelada antes y después.</li>
+<li data-check="fallas">Provocaste las tres fallas y llenaste las tablas.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<p>Esta guía funciona sola. Si quieres juntarla con otras:</p>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con WEB01, lo que no debe verse</p>
+<p>Los 403 y 401 de la matriz existen porque WEB01 cambió <code>invalidAccess</code> y <code>checkAuth</code> a códigos HTTP reales; antes, todo era 200 y la matriz no habría podido distinguir nada.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB02, la sesión</p>
+<p><code>refrescarAuthDesdeBD</code> relee los roles en cada request, así que quitar el permiso o el rol tiene efecto en la siguiente request, sin esperar a que venza la cookie.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB05, XSS</p>
+<p>La falla 3 usa la consola de DevTools como lo haría un script inyectado: mismo origen, misma cookie, mismo token. Lo que frena las dos cosas es el servidor.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M80, control de acceso roto</p>
+<p>BOLA, BFLA y fallar cerrado están en <a href="../modules/m80-control-acceso.html">M80</a>, con el simulador de la matriz sobre este mismo sistema.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/web06.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

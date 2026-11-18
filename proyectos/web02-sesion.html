@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WEB02. Sesión y login seguros</title>
+<meta name="description" content="Una versión de sesión que cierra las demás cookies al cambiar la contraseña, un límite de intentos por cuenta y por IP, un login que tarda lo mismo exista o no la cuenta, y la IP comparada entera.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="web02" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Sesión y login seguros</h1>
+        <p class="lead">Una cookie firmada no se puede revocar: el servidor no guarda nada. Se le agrega una versión que la base controla, y al login, un límite de intentos y un tiempo parejo.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>WEB02</dd></div>
+          <div><dt>Plan</dt><dd>Seguridad web</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>3 a 4 h</dd></div>
+          <div><dt>Módulos</dt><dd>M74, M81</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="web02">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Explicar por qué una cookie firmada sin estado no se puede revocar, y agregarle una versión que la base controla.</li>
+<li>Cerrar todas las demás sesiones de una persona cuando cambia su contraseña, sin sacar a la pestaña que la cambió.</li>
+<li>Limitar los intentos de login por cuenta y por IP en una ventana de 15 minutos, con un 429 y <code>Retry-After</code>.</li>
+<li>Hacer que el login tarde lo mismo exista o no la cuenta, y comparar la IP de la cookie entera, no por prefijo.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>Una estudiante entra al sistema desde una computadora del laboratorio de la facultad y se olvida de cerrar la sesión. Al día siguiente se da cuenta y cambia la contraseña desde su casa. Con el código de hoy, la sesión del laboratorio sigue abierta hasta que vence la cookie: la cookie es <code>base64(json)|hmac</code>, el servidor no guarda nada y no tiene cómo saber que esa copia ya no debería valer. Cambiar la contraseña no cambia la firma.</p>
+<p>Mientras tanto, alguien prueba contraseñas contra <code>login.php</code>. No hay límite: puede intentar todas las que quiera. Y aunque el mensaje de error es el mismo para un usuario que no existe y para una contraseña incorrecta, la respuesta llega antes cuando el usuario no existe, porque <code>password_verify</code> solo corre si la base devolvió una fila. Esta guía cierra los cuatro hallazgos de sesión de la re-auditoría (C, D y E en <a href="web00-laboratorio.html#excusa">WEB00</a>).</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="fw2at fw2ad">
+<title id="fw2at">Una versión que la base controla</title>
+<desc id="fw2ad">Dos cookies de la misma persona, una en el laboratorio y otra en su casa, llevan v igual a 3. La fila de usuarios tiene version_sesion igual a 3. Al cambiar la contraseña, la fila pasa a 4 y la casa recibe una cookie nueva con v igual a 4. En la request siguiente, checkAuth compara: la cookie del laboratorio dice 3, la base dice 4, y se rechaza.</desc>
+<defs><marker id="fw2aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw2af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker></defs>
+<path class="dg-edge" stroke-dasharray="6 4" style="stroke:var(--fail)" d="M220 72 L300 137" marker-end="url(#fw2af)"/>
+<rect x="242" y="86" width="37" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="260" y="98" text-anchor="middle">v: 3</text>
+<path class="dg-edge" d="M220 202 L300 137" marker-end="url(#fw2aa)"/>
+<rect x="242" y="152" width="37" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="260" y="164" text-anchor="middle">v: 4</text>
+<path class="dg-edge" d="M480 137 L560 137" marker-end="url(#fw2aa)"/>
+<rect x="495" y="119" width="49" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="520" y="131" text-anchor="middle">SELECT</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="40" width="200" height="64" rx="8"/>
+<text class="dg-label" x="120.0" y="70.0" text-anchor="middle">Cookie del laboratorio</text>
+<text class="dg-tiny" x="120.0" y="85.0" text-anchor="middle">v: 3</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="170" width="200" height="64" rx="8"/>
+<text class="dg-label" x="120.0" y="200.0" text-anchor="middle">Cookie de la casa</text>
+<text class="dg-tiny" x="120.0" y="215.0" text-anchor="middle">v: 3, luego v: 4</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="300" y="105" width="180" height="64" rx="8"/>
+<text class="dg-label" x="390.0" y="135.0" text-anchor="middle">refrescarAuthDesdeBD</text>
+<text class="dg-tiny" x="390.0" y="150.0" text-anchor="middle">¿v == version_sesion?</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="560" y="105" width="190" height="64" rx="8"/>
+<text class="dg-label" x="655.0" y="135.0" text-anchor="middle">usuarios</text>
+<text class="dg-tiny" x="655.0" y="150.0" text-anchor="middle">version_sesion: 3, luego 4</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB02.1.</b> La firma dice que la cookie la emitió tu servidor; la versión dice si todavía la quieres. Las dos se comprueban en cada request, y la segunda ya tenía dónde: la consulta que relee los roles.</figcaption>
+</figure>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 410" role="img" aria-labelledby="fw2st fw2sd">
+<title id="fw2st">Cambiar la contraseña cierra las otras sesiones</title>
+<desc id="fw2sd">La casa manda el PUT de cambio de contraseña. La API sube la versión en la base y responde con una cookie nueva y un token CSRF nuevo. Después, el laboratorio pide la sesión con su cookie vieja: la API lee la versión 4, la cookie dice 3, y responde 401.</desc>
+<defs><marker id="fw2s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw2s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fw2s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fw2s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Laboratorio</text>
+<path class="dg-frame" d="M70.0 40 V400"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Casa</text>
+<path class="dg-frame" d="M280.0 40 V400"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">API</text>
+<path class="dg-frame" d="M490.0 40 V400"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M700.0 40 V400"/>
+<path class="dg-edge" d="M283.0 72 L485.0 72" marker-end="url(#fw2s-a)"/>
+<rect x="296.5" y="55" width="177.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="66" text-anchor="middle">PUT cambio_contrasena.php</text>
+<path class="dg-edge" d="M493.0 106 L695.0 106" marker-end="url(#fw2s-a)"/>
+<rect x="499.9" y="89" width="190.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="100" text-anchor="middle">UPDATE … version_sesion + 1</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 140 L495.0 140" marker-end="url(#fw2s-r)"/>
+<rect x="529.6" y="123" width="130.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="134" text-anchor="middle">version_sesion = 4</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 174 L285.0 174" marker-end="url(#fw2s-r)"/>
+<rect x="263.5" y="157" width="243.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="168" text-anchor="middle">200 + Set-Cookie (v: 4) + csrfToken</text>
+<path d="M20 206 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="195" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="210" text-anchor="middle" style="fill:var(--fail)">más tarde, en el laboratorio</text>
+<path class="dg-edge" d="M73.0 242 L485.0 242" marker-end="url(#fw2s-a)"/>
+<rect x="178.3" y="225" width="203.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="236" text-anchor="middle">GET login.php + cookie (v: 3)</text>
+<path class="dg-edge" d="M493.0 276 L695.0 276" marker-end="url(#fw2s-a)"/>
+<rect x="519.7" y="259" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="270" text-anchor="middle">SELECT version_sesion</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 310 L495.0 310" marker-end="url(#fw2s-r)"/>
+<rect x="585.7" y="293" width="18.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="304" text-anchor="middle">4</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M487.0 344 L75.0 344" marker-end="url(#fw2s-f)"/>
+<rect x="178.3" y="327" width="203.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="338" text-anchor="middle">401 Tu sesión ya no es válida</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB02.2.</b> El caso principal de la guía. La casa no vuelve a escribir su contraseña: la respuesta del cambio le trae una cookie con la versión nueva.</figcaption>
+</figure>
+<h2 id="endpoints">Los endpoints</h2>
+<div class="table-wrap">
+<table class="t pj-ep">
+<thead><tr><th>Método y ruta</th><th>Qué hace</th><th>Respuestas</th></tr></thead>
+<tbody>
+<tr><td><span class="ep-method" data-m="POST">POST</span><code>login.php</code></td><td>Inicia sesión. Antes de verificar la contraseña, mira cuántos fallos hubo para esa cuenta y esa IP en los últimos 15 minutos.</td><td>200; 401 si no coincide; 429 con <code>Retry-After: 900</code> si se pasó del límite</td></tr>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>login.php</code></td><td>Devuelve la sesión si la cookie es válida, tiene la versión actual y viene de la misma IP.</td><td>200; 401</td></tr>
+<tr><td><span class="ep-method" data-m="PUT">PUT</span><code>cambio_contrasena.php</code></td><td>Cambia la contraseña, sube la versión de sesión y devuelve una cookie y un <code>csrfToken</code> nuevos.</td><td>200; 400; 401; 403</td></tr>
+<tr><td><span class="ep-method" data-m="DELETE">DELETE</span><code>login.php</code></td><td>Cierra la sesión de este navegador (borra la cookie).</td><td>200; 401</td></tr>
+</tbody>
+</table>
+</div>
+<p>El frontend no cambia: <code>apiFetch</code> ya guarda cualquier <code>csrfToken</code> que venga en <code>data</code>, así que la respuesta del cambio de contraseña le actualiza el token sin tocar <code>CambiarPasswordForm.jsx</code>. Lo que sí pasa una vez: al aplicar la guía, todas las cookies emitidas antes dejan de valer, porque no traen versión. Cada persona vuelve a entrar una vez.</p>
+<h2 id="dependencias">Qué necesitas</h2>
+<p>El laboratorio de <a href="web00-laboratorio.html">WEB00</a> y la respuesta central de <a href="web01-lo-que-no-debe-verse.html#paso-response">WEB01</a> (<code>Response::serverError</code> y <code>Env::exigir</code>). Si no hiciste WEB01, cambia cada <code>Response::serverError($e)</code> de esta guía por el <code>Response::error("Error", -1, 500)</code> de siempre y quita la línea de <code>exigirHash</code>. No se instala nada.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<p>Una migración agrega la columna de la versión y la tabla de intentos. Sigue el formato de las que ya están en <code>database/migrations/</code>, con la reversa comentada al final.</p>
+<pre data-lang="sql" data-file="database/migrations/2026_11_09_sesiones_y_login.sql"><code>-- =============================================================================
+-- MIGRACIÓN: sesiones revocables y límite de intentos de login
+-- Fecha: 2026-11-09
+--
+--   - usuarios.version_sesion: sube al cambiar la contraseña. Una cookie con otra
+--     versión deja de valer, aunque su firma sea correcta.
+--   - intentos_login: un renglón por intento fallido, por cuenta y por IP.
+-- =============================================================================
+
+USE control_practicas_db;
+
+ALTER TABLE usuarios
+    ADD COLUMN version_sesion INT UNSIGNED NOT NULL DEFAULT 1
+        COMMENT 'Sube al cambiar la contraseña: invalida las cookies anteriores' AFTER estado;
+
+CREATE TABLE intentos_login (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    clave VARCHAR(200) NOT NULL COMMENT 'cuenta:&lt;identificador&gt; o ip:&lt;dirección&gt;',
+    creado DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_intentos_clave_fecha (clave, creado)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -----------------------------------------------------------------------------
+-- REVERSA
+-- DROP TABLE intentos_login;
+-- ALTER TABLE usuarios DROP COLUMN version_sesion;</code></pre>
+<pre data-lang="shell"><code>cmd /c "C:\xampp\mysql\bin\mysql.exe -u root -h 127.0.0.1 -P 3308 &lt; database\migrations\2026_11_09_sesiones_y_login.sql"
+C:\xampp\mysql\bin\mysql.exe -u root -h 127.0.0.1 -P 3308 -e "SELECT id, username, version_sesion FROM control_practicas_db.usuarios;"</code></pre>
+<p>La segunda línea tiene que mostrar los tres usuarios con <code>version_sesion</code> en 1. Suma las mismas dos definiciones a <code>database/schema.sql</code> para que una instalación nueva ya las tenga.</p>
+<p>Y una variable nueva en el <code>.env</code> (en <code>C:\xampp\secretos\practicas.env</code> si hiciste WEB01): un hash de bcrypt de una contraseña que nadie conoce, para el paso 4. Genéralo con PHP y pega la salida:</p>
+<pre data-lang="shell"><code>C:\xampp\php\php.exe -r "echo password_hash(bin2hex(random_bytes(16)), PASSWORD_DEFAULT), PHP_EOL;"</code></pre>
+<pre data-lang="shell" data-file="C:/xampp/secretos/practicas.env (línea nueva)"><code># Hash de relleno para el login (paso 4 de WEB02). Mismo costo que los de usuarios.password_hash.
+LOGIN_HASH_RELLENO=$2y$10$...los 53 caracteres que imprimió el comando...</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Guardar la versión en la fila del usuario, que ya se lee en cada request, y los intentos en una tabla propia con un índice por clave y fecha.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Pasar a sesiones del lado del servidor (una tabla <code>sesiones</code> con un id aleatorio en la cookie): es la solución más flexible, porque permite cerrar una sesión concreta, pero cambia el formato de la cookie y todo <code>checkAuth</code>. Con la versión, la cookie sigue igual y se gana lo que pidió la re-auditoría: que cambiar la contraseña corte las demás. Tampoco se usa Redis para los intentos: el sistema no lo tiene y MariaDB alcanza para este volumen.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el hash de relleno tenga otro costo que los de la base. En PHP 8.3, <code>PASSWORD_DEFAULT</code> es bcrypt con costo 10, y los hashes de <code>seed.sql</code> empiezan con <code>$2y$10$</code>: el de relleno tiene que empezar igual. PHP 8.4 subió el costo por defecto a 12 <span class="badge badge--doc">Documentado</span>; si actualizas, los hashes nuevos y el relleno tienen que seguir coincidiendo.</dd></div>
+</dl>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<h3 id="paso-sesion">Paso 1. La cookie, en un solo lugar</h3>
+<p>Hoy las opciones de <code>setcookie</code> se repiten en <code>login()</code> y en <code>logout()</code>, y el paso 5 necesita una tercera copia. Un archivo nuevo las junta, y de paso arma el payload con la versión.</p>
+<div class="pseudo"><ol>
+<li><code>opcionesCookie</code> devuelve las opciones de siempre, leídas del <code>.env</code>.</li>
+<li><code>emitirSesion</code> arma el payload con los datos del usuario, la versión, el vencimiento y la IP, lo firma y lo envía.</li>
+<li>También deja la cookie nueva en <code>$_COOKIE</code>, porque <code>csrfToken()</code> se calcula sobre ella en la misma request.</li>
+<li><code>mismaIp</code> compara la IP guardada con la actual, entera.</li>
+</ol></div>
+<pre data-lang="php" data-file="api/core/sesion.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+/** Opciones de la cookie de sesión: las usan el login, el cambio de contraseña y el logout. */
+function opcionesCookie(int $expira): array
+{
+    return [
+        'expires'  =&gt; $expira,
+        'path'     =&gt; '/',
+        'domain'   =&gt; COOKIE_DOMAIN,
+        'secure'   =&gt; filter_var(COOKIE_SECURE, FILTER_VALIDATE_BOOLEAN),
+        'httponly' =&gt; filter_var(COOKIE_HTTPONLY, FILTER_VALIDATE_BOOLEAN),
+        'samesite' =&gt; COOKIE_SAMESITE,
+    ];
+}
+
+/**
+ * Firma y envía la cookie. $usuario trae id, username, name, institucion_id, roles e isAdmin;
+ * $version es usuarios.version_sesion en este momento.
+ */
+function emitirSesion(array $usuario, int $version): array
+{
+    $payload = [
+        'id'             =&gt; (int)$usuario['id'],
+        'username'       =&gt; (string)$usuario['username'],
+        'name'           =&gt; (string)$usuario['name'],
+        'institucion_id' =&gt; $usuario['institucion_id'],
+        'roles'          =&gt; (string)$usuario['roles'],
+        'isAdmin'        =&gt; (bool)$usuario['isAdmin'],
+        'v'              =&gt; $version,
+        'exp'            =&gt; time() + (int)COOKIE_LIFETIME,
+        'ip'             =&gt; (string)($_SERVER['REMOTE_ADDR'] ?? ''),
+    ];
+    $json  = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    $valor = base64_encode($json) . '|' . hash_hmac('sha256', $json, COOKIE_KEY);
+
+    setcookie(COOKIE_NAME, $valor, opcionesCookie($payload['exp']));
+    $_COOKIE[COOKIE_NAME] = $valor;   # csrfToken() se calcula sobre la cookie nueva
+    return $payload;
+}
+
+function borrarSesion(): void
+{
+    setcookie(COOKIE_NAME, '', opcionesCookie(time() - 3600));
+    unset($_COOKIE[COOKIE_NAME]);
+}
+
+/** La IP de la cookie tiene que ser exactamente la de la request, no un prefijo. */
+function mismaIp(string $guardada, string $actual): bool
+{
+    return $guardada !== '' &amp;&amp; hash_equals($guardada, $actual);
+}</code></pre>
+<aside class="callout callout--def">
+<p class="callout-label">PHP de por medio</p>
+<p>El archivo solo define funciones: no corre nada al incluirlo, y por eso la prueba del final puede cargarlo sin base ni <code>.env</code>. Las constantes como <code>COOKIE_KEY</code> se leen recién cuando se llama a la función. <code>hash_equals</code> compara dos textos en tiempo constante; aquí no hace falta por el tiempo (la IP no es secreta), pero deja la comparación en una sola forma para todo el archivo.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un solo lugar arma, firma y envía la cookie; el formato <code>base64(json)|hmac</code> no cambia, así que <code>checkAuth</code> sigue leyendo lo mismo más un campo <code>v</code>.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Copiar el <code>setcookie</code> a <code>usuarios.php</code> para el cambio de contraseña: sería la tercera copia, y la primera que se desincroniza cuando alguien cambie <code>SameSite</code> en el <code>.env</code>.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Llamar a <code>emitirSesion</code> después de haber escrito algo en la salida: <code>setcookie</code> falla con <code>Cannot modify header information - headers already sent</code> y el cambio de contraseña queda hecho sin cookie nueva. En los endpoints de este repositorio nada imprime antes de <code>Response</code>; si agregas un <code>echo</code> de depuración, ese es el síntoma.</dd></div>
+</dl>
+<h3 id="paso-checkauth">Paso 2. La IP entera y la versión</h3>
+<p>Dos cambios en la lectura de la cookie. El primero está en <code>checkAuth</code>: la comparación de hoy es <code>strpos($_SERVER['REMOTE_ADDR'], $data['ip']) !== 0</code>, que acepta cualquier IP que <em>empiece</em> igual. Una cookie emitida para <code>127.0.0.1</code> vale desde <code>127.0.0.10</code>, y una con <code>ip</code> vacía vale desde cualquier lado, porque en PHP 8 <code>strpos</code> con una aguja vacía devuelve 0. Reemplaza el bloque de la IP al final de <code>checkAuth</code>:</p>
+<pre data-lang="php" data-file="api/core/auth.php (cambios)"><code>&lt;?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/sesion.php';
+
+# ... checkAuth() igual hasta las validaciones de tiempo ...
+
+    # La cookie vale solo desde la IP exacta que la recibió
+    if (!isset($data['ip']) || !mismaIp((string)$data['ip'], (string)($_SERVER['REMOTE_ADDR'] ?? ''))) {
+        return null;
+    }
+
+    # Sin versión: es una cookie emitida antes de esta guía, y hay que volver a entrar
+    if (!isset($data['v']) || !is_int($data['v'])) {
+        return null;
+    }
+
+    return $data;
+}</code></pre>
+<p>El segundo está en <code>refrescarAuthDesdeBD</code>, que ya lee la fila del usuario en cada request: ahora también trae <code>version_sesion</code> y la compara con la de la cookie.</p>
+<pre data-lang="php" data-file="api/core/auth-middleware.php (refrescarAuthDesdeBD completa)"><code>function refrescarAuthDesdeBD(array $data): array
+{
+    $stmt = Connection::load()-&gt;prepare("SELECT u.estado_cuenta, u.version_sesion,
+                                                (SELECT GROUP_CONCAT(ar.id_rol ORDER BY ar.id_rol)
+                                                   FROM asignaciones_roles ar
+                                                  WHERE ar.id_usuario = u.id AND ar.estado = 1) AS roles
+                                           FROM usuarios u WHERE u.id = ? AND u.estado = 1");
+    $stmt-&gt;execute([(int)($data['id'] ?? 0)]);
+    $fila = $stmt-&gt;fetch(PDO::FETCH_ASSOC);
+
+    # Cuenta suspendida, borrada o con una versión de sesión más nueva que la de la cookie
+    if (!$fila || $fila['estado_cuenta'] !== 'activo'
+        || (int)$fila['version_sesion'] !== (int)($data['v'] ?? -1)) {
+        Response::error("Tu sesión ya no es válida. Vuelve a iniciar sesión.", -2);
+    }
+
+    $roles = $fila['roles'] !== null ? array_map('intval', explode(',', (string)$fila['roles'])) : [];
+    $data['roles']   = implode(',', $roles);
+    $data['isAdmin'] = in_array(2, $roles, true);
+    return $data;
+}</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Comparar la IP entera y la versión en los dos lugares donde ya se valida la cookie: la firma y la fecha en <code>checkAuth</code>, el estado de la cuenta en <code>refrescarAuthDesdeBD</code>.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Quitar el ligado a la IP, que es lo que hacen muchos sistemas porque un teléfono cambia de IP al pasar de wifi a datos. Es razonable, pero el repositorio ya lo decidió así y la guía no cambia esa decisión, solo arregla la comparación. Si lo quitas, la versión de sesión sigue protegiéndote al cambiar la contraseña.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que <code>localhost</code> resuelva a veces a <code>127.0.0.1</code> y a veces a <code>::1</code>: con la comparación exacta, la cookie emitida por IPv4 no vale por IPv6 y la sesión "se cae sola". Lo provocas en la falla 3. Detrás del proxy de Vite la IP es siempre la de la conexión del proxy, así que en el laboratorio no pasa.</dd></div>
+</dl>
+<h3 id="paso-throttle">Paso 3. El límite de intentos</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="fw2bt fw2bd">
+<title id="fw2bt">La ventana deslizante de 15 minutos</title>
+<desc id="fw2bd">Una línea de tiempo con siete intentos contra la cuenta estudiante. Los cinco primeros fallan con 401 y cada uno deja un renglón en intentos_login. El sexto, dentro de los 15 minutos, encuentra cinco renglones y recibe 429 sin que se verifique la contraseña. El séptimo llega después de que el primer renglón salió de la ventana y vuelve a verificarse.</desc>
+<path class="sim-axis" d="M40 150 H740"/>
+<rect x="60" y="62" width="470" height="70" rx="8" class="dg-layer" style="--c: var(--l-queue)"/>
+<text class="dg-small" x="295" y="54" text-anchor="middle">ventana de 15 minutos que mira el sexto intento</text>
+<g class="dg-label">
+<circle cx="80" cy="150" r="9" class="dg-bad"/><circle cx="170" cy="150" r="9" class="dg-bad"/><circle cx="260" cy="150" r="9" class="dg-bad"/>
+<circle cx="350" cy="150" r="9" class="dg-bad"/><circle cx="440" cy="150" r="9" class="dg-bad"/>
+<circle cx="530" cy="150" r="9" class="dg-warnbox"/><circle cx="690" cy="150" r="9" class="dg-box"/>
+</g>
+<text class="dg-tiny" x="80" y="180" text-anchor="middle">1: 401</text><text class="dg-tiny" x="170" y="180" text-anchor="middle">2: 401</text>
+<text class="dg-tiny" x="260" y="180" text-anchor="middle">3: 401</text><text class="dg-tiny" x="350" y="180" text-anchor="middle">4: 401</text>
+<text class="dg-tiny" x="440" y="180" text-anchor="middle">5: 401</text><text class="dg-tiny" x="530" y="180" text-anchor="middle">6: 429</text>
+<text class="dg-tiny" x="690" y="180" text-anchor="middle">7: se verifica</text>
+<text class="dg-tiny" x="80" y="100" text-anchor="middle">renglón</text><text class="dg-tiny" x="440" y="100" text-anchor="middle">renglón 5</text>
+<text class="dg-tiny" x="530" y="210" text-anchor="middle">sin password_verify</text>
+<text class="dg-tiny" x="690" y="210" text-anchor="middle">el 1 ya salió de la ventana</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB02.3.</b> Cinco fallos por cuenta en 15 minutos; el sexto recibe 429 y no llega a probar la contraseña. Los minutos entre intentos son ilustrativos. La IP lleva su propio contador, con un tope de 20, para quien prueba muchas cuentas a la vez.</figcaption>
+</figure>
+<p>La clase lleva la cuenta en <code>intentos_login</code>. Cada fallo deja dos renglones, uno con la clave de la cuenta y otro con la de la IP; un login correcto borra los de la cuenta.</p>
+<pre data-lang="php" data-file="api/core/login-throttle.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+/**
+ * Intentos de login fallidos en una ventana deslizante, por cuenta y por IP.
+ * Un login correcto borra los fallos de la cuenta; los de la IP se quedan hasta salir de la ventana.
+ */
+final class LoginThrottle
+{
+    private const VENTANA_MIN = 15;
+    private const MAX_POR_CUENTA = 5;
+    private const MAX_POR_IP = 20;
+
+    /** @return array{cuenta: string, ip: string} */
+    public static function claves(string $identificador, string $ip): array
+    {
+        return [
+            'cuenta' =&gt; 'cuenta:' . mb_strtolower(trim($identificador)),
+            'ip'     =&gt; 'ip:' . $ip,
+        ];
+    }
+
+    public static function bloqueado(PDO $db, array $claves): bool
+    {
+        $stmt = $db-&gt;prepare(
+            "SELECT clave, COUNT(*) FROM intentos_login
+              WHERE clave IN (?, ?) AND creado &gt; NOW() - INTERVAL " . self::VENTANA_MIN . " MINUTE
+              GROUP BY clave"
+        );
+        $stmt-&gt;execute([$claves['cuenta'], $claves['ip']]);
+        $n = $stmt-&gt;fetchAll(PDO::FETCH_KEY_PAIR);
+        return (int)($n[$claves['cuenta']] ?? 0) &gt;= self::MAX_POR_CUENTA
+            || (int)($n[$claves['ip']] ?? 0) &gt;= self::MAX_POR_IP;
+    }
+
+    public static function registrarFallo(PDO $db, array $claves): void
+    {
+        $db-&gt;prepare("INSERT INTO intentos_login (clave) VALUES (?), (?)")
+           -&gt;execute([$claves['cuenta'], $claves['ip']]);
+        if (random_int(1, 100) === 1) {   # de vez en cuando, borra lo que tiene más de un día
+            $db-&gt;exec("DELETE FROM intentos_login WHERE creado &lt; NOW() - INTERVAL 1 DAY");
+        }
+    }
+
+    public static function limpiarCuenta(PDO $db, array $claves): void
+    {
+        $db-&gt;prepare("DELETE FROM intentos_login WHERE clave = ?")-&gt;execute([$claves['cuenta']]);
+    }
+
+    public static function segundosDeEspera(): int
+    {
+        return self::VENTANA_MIN * 60;
+    }
+}</code></pre>
+<aside class="callout callout--def">
+<p class="callout-label">PHP de por medio</p>
+<p><code>PDO::FETCH_KEY_PAIR</code> convierte un resultado de dos columnas en un arreglo <code>clave =&gt; valor</code>: aquí, <code>['cuenta:estudiante' =&gt; 5, 'ip:127.0.0.1' =&gt; 7]</code>. Si una clave no tuvo fallos, no aparece, y por eso el <code>?? 0</code>. Concatenar <code>self::VENTANA_MIN</code> en el SQL es seguro porque es una constante entera del código, no un dato de la request; el resto va como parámetro.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Dos contadores: 5 fallos por cuenta frenan a quien insiste con una persona; 20 por IP frenan a quien prueba una contraseña común contra muchas cuentas (<em>password spraying</em>, que M59 detecta del otro lado). La cuenta se normaliza a minúsculas y sin espacios, que es como la compara MariaDB con <code>utf8mb4_unicode_ci</code>.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Bloquear la cuenta hasta que un administrador la desbloquee: convierte el límite en una forma barata de dejar sin acceso a cualquiera cuyo usuario conozcas. Con una ventana de 15 minutos, el bloqueo se levanta solo. Tampoco se usa un CAPTCHA: agrega un servicio externo y el problema aquí es de volumen, no de bots sofisticados.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el contador lo lea y lo escriba una request a la vez, sin transacción: dos intentos que llegan en el mismo instante pueden pasar los dos con 4 fallos registrados y terminar en 6. Para un límite de login, uno de más no cambia nada; las carreras que sí importan son el tema de WEB10. Y que detrás de un proxy todas las requests lleguen con la IP del proxy: el contador por IP bloquearía a todos juntos. Lo ves en Limitaciones.</dd></div>
+</dl>
+<h3 id="paso-login">Paso 4. El login: límite y mismo tiempo</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="fw2ct fw2cd">
+<title id="fw2ct">Dos logins fallidos, antes y después</title>
+<desc id="fw2cd">Arriba, el código de hoy: si la cuenta no existe, la respuesta sale justo después del SELECT; si existe, después del SELECT y de password_verify, que es la parte larga. Abajo, con el hash de relleno, los dos casos hacen SELECT y password_verify, y terminan juntos. Los largos de las barras son ilustrativos.</desc>
+<text class="dg-group" x="20" y="28">Hoy</text>
+<text class="dg-small" x="20" y="62">no existe</text><rect x="130" y="48" width="60" height="22" rx="4" class="dg-layer" style="--c: var(--l-db)"/><text class="dg-tiny" x="160" y="63" text-anchor="middle">SELECT</text>
+<text class="dg-small" x="20" y="96">existe</text><rect x="130" y="82" width="60" height="22" rx="4" class="dg-layer" style="--c: var(--l-db)"/><text class="dg-tiny" x="160" y="97" text-anchor="middle">SELECT</text>
+<rect x="194" y="82" width="420" height="22" rx="4" class="dg-layer" style="--c: var(--l-gpu)"/><text class="dg-tiny" x="404" y="97" text-anchor="middle">password_verify (bcrypt, costo 10)</text>
+<text class="dg-small" x="630" y="80" style="fill:var(--fail)">la diferencia se mide</text>
+<text class="dg-group" x="20" y="148">Con el relleno</text>
+<text class="dg-small" x="20" y="182">no existe</text><rect x="130" y="168" width="60" height="22" rx="4" class="dg-layer" style="--c: var(--l-db)"/><text class="dg-tiny" x="160" y="183" text-anchor="middle">SELECT</text>
+<rect x="194" y="168" width="420" height="22" rx="4" class="dg-layer" style="--c: var(--l-gpu)"/><text class="dg-tiny" x="404" y="183" text-anchor="middle">password_verify contra LOGIN_HASH_RELLENO</text>
+<text class="dg-small" x="20" y="216">existe</text><rect x="130" y="202" width="60" height="22" rx="4" class="dg-layer" style="--c: var(--l-db)"/><text class="dg-tiny" x="160" y="217" text-anchor="middle">SELECT</text>
+<rect x="194" y="202" width="420" height="22" rx="4" class="dg-layer" style="--c: var(--l-gpu)"/><text class="dg-tiny" x="404" y="217" text-anchor="middle">password_verify contra el hash real</text>
+<text class="dg-small" x="630" y="200">terminan juntos</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB02.4.</b> El mensaje de error ya era el mismo; el tiempo no. Con el hash de relleno, una cuenta que no existe paga el mismo bcrypt que una que existe. Cuánto dura cada barra en tu máquina lo mides en <a href="#comprueba-script">el script</a>.</figcaption>
+</figure>
+<p>La función <code>login()</code> de <code>api/models/login.php</code> queda así, entera. Lo que cambia está marcado con un comentario; la consulta suma <code>u.version_sesion</code>.</p>
+<pre data-lang="php" data-file="api/models/login.php (login y logout)"><code>    public function login(array $arrayData) {
+        $identificador = trim($arrayData["identificador"] ?? '');
+        $contrasena    = $arrayData["contrasena"] ?? '';
+
+        if (mb_strlen($identificador) &lt; 3 || mb_strlen($identificador) &gt; 150) {
+            $this-&gt;response-&gt;error("El identificador de usuario no es valido", -1, 400);
+        }
+        if (strlen($contrasena) &lt; 8) {
+            $this-&gt;response-&gt;error("La contraseña debe tener al menos 8 caracteres", -1, 400);
+        }
+
+        # Nuevo: antes de tocar la contraseña, ¿esta cuenta o esta IP ya fallaron demasiado?
+        $claves = LoginThrottle::claves($identificador, (string)($_SERVER['REMOTE_ADDR'] ?? ''));
+        if (LoginThrottle::bloqueado($this-&gt;connection, $claves)) {
+            header('Retry-After: ' . LoginThrottle::segundosDeEspera());
+            $this-&gt;response-&gt;error("Demasiados intentos. Espera unos minutos e inténtalo de nuevo.", -1, 429);
+        }
+
+        $columna = filter_var($identificador, FILTER_VALIDATE_EMAIL) ? 'u.email' : 'u.username';
+
+        try {
+            $query = "SELECT u.id, u.username, u.nombre, u.apellido, u.password_hash, u.institucion_id,
+                             u.autorizado_publicar, u.version_sesion,
+                             (SELECT GROUP_CONCAT(ar.id_rol ORDER BY ar.id_rol)
+                                FROM asignaciones_roles ar
+                               WHERE ar.id_usuario = u.id AND ar.estado = 1) AS roles
+                      FROM usuarios u
+                      WHERE $columna = ? AND u.estado = 1 AND u.estado_cuenta = 'activo'";
+            $stmt = $this-&gt;connection-&gt;prepare($query);
+            $stmt-&gt;execute([$identificador]);
+            $result = $stmt-&gt;fetch(PDO::FETCH_ASSOC);
+
+            # Nuevo: password_verify corre siempre, exista o no la cuenta
+            $hash     = $result ? $result['password_hash'] : (string)LOGIN_HASH_RELLENO;
+            $coincide = password_verify($contrasena, $hash) &amp;&amp; $result !== false;
+
+            if (!$coincide) {
+                LoginThrottle::registrarFallo($this-&gt;connection, $claves);
+                $this-&gt;response-&gt;error("La contraseña y el usuario no coinciden", -1, 401);
+            }
+            LoginThrottle::limpiarCuenta($this-&gt;connection, $claves);
+
+            $roles = $result['roles'] !== null
+                ? array_map('intval', explode(',', $result['roles']))
+                : [];
+
+            # Nuevo: la cookie la arma sesion.php, con la versión de sesión de la fila
+            $payload = emitirSesion([
+                'id'             =&gt; $result['id'],
+                'username'       =&gt; $result['username'],
+                'name'           =&gt; $result['nombre'] . ' ' . $result['apellido'],
+                'institucion_id' =&gt; $result['institucion_id'],
+                'roles'          =&gt; implode(',', $roles),
+                'isAdmin'        =&gt; in_array(self::ROL_ADMIN, $roles, true),
+            ], (int)$result['version_sesion']);
+
+            $this-&gt;response-&gt;success([
+                'id'        =&gt; $payload['id'],
+                'username'  =&gt; $payload['username'],
+                'name'      =&gt; $payload['name'],
+                'roles'     =&gt; $payload['roles'],
+                'isAdmin'   =&gt; $payload['isAdmin'],
+                'institucion_id' =&gt; $payload['institucion_id'],
+                'autorizado_publicar' =&gt; (int)$result['autorizado_publicar'],
+                'csrfToken' =&gt; csrfToken()
+            ], "Logueado exitosamente");
+        } catch (PDOException $e) {
+            Response::serverError($e);
+        }
+    }
+
+    # Cierra sesión en este navegador: borra la cookie
+    public function logout() {
+        borrarSesion();
+        $this-&gt;response-&gt;success([], "Sesión cerrada");
+    }</code></pre>
+<p>Tres líneas más para que todo esté cargado. En <code>api/endpoints/login.php</code>, junto a los otros <code>require_once</code>:</p>
+<pre data-lang="php" data-file="api/endpoints/login.php (require nuevo)"><code>require_once __DIR__ . "/../core/login-throttle.php";</code></pre>
+<p>Y en <code>api/core/configuration.php</code>, la constante del hash y su comprobación. Como parte del mismo cambio sale el bloque de <code>session_start()</code>: la API no usa <code>$_SESSION</code> en ningún archivo (compruébalo con <code>Select-String -Path api\*\*.php -Pattern '_SESSION'</code>, que no debe encontrar nada), así que esa sesión solo agregaba una segunda cookie, <code>sid</code>, sin función.</p>
+<pre data-lang="php" data-file="api/core/configuration.php"><code>&lt;?php
+require_once(__DIR__ . "/env.php");
+
+$envFuera = dirname(__DIR__, 4) . '/secretos/practicas.env';
+Env::load(is_file($envFuera) ? $envFuera : __DIR__ . '/.env');
+Env::exigir(['COOKIE_NAME', 'COOKIE_KEY', 'DATABASE', 'HOST_DB', 'LOGIN_HASH_RELLENO']);
+Env::exigirHash('LOGIN_HASH_RELLENO');
+
+require_once(__DIR__ . "/errores.php");
+
+# Sin session_start(): la sesión es la cookie firmada de sesion.php
+
+#   ENVIRONMENT DEFINITIONS
+define('COOKIE_NAME', Env::get('COOKIE_NAME'));
+define('COOKIE_KEY', Env::get('COOKIE_KEY'));
+define('COOKIE_LIFETIME', Env::get('COOKIE_LIFETIME'));
+define('COOKIE_DOMAIN', Env::get('COOKIE_DOMAIN'));
+define('COOKIE_SECURE', Env::get('COOKIE_SECURE'));
+define('COOKIE_HTTPONLY', Env::get('COOKIE_HTTPONLY'));
+define('COOKIE_SAMESITE', Env::get('COOKIE_SAMESITE'));
+define('LOGIN_HASH_RELLENO', Env::get('LOGIN_HASH_RELLENO'));
+
+define("HOST_DB", Env::get('HOST_DB'));
+define("USER_DB", Env::get('USER_DB'));
+define("PASSWORD_DB", Env::get('PASSWORD_DB'));
+define("DATABASE", Env::get('DATABASE'));
+define("CHARSET", Env::get('CHARSET'));</code></pre>
+<pre data-lang="php" data-file="api/core/env.php (método nuevo, junto a exigir)"><code>    /** Corta el arranque si la variable no es un hash que entienda password_verify. */
+    public static function exigirHash(string $clave): void
+    {
+        if (password_get_info((string)self::get($clave, ''))['algo'] === null) {
+            self::fallar("$clave no es un hash de password_hash()");
+        }
+    }</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Verificar siempre contra un hash, real o de relleno, y comprobar el límite antes de esa verificación, para que un bloqueado no cueste un bcrypt.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Un <code>usleep</code> aleatorio en el camino corto: el ruido se promedia con suficientes intentos y la diferencia vuelve a aparecer. Tampoco sirve calcular <code>password_hash</code> en cada request para la cuenta inexistente: costaría un bcrypt de más y el tiempo seguiría distinto (hash más verificación contra solo verificación).</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que alguien "simplifique" la condición a <code>$result &amp;&amp; password_verify(...)</code>: PHP corta en el primer falso y la verificación deja de correr para las cuentas inexistentes. El orden de la línea es la defensa. Y que <code>LOGIN_HASH_RELLENO</code> quede sin definir: <code>exigirHash</code> no deja arrancar, que es preferible a un login que filtra cuentas en silencio.</dd></div>
+</dl>
+<h3 id="paso-cambio">Paso 5. Cambiar la contraseña cierra las demás</h3>
+<p>El final de <code>changePassword</code> en <code>api/models/usuarios.php</code> sube la versión en el mismo <code>UPDATE</code> que cambia el hash, y le da a esta pestaña una cookie nueva. La función recibe un parámetro más, la sesión actual, para armar esa cookie.</p>
+<pre data-lang="php" data-file="api/models/usuarios.php (changePassword, el final)"><code>    public function changePassword(array $arrayData, array $sesion) {
+        # ... las validaciones y la verificación de password_actual quedan igual ...
+
+        $newPasswordHash = password_hash($password_nueva, PASSWORD_DEFAULT);
+        try {
+            # La contraseña y la versión cambian juntas: toda cookie anterior deja de valer
+            $stmt = $this-&gt;connection-&gt;prepare(
+                "UPDATE usuarios SET password_hash = ?, version_sesion = version_sesion + 1 WHERE id = ?"
+            );
+            $stmt-&gt;execute([$newPasswordHash, $id]);
+
+            $stmt = $this-&gt;connection-&gt;prepare("SELECT version_sesion FROM usuarios WHERE id = ?");
+            $stmt-&gt;execute([$id]);
+            $version = (int)$stmt-&gt;fetchColumn();
+        } catch (PDOException $e) {
+            Response::serverError($e);
+        }
+
+        # Esta pestaña sigue dentro con una cookie nueva; el resto de las sesiones queda fuera
+        emitirSesion($sesion, $version);
+        $this-&gt;response-&gt;success(['csrfToken' =&gt; csrfToken()], "La contraseña se cambio correctamente!");
+    }</code></pre>
+<pre data-lang="php" data-file="api/endpoints/cambio_contrasena.php (desde requireAuth)"><code>$auth = requireAuth([1,2,3]);
+$data = readJsonInput("PUT");
+$connection = new Connection();
+$response = new Response();
+
+try {
+  $cambioContrasena = new Usuarios($connection, $response);
+  $cambioContrasena-&gt;changePassword([
+                'id'                          =&gt; (string)$auth['id'], # sale de la sesion, no del cuerpo
+                'password_actual'             =&gt; inputString($data, 'password_actual'),
+                'password_nueva'              =&gt; inputString($data, 'password_nueva'),
+                'password_nueva_confirmacion' =&gt; inputString($data, 'password_nueva_confirmacion')
+            ], $auth);
+}
+catch (Exception $e) {
+  Response::serverError($e);
+}</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Subir la versión en el mismo <code>UPDATE</code> que el hash, para que no exista un momento con la contraseña nueva y las sesiones viejas vivas; y reemitir la cookie de quien hizo el cambio, para no sacarlo.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Cerrar también la sesión actual y mandarlo al login: es más simple y algunos sistemas lo hacen, pero para quien acaba de escribir su contraseña nueva es un paso de más sin ganancia. Tampoco se agrega un "cerrar todas mis sesiones" sin cambiar la contraseña; con esta columna es un <code>UPDATE</code> de una línea, y queda como ejercicio en Limitaciones.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el frontend se quede con el <code>csrfToken</code> viejo: el token es el HMAC de la cookie, y la cookie cambió. No pasa porque <code>apiFetch</code> guarda el <code>csrfToken</code> de cualquier respuesta; si un día cambias eso, la siguiente escritura de esa pestaña da 403. Y que la cuenta del administrador no tenga roles 1, 2 o 3 en <code>requireAuth([1,2,3])</code>: no es tu caso, porque <code>isAdmin</code> pasa siempre.</dd></div>
+</dl>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="web02-sesion"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-pruebas">La prueba sin servidor</h3>
+<p>Una prueba de línea de comandos, en PHP puro, para las dos funciones que no necesitan base: la comparación de IP (contra la vieja, para que veas el hueco) y las claves del límite.</p>
+<pre data-lang="php" data-file="tests/sesion_test.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../api/core/sesion.php';
+require __DIR__ . '/../api/core/login-throttle.php';
+
+$fallos = 0;
+function caso(string $nombre, bool $esperado, bool $obtenido): void
+{
+    global $fallos;
+    $ok = $esperado === $obtenido;
+    if (!$ok) {
+        $fallos++;
+    }
+    printf("%s %s\n", $ok ? 'ok    ' : 'FALLA ', $nombre);
+}
+
+# La comparación de antes de esta guía
+$vieja = fn(string $guardada, string $actual): bool =&gt; strpos($actual, $guardada) === 0;
+
+caso('misma IP',                          true,  mismaIp('127.0.0.1', '127.0.0.1'));
+caso('una IP que empieza igual no vale',  false, mismaIp('127.0.0.1', '127.0.0.10'));
+caso('IPv4 contra IPv6 de loopback',      false, mismaIp('127.0.0.1', '::1'));
+caso('una cookie sin IP no vale',         false, mismaIp('', '10.0.0.5'));
+caso('la vieja aceptaba el prefijo',      true,  $vieja('127.0.0.1', '127.0.0.10'));
+caso('la vieja aceptaba la IP vacía',     true,  $vieja('', '10.0.0.5'));
+
+$c = LoginThrottle::claves('  Estudiante ', '127.0.0.1');
+caso('la cuenta no distingue mayúsculas', true,  $c['cuenta'] === 'cuenta:estudiante');
+caso('la IP lleva su propia clave',       true,  $c['ip'] === 'ip:127.0.0.1');
+
+echo $fallos === 0 ? "\nTodo bien\n" : "\n$fallos caso(s) fallaron\n";
+exit($fallos === 0 ? 0 : 1);</code></pre>
+<aside class="callout callout--try">
+<p class="callout-label">Pruébalo ahora</p>
+<p>Desde la raíz del proyecto, <code>C:\xampp\php\php.exe tests\sesion_test.php</code>. Tienen que salir ocho líneas <code>ok</code> y al final <code>Todo bien</code>. Las dos líneas de <code>la vieja</code> no prueban tu código: demuestran que el hueco existía, y por eso se espera <code>true</code>.</p>
+</aside>
+<h3 id="comprueba-script">El script contra la API</h3>
+<p>Cuatro comprobaciones con <code>curl</code>, en un orden que no se pisa: el contador se vacía entre una y otra para que el límite de la primera no bloquee la siguiente. Los cuerpos JSON los arma <code>ConvertTo-Json</code> en un archivo temporal, para que PowerShell no toque las comillas.</p>
+<pre data-lang="shell" data-file="lab/web02.ps1"><code>param(
+  [string]$Base  = "http://localhost/SistemaControlPracticas/api/endpoints",
+  [string]$Mysql = "C:\xampp\mysql\bin\mysql.exe"
+)
+$login = "$Base/login.php"
+function Limpiar { &amp; $Mysql -u root -h 127.0.0.1 -P 3308 control_practicas_db -e "DELETE FROM intentos_login" }
+function Cuerpo($tabla) { $tabla | ConvertTo-Json -Compress | Set-Content -NoNewline -Encoding utf8NoBOM lab\cuerpo.json }
+function Post($tabla, [string[]]$extra) {
+  Cuerpo $tabla
+  &amp; curl.exe -s -H "Content-Type: application/json" --data-binary "@lab\cuerpo.json" @extra $login
+}
+
+"1) Tiempo: cuenta que existe contra cuenta que no (4 intentos de cada una)"
+Limpiar
+foreach ($id in "estudiante", "nadie-existe") {
+  $t = 1..4 | ForEach-Object { [double](Post @{ identificador = $id; contrasena = "incorrecta-1" } @("-o", "NUL", "-w", "%{time_total}")) }
+  "   {0,-14} promedio {1:N3} s" -f $id, ($t | Measure-Object -Average).Average
+}
+
+"2) Seis fallos contra la misma cuenta"
+Limpiar
+1..6 | ForEach-Object { "   intento {0} -&gt; {1}" -f $_, (Post @{ identificador = "estudiante"; contrasena = "incorrecta-1" } @("-o", "NUL", "-w", "%{http_code}")) }
+
+"3) Veintiún fallos desde la misma IP, cada uno contra otra cuenta"
+Limpiar
+$codigos = 1..21 | ForEach-Object { Post @{ identificador = "nadie-$_"; contrasena = "incorrecta-1" } @("-o", "NUL", "-w", "%{http_code}") }
+"   intento 20 -&gt; {0}, intento 21 -&gt; {1}" -f $codigos[19], $codigos[20]
+
+"4) Cambiar la contraseña cierra la otra sesión"
+Limpiar
+$a = Post @{ identificador = "estudiante"; contrasena = "Password123" } @("-c", "lab\a.txt") | ConvertFrom-Json
+$null = Post @{ identificador = "estudiante"; contrasena = "Password123" } @("-c", "lab\b.txt")
+Cuerpo @{ password_actual = "Password123"; password_nueva = "Password456"; password_nueva_confirmacion = "Password456" }
+$cambio = &amp; curl.exe -s -X PUT -b lab\a.txt -c lab\a.txt -H "Content-Type: application/json" -H "X-CSRF-Token: $($a.data.csrfToken)" --data-binary "@lab\cuerpo.json" "$Base/cambio_contrasena.php" | ConvertFrom-Json
+"   cambio            -&gt; code {0}" -f $cambio.code
+"   sesión que cambió -&gt; {0}" -f (&amp; curl.exe -s -o NUL -w "%{http_code}" -b lab\a.txt $login)
+"   la otra sesión    -&gt; {0}" -f (&amp; curl.exe -s -o NUL -w "%{http_code}" -b lab\b.txt $login)
+
+# Deja la contraseña como estaba, con el token nuevo que trajo el cambio
+Cuerpo @{ password_actual = "Password456"; password_nueva = "Password123"; password_nueva_confirmacion = "Password123" }
+$null = &amp; curl.exe -s -X PUT -b lab\a.txt -c lab\a.txt -H "Content-Type: application/json" -H "X-CSRF-Token: $($cambio.data.csrfToken)" --data-binary "@lab\cuerpo.json" "$Base/cambio_contrasena.php"
+Limpiar</code></pre>
+<p>Córrelo con <code>pwsh .\lab\web02.ps1</code>. Lo que el diseño espera, y lo que tienes que comparar con tu salida:</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Comprobación</th><th>Qué debe aparecer</th><th>Tu resultado</th></tr></thead>
+<tbody>
+<tr><td>1) Tiempo</td><td>Los dos promedios del mismo orden de magnitud. Anota los dos: la guía no da cifras porque dependen de tu CPU.</td><td>&nbsp;</td></tr>
+<tr><td>2) Cuenta</td><td>Intentos 1 a 5 con 401; el 6, con 429.</td><td>&nbsp;</td></tr>
+<tr><td>3) IP</td><td>Intento 20 con 401; el 21, con 429.</td><td>&nbsp;</td></tr>
+<tr><td>4) Revocación</td><td><code>code 1</code>, la sesión que cambió con 200 y la otra con 401.</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<p>Después, entra desde el frontend con <code>estudiante</code>, cambia la contraseña desde el formulario y, sin recargar, haz cualquier acción que escriba (postularte, por ejemplo). Tiene que funcionar: es la prueba de que el <code>csrfToken</code> nuevo llegó a <code>apiFetch</code>. Vuelve a dejar <code>Password123</code>.</p>
+<h3 id="comprueba-fallas">Fallas provocadas</h3>
+<p><b>Falla 1. Sin la versión.</b> En <code>refrescarAuthDesdeBD</code>, comenta la línea <code>|| (int)$fila['version_sesion'] !== …</code> y repite el bloque 4 del script. Ahora la otra sesión responde 200 después del cambio: la cookie del laboratorio sigue entrando. Esa es la situación de la excusa. Descomenta la línea.</p>
+<p><b>Falla 2. El atajo de la condición.</b> Cambia la línea de <code>$coincide</code> por <code>$coincide = $result !== false &amp;&amp; password_verify($contrasena, $hash);</code> y repite el bloque 1. Anota los dos promedios: con este orden, la cuenta que no existe deja de pagar el bcrypt. La diferencia entre los dos números es lo que un atacante mide para saber qué usuarios existen. Vuelve al orden original.</p>
+<p><b>Falla 3. IPv4 contra IPv6.</b> Entra con <code>curl.exe -4</code> y pide la sesión con <code>curl.exe -6</code>, con el mismo archivo de cookies. La segunda request tiene que dar 401, porque llega desde <code>::1</code> y la cookie dice <code>127.0.0.1</code>. Si curl responde <code>Failed to connect</code>, tu Apache no escucha en IPv6 y la falla no aplica.</p>
+<pre data-lang="shell"><code># lab\login.json es el cuerpo del paso 7 de WEB00
+curl.exe -4 -s -o NUL -c lab\ip.txt -H "Content-Type: application/json" --data-binary "@lab\login.json" http://localhost/SistemaControlPracticas/api/endpoints/login.php
+curl.exe -6 -s -o NUL -w "%{http_code}`n" -b lab\ip.txt http://localhost/SistemaControlPracticas/api/endpoints/login.php</code></pre>
+<h2 id="limites">Limitaciones</h2>
+<ul>
+<li><b>No se cierra una sesión concreta.</b> La versión es por usuario: corta todas o ninguna. Para "cerrar la sesión del laboratorio" sin tocar la de casa hacen falta sesiones del lado del servidor, con un id por dispositivo. Un botón "cerrar todas mis sesiones" sí sale con lo que hay: <code>UPDATE usuarios SET version_sesion = version_sesion + 1 WHERE id = ?</code> y <code>emitirSesion</code>, como en el paso 5.</li>
+<li><b>El logout no revoca.</b> <code>DELETE login.php</code> borra la cookie del navegador, pero una copia robada antes sigue valiendo hasta <code>exp</code>. Si quieres que el logout también corte las copias, súbele la versión (y cerrará todas las sesiones de esa persona).</li>
+<li><b>La IP detrás de un proxy.</b> Si pones Nginx o Cloudflare delante, <code>REMOTE_ADDR</code> pasa a ser la del proxy: el ligado a la IP deja de significar algo y el contador por IP junta a todos. La IP real viene en una cabecera (<code>X-Forwarded-For</code>) que solo vale si la escribe tu proxy, nunca leída directa del cliente.</li>
+<li><b>El costo.</b> Cada fallo suma dos <code>INSERT</code> y cada login, un <code>SELECT</code> con <code>COUNT</code> sobre un índice. Para el volumen de un sistema de prácticas es despreciable; la tabla se purga sola de lo que tiene más de un día, en promedio una vez cada 100 fallos.</li>
+<li><b>Nada se ejecutó al escribir esta guía.</b> Los códigos esperados salen de leer el código. Los tiempos del bloque 1 son tuyos y la guía no los anticipa.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="web02">
+<p class="pj-repo-head">Trabaja en la rama <code>web02-sesion</code>. La migración va en el commit; el <code>.env</code> con el hash de relleno, no.</p>
+<ul class="pj-checks">
+<li data-check="migracion">Corriste la migración y los tres usuarios tienen <code>version_sesion</code> en 1.</li>
+<li data-check="sesion"><code>core/sesion.php</code> y <code>core/login-throttle.php</code> pasan <code>php -l</code>.</li>
+<li data-check="test"><code>tests/sesion_test.php</code> dice <code>Todo bien</code>.</li>
+<li data-check="limite">El script da 401 cinco veces y 429 en el sexto intento, y 429 en el 21 por IP.</li>
+<li data-check="revocar">Después del cambio de contraseña, la otra sesión da 401.</li>
+<li data-check="front">Cambiaste la contraseña desde el frontend y la siguiente escritura funcionó sin recargar.</li>
+<li data-check="fallas">Provocaste las fallas 1 y 2 y anotaste los tiempos.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<p>Esta guía funciona sola. Si quieres juntarla con otras:</p>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con WEB00 y WEB01</p>
+<p>El script usa el laboratorio de WEB00 y depende de que los errores salgan con su código HTTP real (WEB01): un 429 que saliera como 200 no lo vería <code>%{http_code}</code>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M81, autenticación y sesiones</p>
+<p>La versión de sesión es la forma mínima de revocar un token sin estado; las alternativas (sesiones en servidor, listas de revocación, tokens cortos con refresh) están en <a href="../modules/m81-autenticacion-sesiones.html">M81</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M74, cookies</p>
+<p><code>opcionesCookie</code> junta los atributos que M74 explica uno por uno: <code>HttpOnly</code>, <code>Secure</code>, <code>SameSite</code> y el dominio.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con A12, sesiones en Java</p>
+<p>A12 resuelve lo mismo con sesiones en Redis: ahí revocar es borrar una clave. Compara qué se gana y qué se paga con cada forma.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/web02.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

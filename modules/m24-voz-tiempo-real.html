@@ -152,6 +152,16 @@
         </table>
       </div>
 
+      <p><b>Paso a paso: de dónde salen esos números.</b> Casi todas las filas usan la ley de Little: lo que hay abierto a la vez es lo que empieza por segundo multiplicado por lo que dura cada cosa. Es como contar cuánta gente hay dentro de un café: si entran 10 personas por minuto y cada una se queda 6 minutos, adentro hay 60.</p>
+
+      <ol class="steps">
+        <li><span class="step-title">Turnos por segundo</span>Cada sesión completa un intercambio cada 18 s. Con 30&#8239;000 sesiones, 30&#8239;000 ÷ 18 ≈ 1&#8239;667 turnos empiezan cada segundo.</li>
+        <li><span class="step-title">Streams de STT</span>Un stream de transcripción está abierto solo mientras el usuario habla: 6 de cada 18 s, un tercio del tiempo. Un tercio de 30&#8239;000 sesiones son 10&#8239;000 streams. Con Little da lo mismo: 1&#8239;667 turnos por segundo × 6 s ≈ 10&#8239;000.</li>
+        <li><span class="step-title">Agentes hablando</span>La misma cuenta con los 9 s que habla el agente: la mitad del tiempo, 15&#8239;000 sesiones.</li>
+        <li><span class="step-title">Generaciones del LLM</span>Una respuesta tiene unos 30 tokens y cada token tarda 25 ms, así que generarla dura 30 × 25 = 750 ms. 1&#8239;667 respuestas por segundo × 0.75 s ≈ 1&#8239;250 generaciones en curso a la vez.</li>
+        <li><span class="step-title">Réplicas</span>Una réplica atiende 64 generaciones a la vez, pero se la usa al 75&#8239;% para tener margen: 64 × 0.75 = 48. Entonces 1&#8239;250 ÷ 48 = 26.04, y como no existe media réplica, se redondea hacia arriba: 27.</li>
+      </ol>
+
       <p>Las 27 réplicas son pocas al lado de las 125 de la flota de texto del <a href="m19-router-flota.html#flota">M19</a>: una respuesta hablada tiene unos 30 tokens, porque nadie escucha un párrafo entero. Lo caro de la voz no es el LLM. Es todo lo que rodea al LLM: tener 10&#8239;000 streams de transcripción y 15&#8239;000 de síntesis abiertos, mover 1.56 Gbps de audio por sentido y contestar en menos de un segundo, cada vez.</p>
 
       <h3 id="numeros-requisitos">Requisitos del servicio de referencia</h3>
@@ -603,6 +613,104 @@ Content-Type: application/json
 
       <p>Los paquetes salen cada 20 ms, pero no llegan cada 20 ms. El <dfn data-term="jitter-red">jitter de red</dfn> es la variación de esa demora: uno tarda 40 ms, el siguiente 90, el otro 45. Si el receptor reprodujera cada paquete apenas llega, el audio sonaría a saltos. Por eso espera un poco en un <b>jitter buffer</b>: guarda los paquetes, los ordena y los reproduce a ritmo fijo, con un retraso. Un paquete que llega después de su momento de sonar se descarta como si se hubiera perdido.</p>
 
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Un amigo te manda por correo una historia en fotos, una por día. El correo no es parejo: una tarda dos días, otra cinco, otra llega antes que la anterior. Si pegas cada foto en el álbum el día que llega, la historia sale desordenada y con huecos. Si esperas unos días antes de empezar, casi todas ya están cuando les toca su lugar, y las pegas en orden, una por día. Esa espera es el jitter buffer: más espera, menos huecos, pero la historia empieza más tarde. La foto que llega después de su día ya no sirve, y el hueco se rellena como se pueda: eso es la PLC.</p>
+      </aside>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 350" role="img" aria-labelledby="fjr24at fjr24ad">
+<title id="fjr24at">Cinco paquetes con y sin jitter buffer</title>
+<desc id="fjr24ad">Cinco paquetes salen cada 20 ms, a los 0, 20, 40, 60 y 80 ms. La red les suma demoras distintas: 40, 80, 45, 55 y 130 ms, así que llegan a los 40, 100, 85, 115 y 210 ms, y el 3 llega antes que el 2. Sin espera, el receptor reproduce el 1 apenas llega, a los 40 ms, y espera a los siguientes cada 20 ms: solo el 1 está a tiempo; el 2, el 3, el 4 y el 5 llegan tarde. Con un buffer de 60 ms, empieza a reproducir a los 100 ms: el 1, el 2, el 3 y el 4 ya llegaron y suenan en orden; solo el 5, que llega a los 210 ms y le tocaba a los 180, va tarde y se rellena con PLC.</desc>
+<defs><marker id="fjr24aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="10" y="56">Salen</text>
+<text class="dg-tiny" x="10" y="72">cada 20 ms</text>
+<text class="dg-small" x="10" y="116">Llegan</text>
+<text class="dg-tiny" x="10" y="132">demora en ms</text>
+<path class="dg-feedback" d="M160 72 L256 104" marker-end="url(#fjr24aa)"/>
+<path class="dg-feedback" d="M208 72 L400 104" marker-end="url(#fjr24aa)"/>
+<path class="dg-feedback" d="M256 72 L364 104" marker-end="url(#fjr24aa)"/>
+<path class="dg-feedback" d="M304 72 L436 104" marker-end="url(#fjr24aa)"/>
+<path class="dg-feedback" d="M352 72 L664 104" marker-end="url(#fjr24aa)"/>
+<circle class="dg-layer" style="--c: var(--l-client)" cx="160" cy="60" r="11"/>
+<text class="dg-tiny" x="160" y="64" text-anchor="middle">1</text>
+<circle class="dg-layer" style="--c: var(--l-client)" cx="208" cy="60" r="11"/>
+<text class="dg-tiny" x="208" y="64" text-anchor="middle">2</text>
+<circle class="dg-layer" style="--c: var(--l-client)" cx="256" cy="60" r="11"/>
+<text class="dg-tiny" x="256" y="64" text-anchor="middle">3</text>
+<circle class="dg-layer" style="--c: var(--l-client)" cx="304" cy="60" r="11"/>
+<text class="dg-tiny" x="304" y="64" text-anchor="middle">4</text>
+<circle class="dg-layer" style="--c: var(--l-client)" cx="352" cy="60" r="11"/>
+<text class="dg-tiny" x="352" y="64" text-anchor="middle">5</text>
+<circle class="dg-layer" style="--c: var(--l-edge)" cx="256" cy="116" r="11"/>
+<text class="dg-tiny" x="256" y="120" text-anchor="middle">1</text>
+<text class="dg-tiny" x="256" y="146" text-anchor="middle">+40</text>
+<circle class="dg-layer" style="--c: var(--l-edge)" cx="400" cy="116" r="11"/>
+<text class="dg-tiny" x="400" y="120" text-anchor="middle">2</text>
+<text class="dg-tiny" x="400" y="146" text-anchor="middle">+80</text>
+<circle class="dg-layer" style="--c: var(--l-edge)" cx="364" cy="116" r="11"/>
+<text class="dg-tiny" x="364" y="120" text-anchor="middle">3</text>
+<text class="dg-tiny" x="364" y="146" text-anchor="middle">+45</text>
+<circle class="dg-layer" style="--c: var(--l-edge)" cx="436" cy="116" r="11"/>
+<text class="dg-tiny" x="436" y="120" text-anchor="middle">4</text>
+<text class="dg-tiny" x="436" y="146" text-anchor="middle">+55</text>
+<circle class="dg-layer" style="--c: var(--l-edge)" cx="664" cy="116" r="11"/>
+<text class="dg-tiny" x="664" y="120" text-anchor="middle">5</text>
+<text class="dg-tiny" x="664" y="146" text-anchor="middle">+130</text>
+<text class="dg-small" x="10" y="179">Sin espera</text>
+<text class="dg-tiny" x="10" y="195">suena apenas llega el 1</text>
+<rect class="dg-ok" x="257" y="166" width="46" height="26" rx="4"/>
+<text class="dg-tiny" x="280" y="183" text-anchor="middle">1</text>
+<rect class="dg-bad" x="305" y="166" width="46" height="26" rx="4"/>
+<text class="dg-tiny" x="328" y="183" text-anchor="middle">2</text>
+<rect class="dg-bad" x="353" y="166" width="46" height="26" rx="4"/>
+<text class="dg-tiny" x="376" y="183" text-anchor="middle">3</text>
+<rect class="dg-bad" x="401" y="166" width="46" height="26" rx="4"/>
+<text class="dg-tiny" x="424" y="183" text-anchor="middle">4</text>
+<rect class="dg-bad" x="449" y="166" width="46" height="26" rx="4"/>
+<text class="dg-tiny" x="472" y="183" text-anchor="middle">5</text>
+<text class="dg-tiny" x="510" y="178">a tiempo: 1</text>
+<text class="dg-tiny dg-fail-text" x="510" y="193">tarde: 2, 3, 4 y 5</text>
+<path class="dg-feedback" d="M256 222 H400"/>
+<path class="dg-feedback" d="M256 216 V228 M400 216 V228"/>
+<text class="dg-tiny" x="328" y="212" text-anchor="middle">espera 60 ms</text>
+<text class="dg-small" x="10" y="249">Buffer de 60 ms</text>
+<text class="dg-tiny" x="10" y="265">espera y suena en orden</text>
+<rect class="dg-ok" x="401" y="236" width="46" height="26" rx="4"/>
+<text class="dg-tiny" x="424" y="253" text-anchor="middle">1</text>
+<rect class="dg-ok" x="449" y="236" width="46" height="26" rx="4"/>
+<text class="dg-tiny" x="472" y="253" text-anchor="middle">2</text>
+<rect class="dg-ok" x="497" y="236" width="46" height="26" rx="4"/>
+<text class="dg-tiny" x="520" y="253" text-anchor="middle">3</text>
+<rect class="dg-ok" x="545" y="236" width="46" height="26" rx="4"/>
+<text class="dg-tiny" x="568" y="253" text-anchor="middle">4</text>
+<rect class="dg-bad" x="593" y="236" width="46" height="26" rx="4"/>
+<text class="dg-tiny" x="616" y="253" text-anchor="middle">5</text>
+<text class="dg-tiny" x="652" y="248">a tiempo: 1 a 4</text>
+<text class="dg-tiny dg-fail-text" x="652" y="263">tarde: 5 (PLC)</text>
+<path class="sim-axis" d="M160 292 H736"/>
+<path class="sim-axis" d="M160 292 V297"/>
+<text class="dg-tiny" x="160" y="310" text-anchor="middle">0</text>
+<path class="sim-axis" d="M256 292 V297"/>
+<text class="dg-tiny" x="256" y="310" text-anchor="middle">40</text>
+<path class="sim-axis" d="M352 292 V297"/>
+<text class="dg-tiny" x="352" y="310" text-anchor="middle">80</text>
+<path class="sim-axis" d="M448 292 V297"/>
+<text class="dg-tiny" x="448" y="310" text-anchor="middle">120</text>
+<path class="sim-axis" d="M544 292 V297"/>
+<text class="dg-tiny" x="544" y="310" text-anchor="middle">160</text>
+<path class="sim-axis" d="M640 292 V297"/>
+<text class="dg-tiny" x="640" y="310" text-anchor="middle">200</text>
+<path class="sim-axis" d="M736 292 V297"/>
+<text class="dg-tiny" x="736" y="310" text-anchor="middle">240</text>
+<text class="dg-tiny" x="746" y="310">ms</text>
+<text class="dg-tiny" x="10" y="336">Cada casilla es el momento en que ese paquete tiene que sonar; si todavía no llegó, va tarde y se rellena con PLC.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura de apoyo.</b> Cinco paquetes, cinco demoras distintas. Esperar 60 ms antes de empezar convierte una llegada desordenada en audio parejo: cuatro de cinco suenan a tiempo en lugar de uno. El costo son esos 60 ms en cada turno. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+      </figure>
+
       <p>Para lo que falta hay dos herramientas. La <dfn data-term="plc">PLC</dfn> inventa el audio que falta a partir del anterior: sirve para 20 o 40 ms; con más, se oye entrecortado. La <dfn data-term="fec">FEC</dfn> del códec Opus manda en cada paquete una copia de menor calidad del cuadro anterior: si se pierde un paquete y el siguiente llega a tiempo, el cuadro se recupera. <span class="badge badge--doc">Documentado</span> Cuesta ancho de banda y algo de espera, porque hay que esperar al paquete siguiente.</p>
 
       <p>El simulador manda 250 paquetes (5 segundos de audio) por tres redes y te deja elegir el tamaño del buffer. Cada punto es un paquete: azul si llegó a tiempo, rojo si llegó tarde o se perdió.</p>
@@ -621,6 +729,8 @@ Content-Type: application/json
           </tbody>
         </table>
       </div>
+
+      <p><b>Cómo leer esta tabla.</b> Cada fila es una red y cada columna, un tamaño de buffer, con o sin FEC. La celda dice qué parte del audio no llegó a tiempo y hubo que inventar con PLC: más bajo es mejor. Un guion es una combinación que no se muestra. Lee la fila de 4G de izquierda a derecha: al pasar de 20 a 60 ms de espera, el audio inventado baja de 38.4 a 11.6&#8239;%; sumarle FEC con los mismos 60 ms lo baja a 2.0&#8239;%, mejor que duplicar la espera a 120 ms (6.0&#8239;%). Y no olvides el precio de moverse a la derecha: cada milisegundo de buffer se suma a cada turno.</p>
 
       <p>Los porcentajes son el audio disimulado con PLC. Tres lecciones salen de la tabla:</p>
 
@@ -1024,6 +1134,8 @@ async def responder(llm_stream, tts, cola_audio):
         </table>
       </div>
 
+      <p><b>Cómo leer esta tabla.</b> Las filas van en el orden en que pasa el tiempo, desde que el usuario calla hasta que oye al agente, y cada celda son milisegundos. El total es la suma de la columna, porque cada salto espera al anterior: en streaming, 30 + 25 + 30 + 250 + 50 + 150 + 100 + 80 + 25 + 40 = 780. Compara las dos primeras columnas fila por fila: casi todo lo que baja, baja porque la versión en streaming deja de esperar a que algo termine. El STT pasa de 300 a 50 porque ya transcribió mientras el usuario hablaba; "hasta lo que se puede decir" pasa de 1&#8239;500 a 100 porque el TTS arranca con la primera frase y no con la respuesta entera. En speech-to-speech, tres filas tienen guion porque esas piezas no existen: un solo modelo hace el trabajo del STT, el LLM y el TTS, y su "primer audio del modelo" (300 ms) las reemplaza.</p>
+
       <figure class="figure">
         <div class="figure-frame">
 <svg viewBox="0 0 770 300" role="img" aria-labelledby="f24bt f24bd">
@@ -1163,6 +1275,27 @@ async def responder(llm_stream, tts, cola_audio):
 oido, borrar = truncar(marcas_del_tts, audio_end_ms=5540)
 contexto.ultimo_turno_del_agente = oido          # lo que el modelo "dijo"
 # Realtime API: {"type": "conversation.item.truncate", "item_id": …, "content_index": 0, "audio_end_ms": 5540}</code></pre>
+
+      <p><b>Paso a paso con la función.</b> Supón que las últimas palabras que generó el TTS tienen estas marcas de ejemplo, en milisegundos desde que empezó la respuesta, y que el audio se cortó en <code>audio_end_ms = 5540</code>:</p>
+
+      <div class="table-wrap">
+        <table class="t">
+          <thead><tr><th>Palabra</th><th class="r">Empieza</th><th class="r">Termina</th><th>¿Terminó antes del corte?</th><th>Va a</th></tr></thead>
+          <tbody>
+            <tr><td>puedo</td><td class="r">5&#8239;120</td><td class="r">5&#8239;390</td><td>Sí: 5&#8239;390 ≤ 5&#8239;540</td><td>Lo oído</td></tr>
+            <tr><td>cambiarlo</td><td class="r">5&#8239;390</td><td class="r">5&#8239;530</td><td>Sí: 5&#8239;530 ≤ 5&#8239;540</td><td>Lo oído</td></tr>
+            <tr><td>al</td><td class="r">5&#8239;560</td><td class="r">5&#8239;640</td><td>No</td><td>Borrar</td></tr>
+            <tr><td>de</td><td class="r">5&#8239;640</td><td class="r">5&#8239;700</td><td>No</td><td>Borrar</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <ol class="steps">
+        <li><span class="step-title">Comparar cada final con el corte</span>Una palabra queda en el contexto solo si terminó de sonar antes del corte. Una palabra que quedó a medias (empezó antes y terminó después) también se borra: el usuario oyó un sonido cortado, no la palabra.</li>
+        <li><span class="step-title">Guardar lo oído</span>El contexto se queda con "…puedo cambiarlo…": eso es lo que el modelo "dijo".</li>
+        <li><span class="step-title">Tirar lo demás</span>"al de las 10:15…" y el precio se borran, aunque ya estaban generados.</li>
+        <li><span class="step-title">El turno siguiente</span>Cuando el usuario dice "No, no, déjalo así", el modelo sabe que nunca dio el precio, y no contesta como si el usuario lo hubiera rechazado.</li>
+      </ol>
 
       <p>El simulador sigue una respuesta de 10.4 segundos. El usuario empieza a hablar a los 5&#8239;230 ms: su audio llega al servidor 85 ms después (captura, red y buffer), el VAD confirma la voz tras 200 ms de habla y la orden de callar vuelve al cliente en 25 ms. El agente se corta a los 5&#8239;540 ms, después de hablar 310 ms encima del usuario. Compara "Truncar bien" con "Sin truncar", y mira las dos falsas alarmas.</p>
 
@@ -1367,6 +1500,16 @@ contexto.ultimo_turno_del_agente = oido          # lo que el modelo "dijo"
       </div>
 
       <p>La cuenta de la salida con caché: 33 turnos × 180 tokens × 64 USD por millón = 0.380 USD, el 73&#8239;% de 0.519. Lo caro de speech-to-speech es <b>la voz del agente</b>: cada segundo que habla son 20 tokens a 64 USD por millón. Y sin caché, el costo se multiplica por nueve, porque cada turno vuelve a pagar todo el audio anterior a precio completo. En la cascada, lo caro también es la voz: el TTS es el 60&#8239;% del costo. El LLM, que en texto era todo, acá es menos de un cuarto.</p>
+
+      <p><b>Paso a paso: por qué sin caché cuesta nueve veces más.</b> Es como si, antes de cada frase nueva, le releyeras a alguien la charla entera desde el principio. Cuenta solo el audio (sin las instrucciones del sistema), con los 60 tokens del usuario y los 180 del agente de cada turno:</p>
+
+      <ol class="steps">
+        <li><span class="step-title">Turno 1</span>El modelo recibe los 60 tokens de lo que dijiste. Entrada: 60.</li>
+        <li><span class="step-title">Turno 2</span>Recibe otra vez el turno 1 entero (60 + 180 = 240) más tus 60 nuevos. Entrada: 300.</li>
+        <li><span class="step-title">Turno 33</span>Recibe los 32 turnos anteriores (32 × 240 = 7&#8239;680) más 60 nuevos: 7&#8239;740 tokens de entrada para contestar 180.</li>
+        <li><span class="step-title">El precio de ese turno</span>Sin caché, todo va a 32 USD por millón: 7&#8239;740 × 32 ÷ 1&#8239;000&#8239;000 ≈ 0.248 USD solo de entrada. Con caché, los 7&#8239;680 repetidos van a 0.40: 0.003 USD, más 60 × 32 ÷ 1&#8239;000&#8239;000 ≈ 0.002 de lo nuevo. Unos 0.005 USD: cerca de cincuenta veces menos.</li>
+        <li><span class="step-title">La suma</span>La entrada crece con cada turno, así que los últimos turnos pesan mucho más que los primeros. Sin caché, la entrada domina y la llamada se dispara; con caché, lo que queda caro es la salida, la voz del agente.</li>
+      </ol>
 
       
       <figure class="figure">

@@ -30,7 +30,8 @@
   /* ---------- Modelo: proyectos y sistemas completos en orden ---------- */
 
   /* series: 'a' para los proyectos en Java y los sistemas completos; 'ia' para los tutoriales de AI Engineering;
-     'ml' para las guías de ML System Design. */
+     'ml' para las guías de ML System Design; 'web' para las guías de seguridad web; 'sec' para las guías de Blue Team
+     y DevSecOps. */
   SD.projectItems = function () {
     var d = SD.data.projects, out = [];
     if (!d) return out;
@@ -43,6 +44,12 @@
     });
     (d.mlTracks || []).forEach(function (t) {
       t.items.forEach(function (p) { out.push(Object.assign({ track: t, series: 'ml' }, p)); });
+    });
+    (d.webTracks || []).forEach(function (t) {
+      t.items.forEach(function (p) { out.push(Object.assign({ track: t, series: 'web' }, p)); });
+    });
+    (d.secTracks || []).forEach(function (t) {
+      t.items.forEach(function (p) { out.push(Object.assign({ track: t, series: 'sec' }, p)); });
     });
     return out;
   };

@@ -1,0 +1,1646 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEC04. Un clúster endurecido y vigilado</title>
+<meta name="description" content="Tienda Norte en k3s: Pod Security restricted, una lista de imágenes por digest, la firma exigida con Kyverno, NetworkPolicy que niegan todo y Falco con una regla propia.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="sec04" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Un clúster endurecido y vigilado</h1>
+        <p class="lead">La firma de SEC02 se exige donde nadie la puede saltar: en la admisión del clúster.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>SEC04</dd></div>
+          <div><dt>Plan</dt><dd>Blue Team y DevSecOps</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>2 h 20 min</dd></div>
+          <div><dt>Módulos</dt><dd>M57, M56</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="sec04">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Levantar un clúster k3s de un nodo con versiones fijas y llevar ahí la API firmada de SEC02 y su PostgreSQL.</li>
+<li>Poner el namespace de la tienda en Pod Security restricted y escribir los <code>securityContext</code> que lo cumplen.</li>
+<li>Permitir solo dos imágenes por digest con una ValidatingAdmissionPolicy nativa, y exigir la firma de tu workflow con Kyverno.</li>
+<li>Negar todo el tráfico del namespace con NetworkPolicy y abrir solo las tres conexiones que la tienda usa.</li>
+<li>Instalar Falco con una regla propia que avisa cuando alguien abre una shell en un pod de la tienda.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>En <a href="sec02-sbom-firma.html">SEC02</a> la imagen de la API quedó firmada por tu workflow, y un script se negaba a desplegar cualquier otra cosa. Ese script es una promesa que cumple quien lo corre: alguien con acceso al servidor puede saltarlo con un <code>docker run</code>. En un clúster la pregunta "¿esto puede correr?" la contesta un solo lugar, el API server, antes de crear cada pod. Ahí se pone la firma, y ahí se ponen también las demás reglas de <a href="../modules/m57-contenedores-k8s.html#admision">57.8</a>.</p>
+<p>Esta guía arma ese clúster en tu máquina, con cuatro capas que viste en <a href="../modules/m57-contenedores-k8s.html#capas">M57</a>: qué puede pedir un pod (Pod Security), qué imágenes entran (una política nativa y Kyverno), con quién habla cada pod (NetworkPolicy) y qué pasa adentro mientras corre (Falco). Cada capa se rompe a propósito al final, y cada falla la corta una capa distinta.</p>
+<figure class="figure" data-arch>
+<div class="figure-frame">
+<svg viewBox="0 0 770 430" role="img" aria-labelledby="fs04t fs04d">
+<title id="fs04t">La arquitectura de SEC04</title>
+<desc id="fs04d">Una persona aplica un manifiesto con kubectl. El API server lo revisa con Pod Security y con la ValidatingAdmissionPolicy, y después le pregunta a Kyverno, que busca la firma de la imagen en GHCR y en Rekor. Si pasa, el pod se crea en el namespace tienda, donde la API habla con PostgreSQL y nada más. Un pod del namespace afuera no llega a la base. Falco mira las llamadas al sistema del nodo y avisa si alguien abre una shell en la tienda. Siete flechas numeradas.</desc>
+<defs><marker id="fs04a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="222" y="170" width="246" height="236" rx="10"/>
+<text class="dg-group" x="234" y="192" text-anchor="start">namespace tienda (restricted)</text>
+<path class="dg-edge" d="M170 78 L228 78" marker-end="url(#fs04a)"/>
+<path class="dg-edge" d="M430 78 L498 78" marker-end="url(#fs04a)"/>
+<path class="dg-edge" d="M585 106 L585 158" marker-end="url(#fs04a)"/>
+<path class="dg-edge" d="M330 106 L330 208" marker-end="url(#fs04a)"/>
+<path class="dg-edge" d="M345 264 L345 318" marker-end="url(#fs04a)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M170 346 L248 346" marker-end="url(#fs04a)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M500 346 C480 330 470 250 452 240" marker-end="url(#fs04a)"/>
+<g data-part="kubectl"><rect class="dg-layer" x="30" y="50" width="140" height="56" rx="8" style="--c: var(--l-client)"/><text class="dg-label" x="100" y="74" text-anchor="middle">kubectl</text><text class="dg-tiny dg-mono" x="100" y="90" text-anchor="middle">tu terminal</text></g>
+<g data-part="apiserver"><rect class="dg-layer" x="230" y="50" width="200" height="56" rx="8" style="--c: var(--l-edge)"/><text class="dg-label" x="330" y="74" text-anchor="middle">API server</text><text class="dg-tiny dg-mono" x="330" y="90" text-anchor="middle">PSA y la VAP, adentro</text></g>
+<g data-part="kyverno"><rect class="dg-layer" x="500" y="50" width="170" height="56" rx="8" style="--c: var(--l-gpu)"/><text class="dg-label" x="585" y="74" text-anchor="middle">Kyverno</text><text class="dg-tiny dg-mono" x="585" y="90" text-anchor="middle">webhook de admisión</text></g>
+<g data-part="registro"><rect class="dg-layer" x="500" y="160" width="170" height="56" rx="8" style="--c: var(--l-external)"/><text class="dg-label" x="585" y="184" text-anchor="middle">GHCR y Rekor</text><text class="dg-tiny dg-mono" x="585" y="200" text-anchor="middle">la imagen y su firma</text></g>
+<g data-part="api"><rect class="dg-layer" x="250" y="208" width="190" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="345" y="232" text-anchor="middle">api</text><text class="dg-tiny dg-mono" x="345" y="248" text-anchor="middle">la imagen firmada</text></g>
+<g data-part="db"><rect class="dg-layer" x="250" y="318" width="190" height="56" rx="8" style="--c: var(--l-db)"/><text class="dg-label" x="345" y="342" text-anchor="middle">db</text><text class="dg-tiny dg-mono" x="345" y="358" text-anchor="middle">PostgreSQL 18</text></g>
+<g data-part="afuera"><rect class="dg-layer" x="30" y="318" width="140" height="56" rx="8" style="--c: var(--l-client)"/><text class="dg-label" x="100" y="342" text-anchor="middle">afuera</text><text class="dg-tiny dg-mono" x="100" y="358" text-anchor="middle">un pod de prueba</text></g>
+<g data-part="falco"><rect class="dg-layer" x="500" y="318" width="170" height="56" rx="8" style="--c: var(--l-gpu)"/><text class="dg-label" x="585" y="342" text-anchor="middle">Falco</text><text class="dg-tiny dg-mono" x="585" y="358" text-anchor="middle">eBPF en el nodo</text></g>
+<g class="pl-pin"><circle cx="199" cy="62" r="10"/><text x="199" y="66" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="315" cy="150" r="10"/><text x="315" y="154" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="464" cy="62" r="10"/><text x="464" y="66" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="600" cy="132" r="10"/><text x="600" y="136" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="360" cy="291" r="10"/><text x="360" y="295" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="209" cy="330" r="10"/><text x="209" y="334" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="482" cy="300" r="10"/><text x="482" y="304" text-anchor="middle">7</text></g>
+<text class="dg-tiny" x="209" y="368" text-anchor="middle">cortado</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC04.1.</b> Las cuatro capas. Pod Security y la política nativa corren dentro del API server (2); Kyverno es un webhook que va al registro (3 y 4). La red deja pasar la flecha 5 y corta la 6. Falco (7) no decide nada: mira y avisa.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>#</th><th>De → a</th><th>Protocolo y formato</th><th>Ejemplo</th><th>Con qué permiso</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>kubectl → API server</td><td>HTTPS, el manifiesto en JSON</td><td><code>kubectl apply -f cluster/tienda.yaml</code></td><td>El kubeconfig de administrador de k3s</td></tr>
+<tr><td>2</td><td>API server → pod nuevo</td><td>En proceso: PSA y la ValidatingAdmissionPolicy</td><td>El pod de la API, revisado antes de guardarse</td><td>Ninguno extra</td></tr>
+<tr><td>3</td><td>API server → Kyverno</td><td>HTTPS, <code>AdmissionReview</code></td><td>"¿Puede crearse este pod?"</td><td>El certificado del webhook</td></tr>
+<tr><td>4</td><td>Kyverno → GHCR y Rekor</td><td>HTTPS, API de OCI y de Rekor</td><td>La firma pegada al digest de la API</td><td>Públicos: el paquete es público</td></tr>
+<tr><td>5</td><td>api → db</td><td>TCP 5432, PostgreSQL</td><td>El <code>SELECT</code> de productos</td><td>Permitido por NetworkPolicy</td></tr>
+<tr><td>6</td><td>afuera → db</td><td>TCP 5432</td><td>Un <code>pg_isready</code> de prueba</td><td>Ninguno: lo corta la red</td></tr>
+<tr><td>7</td><td>Kernel del nodo → Falco</td><td>eBPF, llamadas al sistema</td><td><code>execve</code> de <code>sh</code> en la API</td><td>Falco corre privilegiado en su namespace</td></tr>
+</tbody>
+</table>
+</div>
+<p><b>Las fronteras.</b> Lo único que sale de tu máquina son las descargas (k3s, Helm, las imágenes y los charts) y las consultas de Kyverno a GHCR y a Rekor. El namespace <code>tienda</code> no puede salir a internet. Falco es la pieza con más poder del clúster: carga un programa en el kernel y ve todo lo que corre en el nodo; por eso vive en su propio namespace y no se toca después de instalarlo.</p>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 342" role="img" aria-labelledby="fs04vt fs04vd">
+<title id="fs04vt">Un pod con una imagen sin firma</title>
+<desc id="fs04vd">La persona pide un pod con la imagen de la falla 1 de SEC02. El API server lo pasa por Pod Security y por la política nativa, que lo aceptan. Kyverno busca la firma de publicar.yml en main, no la encuentra y el API server rechaza el pod.</desc>
+<defs><marker id="fs04v-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs04v-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs04v-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs04v-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Persona</text>
+<path class="dg-frame" d="M70.0 40 V332"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">API server</text>
+<path class="dg-frame" d="M280.0 40 V332"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">Kyverno</text>
+<path class="dg-frame" d="M490.0 40 V332"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">GHCR y Rekor</text>
+<path class="dg-frame" d="M700.0 40 V332"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#fs04v-a)"/>
+<rect x="63.400000000000006" y="55" width="223.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">crear pod (api@sha256:…cambiada)</text>
+<rect x="290.0" y="92" width="125" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="300.0" y="108">PSA y VAP: pasa</text>
+<path class="dg-edge" d="M283.0 140 L485.0 140" marker-end="url(#fs04v-a)"/>
+<rect x="329.5" y="123" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="134" text-anchor="middle">AdmissionReview</text>
+<path class="dg-edge" d="M493.0 174 L695.0 174" marker-end="url(#fs04v-a)"/>
+<rect x="513.1" y="157" width="163.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="168" text-anchor="middle">¿firma de publicar.yml?</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M697.0 208 L495.0 208" marker-end="url(#fs04v-f)"/>
+<rect x="565.9" y="191" width="58.199999999999996" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="202" text-anchor="middle">ninguna</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M487.0 242 L285.0 242" marker-end="url(#fs04v-f)"/>
+<rect x="359.2" y="225" width="51.599999999999994" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="236" text-anchor="middle">denied</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M277.0 276 L75.0 276" marker-end="url(#fs04v-f)"/>
+<rect x="116.2" y="259" width="117.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="270" text-anchor="middle">error: sin firma</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC04.2.</b> La versión corta. La completa está en <a href="#viaje">El viaje de un dato</a>.</figcaption>
+</figure>
+<h2 id="antes">Antes de empezar</h2>
+<h3 id="ae-repaso">Lo que viene de SEC00 a SEC03</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 226" role="img" aria-labelledby="fs04rt fs04rd">
+<title id="fs04rt">Lo que viene de las guías anteriores</title>
+<desc id="fs04rd">La tienda de SEC00 sin cambios de código. La imagen firmada de SEC02 y la imagen sin firma de su falla 1. El criterio de pocas reglas que cortan, de SEC01 y SEC03.</desc>
+<defs><marker id="fs04ra" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="16" width="232.667" height="194" rx="8"/>
+<text class="dg-group" x="32.0" y="40" text-anchor="start">La tienda</text>
+<text class="dg-tiny" x="32.0" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="32.0" y="80" text-anchor="start">SEC00: la API en FastAPI, su</text><text class="dg-tiny" x="32.0" y="95" text-anchor="start">&lt;code&gt;init.sql&lt;/code&gt; y el usuario</text><text class="dg-tiny" x="32.0" y="110" text-anchor="start">10001 del Dockerfile.</text>
+<text class="dg-tiny" x="32.0" y="137" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="32.0" y="155" text-anchor="start">Las mismas piezas, ahora como pods,</text><text class="dg-tiny" x="32.0" y="170" text-anchor="start">sin tocar el código.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="16" width="232.667" height="194" rx="8"/>
+<text class="dg-group" x="280.66666666666663" y="40" text-anchor="start">La firma</text>
+<text class="dg-tiny" x="280.66666666666663" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="280.66666666666663" y="80" text-anchor="start">SEC02 firma por digest con la</text><text class="dg-tiny" x="280.66666666666663" y="95" text-anchor="start">identidad de</text><text class="dg-tiny" x="280.66666666666663" y="110" text-anchor="start">&lt;code&gt;publicar.yml&lt;/code&gt; en</text><text class="dg-tiny" x="280.66666666666663" y="125" text-anchor="start">&lt;code&gt;main&lt;/code&gt;.</text>
+<text class="dg-tiny" x="280.66666666666663" y="152" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="280.66666666666663" y="170" text-anchor="start">Kyverno exige esa misma identidad</text><text class="dg-tiny" x="280.66666666666663" y="185" text-anchor="start">antes de crear el pod.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="16" width="232.667" height="194" rx="8"/>
+<text class="dg-group" x="529.3333333333333" y="40" text-anchor="start">La falla 1</text>
+<text class="dg-tiny" x="529.3333333333333" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="529.3333333333333" y="80" text-anchor="start">SEC02 subió</text><text class="dg-tiny" x="529.3333333333333" y="95" text-anchor="start">&lt;code&gt;api:cambiada&lt;/code&gt;, una</text><text class="dg-tiny" x="529.3333333333333" y="110" text-anchor="start">imagen sin firma.</text>
+<text class="dg-tiny" x="529.3333333333333" y="137" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="529.3333333333333" y="155" text-anchor="start">Es la imagen que la falla 3 intenta</text><text class="dg-tiny" x="529.3333333333333" y="170" text-anchor="start">correr.</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC04.3.</b> Tres cosas que vuelven.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Dónde se vio</th></tr></thead>
+<tbody>
+<tr><td>La API, el Dockerfile y <code>db/init.sql</code></td><td><a href="sec00-laboratorio.html#paso-base">SEC00, paso 1</a> y <a href="sec00-laboratorio.html#paso-api">paso 3</a></td></tr>
+<tr><td>La identidad de la firma y el digest del resumen</td><td><a href="sec02-sbom-firma.html#paso-workflow">SEC02, paso 5</a> y <a href="sec02-sbom-firma.html#paso-verificar">paso 6</a></td></tr>
+<tr><td>La imagen sin firma</td><td><a href="sec02-sbom-firma.html#comprueba-fallas">SEC02, falla 1</a></td></tr>
+<tr><td>Fijar por digest</td><td><a href="sec02-sbom-firma.html#paso-pines">SEC02, paso 3</a></td></tr>
+</tbody>
+</table>
+</div>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 168" role="img" aria-labelledby="fs04pt fs04pd">
+<title id="fs04pt">Lámina SEC04.A: las capas de un clúster endurecido</title>
+<desc id="fs04pd">Seis piezas: k3s como clúster, Pod Security Admission en el namespace, la ValidatingAdmissionPolicy con la lista de imágenes, Kyverno con la firma, las NetworkPolicy y Falco.</desc>
+<defs><marker id="fs04pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="136.33333333333331" y="42" text-anchor="middle">k3s</text>
+<text class="dg-tiny dg-mono" x="136.33333333333331" y="60" text-anchor="middle">un nodo, sin Traefik</text>
+<g class="pl-pin"><circle cx="36" cy="32" r="10"/><text x="36" y="36" text-anchor="middle">1</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="384.99999999999994" y="42" text-anchor="middle">Pod Security</text>
+<text class="dg-tiny dg-mono" x="384.99999999999994" y="60" text-anchor="middle">restricted, enforce</text>
+<g class="pl-pin"><circle cx="284.667" cy="32" r="10"/><text x="284.667" y="36" text-anchor="middle">2</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="633.6666666666666" y="42" text-anchor="middle">VAP</text>
+<text class="dg-tiny dg-mono" x="633.6666666666666" y="60" text-anchor="middle">imagenes-tienda</text>
+<g class="pl-pin"><circle cx="533.333" cy="32" r="10"/><text x="533.333" y="36" text-anchor="middle">3</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="136.33333333333331" y="118" text-anchor="middle">Kyverno</text>
+<text class="dg-tiny dg-mono" x="136.33333333333331" y="136" text-anchor="middle">tienda-firmada</text>
+<g class="pl-pin"><circle cx="36" cy="108" r="10"/><text x="36" y="112" text-anchor="middle">4</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="384.99999999999994" y="118" text-anchor="middle">NetworkPolicy</text>
+<text class="dg-tiny dg-mono" x="384.99999999999994" y="136" text-anchor="middle">negar-todo y 2 más</text>
+<g class="pl-pin"><circle cx="284.667" cy="108" r="10"/><text x="284.667" y="112" text-anchor="middle">5</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="633.6666666666666" y="118" text-anchor="middle">Falco</text>
+<text class="dg-tiny dg-mono" x="633.6666666666666" y="136" text-anchor="middle">regla propia</text>
+<g class="pl-pin"><circle cx="533.333" cy="108" r="10"/><text x="533.333" y="112" text-anchor="middle">6</text></g>
+</svg>
+</div>
+<figcaption><b>Lámina SEC04.A.</b> Las capas, en el orden en que se instalan.</figcaption>
+</figure>
+<ol class="plate-key">
+  <li><b>k3s</b><span>Una distribución de Kubernetes en un solo binario, con containerd, CoreDNS y un controlador de NetworkPolicy incluidos. <a href="#paso-instalar">Paso 1</a></span></li>
+  <li><b>Pod Security Admission</b><span>Revisa cada pod contra un nivel de los Pod Security Standards, según la etiqueta de su namespace. <a href="#ae-capas">Las capas de la admisión</a></span></li>
+  <li><b>ValidatingAdmissionPolicy</b><span>Una regla en CEL que el API server evalúa solo, sin webhook. <a href="#ae-capas">Las capas de la admisión</a></span></li>
+  <li><b>Kyverno</b><span>Un webhook de admisión que, entre otras cosas, verifica firmas de imágenes. <a href="#paso-kyverno">Paso 5</a></span></li>
+  <li><b>NetworkPolicy</b><span>Qué tráfico entra y sale de cada pod; sin ninguna, todo pasa. <a href="#paso-red">Paso 6</a></span></li>
+  <li><b>Falco</b><span>Mira las llamadas al sistema del nodo y avisa cuando una coincide con una regla. <a href="#ae-falco">Falco y las llamadas al sistema</a></span></li>
+</ol>
+<h3 id="antes-instalar">Qué tienes que tener</h3>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Para qué</th><th>Cómo compruebas que está</th></tr></thead>
+<tbody>
+<tr><td>Linux con systemd: una VM con Ubuntu 24.04, o WSL con <code>systemd=true</code> en <code>/etc/wsl.conf</code></td><td>k3s se instala como servicio de systemd</td><td><code>systemctl is-system-running</code> responde (aunque diga <code>degraded</code>)</td></tr>
+<tr><td>Un kernel con BTF</td><td>Falco con el driver <code>modern_ebpf</code></td><td><code>ls /sys/kernel/btf/vmlinux</code> muestra el archivo. Si no existe, usa la VM en lugar de WSL</td></tr>
+<tr><td>La imagen firmada de SEC02 y su paquete público en GHCR</td><td>La imagen de la API</td><td>En GitHub, Packages → <code>api</code> dice <code>Public</code></td></tr>
+<tr><td>El repositorio <code>tienda-norte</code></td><td>Donde va la carpeta <code>cluster/</code></td><td><code>ls db/init.sql</code> desde la raíz</td></tr>
+</tbody>
+</table>
+</div>
+<p>Supuesto, no medición: k3s, Kyverno y Falco juntos piden unos 4 GB de memoria libres en la VM. Si el nodo se queda sin memoria, lo primero que verás son pods en <code>Pending</code> o reinicios.</p>
+<h3 id="ae-capas">Las capas de la admisión</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>El control de un aeropuerto. Primero el mostrador mira tu pasaje y tu documento (las reglas que se leen en el papel). Después, migraciones llama a otra oficina para saber si el documento es auténtico (la consulta afuera). Si cualquiera dice que no, no subes al avión, y nadie te revisa la maleta en vuelo: para eso está otra persona mirando la cabina.</p>
+</aside>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="fs04at fs04ad">
+<title id="fs04at">El camino de un pod por la admisión</title>
+<desc id="fs04ad">Un pod pasa por la autenticación y la autorización, después por la admisión nativa (Pod Security y la ValidatingAdmissionPolicy), después por los webhooks (Kyverno) y recién entonces se guarda en etcd y se programa.</desc>
+<defs><marker id="fs04aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="96.25" y="46" text-anchor="middle">Autenticación y RBAC</text>
+<text class="dg-tiny" x="96.25" y="66" text-anchor="middle">¿quién eres y puedes</text>
+<text class="dg-tiny" x="96.25" y="81" text-anchor="middle">crear pods?</text>
+<path class="dg-edge" d="M174.5 55 H208.5" marker-end="url(#fs04aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="212.5" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="288.75" y="46" text-anchor="middle">Pod Security</text>
+<text class="dg-tiny" x="288.75" y="66" text-anchor="middle">¿qué pide el pod?</text>
+<path class="dg-edge" d="M367 55 H401" marker-end="url(#fs04aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="405" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="481.25" y="46" text-anchor="middle">VAP</text>
+<text class="dg-tiny" x="481.25" y="66" text-anchor="middle">¿qué imagen trae?</text>
+<path class="dg-edge" d="M559.5 55 H593.5" marker-end="url(#fs04aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="597.5" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="673.75" y="46" text-anchor="middle">Kyverno</text>
+<text class="dg-tiny" x="673.75" y="66" text-anchor="middle">¿quién la firmó?</text>
+<path class="dg-edge" d="M673.75 92 V120 H96.25 V128" marker-end="url(#fs04aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="130" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="96.25" y="156" text-anchor="middle">Se guarda</text>
+<text class="dg-tiny" x="96.25" y="176" text-anchor="middle">y el kubelet lo arranca</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC04.4.</b> Cada paso puede decir que no. Los dos del medio corren dentro del API server; Kyverno es un servicio aparte al que se le pregunta por HTTPS.</figcaption>
+</figure>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 348" role="img" aria-labelledby="fs04f1t fs04f1d">
+<title id="fs04f1t">Ficha: la admisión del pod</title>
+<desc id="fs04f1d">Ficha de la admisión del pod. Qué entra: El pod que se quiere crear, con su namespace y sus imágenes. Qué hace: Pod Security compara el securityContext con un nivel; la VAP evalúa una expresión CEL; Kyverno verifica la firma. Qué sale: Se guarda o se rechaza con el mensaje de la capa que dijo que no. Ejemplo: Error from server (Forbidden): pods "falla" is forbidden:   violates PodSecurity "restricted:v1.37": ... Qué falla sin él: Un pod que monta el disco del nodo, o una imagen que nadie firmó, corriendo en producción. Dónde vive: cluster/namespaces.yaml, cluster/politicas/. Pasos 2, 4 y 5.</desc>
+<defs><marker id="fs04f1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="124" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">El pod que se quiere crear,</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">con su namespace y sus</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">imágenes.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="124" rx="8"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Pod Security compara el</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">securityContext con un nivel;</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">la VAP evalúa una expresión</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">CEL; Kyverno verifica la</text>
+<text class="dg-tiny" x="291" y="120" text-anchor="start">firma.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="124" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Se guarda o se rechaza con el</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">mensaje de la capa que dijo</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">que no.</text>
+<path class="dg-edge" d="M234 78 H275" marker-end="url(#fs04f1a)"/>
+<path class="dg-edge" d="M493 78 H534" marker-end="url(#fs04f1a)"/>
+<rect class="dg-box" x="20" y="154" width="730" height="78" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="174" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="194" style="white-space:pre">Error from server (Forbidden): pods "falla" is forbidden:</text>
+<text class="dg-tiny dg-mono" x="32" y="210" style="white-space:pre">  violates PodSecurity "restricted:v1.37": ...</text>
+<rect class="dg-warnbox" x="20" y="246" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="266" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="286" text-anchor="start">Un pod que monta el disco del nodo, o una imagen que</text>
+<text class="dg-tiny" x="32" y="302" text-anchor="start">nadie firmó, corriendo en producción.</text>
+<rect class="dg-box" x="393" y="246" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="266" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="286" text-anchor="start">cluster/namespaces.yaml, cluster/politicas/. Pasos 2,</text>
+<text class="dg-tiny" x="405" y="302" text-anchor="start">4 y 5.</text>
+</svg>
+</div>
+<figcaption><b>Ficha SEC04.F1.</b> La admisión del pod.</figcaption>
+</figure>
+<p>Pod Security no mira imágenes, y la política de imágenes no mira privilegios: cada capa tiene un trabajo. Hay un detalle que confunde la primera vez: el modo <code>enforce</code> de Pod Security solo rechaza <b>pods</b>. Un Deployment que pide privilegios se crea con un aviso, y el que falla es su ReplicaSet al crear los pods <span class="badge badge--doc">Documentado</span>. Las otras dos capas de esta guía también miran pods, así que pasa lo mismo.</p>
+<h3 id="ae-falco">Falco y las llamadas al sistema</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>La cámara de seguridad de una tienda. No impide que nadie entre a la bodega, pero graba quién abrió la puerta y a qué hora, y suena una alarma si la puerta se abre fuera de horario.</p>
+</aside>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 342" role="img" aria-labelledby="fs04f2t fs04f2d">
+<title id="fs04f2t">Ficha: una regla de Falco</title>
+<desc id="fs04f2d">Ficha de una regla de Falco. Qué entra: Cada llamada al sistema del nodo, con el proceso, el contenedor y el pod. Qué hace: Compara cada evento con la condición de las reglas cargadas. Qué sale: Una línea JSON con la regla, la prioridad y los campos del evento. Ejemplo: condition: spawned_process and container   and k8s.ns.name = "tienda"   and proc.name in (shell_binaries) Qué falla sin él: Una shell abierta en la API, que nadie ve hasta el próximo incidente. Dónde vive: cluster/falco-values.yaml. Paso 7.</desc>
+<defs><marker id="fs04f2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Cada llamada al sistema del</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">nodo, con el proceso, el</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">contenedor y el pod.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Compara cada evento con la</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">condición de las reglas</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">cargadas.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Una línea JSON con la regla,</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">la prioridad y los campos del</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">evento.</text>
+<path class="dg-edge" d="M234 67 H275" marker-end="url(#fs04f2a)"/>
+<path class="dg-edge" d="M493 67 H534" marker-end="url(#fs04f2a)"/>
+<rect class="dg-box" x="20" y="132" width="730" height="94" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="152" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="172" style="white-space:pre">condition: spawned_process and container</text>
+<text class="dg-tiny dg-mono" x="32" y="188" style="white-space:pre">  and k8s.ns.name = "tienda"</text>
+<text class="dg-tiny dg-mono" x="32" y="204" style="white-space:pre">  and proc.name in (shell_binaries)</text>
+<rect class="dg-warnbox" x="20" y="240" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="260" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="280" text-anchor="start">Una shell abierta en la API, que nadie ve hasta el</text>
+<text class="dg-tiny" x="32" y="296" text-anchor="start">próximo incidente.</text>
+<rect class="dg-box" x="393" y="240" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="260" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="280" text-anchor="start">cluster/falco-values.yaml. Paso 7.</text>
+</svg>
+</div>
+<figcaption><b>Ficha SEC04.F2.</b> Una regla de Falco.</figcaption>
+</figure>
+<p>Cada <code>execve</code> (arrancar un programa) del nodo pasa por Falco, con el nombre del proceso, su padre y los datos del contenedor y del pod. Las reglas usan macros ya escritas en el archivo de reglas que trae Falco, como <code>spawned_process</code> o la lista <code>shell_binaries</code>. Falco no bloquea: escribe una alerta. Lo que hace con esa alerta un SOC lo viste en <a href="../modules/m57-contenedores-k8s.html#runtime">57.9</a> y llega al SIEM en SEC05.</p>
+<h2 id="endpoints">Los endpoints</h2>
+<p>Los de <a href="sec00-laboratorio.html#endpoints">SEC00</a>, sin cambios. Para llamarlos desde tu máquina se usa <code>kubectl port-forward</code> en el puerto 8088, el mismo que tenía Nginx.</p>
+<h2 id="dependencias">Dependencias</h2>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Pieza</th><th>Versión</th><th>Cómo se instala</th><th>Para qué</th></tr></thead>
+<tbody>
+<tr><td>k3s</td><td>v1.37.2+k3s1</td><td>Script oficial con <code>INSTALL_K3S_VERSION</code></td><td>El clúster de un nodo</td></tr>
+<tr><td>Helm</td><td>v4.3.2</td><td>Tarball con su SHA-256</td><td>Instalar Kyverno y Falco</td></tr>
+<tr><td>Kyverno</td><td>1.20.0, chart <code>kyverno</code> 3.10.0</td><td>Helm</td><td>La firma de la imagen</td></tr>
+<tr><td>Falco</td><td>chart <code>falco</code> 9.2.2</td><td>Helm</td><td>La detección en tiempo de ejecución</td></tr>
+<tr><td>PostgreSQL</td><td>18, por digest</td><td>Imagen oficial</td><td>La base de la tienda</td></tr>
+</tbody>
+</table>
+</div>
+<p>Versiones de las páginas de releases de cada proyecto al 18 de noviembre de 2026 <span class="badge badge--doc">Documentado</span>. El chart de Falco trae su propia versión de Falco: <code>helm show chart falcosecurity/falco --version 9.2.2</code> la muestra en <code>appVersion</code>; anótala.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<pre data-lang="text"><code>tienda-norte/
+├── db/init.sql                    # el de SEC00, sin cambios
+└── cluster/
+    ├── instalar.sh                # k3s y Helm en versiones fijas (paso 1)
+    ├── namespaces.yaml            # tienda (restricted) y afuera (paso 2)
+    ├── tienda.yaml                # db y api con su securityContext (paso 3)
+    ├── politicas/
+    │   ├── imagenes-tienda.yaml   # la VAP: dos imágenes, por digest (paso 4)
+    │   └── tienda-firmada.yaml    # Kyverno: la firma de publicar.yml (paso 5)
+    ├── red.yaml                   # negar todo y abrir tres conexiones (paso 6)
+    ├── falco-values.yaml          # Falco con la regla propia (paso 7)
+    └── fallas/pod.yaml            # un pod de prueba para las fallas 2 y 3</code></pre>
+<p>Un solo nodo, que es a la vez control plane y worker. No hay Ingress ni balanceador: la tienda se ve con <code>port-forward</code>. Traefik, que k3s trae por defecto, se desactiva para que no haya un punto de entrada que la guía no explica.</p>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<aside class="hito" id="hito-1" data-toc="skip" aria-labelledby="hito-1-t">
+  <p class="hito-num">Hito 1 de 3, unos 60 min</p>
+  <p class="hito-title" id="hito-1-t">La tienda en el clúster</p>
+  <p>k3s y Helm fijados, los dos namespaces con su nivel de Pod Security y la tienda corriendo en restricted.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-instalar">El clúster</a></li>
+    <li><a href="#paso-namespaces">Los namespaces</a></li>
+    <li><a href="#paso-tienda">La tienda en restricted</a></li>
+  </ol>
+</aside>
+<h3 id="paso-instalar">Paso 1. El clúster</h3>
+<div class="step-map" data-where="kubectl apiserver">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Una VM o un WSL con systemd.</dd></div>
+    <div><dt>Sale</dt><dd>k3s corriendo, <code>kubectl</code> y <code>helm</code> en tu usuario.</dd></div>
+    <div><dt>Cambia</dt><dd><code>cluster/instalar.sh</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-capas">Las capas de la admisión</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="kubectl apiserver">
+  <h4 class="file-card-path" id="archivo-cluster-instalar-sh">cluster/instalar.sh<span class="file-card-size">19 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Instala k3s y Helm en versiones exactas y deja el kubeconfig en tu usuario.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Tú, una vez.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Un clúster de un nodo, <code>kubectl</code> y <code>helm</code> listos, y los dos repositorios de charts.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Fija las versiones y el checksum de Helm.</li>
+    <li>Baja el script de k3s y lo corre con la versión fija y sin Traefik.</li>
+    <li>Copia el kubeconfig a tu usuario, solo legible por ti.</li>
+    <li>Baja Helm y comprueba su SHA-256 antes de instalarlo.</li>
+    <li>Agrega los repositorios de Kyverno y Falco.</li>
+  </ol>
+</div>
+<pre data-lang="bash"><code>#!/usr/bin/env bash
+# Instala k3s y Helm en versiones exactas. Linux o WSL con systemd.
+set -euo pipefail
+# (1)
+K3S=v1.37.2+k3s1
+HELM=v4.3.2
+HELM_SHA=d1c0278d46beab79582d7e50f5b3dc206944ba8e577cde618513fd07daa53983
+# (2)
+curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh
+INSTALL_K3S_VERSION="$K3S" sh /tmp/k3s-install.sh --disable traefik
+# (3)
+mkdir -p ~/.kube
+sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+sudo chown "$(id -u):$(id -g)" ~/.kube/config
+chmod 600 ~/.kube/config</code></pre>
+<ol class="code-key">
+  <li>La versión de k3s es la de Kubernetes (1.37.2) más la revisión de k3s. El SHA-256 de Helm es el que publica su página de releases para <code>linux-amd64</code>; si tu máquina es ARM, cambia el nombre del archivo y el hash.</li>
+  <li>El script se baja a un archivo antes de correrlo, para que puedas leerlo. Pide <code>sudo</code> por su cuenta. <code>--disable traefik</code> deja el clúster sin Ingress.</li>
+  <li>k3s escribe su kubeconfig solo legible por root. Copiarlo con permisos 600 evita la salida fácil, que es <code>--write-kubeconfig-mode 644</code>: ese archivo es la llave de administrador del clúster.</li>
+</ol>
+<pre data-lang="bash"><code># (4)
+curl -fsSLo /tmp/helm.tgz "https://get.helm.sh/helm-$HELM-linux-amd64.tar.gz"
+echo "$HELM_SHA  /tmp/helm.tgz" | sha256sum -c -
+tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm
+sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
+# (5)
+helm repo add kyverno https://kyverno.github.io/kyverno/
+helm repo add falcosecurity https://falcosecurity.github.io/charts
+helm repo update</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li><code>sha256sum -c</code> corta el script si el archivo no es el esperado, como hizo <code>herramientas.sh</code> en SEC02.</li>
+  <li>Los charts se instalan en los pasos 5 y 7, cada uno con su versión exacta.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver cluster/instalar.sh completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="bash" data-file="cluster/instalar.sh"><code>#!/usr/bin/env bash
+# Instala k3s y Helm en versiones exactas. Linux o WSL con systemd.
+set -euo pipefail
+K3S=v1.37.2+k3s1
+HELM=v4.3.2
+HELM_SHA=d1c0278d46beab79582d7e50f5b3dc206944ba8e577cde618513fd07daa53983
+curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh
+INSTALL_K3S_VERSION="$K3S" sh /tmp/k3s-install.sh --disable traefik
+mkdir -p ~/.kube
+sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+sudo chown "$(id -u):$(id -g)" ~/.kube/config
+chmod 600 ~/.kube/config
+curl -fsSLo /tmp/helm.tgz "https://get.helm.sh/helm-$HELM-linux-amd64.tar.gz"
+echo "$HELM_SHA  /tmp/helm.tgz" | sha256sum -c -
+tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm
+sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
+helm repo add kyverno https://kyverno.github.io/kyverno/
+helm repo add falcosecurity https://falcosecurity.github.io/charts
+helm repo update</code></pre>
+  </div>
+</details>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>chmod +x cluster/instalar.sh &amp;&amp; cluster/instalar.sh
+kubectl get nodes
+kubectl get pods -n kube-system</code></pre>
+  <p>Al terminar, Helm imprime <code>/tmp/helm.tgz: OK</code> antes de instalarse. <code>kubectl get nodes</code> muestra tu nodo en <code>Ready</code> con la versión <code>v1.37.2+k3s1</code>. En <code>kube-system</code> tienen que estar <code>coredns</code>, <code>local-path-provisioner</code> y <code>metrics-server</code>, y ningún pod de Traefik.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>System has not been booted with systemd as init system</code>: WSL sin systemd. Agrega <code>[boot]</code> y <code>systemd=true</code> a <code>/etc/wsl.conf</code>, corre <code>wsl --shutdown</code> desde Windows y vuelve a abrir la terminal.</li>
+    <li><code>/tmp/helm.tgz: FAILED</code>: El archivo no coincide con el hash. No sigas: vuelve a bajarlo y, si falla otra vez, compara el hash con la página de releases.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Versiones exactas, el instalador leído antes de correrlo y el kubeconfig en 600.</dd></div>
+<div><dt>Lo que descartas</dt><dd>El <code>curl … | sh</code> de una línea y la última versión que haya hoy.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Si actualizas k3s sin cambiar <code>enforce-version</code> del paso 2, Pod Security sigue revisando con las reglas de la 1.37, que es lo que quieres hasta revisar las nuevas.</dd></div>
+</dl>
+<h3 id="paso-namespaces">Paso 2. Los namespaces</h3>
+<div class="step-map" data-where="apiserver">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>El clúster del paso 1.</dd></div>
+    <div><dt>Sale</dt><dd>Los namespaces <code>tienda</code> y <code>afuera</code>, la clave de la base y el <code>init.sql</code>.</dd></div>
+    <div><dt>Cambia</dt><dd><code>cluster/namespaces.yaml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-capas">Las capas de la admisión</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<p>Pod Security se configura con tres etiquetas en el namespace: <code>enforce</code> rechaza, <code>warn</code> avisa en la terminal de quien aplica y <code>audit</code> deja una marca en el log de auditoría. Con las tres en restricted, el aviso aparece aunque el objeto sea un Deployment, que es justo el caso que enforce no ve.</p>
+<div class="file-card" data-where="apiserver">
+  <h4 class="file-card-path" id="archivo-cluster-namespaces-yaml">cluster/namespaces.yaml<span class="file-card-size">16 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Crea el namespace de la tienda en restricted y uno de pruebas en baseline.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>El API server, en cada pod.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Dos namespaces con sus etiquetas de Pod Security.</dd></div>
+  </dl>
+</div>
+<pre data-lang="yaml" data-file="cluster/namespaces.yaml"><code>apiVersion: v1
+kind: Namespace
+metadata:
+  name: tienda
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.37
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: afuera
+  labels:
+    pod-security.kubernetes.io/enforce: baseline</code></pre>
+<p><code>enforce-version</code> fija qué versión de las reglas se aplica: al actualizar el clúster, las reglas no cambian solas. <code>afuera</code> queda en baseline para que los pods de prueba arranquen sin escribir un securityContext completo; baseline igual prohíbe <code>privileged</code> y montar el disco del nodo.</p>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>kubectl apply -f cluster/namespaces.yaml
+kubectl -n tienda create secret generic tienda-db --from-literal=clave="$(openssl rand -hex 24)"
+kubectl -n tienda create configmap tienda-init --from-file=01-init.sql=db/init.sql
+kubectl get ns tienda --show-labels</code></pre>
+  <p>Dos <code>namespace/… created</code>, <code>secret/tienda-db created</code> y <code>configmap/tienda-init created</code>. La última línea muestra las cuatro etiquetas de Pod Security más <code>kubernetes.io/metadata.name=tienda</code>, que pone Kubernetes solo y que las políticas de los pasos 4 a 6 usan para elegir el namespace.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>restricted en enforce desde el primer día, con la versión fija.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Empezar en privileged y endurecer después: nadie vuelve a apretar algo que ya funciona.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>La clave en hexadecimal es a propósito: va dentro de una URL en el paso 3, y un <code>@</code> o un <code>/</code> la romperían.</dd></div>
+</dl>
+<h3 id="paso-tienda">Paso 3. La tienda en restricted</h3>
+<div class="step-map" data-where="db api">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Los namespaces, el Secret y el ConfigMap del paso 2.</dd></div>
+    <div><dt>Sale</dt><dd>La base y la API corriendo en <code>tienda</code>.</dd></div>
+    <div><dt>Cambia</dt><dd><code>cluster/tienda.yaml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-capas">Las capas de la admisión</a></dd></div>
+    <div><dt>Tiempo</dt><dd>35 min</dd></div>
+  </dl>
+</div>
+<p>Dos pods que cumplen restricted sin cambiar una línea del código de SEC00. Todo lo que cambia está en el <code>securityContext</code> y en los volúmenes.</p>
+<div class="file-card" data-where="db api">
+  <h4 class="file-card-path" id="archivo-cluster-tienda-yaml">cluster/tienda.yaml<span class="file-card-size">97 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Describe la base y la API como pods que cumplen restricted.</dd></div>
+    <div><dt>Quién lo usa</dt><dd><code>kubectl apply</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Las imágenes por digest, la clave y el <code>init.sql</code> del paso 2.</dd></div>
+    <div><dt>Qué sale</dt><dd>Un StatefulSet <code>db</code>, un Deployment <code>api</code> y sus dos Services.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>El Service de la base.</li>
+    <li>La base corre como el usuario 999, con su grupo en el volumen.</li>
+    <li>La imagen de PostgreSQL, por digest, y la clave desde el Secret.</li>
+    <li>Sin escalar privilegios, sin capabilities y con la raíz de solo lectura.</li>
+    <li>Lo que PostgreSQL sí escribe va en volúmenes.</li>
+    <li>El volumen de datos lo pide el StatefulSet.</li>
+    <li>La API corre como el usuario 10001, con número.</li>
+    <li>La imagen firmada, y el DSN armado con la clave.</li>
+    <li>El mismo securityContext, y el log en un volumen.</li>
+    <li>El Service de la API.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code># (1)
+apiVersion: v1
+kind: Service
+metadata: {name: db, namespace: tienda}
+spec:
+  selector: {app: db}
+  ports: [{port: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: db, namespace: tienda}
+spec:
+  serviceName: db
+  selector: {matchLabels: {app: db}}
+  template:
+    metadata: {labels: {app: db}}
+    spec:
+      automountServiceAccountToken: false
+# (2)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: {type: RuntimeDefault}</code></pre>
+<ol class="code-key">
+  <li>Un Service normal: la API se conecta a <code>db</code> por nombre, como en el compose de SEC00.</li>
+  <li>La imagen oficial de PostgreSQL trae el usuario <code>postgres</code> con el número 999 y su entrypoint funciona sin root. <code>seccompProfile: RuntimeDefault</code> es obligatorio en restricted. <code>automountServiceAccountToken: false</code>: la base no habla con el API server, así que no necesita su token.</li>
+</ol>
+<pre data-lang="yaml"><code>      containers:
+        - name: postgres
+# (3)
+          image: postgres:18@sha256:EL-DIGEST-DE-POSTGRES
+          env:
+            - {name: POSTGRES_DB, value: tienda}
+            - {name: POSTGRES_USER, value: tienda}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: tienda-db, key: clave}}
+          ports: [{containerPort: 5432}]
+# (4)
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>El digest lo pones tú abajo, en el "Pruébalo". La clave entra por variable de entorno desde el Secret, como en el compose de SEC00.</li>
+  <li>Las tres líneas que restricted pide en cada contenedor (la raíz de solo lectura no la pide: es un extra). Sin capabilities, un proceso de PostgreSQL comprometido no puede ni cambiar el dueño de un archivo.</li>
+</ol>
+<pre data-lang="yaml"><code># (5)
+          volumeMounts:
+            - {name: datos, mountPath: /var/lib/postgresql}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+            - {name: socket, mountPath: /var/run/postgresql}
+            - {name: tmp, mountPath: /tmp}
+          readinessProbe:
+            exec: {command: [pg_isready, -U, tienda, -d, tienda]}
+            periodSeconds: 5
+      volumes:
+        - {name: init, configMap: {name: tienda-init}}
+        - {name: socket, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+# (6)
+  volumeClaimTemplates:
+    - metadata: {name: datos}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 1Gi}}</code></pre>
+<ol class="code-key" style="counter-reset: ck 4">
+  <li>Con la raíz de solo lectura, todo lo que PostgreSQL escribe tiene su volumen: los datos, el socket y <code>/tmp</code>. El <code>init.sql</code> de SEC00 entra desde el ConfigMap, en solo lectura, y corre la primera vez.</li>
+  <li>El provisionador <code>local-path</code> de k3s crea una carpeta en el nodo para el volumen.</li>
+</ol>
+<pre data-lang="yaml"><code>---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: api, namespace: tienda}
+spec:
+  selector: {matchLabels: {app: api}}
+  template:
+    metadata: {labels: {app: api}}
+    spec:
+      automountServiceAccountToken: false
+# (7)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: api
+# (8)
+          image: ghcr.io/TU-USUARIO/tienda-norte/api@sha256:EL-DIGEST-DE-LA-API
+          env:
+            - name: TIENDA_DB_CLAVE
+              valueFrom: {secretKeyRef: {name: tienda-db, key: clave}}
+            - name: TIENDA_DSN
+              value: postgresql://tienda:$(TIENDA_DB_CLAVE)@db:5432/tienda</code></pre>
+<ol class="code-key" style="counter-reset: ck 6">
+  <li>El Dockerfile de SEC00 dice <code>USER tienda</code>, con nombre. Con <code>runAsNonRoot</code> el kubelet tiene que comprobar que no es root, y con un nombre no puede: por eso va el número 10001, el del <code>useradd</code>.</li>
+  <li>La imagen que firmó tu workflow, por el digest del resumen de SEC02. <code>$(TIENDA_DB_CLAVE)</code> lo reemplaza Kubernetes con la variable de arriba, que tiene que estar antes en la lista.</li>
+</ol>
+<pre data-lang="yaml"><code>          ports: [{containerPort: 8000}]
+# (9)
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: logs, mountPath: /var/log/tienda}
+          readinessProbe:
+            httpGet: {path: /api/salud, port: 8000}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}
+      volumes:
+        - {name: logs, emptyDir: {}}
+---
+# (10)
+apiVersion: v1
+kind: Service
+metadata: {name: api, namespace: tienda}
+spec:
+  selector: {app: api}
+  ports: [{port: 8000}]</code></pre>
+<ol class="code-key" style="counter-reset: ck 8">
+  <li>El log JSON de <code>registro.py</code> sigue en <code>/var/log/tienda/api.log</code>, ahora en un volumen. El límite de memoria evita que una fuga en la API se coma el nodo, que aquí comparte con Kyverno y Falco.</li>
+  <li>El Service al que llegan el <code>port-forward</code> y los pods de prueba.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver cluster/tienda.yaml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file="cluster/tienda.yaml"><code>apiVersion: v1
+kind: Service
+metadata: {name: db, namespace: tienda}
+spec:
+  selector: {app: db}
+  ports: [{port: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: db, namespace: tienda}
+spec:
+  serviceName: db
+  selector: {matchLabels: {app: db}}
+  template:
+    metadata: {labels: {app: db}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          image: postgres:18@sha256:EL-DIGEST-DE-POSTGRES
+          env:
+            - {name: POSTGRES_DB, value: tienda}
+            - {name: POSTGRES_USER, value: tienda}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: tienda-db, key: clave}}
+          ports: [{containerPort: 5432}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: datos, mountPath: /var/lib/postgresql}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+            - {name: socket, mountPath: /var/run/postgresql}
+            - {name: tmp, mountPath: /tmp}
+          readinessProbe:
+            exec: {command: [pg_isready, -U, tienda, -d, tienda]}
+            periodSeconds: 5
+      volumes:
+        - {name: init, configMap: {name: tienda-init}}
+        - {name: socket, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+  volumeClaimTemplates:
+    - metadata: {name: datos}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 1Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: api, namespace: tienda}
+spec:
+  selector: {matchLabels: {app: api}}
+  template:
+    metadata: {labels: {app: api}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: api
+          image: ghcr.io/TU-USUARIO/tienda-norte/api@sha256:EL-DIGEST-DE-LA-API
+          env:
+            - name: TIENDA_DB_CLAVE
+              valueFrom: {secretKeyRef: {name: tienda-db, key: clave}}
+            - name: TIENDA_DSN
+              value: postgresql://tienda:$(TIENDA_DB_CLAVE)@db:5432/tienda
+          ports: [{containerPort: 8000}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: logs, mountPath: /var/log/tienda}
+          readinessProbe:
+            httpGet: {path: /api/salud, port: 8000}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}
+      volumes:
+        - {name: logs, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: api, namespace: tienda}
+spec:
+  selector: {app: api}
+  ports: [{port: 8000}]</code></pre>
+  </div>
+</details>
+<p>Antes de aplicar, reemplaza los tres marcadores. El digest de la API es el del resumen del workflow en SEC02; el de PostgreSQL lo da el registro:</p>
+<pre data-lang="bash"><code>docker buildx imagetools inspect postgres:18 | grep -m1 Digest
+sed -i -e "s/TU-USUARIO/tu-usuario-en-minusculas/" \
+  -e "s/EL-DIGEST-DE-LA-API/el-digest-sin-sha256/" \
+  -e "s/EL-DIGEST-DE-POSTGRES/el-de-la-linea-anterior/" cluster/tienda.yaml</code></pre>
+<div data-exercise="sec04-p-usuario"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>kubectl apply -f cluster/tienda.yaml
+kubectl -n tienda get pods -w
+kubectl -n tienda port-forward svc/api 8088:8000 &amp;
+curl -s http://127.0.0.1:8088/api/productos</code></pre>
+  <p>No aparece ningún <code>Warning: would violate PodSecurity</code>. Los pods <code>db-0</code> y <code>api-…</code> llegan a <code>1/1 Running</code> (corta <code>-w</code> con Ctrl+C). El <code>curl</code> devuelve la lista de productos del <code>init.sql</code>, igual que en SEC00.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Error: container has runAsNonRoot and image has non-numeric user (tienda), cannot verify user is non-root</code>: Falta <code>runAsUser: 10001</code> en la API. Es la predicción de arriba.</li>
+    <li><code>ImagePullBackOff en api</code>: El paquete de GHCR es privado, o el usuario de la imagen tiene mayúsculas. GHCR solo acepta minúsculas.</li>
+    <li><code>db-0 en CrashLoopBackOff con Permission denied</code>: PostgreSQL no puede escribir en el volumen. Mira <code>kubectl -n tienda logs db-0</code>: si la carpeta del volumen no es escribible por el 999, revisa el provisionador con <code>kubectl -n kube-system logs deploy/local-path-provisioner</code>.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Usuarios con número, sin capabilities, raíz de solo lectura y sin token de la cuenta de servicio.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Correr como root "porque la imagen oficial lo hace": restricted no lo deja, y el riesgo es el mismo que en <a href="../modules/m57-contenedores-k8s.html#escapes">57.3</a>.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Con la raíz de solo lectura, un programa que escribe donde no esperabas falla al arrancar. El arreglo es un <code>emptyDir</code> en esa ruta, nunca volver a abrir la raíz.</dd></div>
+</dl>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Un clúster de un nodo con versiones fijas.</li>
+    <li>La tienda corriendo en restricted, con la imagen firmada.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>kubectl -n tienda get pods</code></pre>
+  <p>Los dos pods en <code>1/1 Running</code>.</p>
+</aside>
+<aside class="hito" id="hito-2" data-toc="skip" aria-labelledby="hito-2-t">
+  <p class="hito-num">Hito 2 de 3, unos 40 min</p>
+  <p class="hito-title" id="hito-2-t">Solo corre lo que firmaste</p>
+  <p>Una política nativa con las dos imágenes permitidas y Kyverno exigiendo la firma de tu workflow.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-digest">Dos imágenes, por digest</a></li>
+    <li><a href="#paso-kyverno">La firma, en la admisión</a></li>
+  </ol>
+</aside>
+<h3 id="paso-digest">Paso 4. Dos imágenes, por digest</h3>
+<div class="step-map" data-where="apiserver">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La tienda del paso 3.</dd></div>
+    <div><dt>Sale</dt><dd>Una lista cerrada de imágenes en <code>tienda</code>.</dd></div>
+    <div><dt>Cambia</dt><dd><code>cluster/politicas/imagenes-tienda.yaml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-capas">Las capas de la admisión</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<p>Antes de pedirle a Kyverno que vaya al registro, una regla que se resuelve leyendo el pod: qué imágenes pueden correr. Una ValidatingAdmissionPolicy es parte de Kubernetes desde la 1.30 <span class="badge badge--doc">Documentado</span>; la evalúa el API server, sin webhook, así que no se puede caer por separado.</p>
+<div class="file-card" data-where="apiserver">
+  <h4 class="file-card-path" id="archivo-cluster-politicas-imagenes-tienda-yaml">cluster/politicas/imagenes-tienda.yaml<span class="file-card-size">31 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Permite en <code>tienda</code> solo la API por digest y el PostgreSQL fijado.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>El API server, en cada pod de <code>tienda</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>El pod.</dd></div>
+    <div><dt>Qué sale</dt><dd>El pod aceptado o un error con el mensaje.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>La política mira pods al crearlos o cambiarlos.</li>
+    <li>Cada contenedor, también los de inicio, tiene que ser una de las dos imágenes.</li>
+    <li>El mensaje de rechazo.</li>
+    <li>El binding la aplica solo en tienda y rechaza.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code>apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: imagenes-tienda}
+spec:
+  failurePolicy: Fail
+# (1)
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  variables:
+    - name: todos
+      expression: object.spec.containers + object.spec.?initContainers.orValue([])
+# (2)
+  validations:
+    - expression: &gt;-
+        variables.todos.all(c,
+          c.image.startsWith('ghcr.io/TU-USUARIO/tienda-norte/api@sha256:') ||
+          c.image == 'postgres:18@sha256:EL-DIGEST-DE-POSTGRES')
+# (3)
+      message: "en tienda solo corren la API por digest y el PostgreSQL fijado"</code></pre>
+<ol class="code-key">
+  <li>Una regla para pods, no para Deployments: el Deployment se crea, y su ReplicaSet no puede crear el pod.</li>
+  <li><code>.?initContainers.orValue([])</code> es CEL: si el campo no existe, usa una lista vacía. La API tiene que venir por digest de tu repositorio; PostgreSQL, con el digest exacto del paso 3. Cualquier otra imagen, aunque venga por digest, se rechaza.</li>
+  <li>El mensaje que verá quien aplique. Que diga qué se permite, no solo que no.</li>
+</ol>
+<pre data-lang="yaml"><code>---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: imagenes-tienda}
+spec:
+  policyName: imagenes-tienda
+# (4)
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: tienda</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li>La política sola no hace nada: el binding dice dónde y cómo. <code>Deny</code> rechaza; <code>Warn</code> y <code>Audit</code> sirven para probar una política nueva sin romper nada.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver cluster/politicas/imagenes-tienda.yaml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file="cluster/politicas/imagenes-tienda.yaml"><code>apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: imagenes-tienda}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  variables:
+    - name: todos
+      expression: object.spec.containers + object.spec.?initContainers.orValue([])
+  validations:
+    - expression: &gt;-
+        variables.todos.all(c,
+          c.image.startsWith('ghcr.io/TU-USUARIO/tienda-norte/api@sha256:') ||
+          c.image == 'postgres:18@sha256:EL-DIGEST-DE-POSTGRES')
+      message: "en tienda solo corren la API por digest y el PostgreSQL fijado"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: imagenes-tienda}
+spec:
+  policyName: imagenes-tienda
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: tienda</code></pre>
+  </div>
+</details>
+<aside class="callout callout--def">
+<p class="callout-label">CEL de por medio</p>
+<p>CEL es un lenguaje de expresiones: no tiene bucles ni efectos. <code>lista.all(c, condición)</code> es verdadero si la condición vale para cada <code>c</code>, como <code>all(...)</code> de Python. <code>object</code> es el pod que llega. <code>&gt;-</code> en YAML une las líneas siguientes en una sola cadena.</p>
+</aside>
+<pre data-lang="bash"><code>sed -i -e "s/TU-USUARIO/tu-usuario-en-minusculas/" -e "s/EL-DIGEST-DE-POSTGRES/el-del-paso-3/" cluster/politicas/imagenes-tienda.yaml</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>kubectl apply -f cluster/politicas/imagenes-tienda.yaml
+kubectl -n tienda rollout restart deploy/api
+kubectl -n tienda get pods</code></pre>
+  <p>Dos líneas <code>created</code>. El reinicio crea un pod nuevo de la API y pasa la política: si el digest de la API o el de PostgreSQL no coinciden con lo que está en <code>tienda.yaml</code>, el pod nuevo no aparece y el error está en <code>kubectl -n tienda get events</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>ValidatingAdmissionPolicy 'imagenes-tienda' … denied request: en tienda solo corren …</code>: Una imagen de <code>tienda.yaml</code> no coincide. Compara letra por letra con la política, incluido el usuario en minúsculas.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una lista cerrada de imágenes en una política nativa.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Una regla en Kyverno para todo: funciona, pero pone una regla que solo lee el pod detrás de un servicio que se puede caer.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Si actualizas PostgreSQL, cambian el digest de <code>tienda.yaml</code> y el de la política, en el mismo cambio. Olvidar la política deja a la base sin poder reiniciarse.</dd></div>
+</dl>
+<h3 id="paso-kyverno">Paso 5. La firma, en la admisión</h3>
+<div class="step-map" data-where="kyverno registro">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La tienda con la política del paso 4.</dd></div>
+    <div><dt>Sale</dt><dd>Kyverno instalado y la firma exigida en <code>tienda</code>.</dd></div>
+    <div><dt>Cambia</dt><dd><code>cluster/politicas/tienda-firmada.yaml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-capas">Las capas de la admisión</a></dd></div>
+    <div><dt>Tiempo</dt><dd>25 min</dd></div>
+  </dl>
+</div>
+<p>Es la promesa de SEC02: la verificación de <code>verificar.sh</code>, ahora en el único lugar que nadie puede saltar. Kyverno 1.20 marca como estable el tipo <code>ImageValidatingPolicy</code>, con <code>apiVersion: policies.kyverno.io/v1</code> <span class="badge badge--doc">Documentado</span>.</p>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>helm install kyverno kyverno/kyverno -n kyverno --create-namespace --version 3.10.0 --wait
+kubectl -n kyverno get pods</code></pre>
+  <p>Helm termina con <code>STATUS: deployed</code>. Los pods de Kyverno (admisión, background, cleanup y reports) quedan en <code>Running</code>.</p>
+</aside>
+<div class="file-card" data-where="kyverno registro">
+  <h4 class="file-card-path" id="archivo-cluster-politicas-tienda-firmada-yaml">cluster/politicas/tienda-firmada.yaml<span class="file-card-size">33 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Exige que la imagen de la API tenga una firma de <code>publicar.yml</code> en <code>main</code>.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Kyverno, en cada pod de <code>tienda</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>El pod.</dd></div>
+    <div><dt>Qué sale</dt><dd>El pod aceptado o rechazado con el mensaje.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Rechaza, y si Kyverno no responde, también.</li>
+    <li>Solo pods del namespace tienda.</li>
+    <li>Qué imágenes revisa.</li>
+    <li>Quién tiene que haber firmado, como en SEC02.</li>
+    <li>La condición: cada imagen de la API tiene al menos una firma válida.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code>apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata: {name: tienda-firmada}
+spec:
+# (1)
+  validationActions: [Deny]
+  failurePolicy: Fail
+  webhookConfiguration: {timeoutSeconds: 15}
+  evaluation: {background: {enabled: false}}
+# (2)
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: tienda}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+# (3)
+  matchImageReferences:
+    - glob: "ghcr.io/TU-USUARIO/tienda-norte/api*"</code></pre>
+<ol class="code-key">
+  <li><code>failurePolicy: Fail</code>: si Kyverno está caído o tarda más de 15 segundos, el pod no se crea. Es la decisión 4 de las <a href="#decisiones">decisiones guiadas</a>. Sin revisión en segundo plano: la política decide al crear, no reescanea.</li>
+  <li>Igual que el binding del paso 4: el namespace por su etiqueta automática.</li>
+  <li>La política solo mira las imágenes de tu repositorio. PostgreSQL no tiene tu firma, y no la necesita: la lista del paso 4 ya lo fija por digest.</li>
+</ol>
+<pre data-lang="yaml"><code># (4)
+  attestors:
+    - name: cosign
+      cosign:
+        keyless:
+          identities:
+            - subject: "https://github.com/TU-USUARIO/tienda-norte/.github/workflows/publicar.yml@refs/heads/main"
+              issuer: "https://token.actions.githubusercontent.com"
+        ctlog:
+          url: "https://rekor.sigstore.dev"
+# (5)
+  validations:
+    - expression: &gt;-
+        images.containers
+        .filter(i, i.startsWith('ghcr.io/TU-USUARIO/tienda-norte/api'))
+        .all(i, verifyImageSignatures(i, [attestors.cosign]) &gt; 0)
+      message: "la imagen de la API no tiene una firma de publicar.yml en main"</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li>La misma identidad y el mismo emisor que <code>verificar.sh</code> en SEC02: una firma hecha desde otra rama, otro workflow u otro repositorio no sirve. La entrada en Rekor prueba cuándo se firmó.</li>
+  <li><code>verifyImageSignatures</code> devuelve cuántas firmas válidas encontró; tiene que haber al menos una por cada imagen de la API del pod.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver cluster/politicas/tienda-firmada.yaml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file="cluster/politicas/tienda-firmada.yaml"><code>apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata: {name: tienda-firmada}
+spec:
+  validationActions: [Deny]
+  failurePolicy: Fail
+  webhookConfiguration: {timeoutSeconds: 15}
+  evaluation: {background: {enabled: false}}
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: tienda}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  matchImageReferences:
+    - glob: "ghcr.io/TU-USUARIO/tienda-norte/api*"
+  attestors:
+    - name: cosign
+      cosign:
+        keyless:
+          identities:
+            - subject: "https://github.com/TU-USUARIO/tienda-norte/.github/workflows/publicar.yml@refs/heads/main"
+              issuer: "https://token.actions.githubusercontent.com"
+        ctlog:
+          url: "https://rekor.sigstore.dev"
+  validations:
+    - expression: &gt;-
+        images.containers
+        .filter(i, i.startsWith('ghcr.io/TU-USUARIO/tienda-norte/api'))
+        .all(i, verifyImageSignatures(i, [attestors.cosign]) &gt; 0)
+      message: "la imagen de la API no tiene una firma de publicar.yml en main"</code></pre>
+  </div>
+</details>
+<pre data-lang="bash"><code>sed -i "s/TU-USUARIO/tu-usuario/" cluster/politicas/tienda-firmada.yaml</code></pre>
+<p>Ojo con el <code>sed</code>: en el <code>glob</code> y en la expresión va el usuario en minúsculas (como en GHCR), y en el <code>subject</code> va exactamente como en la URL de tu repositorio. Si tu usuario tiene mayúsculas, corrige el <code>subject</code> a mano.</p>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>kubectl apply -f cluster/politicas/tienda-firmada.yaml
+kubectl get imagevalidatingpolicy
+kubectl -n tienda rollout restart deploy/api
+kubectl -n tienda get pods</code></pre>
+  <p>La política aparece en la lista. El pod nuevo de la API llega a <code>Running</code>: Kyverno encontró la firma. Anota cuánto tardó en aparecer el pod comparado con el reinicio del paso 4: la diferencia es la consulta al registro y a Rekor.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>la imagen de la API no tiene una firma de publicar.yml en main, con la imagen buena</code>: Primero, el <code>subject</code>: tiene que ser idéntico a la identidad que acepta <code>verificar.sh</code> de SEC02 (corre ese script con el mismo digest). Si <code>verificar.sh</code> pasa y Kyverno no, el problema es el formato de la firma: cosign 3 la guarda como bundle con las referencias de OCI 1.1, y la página de Kyverno de esta política no dice cómo trata ese formato. La salida documentada de cosign es firmar también en el formato anterior: <code>cosign sign --new-bundle-format=false --use-signing-config=false</code> en <code>publicar.yml</code>.</li>
+    <li><code>failed calling webhook … context deadline exceeded</code>: Kyverno no respondió en 15 segundos. Mira <code>kubectl -n kyverno logs deploy/kyverno-admission-controller</code>: casi siempre es que no llega a GHCR o a Rekor.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>La firma se exige en la admisión, con <code>failurePolicy: Fail</code> y la identidad exacta del workflow.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Confiar en que el pipeline firma: firmar no impide desplegar otra cosa. O <code>Ignore</code>: tumbar a Kyverno sería la forma de saltar la firma.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Con <code>Fail</code>, si Kyverno se cae, nadie despliega en <code>tienda</code> (los pods que ya corren siguen). En producción va con tres réplicas y una alerta; aquí, con una, lo vas a ver en la falla de Limitaciones.</dd></div>
+</dl>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Solo dos imágenes pueden correr en <code>tienda</code>, por digest.</li>
+    <li>La de la API, además, con la firma de tu workflow.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>kubectl get validatingadmissionpolicy,imagevalidatingpolicy</code></pre>
+  <p>Las dos políticas en la lista, y la tienda sigue en <code>Running</code>.</p>
+</aside>
+<aside class="hito" id="hito-3" data-toc="skip" aria-labelledby="hito-3-t">
+  <p class="hito-num">Hito 3 de 3, unos 40 min</p>
+  <p class="hito-title" id="hito-3-t">La red cerrada y alguien mirando</p>
+  <p>NetworkPolicy que niegan todo y abren tres conexiones, y Falco con una regla propia.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-red">Negar todo, abrir tres</a></li>
+    <li><a href="#paso-falco">Falco y una regla propia</a></li>
+  </ol>
+</aside>
+<h3 id="paso-red">Paso 6. Negar todo, abrir tres</h3>
+<div class="step-map" data-where="api db afuera">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La tienda con sus políticas de admisión.</dd></div>
+    <div><dt>Sale</dt><dd>Tres conexiones permitidas y todo lo demás cortado.</dd></div>
+    <div><dt>Cambia</dt><dd><code>cluster/red.yaml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m57-contenedores-k8s.html#red-k8s">57.6</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<p>Sin NetworkPolicy, cualquier pod del clúster llega a la base, y la API puede salir a cualquier lugar de internet. k3s trae un controlador de NetworkPolicy integrado, así que estas políticas se aplican sin instalar nada <span class="badge badge--doc">Documentado</span>.</p>
+<div class="file-card" data-where="api db afuera">
+  <h4 class="file-card-path" id="archivo-cluster-red-yaml">cluster/red.yaml<span class="file-card-size">32 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Niega todo el tráfico de <code>tienda</code> y abre lo que la tienda usa.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>El controlador de NetworkPolicy de k3s.</dd></div>
+    <div><dt>Qué entra</dt><dd>Las etiquetas <code>app</code> de los pods.</dd></div>
+    <div><dt>Qué sale</dt><dd>Tres políticas: negar todo, la de la API y la de la base.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Ningún pod de tienda recibe ni envía nada.</li>
+    <li>A la API se llega al 8000 desde cualquier lugar.</li>
+    <li>La API sale solo a la base.</li>
+    <li>Y a kube-dns, para resolver nombres.</li>
+    <li>A la base se llega solo desde la API, al 5432.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code># (1)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: negar-todo, namespace: tienda}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: api, namespace: tienda}
+spec:
+  podSelector: {matchLabels: {app: api}}
+  policyTypes: [Ingress, Egress]
+# (2)
+  ingress:
+    - ports: [{port: 8000, protocol: TCP}]</code></pre>
+<ol class="code-key">
+  <li><code>podSelector: {}</code> elige todos los pods del namespace, y sin reglas, no deja nada. Las políticas se suman: lo que una permite, queda permitido. Por eso se empieza negando todo.</li>
+  <li>Una regla de entrada sin <code>from</code> acepta cualquier origen, pero solo en el 8000. Es la puerta de la tienda.</li>
+</ol>
+<pre data-lang="yaml"><code>  egress:
+# (3)
+    - to: [{podSelector: {matchLabels: {app: db}}}]
+      ports: [{port: 5432, protocol: TCP}]
+# (4)
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: db, namespace: tienda}
+spec:
+  podSelector: {matchLabels: {app: db}}
+  policyTypes: [Ingress]
+# (5)
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: api}}}]
+      ports: [{port: 5432, protocol: TCP}]</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>Un <code>podSelector</code> sin <code>namespaceSelector</code> se refiere al mismo namespace: los pods <code>app=db</code> de <code>tienda</code>.</li>
+  <li>El namespace y el pod en el mismo elemento de la lista: los pods de CoreDNS (<code>k8s-app=kube-dns</code> en k3s) de <code>kube-system</code>. Separados en dos elementos significaría "cualquier pod de kube-system o cualquier kube-dns", que es otra cosa.</li>
+  <li>La base acepta solo a los pods <code>app=api</code> de <code>tienda</code>, y solo en el 5432. No tiene regla de salida: <code>negar-todo</code> la deja sin salida, y sus respuestas a la API pasan igual, porque son parte de una conexión permitida.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver cluster/red.yaml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file="cluster/red.yaml"><code>apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: negar-todo, namespace: tienda}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: api, namespace: tienda}
+spec:
+  podSelector: {matchLabels: {app: api}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports: [{port: 8000, protocol: TCP}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: db}}}]
+      ports: [{port: 5432, protocol: TCP}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: db, namespace: tienda}
+spec:
+  podSelector: {matchLabels: {app: db}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: api}}}]
+      ports: [{port: 5432, protocol: TCP}]</code></pre>
+  </div>
+</details>
+<div data-exercise="sec04-p-dns"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>kubectl apply -f cluster/red.yaml
+curl -s http://127.0.0.1:8088/api/productos
+kubectl -n afuera run sonda --rm -i --restart=Never --image=postgres:18 -- pg_isready -h db.tienda -t 3</code></pre>
+  <p>El <code>curl</code> vuelve a devolver los productos. La sonda, desde <code>afuera</code>, responde <code>db.tienda:5432 - no response</code>: la base no contesta a nadie que no sea la API. Sin la política de la base, la misma sonda diría <code>accepting connections</code>.</p>
+</aside>
+<aside class="callout callout--try">
+<p class="callout-label">Pruébalo ahora: un error de etiqueta</p>
+<p>Cambia en la política <code>db</code> la etiqueta <code>app: api</code> por <code>app: apii</code>, aplica y vuelve a correr el <code>curl</code>. Tarda y termina con un error 500 o sin respuesta: la API ya no llega a la base. Ningún mensaje dice por qué; así se ve un error de etiquetas en una NetworkPolicy. Vuelve a <code>app: api</code> y aplica.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Negar todo, entrada y salida, y una regla por conexión.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Cerrar solo la entrada: la salida libre es por donde se van los datos después de una intrusión.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Una política con una etiqueta mal escrita no da error: no elige ningún pod y la conexión se corta en silencio. Después de cada cambio, prueba la conexión que tenía que seguir funcionando.</dd></div>
+</dl>
+<h3 id="paso-falco">Paso 7. Falco y una regla propia</h3>
+<div class="step-map" data-where="falco api">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>El clúster con la tienda.</dd></div>
+    <div><dt>Sale</dt><dd>Falco corriendo y la regla propia cargada.</dd></div>
+    <div><dt>Cambia</dt><dd><code>cluster/falco-values.yaml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-falco">Falco y las llamadas al sistema</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<p>Las tres capas anteriores deciden qué entra y con quién habla. Ninguna ve lo que pasa dentro de un contenedor que ya corre: si alguien consigue una shell en la API, PSA, las políticas y la red no se enteran.</p>
+<div class="file-card" data-where="falco api">
+  <h4 class="file-card-path" id="archivo-cluster-falco-values-yaml">cluster/falco-values.yaml<span class="file-card-size">18 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Configura Falco para k3s, con salida JSON y una regla propia.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Helm, al instalar el chart.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Falco en cada nodo con la regla <code>Shell en un contenedor de la tienda</code>.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>El driver de eBPF moderno, sin módulo de kernel.</li>
+    <li>Una línea JSON por alerta, sin esperar.</li>
+    <li>La regla propia, con su nombre.</li>
+    <li>La condición: un proceso nuevo de shell en un contenedor de tienda.</li>
+    <li>Qué dice la alerta y con qué prioridad.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code># (1)
+driver:
+  kind: modern_ebpf
+# (2)
+tty: true
+falco:
+  json_output: true
+customRules:
+  tienda.yaml: |-
+# (3)
+    - rule: Shell en un contenedor de la tienda
+      desc: Alguien abre una shell en un pod del namespace tienda.
+# (4)
+      condition: &gt;
+        spawned_process and container
+        and k8s.ns.name = "tienda"
+        and proc.name in (shell_binaries)
+# (5)
+      output: &gt;
+        Shell en tienda (uid=%user.uid pod=%k8s.pod.name contenedor=%container.name
+        comando=%proc.cmdline padre=%proc.pname)
+      priority: WARNING
+      tags: [tienda, mitre_execution, T1059]</code></pre>
+<ol class="code-key">
+  <li><code>modern_ebpf</code> va incluido en Falco y necesita un kernel con BTF, que comprobaste en <a href="#antes-instalar">Antes de empezar</a>. El driver de módulo compila contra tu kernel, y es lo que más falla en una VM.</li>
+  <li>Con <code>tty: true</code> Falco escribe cada alerta apenas ocurre; sin él, las alertas pueden quedarse en el buffer y aparecer tarde en <code>kubectl logs</code>.</li>
+  <li>El nombre es lo que buscarás en los logs, y en SEC05 en el SIEM.</li>
+  <li><code>spawned_process</code> y <code>container</code> son macros y <code>shell_binaries</code> es una lista, todas del archivo de reglas que trae Falco. La regla nueva solo agrega el namespace.</li>
+  <li>Los campos con <code>%</code> se llenan con el evento. La etiqueta <code>T1059</code> es la técnica de ATT&amp;CK de intérpretes de comandos, como en <a href="sec00-laboratorio.html#ae-attack">SEC00</a>.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver cluster/falco-values.yaml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file="cluster/falco-values.yaml"><code>driver:
+  kind: modern_ebpf
+tty: true
+falco:
+  json_output: true
+customRules:
+  tienda.yaml: |-
+    - rule: Shell en un contenedor de la tienda
+      desc: Alguien abre una shell en un pod del namespace tienda.
+      condition: &gt;
+        spawned_process and container
+        and k8s.ns.name = "tienda"
+        and proc.name in (shell_binaries)
+      output: &gt;
+        Shell en tienda (uid=%user.uid pod=%k8s.pod.name contenedor=%container.name
+        comando=%proc.cmdline padre=%proc.pname)
+      priority: WARNING
+      tags: [tienda, mitre_execution, T1059]</code></pre>
+  </div>
+</details>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>helm install falco falcosecurity/falco -n falco --create-namespace --version 9.2.2 -f cluster/falco-values.yaml --wait
+kubectl -n falco get pods
+kubectl -n falco logs ds/falco -c falco | grep -m3 -i "rule\|loaded"</code></pre>
+  <p>Un pod de Falco por nodo (aquí, uno) en <code>2/2 Running</code> o <code>1/1</code>, según los contenedores que agregue el chart. En el log, las líneas de arranque nombran los archivos de reglas que cargó, entre ellos <code>tienda.yaml</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Failed to load the modern eBPF probe … BTF</code>: El kernel no tiene BTF. En WSL no hay arreglo simple: usa una VM con Ubuntu 24.04.</li>
+    <li><code>LOAD_ERR_COMPILE_CONDITION … shell_binaries</code>: La regla propia se cargó sin las reglas por defecto. Revisa que no hayas apagado <code>falcoctl</code> en los values: es el que las instala.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una regla propia, solo para <code>tienda</code>, encima de las reglas por defecto.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Escribir todas las reglas desde cero, o encender todas las del proyecto y mirar el ruido.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Falco ve nombres de programas: la regla no dispara con <code>python -c</code>, que hace lo mismo que una shell. Es la última predicción de las fallas y el primer punto de Limitaciones.</dd></div>
+</dl>
+<h2 id="viaje">El viaje de un dato</h2>
+<p>El caso principal: desplegar una versión nueva de la API, firmada, y lo que pasa hasta que corre y alguien la mira.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 478" role="img" aria-labelledby="fs04st fs04sd">
+<title id="fs04st">Una versión nueva de la API, del apply al proceso vigilado</title>
+<desc id="fs04sd">La persona aplica el Deployment con el digest nuevo. El ReplicaSet pide un pod al API server. Pod Security y la política nativa lo aceptan. Kyverno verifica la firma en GHCR y Rekor y lo acepta. El kubelet baja la imagen por digest y arranca el contenedor. Falco ve el execve de uvicorn y no dispara, porque no es una shell.</desc>
+<defs><marker id="fs04s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs04s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs04s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs04s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="11.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Persona</text>
+<path class="dg-frame" d="M70.0 40 V468"/>
+<rect class="dg-box" x="137.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="196.0" y="29" text-anchor="middle" style="font-size:13.5px">API server</text>
+<path class="dg-frame" d="M196.0 40 V468"/>
+<rect class="dg-box" x="263.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="322.0" y="29" text-anchor="middle" style="font-size:13.5px">Kyverno</text>
+<path class="dg-frame" d="M322.0 40 V468"/>
+<rect class="dg-box" x="389.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="448.0" y="29" text-anchor="middle" style="font-size:13.5px">GHCR y Rekor</text>
+<path class="dg-frame" d="M448.0 40 V468"/>
+<rect class="dg-box" x="515.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="574.0" y="29" text-anchor="middle" style="font-size:13.5px">Kubelet</text>
+<path class="dg-frame" d="M574.0 40 V468"/>
+<rect class="dg-box" x="641.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Falco</text>
+<path class="dg-frame" d="M700.0 40 V468"/>
+<path class="dg-edge" d="M73.0 72 L191.0 72" marker-end="url(#fs04s-a)"/>
+<rect x="51.10000000000001" y="55" width="163.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="133.0" y="66" text-anchor="middle">apply: api@sha256:nuevo</text>
+<rect x="206.0" y="92" width="174" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="216.0" y="108">ReplicaSet pide un pod</text>
+<rect x="206.0" y="126" width="202" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="216.0" y="142">PSA restricted y VAP: pasa</text>
+<path class="dg-edge" d="M199.0 174 L317.0 174" marker-end="url(#fs04s-a)"/>
+<rect x="177.10000000000002" y="157" width="163.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="259.0" y="168" text-anchor="middle">AdmissionReview del pod</text>
+<path class="dg-edge" d="M325.0 208 L443.0 208" marker-end="url(#fs04s-a)"/>
+<rect x="299.8" y="191" width="170.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="202" text-anchor="middle">firma y entrada en Rekor</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M445.0 242 L327.0 242" marker-end="url(#fs04s-r)"/>
+<rect x="283.3" y="225" width="203.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="236" text-anchor="middle">firma de publicar.yml en main</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M319.0 276 L201.0 276" marker-end="url(#fs04s-r)"/>
+<rect x="229.9" y="259" width="58.199999999999996" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="259.0" y="270" text-anchor="middle">allowed</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M199.0 310 L569.0 310" marker-end="url(#fs04s-q)"/>
+<rect x="332.8" y="293" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="304" text-anchor="middle">pod programado</text>
+<path class="dg-edge" d="M571.0 344 L453.0 344" marker-end="url(#fs04s-a)"/>
+<rect x="455.5" y="327" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="511.0" y="338" text-anchor="middle">pull por digest</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M577.0 378 L695.0 378" marker-end="url(#fs04s-q)"/>
+<rect x="525.4" y="361" width="223.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="637.0" y="372" text-anchor="middle">execve uvicorn (lo ve el kernel)</text>
+<rect x="481.0" y="398" width="209" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="491.0" y="414">no es una shell: sin alerta</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC04.5.</b> El viaje completo. Tres capas dicen que sí antes de que exista el contenedor; la cuarta mira lo que hace después.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Paso</th><th>De → a</th><th>Qué viaja</th><th>Dónde queda</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Persona → API server</td><td>El Deployment con el digest nuevo</td><td>etcd (el almacén de k3s)</td></tr>
+<tr><td>2</td><td>API server, adentro</td><td>El pod contra restricted y la lista de imágenes</td><td>Nada si pasa; un evento si no</td></tr>
+<tr><td>3</td><td>API server → Kyverno → GHCR y Rekor</td><td>El digest y la firma</td><td>Un reporte de política de Kyverno</td></tr>
+<tr><td>4</td><td>Kubelet → GHCR</td><td>La imagen, pedida por digest</td><td>La caché de containerd en el nodo</td></tr>
+<tr><td>5</td><td>Kernel → Falco</td><td>Cada <code>execve</code> del contenedor</td><td>El log de Falco si una regla coincide</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="sec04-cluster"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-verde">El punto de partida</h3>
+<div class="step-map" data-where="apiserver kyverno api db falco">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Todo lo de los pasos 1 a 7.</dd></div>
+    <div><dt>Sale</dt><dd>Una tabla con lo que viste.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-capas">Las capas de la admisión</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Lo que el diseño espera</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td><code>kubectl -n tienda get pods</code></td><td><code>db-0</code> y <code>api-…</code> en <code>1/1 Running</code></td><td></td></tr>
+<tr><td><code>curl</code> a <code>/api/productos</code></td><td>La lista del <code>init.sql</code></td><td></td></tr>
+<tr><td>Sonda desde <code>afuera</code></td><td><code>no response</code></td><td></td></tr>
+<tr><td>Las dos políticas de imágenes</td><td>Listadas, y la API corriendo</td><td></td></tr>
+<tr><td>Falco</td><td>Su pod en <code>Running</code> con <code>tienda.yaml</code> cargado</td><td></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-fallas">Las fallas, a propósito</h3>
+<p>Las fallas 2 y 3 usan un pod de prueba que cumple restricted, para que lo corte la capa que se está probando y no Pod Security. <code>--dry-run=server</code> pasa el pod por toda la admisión sin guardarlo.</p>
+<div class="file-card" data-where="apiserver kyverno">
+  <h4 class="file-card-path" id="archivo-cluster-fallas-pod-yaml">cluster/fallas/pod.yaml<span class="file-card-size">15 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Un pod que cumple restricted, con la imagen como marcador.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Las fallas 2 y 3.</dd></div>
+    <div><dt>Qué entra</dt><dd>La imagen, que pone <code>sed</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Un pod que solo puede cortar la capa que se prueba.</dd></div>
+  </dl>
+</div>
+<pre data-lang="yaml" data-file="cluster/fallas/pod.yaml"><code>apiVersion: v1
+kind: Pod
+metadata: {name: falla, namespace: tienda}
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: prueba
+      image: IMAGEN
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities: {drop: [ALL]}</code></pre>
+<div data-exercise="sec04-p-deploy"></div>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 1: un Deployment privilegiado</p>
+<p><b>Provócala.</b> En el contenedor de la API de <code>tienda.yaml</code>, agrega <code>privileged: true</code> a su <code>securityContext</code> y aplica. Después, <code>kubectl -n tienda get events --field-selector reason=FailedCreate</code>.</p><p><b>Qué tiene que pasar.</b> El apply imprime <code>Warning: would violate PodSecurity "restricted:v1.37": privileged …</code> y el Deployment se actualiza. El pod nuevo nunca aparece (el viejo sigue), y el evento dice <code>violates PodSecurity "restricted:v1.37"</code>. <b>Por qué importa.</b> Un contenedor privilegiado ve los dispositivos del nodo y puede escapar del contenedor, como viste en <a href="../modules/m57-contenedores-k8s.html#escapes">57.3</a>. Que el error esté en los eventos y no en el apply es lo que hace que se pase por alto. <b>Deshazla</b> con <code>git checkout cluster/tienda.yaml</code> y vuelve a aplicar.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 2: una imagen por etiqueta</p>
+<p><b>Provócala.</b> <code>sed "s|IMAGEN|postgres:18|" cluster/fallas/pod.yaml | kubectl apply --dry-run=server -f -</code></p><p><b>Qué tiene que pasar.</b> Un error que nombra <code>ValidatingAdmissionPolicy 'imagenes-tienda'</code> con el mensaje <code>en tienda solo corren la API por digest y el PostgreSQL fijado</code>. <b>Por qué importa.</b> La etiqueta <code>18</code> apunta hoy a una imagen y mañana a otra. Por digest sabes exactamente qué corre, y es lo que firmaste. <b>No hay nada que deshacer</b>: <code>--dry-run</code> no guarda el pod.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 3: una imagen sin firma</p>
+<p><b>Provócala.</b> Con el digest de <code>api:cambiada</code> de la falla 1 de SEC02: <code>sed "s|IMAGEN|ghcr.io/tu-usuario/tienda-norte/api@sha256:EL-DE-LA-FALLA-1|" cluster/fallas/pod.yaml | kubectl apply --dry-run=server -f -</code></p><p><b>Qué tiene que pasar.</b> Pasa Pod Security y la política nativa (es tu repositorio y viene por digest), y la rechaza Kyverno con <code>la imagen de la API no tiene una firma de publicar.yml en main</code>. <b>Por qué importa.</b> Es exactamente lo que <code>verificar.sh</code> detectaba en SEC02, pero ahora no depende de que alguien corra un script: no hay forma de crear el pod. <b>No hay nada que deshacer.</b></p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 4: un pod de otro namespace contra la base</p>
+<p><b>Provócala.</b> <code>kubectl -n afuera run sonda --rm -i --restart=Never --image=postgres:18 -- pg_isready -h db.tienda -t 3</code>. Después, borra la política <code>db</code> (<code>kubectl -n tienda delete networkpolicy db</code>) y repite.</p><p><b>Qué tiene que pasar.</b> Con la política: <code>no response</code>. Sin ella, tampoco: <code>negar-todo</code> sigue negando la entrada a la base. Recién si borras también <code>negar-todo</code>, la sonda dice <code>accepting connections</code>. <b>Por qué importa.</b> Las políticas se suman: borrar una regla que permite no abre nada mientras siga la que niega todo. Es la ventaja de empezar negando. <b>Deshazla</b> con <code>kubectl apply -f cluster/red.yaml</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 5: la API saca datos a internet</p>
+<p><b>Provócala.</b> <code>kubectl -n tienda exec deploy/api -- python -c "import socket; socket.create_connection(('example.com', 443), 3)"</code></p><p><b>Qué tiene que pasar.</b> El nombre se resuelve (el DNS está permitido) y la conexión termina en <code>TimeoutError: timed out</code> después de 3 segundos. <b>Por qué importa.</b> Con una inyección en la API, lo primero que hace un atacante es mandar los datos afuera o bajar herramientas. La salida cerrada le quita las dos cosas. <b>No hay nada que deshacer.</b></p>
+</aside>
+<div data-exercise="sec04-p-python"></div>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 6: una shell en la API</p>
+<p><b>Provócala.</b> En una terminal, <code>kubectl -n falco logs ds/falco -c falco -f | grep "Shell en un contenedor"</code>. En otra, <code>kubectl -n tienda exec deploy/api -- sh -c "id; ls /var/log/tienda"</code>.</p><p><b>Qué tiene que pasar.</b> En segundos aparece una línea JSON con <code>"rule":"Shell en un contenedor de la tienda"</code>, <code>"priority":"Warning"</code> y en <code>output</code> el pod, <code>uid=10001</code> y <code>comando=sh -c id; ls /var/log/tienda</code>. Las reglas por defecto pueden sumar otra alerta propia del exec. <b>Por qué importa.</b> Las tres capas anteriores dejaron pasar el exec, porque viene de alguien con permiso en el API server. Falco es lo único que lo ve, y su alerta es la que en SEC05 llega al SIEM. <b>No hay nada que deshacer.</b> Corta el <code>logs -f</code> con Ctrl+C.</p>
+</aside>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Qué la corta o la ve</th><th>¿Pasó?</th><th>Lo que decía</th></tr></thead>
+<tbody>
+<tr><td>1. Deployment privilegiado</td><td>Pod Security, en los eventos</td><td></td><td></td></tr>
+<tr><td>2. Imagen por etiqueta</td><td>ValidatingAdmissionPolicy</td><td></td><td></td></tr>
+<tr><td>3. Imagen sin firma</td><td>Kyverno</td><td></td><td></td></tr>
+<tr><td>4. Otro namespace a la base</td><td>NetworkPolicy</td><td></td><td></td></tr>
+<tr><td>5. Salida a internet</td><td>NetworkPolicy</td><td></td><td></td></tr>
+<tr><td>6. Shell en la API</td><td>Falco (la ve, no la corta)</td><td></td><td></td></tr>
+</tbody>
+</table>
+</div>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>La tienda corre en un clúster endurecido con la imagen firmada.</li>
+    <li>Cuatro capas, cada una probada con la falla que le toca.</li>
+    <li>Una alerta de Falco con nombre propio, lista para el SIEM.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>kubectl -n tienda get pods &amp;&amp; kubectl get validatingadmissionpolicy,imagevalidatingpolicy &amp;&amp; kubectl -n tienda get networkpolicy</code></pre>
+  <p>Los dos pods, las dos políticas de imágenes y las tres NetworkPolicy.</p>
+</aside>
+<h2 id="limitaciones">Limitaciones</h2>
+<ul>
+<li><b>Lo que Falco no ve.</b> La regla mira nombres de programas: <code>python -c</code>, <code>perl</code> o un binario copiado con otro nombre hacen lo mismo que una shell y no la disparan. Las reglas por defecto cubren parte de eso (escritura en carpetas del sistema, conexiones raras); ninguna regla cubre todo.</li>
+<li><b>Lo que la admisión no ve.</b> <code>kubectl debug</code> agrega contenedores efímeros por un subrecurso (<code>pods/ephemeralcontainers</code>) que las dos políticas de imágenes no miran; Pod Security sí los revisa. Si alguien tiene permiso de <code>pods/exec</code> en <code>tienda</code>, entra igual: eso se cierra con RBAC, como en <a href="../modules/m57-contenedores-k8s.html#rbac-k8s">57.5</a>.</li>
+<li><b>Kyverno con una réplica.</b> Con <code>failurePolicy: Fail</code>, si su pod se cae, no se crean pods en <code>tienda</code>. Pruébalo: <code>kubectl -n kyverno scale deploy kyverno-admission-controller --replicas=0</code>, reinicia la API, mira el error y vuelve a <code>--replicas=1</code>.</li>
+<li><b>Un solo nodo.</b> El control plane, la tienda y Falco comparten máquina: un pod que escapa del contenedor está en el mismo nodo que el API server.</li>
+<li><b>Los secretos.</b> La clave de la base está en un Secret de Kubernetes, que k3s guarda sin cifrar en su base salvo que actives el cifrado en reposo (<code>--secrets-encryption</code>), como en <a href="../modules/m57-contenedores-k8s.html#secretos-k8s">57.7</a>.</li>
+</ul>
+<h3 id="limitaciones-costo">Costo y tiempo, con la cuenta a mano</h3>
+<p>No hay costo de nube: todo corre en tu máquina. El costo está en el tiempo de admisión. Supuesto: si Kyverno tarda 1 segundo en verificar una firma (una consulta al registro y otra a Rekor), un despliegue de 3 réplicas suma unos 3 segundos; con 20 despliegues al día, un minuto. Compáralo con lo que anotaste en el paso 5. El techo es el <code>timeoutSeconds: 15</code>: si una verificación tarda más, el pod se rechaza.</p>
+<h3 id="limitaciones-produccion">Qué cambia en producción</h3>
+<ul>
+<li>Kyverno con tres réplicas del controlador de admisión y una alerta si no responde.</li>
+<li>Un registro espejo propio para las imágenes y un Rekor alcanzable: si GHCR o Rekor no responden, la admisión con <code>Fail</code> frena los despliegues.</li>
+<li>El cifrado en reposo de los Secrets, o un gestor externo con rotación.</li>
+<li>Las políticas en Git y aplicadas por el pipeline, con <code>Audit</code> primero y <code>Deny</code> después de mirar los reportes.</li>
+<li>Las alertas de Falco enviadas al SIEM, con su propia alerta de silencio si Falco deja de reportar: es SEC05.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="sec04">
+<p class="pj-repo-head">El mismo repositorio de la tienda, con la carpeta <code>cluster/</code>. Marca cada comprobación cuando la veas.</p>
+<ul class="pj-checks">
+<li data-check="cluster">k3s v1.37.2+k3s1 y Helm v4.3.2 instalados, con el hash comprobado.</li>
+<li data-check="restricted">La tienda corre en restricted sin avisos de Pod Security.</li>
+<li data-check="imagenes">La política nativa rechaza una imagen por etiqueta.</li>
+<li data-check="firma">Kyverno rechaza la imagen sin firma de SEC02.</li>
+<li data-check="red">La sonda desde <code>afuera</code> no llega a la base y la API no sale a internet.</li>
+<li data-check="falco">Falco avisó de la shell en la API.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con SEC00 a SEC03</p>
+<p>La tienda es la de <a href="sec00-laboratorio.html">SEC00</a>, sin cambios de código. La firma y la imagen sin firma vienen de <a href="sec02-sbom-firma.html">SEC02</a>, y el criterio de pocas reglas que cortan es el de <a href="sec01-pipeline.html#ae-gate">SEC01</a> y <a href="sec03-iac.html">SEC03</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con la Parte VII del curso</p>
+<p>Los Pod Security Standards en <a href="../modules/m57-contenedores-k8s.html#pss">57.4</a>, la red en <a href="../modules/m57-contenedores-k8s.html#red-k8s">57.6</a>, la admisión en <a href="../modules/m57-contenedores-k8s.html#admision">57.8</a> y Falco en <a href="../modules/m57-contenedores-k8s.html#runtime">57.9</a>. La cadena de suministro detrás de la firma está en <a href="../modules/m56-supply-chain.html">M56</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con el glosario</p>
+<p><a href="../glosario.html#t-pod-security-standards">Pod Security Standards</a>, <a href="../glosario.html#t-admission-controller">admission controller</a>, <a href="../glosario.html#t-network-policy">NetworkPolicy</a>, <a href="../glosario.html#t-falco">Falco</a> y <a href="../glosario.html#t-seccomp">seccomp</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/sec04.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

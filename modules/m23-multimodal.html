@@ -235,6 +235,15 @@
         <li><b>Gemini 3.</b> Sin <code>media_resolution</code>, el tope es 1&#8239;120 tokens por imagen.</li>
       </ul>
 
+      <p><b>Paso a paso, con una imagen chica.</b> Si la tabla te pareció densa, rehaz la regla de Anthropic con una captura de 1000 × 750 píxeles, que ya entra en todos los topes y no hace falta achicar. El símbolo ⌈ ⌉ significa "redondear hacia arriba": un bloque a medio llenar se cobra entero.</p>
+
+      <ol class="steps">
+        <li><span class="step-title">Contar columnas</span>1000 ÷ 28 = 35.7, que redondeado hacia arriba son 36 bloques a lo ancho. La última columna tiene solo 20 píxeles útiles (1000 − 35 × 28), pero cuenta como una.</li>
+        <li><span class="step-title">Contar filas</span>750 ÷ 28 = 26.8, que redondeado hacia arriba son 27 bloques a lo alto.</li>
+        <li><span class="step-title">Multiplicar</span>36 × 27 = 972 bloques, es decir, 972 tokens. Por debajo del tope estándar de 1&#8239;568, así que no se achica.</li>
+        <li><span class="step-title">Comparar con la foto grande</span>La foto de 23.1 pasaba el tope, por eso primero se achicaba y después se contaba. La regla es siempre la misma: primero llevarla al tamaño permitido, después contar cuadraditos.</li>
+      </ol>
+
       <p>Que gpt-4.1 cueste 765 tokens y Anthropic 4&#8239;740 no significa que uno sea más barato: el precio por token es distinto, y sobre todo <b>ven imágenes distintas</b>. A 1024 × 768, el texto chico de una captura de pantalla ya no se lee. La resolución es una decisión de calidad, no solo de costo: un modelo que lee planillas necesita los bloques; uno que clasifica fotos de productos, no.</p>
 
       <div data-calc="imgtokens"></div>
@@ -326,9 +335,16 @@
 
       <p>¿Cuánto cuesta el encoder? Con la regla del <a href="m13-gpus.html#roofline">M13</a> de 2 FLOP por parámetro y por token: un ViT-L tiene unos 300 millones de parámetros (307 M en el paper del ViT) <span class="badge badge--doc">Documentado</span>, y sobre 4&#8239;740 tokens hace 2 × 0.3 × 10⁹ × 4&#8239;740 ≈ 2.8 TFLOP. El LLM de 70 mil millones de parámetros del M19 hace, sobre esos mismos tokens, 2 × 70 × 10⁹ × 4&#8239;740 ≈ 664 TFLOP. El encoder es el 0.43&#8239;% del cómputo. <span class="badge badge--ref">Diseño de referencia</span> Con un modelo grande, lo caro de una imagen no es el encoder: es que agrega miles de tokens al prefill.</p>
 
+      <p><b>Paso a paso: por qué sale tan chico.</b> Las dos cuentas usan la misma fórmula, 2 × parámetros × tokens, y los mismos 4&#8239;740 tokens. Así que los tokens se cancelan y la proporción depende solo del tamaño de cada red: 0.3 mil millones ÷ 70 mil millones = 0.0043, el 0.43&#8239;%. Con un LLM de 4 mil millones y un encoder de 600 millones, la misma división da 0.6 ÷ 4 = 0.15, el 15&#8239;% del párrafo siguiente. No hace falta memorizar los TFLOP: alcanza con comparar los tamaños.</p>
+
       <p>Con un modelo chico la proporción cambia. Un LLM de 4 mil millones de parámetros con un encoder de 600 millones gasta el 15&#8239;% de su cómputo en el encoder, y el encoder trabaja distinto que el resto: corre una vez por imagen, es compute-bound y se paraleliza bien, mientras que el decode es memory-bound y largo. Es el mismo argumento con el que el <a href="m15-motores-inferencia.html#desagregado">M15</a> separó prefill y decode, llevado un paso más allá. vLLM publicó en diciembre de 2025 su versión con el encoder como tercera etapa (encoder, prefill y decode desagregados) y la resume así: <span class="badge badge--doc">Documentado</span></p>
 
       <blockquote><p>Encoder: one-shot, compute-bound, high parallelism. Prefill: high memory bandwidth, large GEMMs. Decode: heavily memory-bound, long-lived, sequential.</p></blockquote>
+
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Piensa en una cocina. Una etapa <b>compute-bound</b> es un cocinero con una montaña de papas ya sobre la mesada: lo que lo limita es la velocidad de sus manos, y si pones más cocineros, terminan antes. Una etapa <b>memory-bound</b> es un cocinero que pela rapidísimo pero espera a que le traigan cada papa del depósito: lo que lo limita es el pasillo, no las manos. El encoder es el primer cocinero (pela todos los parches de una vez); el decode es el segundo (por cada token nuevo vuelve a leer todos los pesos de la memoria). Por eso conviene ponerlos en cocinas distintas, cada una equipada para su problema.</p>
+      </aside>
 
       <p>En sus pruebas con Qwen3-VL-4B en 4 A100 y requests con cuatro imágenes, separar el encoder subió el goodput de 6 a 12 requests por segundo y bajó el TTFT p99 entre un 30 y un 50&#8239;%. <span class="badge badge--doc">Documentado</span></p>
 
@@ -580,6 +596,51 @@ def validar(ruta: str) -&gt; Image.Image:
 
       <p>Un <dfn data-term="difusion">modelo de difusión</dfn> parte de ruido puro y lo va limpiando en pasos. En cada paso, una red (un U-Net en los modelos de 2022 y 2023; un transformer de difusión, o DiT, en los actuales) mira la imagen ruidosa y el prompt y predice cuánto ruido quitar. Después de decenas de pasos queda una imagen. El trabajo no ocurre sobre los píxeles sino en un espacio latente comprimido: un VAE convierte el latente final en píxeles. FLUX.1 [dev] es un transformer de 12 mil millones de parámetros, y su ejemplo de uso genera 1024 × 1024 en 50 pasos. <span class="badge badge--doc">Documentado</span></p>
 
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 228" role="img" aria-labelledby="fjr23at fjr23ad">
+<title id="fjr23at">El bucle de la difusión, un paso por vuelta</title>
+<desc id="fjr23ad">Se parte de un latente lleno de ruido de 128 por 128 por 16 valores. En cada vuelta, el DiT de 12 mil millones de parámetros mira el latente y el prompt y predice el ruido; se quita un poco de ese ruido y el latente queda un poco más limpio. La vuelta se repite 50 veces, o 4 en un modelo destilado. Al final, el VAE convierte el latente en píxeles. El costo es la cantidad de pasos por una pasada completa del modelo, y entre dos pasos todo el estado es el latente, 512 KiB.</desc>
+<defs><marker id="fjr23aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="190" y="8" width="130" height="30" rx="6"/>
+<text class="dg-small" x="255" y="28" text-anchor="middle">Prompt (texto)</text>
+<path class="dg-edge" d="M255 38 V58" marker-end="url(#fjr23aa)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="10" y="60" width="140" height="64" rx="6"/>
+<text class="dg-label" x="80" y="84" text-anchor="middle" style="font-size:13px">Latente</text>
+<text class="dg-tiny" x="80" y="100" text-anchor="middle">con ruido</text>
+<text class="dg-tiny" x="80" y="114" text-anchor="middle">128 × 128 × 16</text>
+<path class="dg-edge" d="M150 92 H178" marker-end="url(#fjr23aa)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="180" y="60" width="150" height="64" rx="6"/>
+<text class="dg-label" x="255" y="84" text-anchor="middle" style="font-size:13px">DiT (12 B)</text>
+<text class="dg-tiny" x="255" y="100" text-anchor="middle">mira latente y prompt</text>
+<text class="dg-tiny" x="255" y="114" text-anchor="middle">predice el ruido</text>
+<path class="dg-edge" d="M330 92 H358" marker-end="url(#fjr23aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="360" y="60" width="150" height="64" rx="6"/>
+<text class="dg-label" x="435" y="84" text-anchor="middle" style="font-size:13px">Quitar un poco</text>
+<text class="dg-tiny" x="435" y="100" text-anchor="middle">latente algo</text>
+<text class="dg-tiny" x="435" y="114" text-anchor="middle">más limpio</text>
+<path class="dg-edge" d="M435 124 V160 H80 V126" marker-end="url(#fjr23aa)"/>
+<text class="dg-tiny" x="258" y="178" text-anchor="middle">otra vuelta: 50 en FLUX.1 [dev], 4 en un modelo destilado</text>
+<path class="dg-edge" d="M510 92 H558" marker-end="url(#fjr23aa)"/>
+<text class="dg-tiny" x="534" y="84" text-anchor="middle">al final</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="560" y="60" width="90" height="64" rx="6"/>
+<text class="dg-label" x="605" y="88" text-anchor="middle" style="font-size:13px">VAE</text>
+<text class="dg-tiny" x="605" y="104" text-anchor="middle">a píxeles</text>
+<path class="dg-edge" d="M650 92 H678" marker-end="url(#fjr23aa)"/>
+<rect class="dg-box" x="680" y="60" width="80" height="64" rx="6"/>
+<text class="dg-label" x="720" y="96" text-anchor="middle" style="font-size:13px">Imagen</text>
+<text class="dg-small" x="10" y="204">Costo = pasos × una pasada completa del DiT. Por eso bajar de 50 a 4 pasos divide la GPU por 12.5.</text>
+<text class="dg-small" x="10" y="222">Entre dos vueltas, todo el estado es el latente: 128 × 128 × 16 × 2 bytes = 512 KiB.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 23.6 bis.</b> La difusión es un bucle: el mismo modelo entero se aplica una vez por paso. Mira la flecha de vuelta: cada vuelta cuesta lo mismo, y lo único que cambia entre vueltas es el latente, que es chico. De ahí salen el costo de 23.5 y la interrupción barata de 23.7.</figcaption>
+</figure>
+
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Imagina un restaurador que recibe un cuadro cubierto de manchas y, en cada pasada, quita solo una capa fina: mira el cuadro y la descripción de lo que debería haber ("un perro en la playa"), adivina qué parte es mancha y la limpia un poco. Con 50 pasadas queda nítido; con 4 pasadas de un restaurador muy entrenado (el modelo destilado) queda casi igual, mucho más rápido. Cada pasada cuesta lo mismo, porque el restaurador mira el cuadro entero cada vez.</p>
+      </aside>
+
       <p>Un modelo <a href="m12-llm-por-dentro.html#caja">autorregresivo</a> genera la imagen como un LLM genera texto: token de imagen por token de imagen, cada uno condicionado a los anteriores, y un decoder convierte los tokens en píxeles. La generación de imágenes de GPT-4o funciona así; su system card lo dice de forma explícita: "Unlike DALL·E, which operates as a diffusion model, 4o image generation is an autoregressive model natively embedded within ChatGPT". <span class="badge badge--doc">Documentado</span> Para servirlo, vale todo lo del M12 al M15: decode, KV cache, batching continuo.</p>
 
 <figure class="figure">
@@ -676,6 +737,15 @@ def validar(ruta: str) -&gt; Image.Image:
           </tbody>
         </table>
       </div>
+
+      <p><b>Cómo leer esta tabla.</b> Cada fila usa el resultado de la anterior, así que se lee de arriba abajo como una receta:</p>
+
+      <ol class="steps">
+        <li><span class="step-title">Cuánto trabajo es un paso</span>2 × 12 × 10⁹ × 4&#8239;608 tokens = 110.6 × 10¹² operaciones, es decir, 110.6 TFLOP (billones de operaciones de punto flotante).</li>
+        <li><span class="step-title">Cuánto trabajo hace la GPU por segundo</span>Una H100 promete 1&#8239;979 TFLOP por segundo en FP8, pero en la práctica se aprovecha una fracción: el MFU. Al 40&#8239;%, son 0.4 × 1&#8239;979 = 791.6 TFLOP por segundo útiles.</li>
+        <li><span class="step-title">Dividir</span>110.6 ÷ 791.6 = 0.14 s por paso. Es la misma cuenta que "kilómetros ÷ kilómetros por hora = horas".</li>
+        <li><span class="step-title">Multiplicar por los pasos</span>50 × 0.14 = 7 s; con 4 pasos, 0.56 s. En BF16 la GPU rinde la mitad (989 en lugar de 1&#8239;979), así que tarda el doble: 14 s.</li>
+      </ol>
 
       
       <figure class="figure">
@@ -1184,6 +1254,83 @@ data: {"id": "job_8f3", "images": 1}</code></pre>
           </tbody>
         </table>
       </div>
+
+      <p><b>Cómo leer esta tabla.</b> Primero sale cuántas GPUs están ocupadas en promedio, con la ley de Little: 2.31 imágenes por segundo × 7 segundos cada una = 16.2 GPUs trabajando a la vez. Eso no cambia entre filas. Lo que cambia es cuántas GPUs pones: el uso es ocupadas ÷ provisionadas (16.2 ÷ 24 = 67&#8239;%; 16.2 ÷ 17 = 95&#8239;%). La tercera columna dice qué fracción de los jobs llega y no encuentra ninguna GPU libre; las dos últimas, cuánto esperan. Fíjate en el salto: de 24 a 20 GPUs la espera p95 pasa de 0 a 3.1 s, pero de 18 a 17, una sola GPU menos, pasa de 9.3 a 23.2 s.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 236" role="img" aria-labelledby="fjr23bt fjr23bd">
+<title id="fjr23bt">Ocupadas contra provisionadas</title>
+<desc id="fjr23bd">Arriba, la ley de Little: llegan 2.31 imágenes por segundo, cada una ocupa una GPU 7 segundos, así que en promedio hay 16.2 GPUs ocupadas. Abajo, dos flotas. Con 24 GPUs, unas 16 están ocupadas y quedan 8 libres: el 67 por ciento de uso, y una ráfaga casi siempre encuentra lugar. Con 17 GPUs, 16 están ocupadas y queda una sola libre: el 95 por ciento de uso, y cualquier ráfaga hace cola.</desc>
+<defs><marker id="fjr23ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="10" y="14" width="220" height="56" rx="6"/>
+<text class="dg-label" x="120" y="38" text-anchor="middle" style="font-size:13px">Llegan 2.31 por segundo</text>
+<text class="dg-tiny" x="120" y="56" text-anchor="middle">pico del MVP</text>
+<path class="dg-edge" d="M230 42 H268" marker-end="url(#fjr23ba)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="270" y="14" width="220" height="56" rx="6"/>
+<text class="dg-label" x="380" y="38" text-anchor="middle" style="font-size:13px">× 7 s de GPU cada una</text>
+<text class="dg-tiny" x="380" y="56" text-anchor="middle">el DiT de 12 B, 50 pasos</text>
+<path class="dg-edge" d="M490 42 H528" marker-end="url(#fjr23ba)"/>
+<rect class="dg-box dg-box--em" x="530" y="14" width="230" height="56" rx="6"/>
+<text class="dg-label" x="645" y="38" text-anchor="middle" style="font-size:13px">= 16.2 GPUs ocupadas</text>
+<text class="dg-tiny" x="645" y="56" text-anchor="middle">en promedio (ley de Little)</text>
+<text class="dg-small" x="10" y="113">24 GPUs</text>
+<rect x="120" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="142" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="164" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="186" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="208" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="230" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="252" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="274" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="296" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="318" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="340" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="362" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="384" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="406" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="428" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="450" y="98" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect class="dg-box" x="472" y="98" width="18" height="22" rx="3"/>
+<rect class="dg-box" x="494" y="98" width="18" height="22" rx="3"/>
+<rect class="dg-box" x="516" y="98" width="18" height="22" rx="3"/>
+<rect class="dg-box" x="538" y="98" width="18" height="22" rx="3"/>
+<rect class="dg-box" x="560" y="98" width="18" height="22" rx="3"/>
+<rect class="dg-box" x="582" y="98" width="18" height="22" rx="3"/>
+<rect class="dg-box" x="604" y="98" width="18" height="22" rx="3"/>
+<rect class="dg-box" x="626" y="98" width="18" height="22" rx="3"/>
+<text class="dg-small" x="660" y="113">67 % de uso</text>
+<text class="dg-tiny" x="120" y="138">8 libres: una ráfaga casi siempre encuentra lugar</text>
+<text class="dg-small" x="10" y="173">17 GPUs</text>
+<rect x="120" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="142" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="164" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="186" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="208" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="230" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="252" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="274" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="296" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="318" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="340" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="362" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="384" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="406" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="428" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect x="450" y="158" width="18" height="22" rx="3" style="fill: var(--l-gpu)" opacity="0.7"/>
+<rect class="dg-box" x="472" y="158" width="18" height="22" rx="3"/>
+<text class="dg-small" x="510" y="173">95 % de uso</text>
+<text class="dg-tiny" x="120" y="198">1 libre: dos imágenes que llegan juntas ya hacen cola</text>
+<text class="dg-small" x="10" y="226">Lleno: GPU ocupada. Vacío: GPU libre. Lo ocupado no cambia; lo que eliges es cuánto margen dejas.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 23.11 bis.</b> La ley de Little dice cuántas GPUs trabajan; Erlang C dice cuánto espera la gente según cuántas sobran. Con 17 GPUs el promedio entra, pero el margen es una sola GPU, y las llegadas no son parejas: vienen en ráfagas.</figcaption>
+</figure>
+
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Las cajas de un supermercado. Si cada cliente tarda 3 minutos y llegan 5 por minuto, en promedio hay 15 cajas ocupadas (eso es la ley de Little). Con 20 cajas abiertas casi nunca haces fila. Con 16 abiertas, el promedio "entra", pero basta que lleguen tres clientes juntos para que se forme fila, y la fila tarda en desarmarse porque las cajas nunca quedan libres. Erlang C es la fórmula que calcula esa fila sin tener que simularla.</p>
+      </aside>
 
       
       <figure class="figure">

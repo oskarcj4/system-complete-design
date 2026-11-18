@@ -152,6 +152,50 @@
 
       <p>Continuous batching necesita memoria para el KV cache de cada request que entra. Los primeros sistemas reservaban de una vez el espacio para el contexto máximo, contiguo: una request que termina usando 2000 tokens de una reserva de 32 768 desperdicia el 94&#8239;% de su espacio. El paper de vLLM midió que los sistemas de entonces desperdiciaban entre el 60 y el 80&#8239;% de la memoria del KV cache. <span class="badge badge--doc">Documentado</span></p>
 
+      <p><b>Paso a paso, con los números del párrafo anterior.</b> Antes de mirar la tabla de bloques, conviene ver de dónde sale ese 94&#8239;%:</p>
+      <ol class="steps">
+        <li><span class="step-title">Reservar el máximo</span>El sistema viejo no sabe cuánto va a escribir la request, así que le guarda lugar para 32&#8239;768 tokens, todos seguidos.</li>
+        <li><span class="step-title">Usar lo que hace falta</span>La request termina con 2000 tokens: usa 2000 ÷ 32&#8239;768 = 6.1&#8239;% de su reserva.</li>
+        <li><span class="step-title">Contar lo perdido</span>Los otros 30&#8239;768 lugares (93.9&#8239;%, el "94&#8239;%") quedan apartados y vacíos hasta que la request termina: nadie más los puede usar.</li>
+        <li><span class="step-title">Lo mismo con bloques de 16</span>2000 ÷ 16 = 125 bloques justos, pedidos de a uno a medida que crece. Si fueran 2010 tokens, serían 126 bloques y sobrarían 6 lugares en el último: 6 de 2016, menos del 0.3&#8239;%.</li>
+      </ol>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="fjr15at fjr15ad">
+<title id="fjr15at">Reserva contigua contra bloques a pedido</title>
+<desc id="fjr15ad">Arriba, sin PagedAttention: una request recibe una reserva contigua de 32 768 tokens y usa solo 2000; los 30 768 restantes, el 94 por ciento, quedan vacíos y bloqueados. Abajo, con PagedAttention: la misma request pide 125 bloques de 16 tokens a medida que los necesita, que pueden estar en cualquier lugar de la memoria, y todo lo demás queda libre para otras requests.</desc>
+<text class="dg-group" x="20" y="24">Sin PagedAttention: reserva contigua para el contexto máximo</text>
+<rect class="dg-box" x="20" y="36" width="730" height="36" rx="6"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="20" y="36" width="46" height="36" rx="6"/>
+<text class="dg-small" x="408" y="59" text-anchor="middle">30&#8239;768 lugares reservados y vacíos: 94&#8239;% desperdiciado</text>
+<text class="dg-tiny" x="20" y="90">2000 tokens usados (6&#8239;%)</text>
+<text class="dg-tiny" x="750" y="90" text-anchor="end">nadie más puede usar este espacio</text>
+<text class="dg-group" x="20" y="128">Con PagedAttention: bloques de 16 tokens, pedidos cuando hacen falta</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="20" y="140" width="64" height="34" rx="6"/>
+<text class="dg-tiny" x="52" y="161" text-anchor="middle">bloque 0</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="96" y="140" width="64" height="34" rx="6"/>
+<text class="dg-tiny" x="128" y="161" text-anchor="middle">bloque 1</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="172" y="140" width="64" height="34" rx="6"/>
+<text class="dg-tiny" x="204" y="161" text-anchor="middle">bloque 2</text>
+<text class="dg-label" x="272" y="162" text-anchor="middle">…</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="308" y="140" width="80" height="34" rx="6"/>
+<text class="dg-tiny" x="348" y="161" text-anchor="middle">bloque 124</text>
+<rect x="420" y="140" width="64" height="34" rx="6" fill="var(--fill)"/>
+<text class="dg-tiny" x="452" y="161" text-anchor="middle">libre</text>
+<rect x="496" y="140" width="64" height="34" rx="6" fill="var(--fill)"/>
+<text class="dg-tiny" x="528" y="161" text-anchor="middle">libre</text>
+<rect x="572" y="140" width="64" height="34" rx="6" fill="var(--fill)"/>
+<text class="dg-tiny" x="604" y="161" text-anchor="middle">libre</text>
+<rect x="648" y="140" width="102" height="34" rx="6" fill="var(--fill)"/>
+<text class="dg-tiny" x="699" y="161" text-anchor="middle">libre para otros</text>
+<text class="dg-tiny" x="20" y="198">125 bloques × 16 = 2000 tokens. Cada bloque puede estar en cualquier lugar de la memoria: la tabla de bloques recuerda dónde.</text>
+<text class="dg-tiny" x="20" y="218">Lo que no se pidió queda libre para otras requests: por eso caben muchas más en el mismo batch.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 15.2a.</b> La misma request de 2000 tokens, con reserva contigua y con bloques a pedido. La reserva aparta 16 veces lo que se usa; los bloques apartan solo lo usado, redondeado al bloque.</figcaption>
+      </figure>
+
       <p><dfn data-term="pagedattention">PagedAttention</dfn> aplica la idea de la memoria virtual de un sistema operativo: el cache se divide en bloques de pocos tokens (16, por ejemplo), cada request tiene una tabla que traduce sus bloques lógicos a bloques físicos cualquiera, y un bloque nuevo se pide solo cuando el anterior se llena.</p>
 
       <figure class="figure">
@@ -224,6 +268,11 @@
       </figure>
 
       <p>Con el desperdicio por debajo del 4&#8239;%, caben muchas más requests en el mismo batch, y el throughput del paper de vLLM fue de 2 a 4 veces el de los sistemas anteriores con la misma latencia. Compartir bloques permite además generar varias respuestas para el mismo prompt (el botón de regenerar, o <code>n &gt; 1</code> en la API) sin copiar el cache del prompt: se copia un bloque solo cuando una de las respuestas lo modifica (copy-on-write).</p>
+
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Piensa en una playlist. Las canciones están guardadas en cualquier parte del disco, desordenadas; la playlist solo dice en qué orden tocarlas. La tabla de bloques es la playlist de cada request: sus bloques están desparramados por la memoria, y la tabla dice cuál va primero, cuál segundo. Dos playlists pueden incluir la misma canción sin copiarla (el bloque compartido, con su contador de referencias). Y si alguien quiere editar esa canción solo para su playlist, recién ahí se hace una copia para él: eso es copy-on-write.</p>
+      </aside>
 
       <figure class="figure">
         <div class="figure-frame">
@@ -444,6 +493,15 @@
         <figcaption><b>Figura 15.5.</b> El hash encadenado hace que un bloque represente todo lo que vino antes, no solo sus 16 tokens. La tabla de hashes de vLLM y el árbol de SGLang guardan la misma información. <span class="badge badge--doc">Documentado</span></figcaption>
       </figure>
 
+      <p><b>Paso a paso: cómo encuentra la request B lo que ya está calculado.</b> Con la figura 15.5 a la vista:</p>
+      <ol class="steps">
+        <li><span class="step-title">Primer bloque</span>El motor calcula h1 = hash(tokens 0–15) y lo busca en su tabla. Está, porque A lo dejó ahí: B usa ese bloque sin recalcularlo.</li>
+        <li><span class="step-title">Segundo bloque</span>Calcula h2 = hash(h1, tokens 16–31). Mete h1 en la cuenta a propósito: así h2 resume los 32 primeros tokens, no solo los 16 de su bloque. También está.</li>
+        <li><span class="step-title">Tercer bloque</span>h3 = hash(h2, tokens 32–47). Está: el historial es el mismo.</li>
+        <li><span class="step-title">Cuarto bloque</span>La pregunta de B es distinta, así que h4' no está en la tabla. Desde acá B hace su prefill normal: del token 48 en adelante (el 49.º contando desde 1). Se ahorró 48 de 64 tokens, el 75&#8239;%.</li>
+      </ol>
+      <p>¿Por qué encadenar y no hashear cada bloque solo? Porque el K y el V de un token dependen de todos los tokens anteriores (la atención mira hacia atrás, <a href="m12-llm-por-dentro.html#kv-cache">M12</a>). Si dos prompts tienen los mismos 16 tokens en el bloque 2 pero distinto prompt de sistema, sus K y V en ese bloque son distintos. Un hash del bloque solo los confundiría y el modelo leería un cache equivocado; el hash encadenado los distingue porque arrastra todo lo previo. Por eso basta cambiar una coma al principio del prompt de sistema para que no se reutilice nada.</p>
+
       <h2 id="chunked"><span class="sec-num">15.5</span>Chunked prefill: mezclar las dos fases</h2>
 
       <aside class="callout callout--simple">
@@ -638,6 +696,13 @@
         <figcaption><b>Figura 15.6.</b> El mismo prefill, entero y en trozos, con el modelo de costo de M12.1. Entero, deja a todos sin tokens durante 1.67 s; en trozos, cada usuario recibe un token cada 90 a 140 ms y el prefill termina apenas más tarde.</figcaption>
       </figure>
 
+      <p><b>Cómo leer esta figura.</b> Las dos filas son la misma réplica, con el tiempo de izquierda a derecha; cada punto es un momento en que los 64 usuarios reciben un token.</p>
+      <ul>
+        <li><b>Fila de arriba:</b> los puntos van muy juntos (un paso de decode solo dura 11.6 ms) hasta que llega el bloque ancho del prefill entero. Durante esos 1.67 s no hay ningún punto: el chat de los 64 usuarios se congela.</li>
+        <li><b>Fila de abajo:</b> el prompt de 30&#8239;000 tokens se parte en trozos de 2048. Son 14 trozos llenos (14 × 2048 = 28&#8239;672) y uno de 1328, en total 15 pasos. Cada paso es más lento que un decode solo (93 a 138 ms en lugar de 11.6), pero en cada uno los 64 usuarios reciben su token.</li>
+        <li><b>El precio:</b> el prefill termina a los 1.72 s en lugar de 1.67 s, unos 50 ms más para quien mandó el documento. A cambio, nadie se queda 1.67 s sin respuesta.</li>
+      </ul>
+
       <aside class="callout callout--tradeoff">
         <p class="callout-label">Trade-off</p>
         <p>El tamaño del trozo reparte el dolor. Trozos grandes terminan antes el prefill (mejor TTFT para quien acaba de llegar) y meten saltos más grandes en el decode de los demás (peor TPOT). Trozos chicos, al revés. En vLLM es el parámetro <code>--max-num-batched-tokens</code>.</p>
@@ -685,6 +750,14 @@
         <figcaption><b>Figura 15.7.</b> La desagregación cambia interferencia entre fases por transferencia de datos: cada request mueve su KV cache una vez, así que hace falta una red muy rápida entre los dos grupos.</figcaption>
       </figure>
 
+      <p><b>De dónde salen los 2.7 GB y los 54 ms.</b> Es la cuenta del KV cache de <a href="m12-llm-por-dentro.html#kv-cache">M12</a>, aplicada a una request:</p>
+      <ol class="steps">
+        <li><span class="step-title">Bytes por token</span>Llama 3.1 70B guarda, por cada token, un K y un V (×2) en cada una de sus 80 capas, con 8 cabezas de K y V de 128 números cada una, a 2 bytes por número en BF16: 2 × 80 × 8 × 128 × 2 = 327&#8239;680 bytes, unos 328 kB.</li>
+        <li><span class="step-title">Bytes por request</span>Un prompt de 8192 tokens: 8192 × 327&#8239;680 = 2&#8239;684&#8239;354&#8239;560 bytes, unos 2.7 GB.</li>
+        <li><span class="step-title">Tiempo en la red</span>A 50 GB/s: 2.68 ÷ 50 = 0.054 s, unos 54 ms. Con el KV cache en FP8 (1 byte por número) serían la mitad: 1.3 GB y unos 27 ms.</li>
+      </ol>
+      <p>Esos 54 ms se suman al TTFT de cada request. Si el prefill de esos 8192 tokens tarda varios cientos de milisegundos, el viaje es un costo chico; si los prompts fueran de 200 tokens, el viaje y la coordinación pesarían más que lo que se gana separando.</p>
+
       <p>La propusieron DistServe y Splitwise en 2024; Mooncake, el sistema de serving de Kimi, la usa en producción, y NVIDIA Dynamo y llm-d la ofrecen como opción de despliegue. <span class="badge badge--doc">Documentado</span> Conviene cuando los prompts son largos y los SLOs de TTFT y de TPOT son exigentes a la vez; con prompts cortos, el costo de mover el cache y de operar dos grupos no se paga.</p>
 
       <h2 id="speculative"><span class="sec-num">15.7</span>Speculative decoding</h2>
@@ -703,6 +776,50 @@
       <p>En el decode con pocos usuarios, la GPU tiene cómputo de sobra. El <dfn data-term="speculative-decoding">speculative decoding</dfn> lo aprovecha: un modelo chico y rápido (el draft) propone los próximos k tokens, y el modelo grande los verifica todos en una sola pasada, como si fuera un pequeño prefill. Los tokens se aceptan mientras coincidan con lo que el modelo grande habría elegido; en el primer desacuerdo se corrige y se sigue. El resultado sale con la misma distribución que el modelo grande solo, no es una aproximación. <span class="badge badge--doc">Documentado</span></p>
 
       <p>Si cada token propuesto se acepta con probabilidad α, cada pasada del modelo grande produce en promedio (1 − α<sup>k+1</sup>) ÷ (1 − α) tokens: con α = 0.7 y k = 4, unos 2.8 tokens en lugar de 1. Hay variantes sin modelo aparte: cabezas extra entrenadas sobre el propio modelo (Medusa, EAGLE) o la búsqueda de n-gramas en el prompt, que funciona muy bien cuando la respuesta copia partes de la entrada, como al editar código.</p>
+
+      <p><b>Paso a paso: de dónde sale la fórmula.</b> La fórmula parece rara, pero es una suma que se puede hacer a mano. Piensa en las posiciones de una ronda con k = 4 y α = 0.7:</p>
+      <ol class="steps">
+        <li><span class="step-title">Un token seguro</span>Toda pasada del modelo grande deja al menos un token suyo: la corrección en el primer error o, si acertaron las 4 propuestas, un token extra después de la cuarta. Vale 1.</li>
+        <li><span class="step-title">La propuesta 1</span>Se queda si el grande la acepta: probabilidad α = 0.7.</li>
+        <li><span class="step-title">La propuesta 2</span>Se queda solo si se aceptaron la 1 y la 2: 0.7 × 0.7 = 0.49. La propuesta 3 necesita tres aciertos seguidos: 0.343. La 4, cuatro: 0.24.</li>
+        <li><span class="step-title">Sumar</span>1 + 0.7 + 0.49 + 0.343 + 0.24 = 2.77 tokens por pasada, en promedio. La fórmula (1 − α<sup>5</sup>) ÷ (1 − α) = (1 − 0.168) ÷ 0.3 = 2.77 es la misma suma escrita corta.</li>
+      </ol>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 262" role="img" aria-labelledby="fjr15bt fjr15bd">
+<title id="fjr15bt">Cuánto aporta cada posición de una ronda especulativa</title>
+<desc id="fjr15bd">Barras para una ronda con k = 4 y α = 0.7. El token del modelo grande aporta siempre 1. La propuesta 1 aporta 0.7, la 2 aporta 0.49, la 3 aporta 0.343 y la 4 aporta 0.24, porque cada una necesita que todas las anteriores se hayan aceptado. La suma da 2.77 tokens por pasada.</desc>
+<text class="dg-group" x="20" y="22">Cuánto aporta cada posición, en promedio (α = 0.7, k = 4)</text>
+<path class="sim-axis" d="M20 210 H580"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="30" y="60" width="80" height="150" rx="6"/>
+<text class="dg-label" x="70" y="52" text-anchor="middle">1</text>
+<text class="dg-small" x="70" y="230" text-anchor="middle">del grande</text>
+<text class="dg-tiny" x="70" y="248" text-anchor="middle">siempre</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="145" y="105" width="80" height="105" rx="6"/>
+<text class="dg-label" x="185" y="97" text-anchor="middle">0.7</text>
+<text class="dg-small" x="185" y="230" text-anchor="middle">propuesta 1</text>
+<text class="dg-tiny" x="185" y="248" text-anchor="middle">α</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="260" y="136" width="80" height="74" rx="6"/>
+<text class="dg-label" x="300" y="128" text-anchor="middle">0.49</text>
+<text class="dg-small" x="300" y="230" text-anchor="middle">propuesta 2</text>
+<text class="dg-tiny" x="300" y="248" text-anchor="middle">α × α</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="375" y="159" width="80" height="51" rx="6"/>
+<text class="dg-label" x="415" y="151" text-anchor="middle">0.343</text>
+<text class="dg-small" x="415" y="230" text-anchor="middle">propuesta 3</text>
+<text class="dg-tiny" x="415" y="248" text-anchor="middle">α × α × α</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="490" y="174" width="80" height="36" rx="6"/>
+<text class="dg-label" x="530" y="166" text-anchor="middle">0.24</text>
+<text class="dg-small" x="530" y="230" text-anchor="middle">propuesta 4</text>
+<text class="dg-tiny" x="530" y="248" text-anchor="middle">α × α × α × α</text>
+<rect class="dg-box dg-box--em" x="604" y="90" width="150" height="80" rx="10"/>
+<text class="dg-small" x="679" y="116" text-anchor="middle">Suma</text>
+<text class="dg-big" x="679" y="146" text-anchor="middle">2.77</text>
+<text class="dg-tiny" x="679" y="162" text-anchor="middle">tokens por pasada</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 15.8a.</b> Cada propuesta vale menos que la anterior porque necesita que todas las previas se hayan aceptado. Por eso subir k rinde cada vez menos: una quinta propuesta aportaría 0.7<sup>5</sup> ≈ 0.17 tokens.</figcaption>
+      </figure>
 
       
       <figure class="figure">
@@ -849,6 +966,8 @@
           </tbody>
         </table>
       </div>
+
+      <p><b>Cómo leer esta tabla.</b> Mírala por la columna "Comunicación": cuanto más seguido tienen que hablar las GPUs entre sí, más cerca tienen que estar. Tensor parallelism habla dos veces por capa (160 veces por pasada en un modelo de 80 capas), así que solo funciona dentro de un servidor, con NVLink. Pipeline habla una vez por tramo y aguanta la red entre servidores. Expertos habla en cada capa MoE, pero solo con las GPUs de los expertos elegidos. Datos no habla nunca: por eso es la forma de escalar que siempre se usa, encima de las otras.</p>
 
       <p>Por debajo de todo esto hay trabajo a nivel de kernel que también es parte del motor. FlashAttention calcula la atención por bloques que caben en la SRAM del chip, sin escribir en la HBM la matriz de atención completa: el mismo resultado exacto con mucho menos tráfico de memoria (M13). Los CUDA graphs graban la secuencia de kernels de un paso de decode y la relanzan de una vez, porque con batches chicos el tiempo de lanzar cientos de kernels uno por uno llega a pesar tanto como el cómputo.</p>
 

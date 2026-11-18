@@ -1,0 +1,1865 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEC00. El laboratorio: Tienda Norte y su SIEM</title>
+<meta name="description" content="Tienda Norte mínima en FastAPI, PostgreSQL y Nginx con Docker Compose, Wazuh 4.14 en un solo nodo leyendo sus logs JSON, tres reglas propias probadas con wazuh-logtest y un script que provoca fuerza bruta, pedidos ajenos y un escaneo solo contra tu laboratorio.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="sec00" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>El laboratorio: Tienda Norte y su SIEM</h1>
+        <p class="lead">Una tienda pequeña que puedes atacar porque es tuya, sus logs en un solo lugar y la primera alerta que salta sola.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>SEC00</dd></div>
+          <div><dt>Plan</dt><dd>Blue Team y DevSecOps</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>2.5 h</dd></div>
+          <div><dt>Módulos</dt><dd>M59, M54</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="sec00">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Levantar Tienda Norte mínima (una API en FastAPI, PostgreSQL y Nginx) con Docker Compose, sin puertos abiertos fuera de tu máquina.</li>
+<li>Escribir eventos de seguridad como una línea JSON con campos fijos, y saber por qué ese formato le ahorra trabajo al SIEM.</li>
+<li>Instalar Wazuh en un solo nodo y hacer que lea los logs de la tienda por volúmenes de solo lectura.</li>
+<li>Escribir tres reglas propias, una de ellas de correlación, probarlas con <code>wazuh-logtest</code> y verlas saltar.</li>
+<li>Provocar fuerza bruta, lectura de pedidos ajenos y un escaneo de rutas, solo contra tu laboratorio, y encontrar cada alerta.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>Tienda Norte es la tienda en línea de la <a href="../modules/m54-threat-modeling.html#tienda">Parte VII</a>: dos personas, medio día por semana para la seguridad, y un threat model que dice qué puede salir mal. En <a href="../modules/m59-deteccion.html#tienda">59.10</a> elegiste sus diez primeras detecciones. Falta lo más básico: que los logs estén en un solo lugar y que una regla los mire sin que nadie tenga que acordarse.</p>
+<p>Esta guía arma el laboratorio de toda la serie SEC. Arriba, una tienda mínima que puedes atacar sin culpa, porque es tuya y vive en <code>127.0.0.1</code>. Abajo, Wazuh, un SIEM de código abierto, que lee sus logs y levanta tres alertas: fuerza bruta contra el login (la técnica T1110.001), una cuenta que recorre pedidos ajenos (BOLA, la fila 2 de la tabla de 59.10) y un escaneo de rutas que no existen. Las guías que siguen le suman un pipeline, una cadena de suministro firmada, un clúster y más reglas, siempre sobre esta misma tienda.</p>
+<p>La regla de la serie es defensiva: cada técnica se provoca solo contra tu laboratorio, con lo mínimo para que deje rastro, y termina en la alerta que la ve. El script que la provoca se niega a hablar con otra cosa que no sea <code>127.0.0.1</code>.</p>
+<figure class="figure" data-arch>
+  <div class="figure-frame">
+<svg viewBox="0 0 770 420" role="img" aria-labelledby="fs00t fs00d">
+<title id="fs00t">La arquitectura del laboratorio de SEC00</title>
+<desc id="fs00d">A la izquierda, provocar.py en tu terminal manda requests a Nginx en 127.0.0.1:8088. Nginx las pasa a la API de FastAPI, que consulta PostgreSQL. La API y Nginx escriben una línea JSON por evento en dos volúmenes de logs. Abajo, en otro compose, el manager de Wazuh lee esos volúmenes en solo lectura, aplica el decoder y las reglas, y manda las alertas al indexer; el dashboard las consulta. Ocho flechas numeradas.</desc>
+<defs><marker id="fs00a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="180" y="30" width="580" height="236" rx="10" fill="none" stroke-dasharray="5 4"/>
+<text class="dg-small" x="190" y="48">compose tienda-norte</text>
+<rect class="dg-frame" x="270" y="300" width="500" height="110" rx="10" fill="none" stroke-dasharray="5 4"/>
+<text class="dg-small" x="280" y="318">compose wazuh single-node</text>
+<path class="dg-edge" d="M140 88 L200 88" marker-end="url(#fs00a)"/>
+<path class="dg-edge" d="M320 88 L380 88" marker-end="url(#fs00a)"/>
+<path class="dg-edge" d="M500 88 L600 88" marker-end="url(#fs00a)"/>
+<path class="dg-edge" d="M440 116 L360 190" marker-end="url(#fs00a)"/>
+<path class="dg-edge" d="M260 116 L360 190" marker-end="url(#fs00a)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M360 246 L360 330" marker-end="url(#fs00a)"/>
+<path class="dg-edge" d="M430 358 L480 358" marker-end="url(#fs00a)"/>
+<path class="dg-edge" d="M640 358 L600 358" marker-end="url(#fs00a)"/>
+<g data-part="provocar"><rect class="dg-layer" x="20" y="60" width="120" height="56" rx="8" style="--c: var(--l-client)"/><text class="dg-label" x="80" y="80" text-anchor="middle">provocar.py</text><text class="dg-tiny dg-mono" x="80" y="96" text-anchor="middle">tu terminal</text></g>
+<g data-part="nginx"><rect class="dg-layer" x="200" y="60" width="120" height="56" rx="8" style="--c: var(--l-edge)"/><text class="dg-label" x="260" y="80" text-anchor="middle">Nginx</text><text class="dg-tiny dg-mono" x="260" y="96" text-anchor="middle">127.0.0.1:8088</text></g>
+<g data-part="api"><rect class="dg-layer" x="380" y="60" width="120" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="440" y="80" text-anchor="middle">API</text><text class="dg-tiny dg-mono" x="440" y="96" text-anchor="middle">FastAPI :8000</text></g>
+<g data-part="db"><rect class="dg-layer" x="600" y="60" width="140" height="56" rx="8" style="--c: var(--l-db)"/><text class="dg-label" x="670" y="80" text-anchor="middle">PostgreSQL</text><text class="dg-tiny dg-mono" x="670" y="96" text-anchor="middle">usuarios, pedidos</text></g>
+<g data-part="logs"><rect class="dg-layer" x="290" y="190" width="140" height="56" rx="8" style="--c: var(--l-queue)"/><text class="dg-label" x="360" y="210" text-anchor="middle">Volúmenes de logs</text><text class="dg-tiny dg-mono" x="360" y="226" text-anchor="middle">JSON, una línea</text></g>
+<g data-part="manager"><rect class="dg-layer" x="290" y="330" width="140" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="360" y="350" text-anchor="middle">wazuh.manager</text><text class="dg-tiny dg-mono" x="360" y="366" text-anchor="middle">decoder y reglas</text></g>
+<g data-part="indexer"><rect class="dg-layer" x="480" y="330" width="120" height="56" rx="8" style="--c: var(--l-db)"/><text class="dg-label" x="540" y="350" text-anchor="middle">wazuh.indexer</text><text class="dg-tiny dg-mono" x="540" y="366" text-anchor="middle">las alertas</text></g>
+<g data-part="dashboard"><rect class="dg-layer" x="640" y="330" width="120" height="56" rx="8" style="--c: var(--l-client)"/><text class="dg-label" x="700" y="350" text-anchor="middle">Dashboard</text><text class="dg-tiny dg-mono" x="700" y="366" text-anchor="middle">localhost:443</text></g>
+<g class="pl-pin"><circle cx="170" cy="88" r="10"/><text x="170" y="92" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="350" cy="88" r="10"/><text x="350" y="92" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="550" cy="88" r="10"/><text x="550" y="92" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="400" cy="153" r="10"/><text x="400" y="157" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="310" cy="153" r="10"/><text x="310" y="157" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="360" cy="288" r="10"/><text x="360" y="292" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="455" cy="358" r="10"/><text x="455" y="362" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="620" cy="358" r="10"/><text x="620" y="362" text-anchor="middle">8</text></g>
+</svg>
+  </div>
+  <figcaption><b>Figura SEC00.1.</b> Las dos mitades del laboratorio. Arriba, la tienda, que se puede atacar. Abajo, el SIEM, que la mira. Lo único que las une son los volúmenes de logs, montados de solo lectura (flecha 6).</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>#</th><th>De → a</th><th>Protocolo y formato</th><th>Ejemplo</th><th>Con qué permiso</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>provocar.py → Nginx</td><td>HTTP/1.1, JSON</td><td><code>POST /api/login</code></td><td>Ninguno: el login es público</td></tr>
+<tr><td>2</td><td>Nginx → API</td><td>HTTP/1.1 por la red interna de Compose</td><td>La misma request, con <code>X-Real-IP</code></td><td>Solo Nginx llega a la API: no publica puertos</td></tr>
+<tr><td>3</td><td>API → PostgreSQL</td><td>Protocolo de PostgreSQL</td><td><code>SELECT … FROM pedidos WHERE id = %s</code></td><td>El usuario <code>tienda</code>, con la clave del <code>.env</code></td></tr>
+<tr><td>4</td><td>API → volumen</td><td>Archivo, una línea JSON por evento</td><td><code>{"evento":"login_fallido",…}</code></td><td>El usuario 10001 del contenedor escribe</td></tr>
+<tr><td>5</td><td>Nginx → volumen</td><td>Archivo, una línea JSON por request</td><td><code>{"ruta":"/.env","estado":"404",…}</code></td><td>El proceso maestro de Nginx escribe</td></tr>
+<tr><td>6</td><td>Volumen → manager</td><td>Lectura del archivo (logcollector)</td><td><code>/var/log/tienda/api/api.log</code></td><td>Montado <code>:ro</code>: el SIEM no puede borrar</td></tr>
+<tr><td>7</td><td>Manager → indexer</td><td>HTTPS con certificados propios</td><td>Una alerta con <code>rule.id</code> 100102</td><td>Los certificados que genera wazuh-docker</td></tr>
+<tr><td>8</td><td>Dashboard → indexer</td><td>HTTPS</td><td>La búsqueda <code>rule.id:100102</code></td><td>El usuario <code>admin</code> del dashboard</td></tr>
+</tbody>
+</table>
+</div>
+<p><b>Las fronteras.</b> Nada sale de tu máquina: Nginx escucha en <code>127.0.0.1:8088</code>, la API y la base no publican puertos, y los logs viajan por volúmenes de Docker, no por la red. Wazuh sí publica sus puertos en todas las interfaces de tu máquina con su compose oficial; en <a href="#limitaciones">Limitaciones</a> está qué hacer con eso. La base entra con el rol <code>tienda</code>, dueño de sus tablas: en esta guía no hay mínimo privilegio en la base, y es a propósito, porque la serie mira la detección y no el endurecimiento de PostgreSQL (eso es <a href="../modules/m35-seguridad-bd.html">M35</a>).</p>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="fs00vt fs00vd">
+<title id="fs00vt">Un login fallido, de la terminal a la alerta</title>
+<desc id="fs00vd">provocar.py manda un login con clave equivocada a Nginx, que lo pasa a la API. La API compara el hash, escribe un evento login_fallido en su archivo y responde 401. El manager de Wazuh lee la línea, la decodifica, coincide con la regla 100101 y, con la octava en dos minutos, con la 100102, y la alerta va al indexer.</desc>
+<defs><marker id="fs00v-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs00v-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs00v-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs00v-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">provocar.py</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="165.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="227.5" y="29" text-anchor="middle" style="font-size:13.5px">Nginx</text>
+<path class="dg-frame" d="M227.5 40 V366"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">API</text>
+<path class="dg-frame" d="M385.0 40 V366"/>
+<rect class="dg-box" x="480.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="542.5" y="29" text-anchor="middle" style="font-size:13.5px">api.log</text>
+<path class="dg-frame" d="M542.5 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">wazuh.manager</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<path class="dg-edge" d="M73.0 72 L222.5 72" marker-end="url(#fs00v-a)"/>
+<rect x="93.25" y="55" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="66" text-anchor="middle">POST /api/login</text>
+<path class="dg-edge" d="M230.5 106 L380.0 106" marker-end="url(#fs00v-a)"/>
+<rect x="263.95" y="89" width="84.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="306.25" y="100" text-anchor="middle">+ X-Real-IP</text>
+<rect x="395.0" y="126" width="153" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="405.0" y="142">scrypt: no coincide</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M388.0 174 L537.5 174" marker-end="url(#fs00v-q)"/>
+<rect x="368.65" y="157" width="190.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="463.75" y="168" text-anchor="middle">{&quot;evento&quot;:&quot;login_fallido&quot;…}</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M382.0 208 L75.0 208" marker-end="url(#fs00v-f)"/>
+<rect x="211.6" y="191" width="31.799999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="202" text-anchor="middle">401</text>
+<path class="dg-edge" d="M697.0 242 L547.5 242" marker-end="url(#fs00v-a)"/>
+<rect x="555.85" y="225" width="130.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="621.25" y="236" text-anchor="middle">lee la línea nueva</text>
+<rect x="523.0" y="262" width="167" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="533.0" y="278">regla 100101, nivel 5</text>
+<rect x="460.0" y="296" width="230" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="470.0" y="312">8.ª en 120 s: 100102, nivel 10</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC00.2.</b> La versión corta. La completa, con el indexer y el dashboard, está en <a href="#viaje">El viaje de un dato</a>.</figcaption>
+</figure>
+<h2 id="antes">Antes de empezar</h2>
+<p>Esta es la primera guía de la serie SEC y no supone que hayas usado Docker, un SIEM ni FastAPI. La lámina presenta las piezas por las que pasa un evento; cada una tiene su apartado más abajo.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="fs00pt fs00pd">
+<title id="fs00pt">Lámina SEC00.A: de una línea de log a una alerta</title>
+<desc id="fs00pd">Seis cajas en fila: la línea JSON que escribe la API, el volumen de logs, el logcollector del manager, el decoder json, las reglas y la alerta. Debajo, la regla de correlación que cuenta eventos, el nivel de la alerta y la técnica de MITRE ATT&amp;CK. Nueve marcas numeradas.</desc>
+<defs><marker id="fs00pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="40" width="100" height="60" rx="8"/>
+<text class="dg-label" x="70" y="66" text-anchor="middle">Línea JSON</text>
+<text class="dg-tiny dg-mono" x="70" y="84" text-anchor="middle">api.log</text>
+<path class="dg-edge" d="M122 70 H142" marker-end="url(#fs00pa)"/>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="146" y="40" width="100" height="60" rx="8"/>
+<text class="dg-label" x="196" y="66" text-anchor="middle">Volumen</text>
+<text class="dg-tiny dg-mono" x="196" y="84" text-anchor="middle">solo lectura</text>
+<path class="dg-edge" d="M248 70 H268" marker-end="url(#fs00pa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="272" y="40" width="100" height="60" rx="8"/>
+<text class="dg-label" x="322" y="66" text-anchor="middle">logcollector</text>
+<text class="dg-tiny dg-mono" x="322" y="84" text-anchor="middle">lee el archivo</text>
+<path class="dg-edge" d="M374 70 H394" marker-end="url(#fs00pa)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="398" y="40" width="100" height="60" rx="8"/>
+<text class="dg-label" x="448" y="66" text-anchor="middle">Decoder</text>
+<text class="dg-tiny dg-mono" x="448" y="84" text-anchor="middle">json</text>
+<path class="dg-edge" d="M500 70 H520" marker-end="url(#fs00pa)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="524" y="40" width="100" height="60" rx="8"/>
+<text class="dg-label" x="574" y="66" text-anchor="middle">Reglas</text>
+<text class="dg-tiny dg-mono" x="574" y="84" text-anchor="middle">propias</text>
+<path class="dg-edge" d="M626 70 H646" marker-end="url(#fs00pa)"/>
+<rect class="dg-warnbox" x="650" y="40" width="100" height="60" rx="8"/>
+<text class="dg-label" x="700" y="66" text-anchor="middle">Alerta</text>
+<text class="dg-tiny dg-mono" x="700" y="84" text-anchor="middle">alerts.json</text>
+<rect class="dg-box" x="398" y="150" width="226" height="70" rx="8"/>
+<text class="dg-label" x="511" y="176" text-anchor="middle">Regla de correlación</text>
+<text class="dg-tiny dg-mono" x="511" y="196" text-anchor="middle">frequency, timeframe, same_field</text>
+<path class="dg-feedback" d="M574 100 V150"/>
+<rect class="dg-box" x="650" y="150" width="100" height="70" rx="8"/>
+<text class="dg-label" x="700" y="176" text-anchor="middle">Nivel</text>
+<text class="dg-tiny dg-mono" x="700" y="196" text-anchor="middle">0 a 15</text>
+<rect class="dg-box" x="146" y="150" width="226" height="70" rx="8"/>
+<text class="dg-label" x="259" y="176" text-anchor="middle">Técnica de ATT&amp;CK</text>
+<text class="dg-tiny dg-mono" x="259" y="196" text-anchor="middle">&lt;mitre&gt;&lt;id&gt;T1110.001</text>
+<path class="dg-feedback" d="M372 185 H398"/>
+<path class="dg-feedback" d="M700 100 V150"/>
+<g class="pl-pin"><circle cx="30" cy="32" r="11"/><text x="30" y="36" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="156" cy="32" r="11"/><text x="156" y="36" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="282" cy="32" r="11"/><text x="282" y="36" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="408" cy="32" r="11"/><text x="408" y="36" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="534" cy="32" r="11"/><text x="534" y="36" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="660" cy="32" r="11"/><text x="660" y="36" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="408" cy="142" r="11"/><text x="408" y="146" text-anchor="middle">7</text></g>
+<g class="pl-pin"><circle cx="660" cy="142" r="11"/><text x="660" y="146" text-anchor="middle">8</text></g>
+<g class="pl-pin"><circle cx="156" cy="142" r="11"/><text x="156" y="146" text-anchor="middle">9</text></g>
+</svg>
+</div>
+<figcaption><b>Lámina SEC00.A.</b> De una línea de log a una alerta. Arriba, el camino; abajo, lo que decide si la alerta sale y cómo se llama.</figcaption>
+</figure>
+<ol class="plate-key">
+  <li><b>Línea JSON</b><span>Un evento por línea, con campos fijos (<code>app</code>, <code>evento</code>, <code>usuario</code>, <code>ip</code>). <a href="#ae-json">Una línea JSON</a></span></li>
+  <li><b>Volumen</b><span>Un disco con nombre que Docker comparte entre contenedores; aquí la tienda escribe y Wazuh lee. <a href="#ae-docker">Los volúmenes</a></span></li>
+  <li><b>logcollector</b><span>El proceso de Wazuh que sigue un archivo y manda cada línea nueva a analizar. <a href="#ae-siem">Qué trae Wazuh</a></span></li>
+  <li><b>Decoder</b><span>Lo que parte la línea en campos; para JSON, Wazuh trae uno. <a href="#ae-reglas">Decoder y regla</a></span></li>
+  <li><b>Regla</b><span>Una condición sobre los campos que, si coincide, deja un nivel y una descripción. <a href="#ae-reglas">Decoder y regla</a></span></li>
+  <li><b>Alerta</b><span>Lo que queda cuando una regla de nivel 3 o más coincide. <a href="#ae-reglas">Decoder y regla</a></span></li>
+  <li><b>Regla de correlación</b><span>Una regla que cuenta coincidencias de otra en una ventana de tiempo. <a href="#ae-correlacion">La correlación</a></span></li>
+  <li><b>Nivel</b><span>De 0 a 15: qué tan grave es. 0 no deja alerta. <a href="#ae-reglas">Decoder y regla</a></span></li>
+  <li><b>Técnica de ATT&amp;CK</b><span>El nombre común de lo que hace el atacante, como T1110.001. <a href="#ae-attack">ATT&amp;CK</a></span></li>
+</ol>
+<h3 id="antes-instalar">Qué tienes que tener instalado</h3>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Herramienta</th><th>Para qué</th><th>Cómo compruebas que está</th></tr></thead>
+<tbody>
+<tr><td>Docker Desktop o Docker Engine con Compose</td><td>La tienda y Wazuh</td><td><code>docker compose version</code> responde con una versión 2</td></tr>
+<tr><td>git</td><td>Bajar wazuh-docker en su versión exacta</td><td><code>git --version</code></td></tr>
+<tr><td>Python 3.13</td><td>Correr <code>provocar.py</code>, que usa solo la biblioteca estándar</td><td><code>python --version</code> (o <code>py --version</code> en Windows)</td></tr>
+<tr><td>Un navegador</td><td>El dashboard de Wazuh en <code>https://localhost</code></td><td>Ya lo tienes</td></tr>
+</tbody>
+</table>
+</div>
+<p>Wazuh necesita memoria: su indexer es OpenSearch. La documentación de wazuh-docker pide subir <code>vm.max_map_count</code> a 262144 en el host de Docker y reservar varios GB de RAM para los contenedores <span class="badge badge--doc">Documentado</span>. Si tu máquina tiene 8 GB, cierra lo que no uses mientras corre el laboratorio.</p>
+<h3 id="ae-docker">Docker Compose y los volúmenes</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un compose es la lista de compras de una cocina: qué electrodomésticos hay, qué enchufe usa cada uno y qué despensa comparten. Un volumen con nombre es esa despensa: la tienda deja cosas y Wazuh las mira, con la puerta de su lado solo para mirar.</p>
+</aside>
+<p>Docker Compose levanta varios contenedores desde un archivo YAML. Cada servicio es un contenedor; los que están en el mismo compose se ven por su nombre (<code>api</code>, <code>db</code>). Un <b>volumen</b> es un directorio que Docker guarda aparte y monta dentro de un contenedor; si le pones un <code>name</code> fijo, otro compose puede montarlo como <code>external</code>. Así cruzan los logs de la tienda al SIEM sin abrir un puerto. Si nunca usaste Compose, <a href="ia00-laboratorio.html">IA00</a> lo presenta desde cero.</p>
+<h3 id="ae-json">Un evento, una línea JSON</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es la diferencia entre un formulario y una carta. A la carta hay que leerla entera para encontrar el nombre; en el formulario, el nombre está siempre en la misma casilla.</p>
+</aside>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 334" role="img" aria-labelledby="fs00f1t fs00f1d">
+<title id="fs00f1t">Ficha: el evento JSON</title>
+<desc id="fs00f1d">Ficha de Ficha: el evento JSON. Qué entra: Lo que pasó en la API: el nombre del evento y sus datos. Qué hace: Lo escribe en una sola línea, con app, ts y evento fijos y el resto después. Qué sale: Una línea que el SIEM parte en campos sin un decoder propio. Ejemplo: evento(&quot;login_fallido&quot;, usuario=&quot;ana&quot;, ip=&quot;172.18.0.1&quot;) {&quot;app&quot;:&quot;tienda&quot;,&quot;ts&quot;:&quot;2026-11-09T15:00:00.000+00:00&quot;,&quot;evento&quot;:&quot;login_fallido&quot;,&quot;usuario&quot;:&quot;ana&quot;,&quot;ip&quot;:&quot;172.18.0.1&quot;} Qué falla sin él: Texto libre: cada regla necesita una expresión regular que se rompe cuando alguien cambia el mensaje. Dónde vive: api/registro.py, que usa app.py. Paso 2.</desc>
+<defs><marker id="fs00f1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="32" y="36">Qué entra</text>
+<text class="dg-tiny" x="32" y="56">Lo que pasó en la API: el</text>
+<text class="dg-tiny" x="32" y="72">nombre del evento y sus datos.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="291" y="36">Qué hace</text>
+<text class="dg-tiny" x="291" y="56">Lo escribe en una sola línea,</text>
+<text class="dg-tiny" x="291" y="72">con app, ts y evento fijos y el</text>
+<text class="dg-tiny" x="291" y="88">resto después.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="550" y="36">Qué sale</text>
+<text class="dg-tiny" x="550" y="56">Una línea que el SIEM parte en</text>
+<text class="dg-tiny" x="550" y="72">campos sin un decoder propio.</text>
+<path class="dg-edge" d="M234 67 H275" marker-end="url(#fs00f1a)"/>
+<path class="dg-edge" d="M493 67 H534" marker-end="url(#fs00f1a)"/>
+<rect class="dg-box" x="20" y="132" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="152">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="172" style="white-space:pre">evento(&quot;login_fallido&quot;, usuario=&quot;ana&quot;, ip=&quot;172.18.0.1&quot;)</text>
+<text class="dg-tiny dg-mono" x="32" y="188" style="white-space:pre">{&quot;app&quot;:&quot;tienda&quot;,&quot;ts&quot;:&quot;2026-11-09T15:00:00.000+00:00&quot;,&quot;evento&quot;:&quot;login_fallido&quot;,&quot;usuario&quot;:&quot;ana&quot;,&quot;ip&quot;:&quot;172.18.0.1&quot;}</text>
+<rect class="dg-warnbox" x="20" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="252">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="272">Texto libre: cada regla necesita una expresión regular</text>
+<text class="dg-tiny" x="32" y="288">que se rompe cuando alguien cambia el mensaje.</text>
+<rect class="dg-box" x="393" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="252">Dónde vive</text>
+<text class="dg-tiny" x="405" y="272">api/registro.py, que usa app.py. Paso 2.</text>
+</svg>
+  </div>
+  <figcaption><b>Ficha SEC00.F1.</b> El evento JSON.</figcaption>
+</figure>
+<h3 id="ae-siem">Qué es un SIEM y qué trae Wazuh</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un SIEM es la sala de cámaras de un edificio: recibe lo que ven todas las cámaras, guarda las grabaciones y suena una alarma cuando ve algo de una lista. Sin ella, cada cámara graba en su cajón y nadie mira.</p>
+</aside>
+<p>Un SIEM junta los logs de muchas fuentes, los normaliza, guarda la historia y corre reglas sobre ella; está explicado en <a href="../modules/m59-deteccion.html#siem">59.4</a>. Wazuh trae tres piezas, cada una en su contenedor:</p>
+<ul>
+<li><b>wazuh.manager</b>: recibe los logs (de <span class="no-autolink">agentes</span> o, aquí, de archivos que lee él mismo con su logcollector), los decodifica, corre las reglas y escribe las alertas.</li>
+<li><b>wazuh.indexer</b>: guarda las alertas para buscarlas. Es un OpenSearch.</li>
+<li><b>wazuh.dashboard</b>: la interfaz web, en <code>https://localhost</code>.</li>
+</ul>
+<h3 id="ae-reglas">Decoder, regla, nivel y alerta</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>El decoder es quien abre el sobre y separa remitente, fecha y asunto. Las reglas son la persona que lee el asunto y decide si va a la pila de urgentes, a la de normales o a la basura.</p>
+</aside>
+<p>Wazuh pasa cada línea por tres fases: <b>predecodificación</b> (fecha y origen), <b>decodificación</b> (los campos; con <code>log_format json</code> lo hace el decoder <code>json</code>) y <b>reglas</b>. Una regla tiene un <code>id</code>, un <code>level</code> de 0 a 15 y condiciones: <code>decoded_as</code>, <code>field</code> con una expresión regular, o <code>if_sid</code> para encadenarse a otra regla. Si coinciden varias, gana la más específica del árbol. Con nivel 0, la línea se reconoce pero no deja alerta; desde nivel 3 queda en <code>alerts.json</code> y en el indexer <span class="badge badge--doc">Documentado</span>. Los ids del 100000 al 120000 son los que Wazuh reserva para reglas propias.</p>
+<h3 id="ae-correlacion">La regla de correlación</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un portazo no es nada. Ocho portazos en dos minutos en la misma puerta sí: alguien está probando llaves.</p>
+</aside>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 334" role="img" aria-labelledby="fs00f2t fs00f2d">
+<title id="fs00f2t">Ficha: la regla de correlación</title>
+<desc id="fs00f2d">Ficha de Ficha: la regla de correlación. Qué entra: Las coincidencias de otra regla, con sus campos. Qué hace: Las cuenta en una ventana y las agrupa por un campo. Qué sale: Una alerta de nivel alto cuando la cuenta llega al umbral. Ejemplo: &lt;rule id=&quot;100102&quot; level=&quot;10&quot; frequency=&quot;8&quot; timeframe=&quot;120&quot;&gt;   &lt;if_matched_sid&gt;100101&lt;/if_matched_sid&gt; &lt;same_field&gt;ip&lt;/same_field&gt; Qué falla sin él: Cada login fallido es una alerta igual de grave: ocho mil al día, y la fuerza bruta se pierde entre ellas. Dónde vive: wazuh/tienda_rules.xml, reglas 100102, 100104 y 100112. Paso 7.</desc>
+<defs><marker id="fs00f2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="32" y="36">Qué entra</text>
+<text class="dg-tiny" x="32" y="56">Las coincidencias de otra</text>
+<text class="dg-tiny" x="32" y="72">regla, con sus campos.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="291" y="36">Qué hace</text>
+<text class="dg-tiny" x="291" y="56">Las cuenta en una ventana y las</text>
+<text class="dg-tiny" x="291" y="72">agrupa por un campo.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="550" y="36">Qué sale</text>
+<text class="dg-tiny" x="550" y="56">Una alerta de nivel alto cuando</text>
+<text class="dg-tiny" x="550" y="72">la cuenta llega al umbral.</text>
+<path class="dg-edge" d="M234 67 H275" marker-end="url(#fs00f2a)"/>
+<path class="dg-edge" d="M493 67 H534" marker-end="url(#fs00f2a)"/>
+<rect class="dg-box" x="20" y="132" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="152">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="172" style="white-space:pre">&lt;rule id=&quot;100102&quot; level=&quot;10&quot; frequency=&quot;8&quot; timeframe=&quot;120&quot;&gt;</text>
+<text class="dg-tiny dg-mono" x="32" y="188" style="white-space:pre">  &lt;if_matched_sid&gt;100101&lt;/if_matched_sid&gt; &lt;same_field&gt;ip&lt;/same_field&gt;</text>
+<rect class="dg-warnbox" x="20" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="252">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="272">Cada login fallido es una alerta igual de grave: ocho</text>
+<text class="dg-tiny" x="32" y="288">mil al día, y la fuerza bruta se pierde entre ellas.</text>
+<rect class="dg-box" x="393" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="252">Dónde vive</text>
+<text class="dg-tiny" x="405" y="272">wazuh/tienda_rules.xml, reglas 100102, 100104 y</text>
+<text class="dg-tiny" x="405" y="288">100112. Paso 7.</text>
+</svg>
+  </div>
+  <figcaption><b>Ficha SEC00.F2.</b> La regla de correlación.</figcaption>
+</figure>
+<p><code>frequency</code> es cuántas veces tiene que haber coincidido la regla de <code>if_matched_sid</code>, <code>timeframe</code> la ventana en segundos, y <code>same_field</code> obliga a que esas coincidencias compartan el valor del campo: la misma <code>ip</code>, no ocho IP distintas. El umbral es una decisión y tiene costo: es el mismo equilibrio entre ruido y ceguera de <a href="../modules/m59-deteccion.html#calidad">59.8</a>.</p>
+<h3 id="ae-attack">La técnica de ATT&amp;CK en cada regla</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Es el código de diagnóstico que el médico anota además de "le duele la panza": otra persona, en otro hospital, entiende lo mismo.</p>
+</aside>
+<p>MITRE ATT&amp;CK le da un id a cada técnica de ataque (<a href="../modules/m59-deteccion.html#attack">59.5</a>). La etiqueta <code>&lt;mitre&gt;</code> de una regla la anota en la alerta, y el dashboard de Wazuh agrupa por técnica. Las tres de esta guía: T1110.001 (adivinar la clave de una cuenta), T1213 (leer datos de un repositorio de información, como hace quien recorre pedidos ajenos, la fila 2 de 59.10) y T1595.003 (escaneo con lista de palabras).</p>
+<h2 id="endpoints">Los endpoints</h2>
+<p>La tienda es mínima a propósito: lo justo para que cada técnica deje un rastro distinto. No hay registro de usuarios ni carrito; ana y beto vienen en la semilla.</p>
+<div class="table-wrap">
+<table class="t pj-ep">
+<thead><tr><th>Método y ruta</th><th>Qué hace</th><th>Respuestas</th></tr></thead>
+<tbody>
+<tr><td><span class="ep-method" data-m="POST">POST</span><code>/api/login</code></td><td>Recibe <code>{"usuario","clave"}</code>, compara con scrypt y devuelve un token. Escribe <code>login_ok</code> o <code>login_fallido</code>.</td><td>200 con <code>{"token"}</code>; 401</td></tr>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>/api/productos</code></td><td>La lista de productos. Pública.</td><td>200</td></tr>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>/api/pedidos/{id}</code></td><td>Un pedido, solo si es de quien trae el token. Si es de otra persona, escribe <code>pedido_ajeno</code>.</td><td>200; 401 sin token; 404 si no existe o no es tuyo</td></tr>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>/api/salud</code></td><td>Responde si la API está viva.</td><td>200 con <code>{"ok": true}</code></td></tr>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>/cualquier-otra-ruta</code></td><td>Nginx responde 404 sin pasar por la API, y lo deja en su log.</td><td>404</td></tr>
+</tbody>
+</table>
+</div>
+<p>Wazuh trae su propia API REST en el puerto 55000; esta guía no la usa (SEC08 sí).</p>
+<h2 id="dependencias">Dependencias</h2>
+<p>La tienda usa tres paquetes de Python, fijados con <code>==</code>. <code>provocar.py</code> no necesita ninguno: usa solo <code>urllib</code>.</p>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Fija las tres dependencias de la API con su versión exacta.</li>
+  </ol>
+</div>
+<pre data-lang="shell"><code>fastapi==0.143.3
+uvicorn==0.54.0
+psycopg[binary]==3.3.6</code></pre>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver api/requirements.txt completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="shell" data-file="api/requirements.txt"><code>fastapi==0.143.3
+uvicorn==0.54.0
+psycopg[binary]==3.3.6</code></pre>
+  </div>
+</details>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Paquete</th><th>Versión</th><th>Para qué</th></tr></thead>
+<tbody>
+<tr><td>fastapi</td><td>0.143.3</td><td>Las rutas, la validación del cuerpo con Pydantic y los encabezados.</td></tr>
+<tr><td>uvicorn</td><td>0.54.0</td><td>El servidor ASGI que corre la app dentro del contenedor.</td></tr>
+<tr><td>psycopg[binary]</td><td>3.3.6</td><td>El cliente de PostgreSQL, con su librería C incluida.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Las versiones son las mismas de <a href="ml01-linea-base.html">ML01</a> y de las guías A, verificadas en PyPI <span class="badge badge--doc">Documentado</span>. Wazuh va en la versión 4.14.10 de wazuh-docker, la última estable al 9 de noviembre de 2026; la 5.0 todavía es una versión preliminar <span class="badge badge--doc">Documentado</span>.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<p>Todo vive en una carpeta, <code>sec-lab</code>, con dos hermanas: la tienda, que escribes tú, y wazuh-docker, que bajas con git. Las rutas relativas del override de Wazuh dependen de que estén lado a lado.</p>
+<pre data-lang="text"><code>sec-lab/
+├── tienda-norte/                 # la víctima: la escribes en el hito 1
+│   ├── .env                      # la clave de la base, fuera de git
+│   ├── .gitignore
+│   ├── compose.yaml
+│   ├── provocar.py               # hito 3
+│   ├── api/
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   ├── registro.py
+│   │   └── app.py
+│   ├── db/
+│   │   └── init.sql
+│   ├── nginx/
+│   │   └── nginx.conf
+│   └── wazuh/
+│       ├── tienda_rules.xml      # hito 2
+│       └── muestras.jsonl
+└── wazuh-docker/                 # git clone, hito 2
+    └── single-node/
+        ├── docker-compose.yml    # el oficial: no se toca
+        ├── docker-compose.override.yml   # el tuyo
+        └── config/wazuh_cluster/wazuh_manager.conf</code></pre>
+<p>Son dos composes distintos a propósito. La tienda se rompe, se borra y se vuelve a levantar muchas veces en la serie; Wazuh tarda en arrancar y guarda la historia de las alertas. Separados, uno no arrastra al otro.</p>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<aside class="hito" id="hito-1" data-toc="skip" aria-labelledby="hito-1-t">
+  <p class="hito-num">Hito 1 de 3, unos 50 min</p>
+  <p class="hito-title" id="hito-1-t">La tienda andando</p>
+  <p>Tienda Norte responde en 127.0.0.1:8088 y cada login, cada pedido ajeno y cada request a Nginx deja una línea JSON en un volumen.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-base">La base y su semilla</a></li>
+    <li><a href="#paso-registro">El registro de eventos</a></li>
+    <li><a href="#paso-api">La API</a></li>
+    <li><a href="#paso-proxy">Nginx, el compose y el arranque</a></li>
+  </ol>
+</aside>
+<h3 id="paso-base">Paso 1. La base y su semilla</h3>
+<div class="step-map" data-where="db">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Nada: el contenedor de PostgreSQL arranca vacío.</dd></div>
+    <div><dt>Sale</dt><dd>Tres tablas, dos usuarios con su hash y cinco pedidos.</dd></div>
+    <div><dt>Cambia</dt><dd><code>db/init.sql</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-docker">Docker Compose y los volúmenes</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="db">
+  <h4 class="file-card-path" id="archivo-db-init-sql">db/init.sql<span class="file-card-size">26 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Crea las tablas y carga la semilla la primera vez que arranca la base.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>La imagen de PostgreSQL, que corre todo lo que hay en <code>/docker-entrypoint-initdb.d/</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Las tablas <code>usuarios</code>, <code>productos</code> y <code>pedidos</code> con datos.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Crea la tabla de usuarios, la de productos y la de pedidos.</li>
+    <li>Carga a ana y a beto con su sal y su hash.</li>
+    <li>Carga tres productos y cinco pedidos: tres de ana y dos de beto.</li>
+  </ol>
+</div>
+<pre data-lang="sql"><code>-- (1)
+CREATE TABLE usuarios (
+    id      serial PRIMARY KEY,
+    usuario text UNIQUE NOT NULL,
+    sal     text NOT NULL,
+    hash    text NOT NULL
+);
+CREATE TABLE productos (
+    id     serial PRIMARY KEY,
+    nombre text NOT NULL,
+    precio numeric(10, 2) NOT NULL
+);
+CREATE TABLE pedidos (
+    id         serial PRIMARY KEY,
+    usuario_id int NOT NULL REFERENCES usuarios (id),
+    total      numeric(10, 2) NOT NULL,
+    creado     timestamptz NOT NULL DEFAULT now()
+);
+---
+-- (2)
+INSERT INTO usuarios (usuario, sal, hash) VALUES
+    (&#x27;ana&#x27;,  &#x27;8f1c2a9e4b7d6031a5c2e9f04b8d7163&#x27;, &#x27;0a91995ba643bfe491d019e85fc77b2081666e6503022a5e66896413be7d0fc1&#x27;),
+    (&#x27;beto&#x27;, &#x27;2b9e7d41c0a8f5e3d6b1c4a7092e8f5d&#x27;, &#x27;4688107a878641133287dfd59c84315337d631391ba83660cedd0e5464d2d3d2&#x27;);
+
+INSERT INTO productos (nombre, precio) VALUES
+    (&#x27;Taza de cerámica&#x27;, 8.50), (&#x27;Libreta A5&#x27;, 4.25), (&#x27;Mochila 20 L&#x27;, 39.90);
+
+-- (3)
+INSERT INTO pedidos (usuario_id, total) VALUES (1, 12.75), (1, 39.90), (1, 8.50), (2, 4.25), (2, 48.40);</code></pre>
+<ol class="code-key">
+  <li>Tres tablas, lo mínimo para que haya un login y algo ajeno que leer. <code>usuarios</code> guarda la sal y el hash, nunca la clave.</li>
+  <li>ana y beto tienen la clave <code>Norte-2026!</code>. El hash es scrypt con N = 2<sup>14</sup>, r = 8 y p = 1, la misma forma de guardar contraseñas de <a href="../modules/m36-criptografia.html">M36</a>; está calculado con <code>hashlib.scrypt</code>, y la sal es la de cada fila.</li>
+  <li>ana (id 1) tiene los pedidos 1, 2 y 3; beto (id 2), el 4 y el 5. El script del hito 3 hace que beto pida los de ana.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver db/init.sql completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="sql" data-file="db/init.sql"><code>CREATE TABLE usuarios (
+    id      serial PRIMARY KEY,
+    usuario text UNIQUE NOT NULL,
+    sal     text NOT NULL,
+    hash    text NOT NULL
+);
+CREATE TABLE productos (
+    id     serial PRIMARY KEY,
+    nombre text NOT NULL,
+    precio numeric(10, 2) NOT NULL
+);
+CREATE TABLE pedidos (
+    id         serial PRIMARY KEY,
+    usuario_id int NOT NULL REFERENCES usuarios (id),
+    total      numeric(10, 2) NOT NULL,
+    creado     timestamptz NOT NULL DEFAULT now()
+);
+---
+INSERT INTO usuarios (usuario, sal, hash) VALUES
+    (&#x27;ana&#x27;,  &#x27;8f1c2a9e4b7d6031a5c2e9f04b8d7163&#x27;, &#x27;0a91995ba643bfe491d019e85fc77b2081666e6503022a5e66896413be7d0fc1&#x27;),
+    (&#x27;beto&#x27;, &#x27;2b9e7d41c0a8f5e3d6b1c4a7092e8f5d&#x27;, &#x27;4688107a878641133287dfd59c84315337d631391ba83660cedd0e5464d2d3d2&#x27;);
+
+INSERT INTO productos (nombre, precio) VALUES
+    (&#x27;Taza de cerámica&#x27;, 8.50), (&#x27;Libreta A5&#x27;, 4.25), (&#x27;Mochila 20 L&#x27;, 39.90);
+
+INSERT INTO pedidos (usuario_id, total) VALUES (1, 12.75), (1, 39.90), (1, 8.50), (2, 4.25), (2, 48.40);</code></pre>
+  </div>
+</details>
+<aside class="callout callout--tradeoff">
+<p class="callout-label">Trade-off</p>
+<p>La clave de la semilla está escrita en esta guía, y eso está bien solo porque es un laboratorio. En una tienda real, la semilla no lleva usuarios con clave conocida.</p>
+</aside>
+<h3 id="paso-registro">Paso 2. El registro de eventos</h3>
+<div class="step-map" data-where="api logs">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Un nombre de evento y sus campos.</dd></div>
+    <div><dt>Sale</dt><dd>Una línea JSON en <code>/var/log/tienda/api.log</code>.</dd></div>
+    <div><dt>Cambia</dt><dd><code>api/registro.py</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-json">Un evento, una línea JSON</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="api logs">
+  <h4 class="file-card-path" id="archivo-api-registro-py">api/registro.py<span class="file-card-size">18 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Escribe cada evento de seguridad como una línea JSON con campos fijos.</dd></div>
+    <div><dt>Quién lo usa</dt><dd><code>app.py</code>, en el login y en la lectura de pedidos.</dd></div>
+    <div><dt>Qué entra</dt><dd>El nombre del evento y sus campos.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una línea en <code>api.log</code>.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Prepara un logger que escribe solo el mensaje en el archivo de logs.</li>
+    <li>Arma el diccionario con app, ts y evento.</li>
+    <li>Le suma los campos de la llamada que no pisan los fijos.</li>
+    <li>Lo escribe como una línea JSON.</li>
+  </ol>
+</div>
+<pre data-lang="python"><code>&quot;&quot;&quot;Una línea JSON por evento de seguridad, para que el SIEM la lea sin un decoder propio.&quot;&quot;&quot;
+import json
+import logging
+import os
+from datetime import datetime, timezone
+
+# (1)
+_log = logging.getLogger(&quot;tienda&quot;)
+_log.setLevel(logging.INFO)
+_manejador = logging.FileHandler(os.environ.get(&quot;TIENDA_LOG&quot;, &quot;/var/log/tienda/api.log&quot;), encoding=&quot;utf-8&quot;)
+_manejador.setFormatter(logging.Formatter(&quot;%(message)s&quot;))
+_log.addHandler(_manejador)
+_log.propagate = False
+
+
+def evento(nombre: str, **campos) -&gt; None:
+    # (2)
+    linea = {&quot;app&quot;: &quot;tienda&quot;, &quot;ts&quot;: datetime.now(timezone.utc).isoformat(timespec=&quot;milliseconds&quot;), &quot;evento&quot;: nombre}
+    # (3)
+    linea.update({k: v for k, v in campos.items() if k not in linea})
+    # (4)
+    _log.info(json.dumps(linea, ensure_ascii=False, separators=(&quot;,&quot;, &quot;:&quot;)))</code></pre>
+<ol class="code-key">
+  <li>Un logger propio con un <code>FileHandler</code> y el formato <code>%(message)s</code>: la línea es solo el JSON, sin prefijos que rompan el decoder. <code>propagate = False</code> evita que la misma línea salga también por la consola de uvicorn.</li>
+  <li>Los tres campos fijos: <code>app</code>, que las reglas usan para saber que la línea es de la tienda; <code>ts</code> en UTC con milisegundos, y <code>evento</code>.</li>
+  <li>Los campos de la llamada, salvo los que ya están: una llamada no puede pisar <code>app</code> ni <code>evento</code>.</li>
+  <li><code>separators</code> sin espacios y <code>ensure_ascii=False</code>: una línea corta y legible, con tildes.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver api/registro.py completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="python" data-file="api/registro.py"><code>&quot;&quot;&quot;Una línea JSON por evento de seguridad, para que el SIEM la lea sin un decoder propio.&quot;&quot;&quot;
+import json
+import logging
+import os
+from datetime import datetime, timezone
+
+_log = logging.getLogger(&quot;tienda&quot;)
+_log.setLevel(logging.INFO)
+_manejador = logging.FileHandler(os.environ.get(&quot;TIENDA_LOG&quot;, &quot;/var/log/tienda/api.log&quot;), encoding=&quot;utf-8&quot;)
+_manejador.setFormatter(logging.Formatter(&quot;%(message)s&quot;))
+_log.addHandler(_manejador)
+_log.propagate = False
+
+
+def evento(nombre: str, **campos) -&gt; None:
+    linea = {&quot;app&quot;: &quot;tienda&quot;, &quot;ts&quot;: datetime.now(timezone.utc).isoformat(timespec=&quot;milliseconds&quot;), &quot;evento&quot;: nombre}
+    linea.update({k: v for k, v in campos.items() if k not in linea})
+    _log.info(json.dumps(linea, ensure_ascii=False, separators=(&quot;,&quot;, &quot;:&quot;)))</code></pre>
+  </div>
+</details>
+<aside class="callout callout--def">
+<p class="callout-label">Python de por medio</p>
+<p><code>**campos</code> junta los argumentos con nombre en un diccionario: <code>evento("x", usuario="ana")</code> deja <code>campos = {"usuario": "ana"}</code>. La línea <code>{k: v for k, v in campos.items() if …}</code> es un diccionario por comprensión. Están en <a href="ia00-laboratorio.html#py-tipos">El Python que vas a ver</a>, en IA00.</p>
+</aside>
+<div data-exercise="sec00-p-registro"></div>
+<h3 id="paso-api">Paso 3. La API</h3>
+<div class="step-map" data-where="api db logs">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Requests de Nginx con <code>X-Real-IP</code>.</dd></div>
+    <div><dt>Sale</dt><dd>JSON para el cliente y eventos para el SIEM.</dd></div>
+    <div><dt>Cambia</dt><dd><code>api/app.py</code>, <code>api/Dockerfile</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-json">Un evento, una línea JSON</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="api db logs">
+  <h4 class="file-card-path" id="archivo-api-app-py">api/app.py<span class="file-card-size">74 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Atiende el login, los productos y los pedidos, y escribe los eventos de seguridad.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Nginx, que le pasa las requests de <code>/api/</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>JSON con usuario y clave, y un token en <code>Authorization</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Respuestas JSON y líneas en <code>api.log</code>.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Lee la conexión a la base del entorno y crea la app sin documentación pública.</li>
+    <li>Define el login: busca al usuario, compara el hash y responde con un token o con 401, dejando el evento.</li>
+    <li>Define cómo se lee el token y las rutas públicas de salud y productos.</li>
+    <li>Define la lectura de un pedido: 404 si no es tuyo, con un evento si existe y es de otro.</li>
+  </ol>
+</div>
+<pre data-lang="python"><code>&quot;&quot;&quot;Tienda Norte mínima: la víctima del laboratorio de la serie SEC.&quot;&quot;&quot;
+import hashlib
+import hmac
+import os
+import secrets
+
+import psycopg
+from fastapi import FastAPI, Header, HTTPException, Request
+from pydantic import BaseModel
+
+from registro import evento
+
+# (1)
+DSN = os.environ[&quot;TIENDA_DSN&quot;]
+SESIONES: dict[str, tuple[int, str]] = {}
+
+app = FastAPI(title=&quot;Tienda Norte&quot;, docs_url=None, redoc_url=None, openapi_url=None)
+
+
+def conectar():
+    # (2)
+    return psycopg.connect(DSN, autocommit=True)
+
+
+def ip_de(request: Request) -&gt; str:
+    # (3)
+    return request.headers.get(&quot;x-real-ip&quot;, &quot;desconocida&quot;)</code></pre>
+<ol class="code-key">
+  <li>La conexión a la base sale de una variable de entorno: la clave no está en el código. Las sesiones viven en memoria, un diccionario de token a usuario; alcanza para un laboratorio con un solo proceso. Sin <code>/docs</code> ni <code>/openapi.json</code>: lo que no hace falta no se publica.</li>
+  <li>Una conexión nueva por request, con autocommit. Es lento y no importa aquí: la tienda recibe decenas de requests, no miles.</li>
+  <li>La IP sale de <code>X-Real-IP</code>, que pone Nginx. La API no publica puertos, así que nadie más le habla.</li>
+</ol>
+<pre data-lang="python"><code>class Credenciales(BaseModel):
+    usuario: str
+    clave: str
+
+
+def clave_correcta(clave: str, sal: str, esperado: str) -&gt; bool:
+    # (4)
+    calculado = hashlib.scrypt(clave.encode(), salt=bytes.fromhex(sal), n=2**14, r=8, p=1, dklen=32)
+    return hmac.compare_digest(calculado.hex(), esperado)
+
+
+@app.post(&quot;/api/login&quot;)
+def login(datos: Credenciales, request: Request):
+    with conectar() as db:
+        fila = db.execute(&quot;SELECT id, sal, hash FROM usuarios WHERE usuario = %s&quot;, (datos.usuario,)).fetchone()
+    # (5)
+    if fila is None or not clave_correcta(datos.clave, fila[1], fila[2]):
+        evento(&quot;login_fallido&quot;, usuario=datos.usuario, ip=ip_de(request))
+        raise HTTPException(401, &quot;Usuario o clave incorrectos&quot;)
+    token = secrets.token_urlsafe(32)
+    SESIONES[token] = (fila[0], datos.usuario)
+    evento(&quot;login_ok&quot;, usuario=datos.usuario, ip=ip_de(request))
+    return {&quot;token&quot;: token}</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li>scrypt con los mismos parámetros que la semilla, y <code>hmac.compare_digest</code> para comparar en tiempo constante.</li>
+  <li>Usuario inexistente y clave mala dan la misma respuesta y el mismo evento. El evento lleva el usuario intentado y la IP, lo que la regla de fuerza bruta necesita.</li>
+</ol>
+<pre data-lang="python"><code>def sesion(authorization: str | None) -&gt; tuple[int, str]:
+    # (6)
+    if not authorization or not authorization.startswith(&quot;Bearer &quot;):
+        raise HTTPException(401, &quot;Falta el token&quot;)
+    quien = SESIONES.get(authorization.removeprefix(&quot;Bearer &quot;))
+    if quien is None:
+        raise HTTPException(401, &quot;Token desconocido&quot;)
+    return quien
+
+
+@app.get(&quot;/api/salud&quot;)
+def salud():
+    return {&quot;ok&quot;: True}
+
+
+@app.get(&quot;/api/productos&quot;)
+def productos():
+    with conectar() as db:
+        filas = db.execute(&quot;SELECT id, nombre, precio FROM productos ORDER BY id&quot;).fetchall()
+    return [{&quot;id&quot;: i, &quot;nombre&quot;: n, &quot;precio&quot;: float(p)} for i, n, p in filas]</code></pre>
+<ol class="code-key" style="counter-reset: ck 5">
+  <li>El token va en <code>Authorization: Bearer …</code>. Sin token o con uno desconocido, 401.</li>
+</ol>
+<pre data-lang="python"><code>@app.get(&quot;/api/pedidos/{pedido_id}&quot;)
+def pedido(pedido_id: int, request: Request, authorization: str | None = Header(None)):
+    uid, usuario = sesion(authorization)
+    with conectar() as db:
+        fila = db.execute(&quot;SELECT id, usuario_id, total, creado FROM pedidos WHERE id = %s&quot;, (pedido_id,)).fetchone()
+    # (7)
+    if fila is None or fila[1] != uid:
+        # (8)
+        if fila is not None:
+            evento(&quot;pedido_ajeno&quot;, usuario=usuario, pedido=pedido_id, ip=ip_de(request))
+        raise HTTPException(404, &quot;No existe&quot;)
+    return {&quot;id&quot;: fila[0], &quot;total&quot;: float(fila[2]), &quot;creado&quot;: fila[3].isoformat()}</code></pre>
+<ol class="code-key" style="counter-reset: ck 6">
+  <li>El control de acceso que cierra BOLA: el pedido tiene que ser de quien pregunta. Si no existe o es ajeno, la misma respuesta 404, así que el cliente no aprende cuáles existen.</li>
+  <li>El SIEM sí lo aprende: solo si el pedido existe y es de otra persona queda un <code>pedido_ajeno</code>. Un número que no existe es ruido; uno ajeno es una señal.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver api/app.py completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="python" data-file="api/app.py"><code>&quot;&quot;&quot;Tienda Norte mínima: la víctima del laboratorio de la serie SEC.&quot;&quot;&quot;
+import hashlib
+import hmac
+import os
+import secrets
+
+import psycopg
+from fastapi import FastAPI, Header, HTTPException, Request
+from pydantic import BaseModel
+
+from registro import evento
+
+DSN = os.environ[&quot;TIENDA_DSN&quot;]
+SESIONES: dict[str, tuple[int, str]] = {}
+
+app = FastAPI(title=&quot;Tienda Norte&quot;, docs_url=None, redoc_url=None, openapi_url=None)
+
+
+def conectar():
+    return psycopg.connect(DSN, autocommit=True)
+
+
+def ip_de(request: Request) -&gt; str:
+    return request.headers.get(&quot;x-real-ip&quot;, &quot;desconocida&quot;)
+class Credenciales(BaseModel):
+    usuario: str
+    clave: str
+
+
+def clave_correcta(clave: str, sal: str, esperado: str) -&gt; bool:
+    calculado = hashlib.scrypt(clave.encode(), salt=bytes.fromhex(sal), n=2**14, r=8, p=1, dklen=32)
+    return hmac.compare_digest(calculado.hex(), esperado)
+
+
+@app.post(&quot;/api/login&quot;)
+def login(datos: Credenciales, request: Request):
+    with conectar() as db:
+        fila = db.execute(&quot;SELECT id, sal, hash FROM usuarios WHERE usuario = %s&quot;, (datos.usuario,)).fetchone()
+    if fila is None or not clave_correcta(datos.clave, fila[1], fila[2]):
+        evento(&quot;login_fallido&quot;, usuario=datos.usuario, ip=ip_de(request))
+        raise HTTPException(401, &quot;Usuario o clave incorrectos&quot;)
+    token = secrets.token_urlsafe(32)
+    SESIONES[token] = (fila[0], datos.usuario)
+    evento(&quot;login_ok&quot;, usuario=datos.usuario, ip=ip_de(request))
+    return {&quot;token&quot;: token}
+def sesion(authorization: str | None) -&gt; tuple[int, str]:
+    if not authorization or not authorization.startswith(&quot;Bearer &quot;):
+        raise HTTPException(401, &quot;Falta el token&quot;)
+    quien = SESIONES.get(authorization.removeprefix(&quot;Bearer &quot;))
+    if quien is None:
+        raise HTTPException(401, &quot;Token desconocido&quot;)
+    return quien
+
+
+@app.get(&quot;/api/salud&quot;)
+def salud():
+    return {&quot;ok&quot;: True}
+
+
+@app.get(&quot;/api/productos&quot;)
+def productos():
+    with conectar() as db:
+        filas = db.execute(&quot;SELECT id, nombre, precio FROM productos ORDER BY id&quot;).fetchall()
+    return [{&quot;id&quot;: i, &quot;nombre&quot;: n, &quot;precio&quot;: float(p)} for i, n, p in filas]
+@app.get(&quot;/api/pedidos/{pedido_id}&quot;)
+def pedido(pedido_id: int, request: Request, authorization: str | None = Header(None)):
+    uid, usuario = sesion(authorization)
+    with conectar() as db:
+        fila = db.execute(&quot;SELECT id, usuario_id, total, creado FROM pedidos WHERE id = %s&quot;, (pedido_id,)).fetchone()
+    if fila is None or fila[1] != uid:
+        if fila is not None:
+            evento(&quot;pedido_ajeno&quot;, usuario=usuario, pedido=pedido_id, ip=ip_de(request))
+        raise HTTPException(404, &quot;No existe&quot;)
+    return {&quot;id&quot;: fila[0], &quot;total&quot;: float(fila[2]), &quot;creado&quot;: fila[3].isoformat()}</code></pre>
+  </div>
+</details>
+<aside class="callout callout--def">
+<p class="callout-label">Python de por medio</p>
+<p><code>with conectar() as db:</code> cierra la conexión al salir del bloque aunque haya un error; está en <a href="ia00-laboratorio.html#py-with">IA00</a>. <code>str | None = Header(None)</code> le dice a FastAPI que el encabezado puede faltar. <code>Credenciales(BaseModel)</code> valida el cuerpo con Pydantic, en <a href="ia00-laboratorio.html#py-pydantic">IA00</a>.</p>
+</aside>
+<div data-exercise="sec00-p-pedido"></div>
+<div class="file-card" data-where="api">
+  <h4 class="file-card-path" id="archivo-api-dockerfile">api/Dockerfile<span class="file-card-size">10 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Construye la imagen de la API con un usuario sin privilegios.</dd></div>
+    <div><dt>Quién lo usa</dt><dd><code>docker compose build</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd><code>requirements.txt</code>, <code>app.py</code> y <code>registro.py</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>La imagen <code>tienda-norte-api</code>.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Parte de Python 3.13 slim y crea un usuario sin privilegios con su carpeta de logs.</li>
+    <li>Instala las dependencias y copia el código.</li>
+    <li>Arranca uvicorn con un worker, como ese usuario.</li>
+  </ol>
+</div>
+<pre data-lang="dockerfile"><code>FROM python:3.13.16-slim
+# (1)
+RUN useradd --uid 10001 --no-create-home tienda \
+ &amp;&amp; mkdir -p /var/log/tienda &amp;&amp; chown tienda /var/log/tienda
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app.py registro.py ./
+# (2)
+USER tienda
+EXPOSE 8000
+# (3)
+CMD [&quot;uvicorn&quot;, &quot;app:app&quot;, &quot;--host&quot;, &quot;0.0.0.0&quot;, &quot;--port&quot;, &quot;8000&quot;, &quot;--workers&quot;, &quot;1&quot;]</code></pre>
+<ol class="code-key">
+  <li>Un usuario con uid 10001 y la carpeta de logs suya. Cuando Docker monta un volumen vacío sobre esa carpeta, copia el dueño de la imagen, así que el usuario puede escribir.</li>
+  <li>El proceso corre sin root: quien tome la API no es root dentro del contenedor.</li>
+  <li>Un solo worker, porque las sesiones están en memoria. Con dos, un token creado en uno no existiría en el otro.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver api/Dockerfile completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="dockerfile" data-file="api/Dockerfile"><code>FROM python:3.13.16-slim
+RUN useradd --uid 10001 --no-create-home tienda \
+ &amp;&amp; mkdir -p /var/log/tienda &amp;&amp; chown tienda /var/log/tienda
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app.py registro.py ./
+USER tienda
+EXPOSE 8000
+CMD [&quot;uvicorn&quot;, &quot;app:app&quot;, &quot;--host&quot;, &quot;0.0.0.0&quot;, &quot;--port&quot;, &quot;8000&quot;, &quot;--workers&quot;, &quot;1&quot;]</code></pre>
+  </div>
+</details>
+<h3 id="paso-proxy">Paso 4. Nginx, el compose y el arranque</h3>
+<div class="step-map" data-where="provocar nginx api db logs">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Requests de tu terminal en <code>127.0.0.1:8088</code>.</dd></div>
+    <div><dt>Sale</dt><dd>La tienda andando y dos archivos de log.</dd></div>
+    <div><dt>Cambia</dt><dd><code>nginx/nginx.conf</code>, <code>compose.yaml</code>, <code>.env</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-docker">Docker Compose y los volúmenes</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="nginx logs">
+  <h4 class="file-card-path" id="archivo-nginx-nginx-conf">nginx/nginx.conf<span class="file-card-size">24 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Pasa <code>/api/</code> a la API, responde 404 a lo demás y deja cada request como JSON.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>El contenedor <code>nginx</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Requests HTTP.</dd></div>
+    <div><dt>Qué sale</dt><dd>Requests a la API con <code>X-Real-IP</code>, y <code>nginx-access.log</code>.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Define un log de acceso en JSON y apaga la versión de Nginx en las respuestas.</li>
+    <li>Pasa /api/ a la API con la IP real.</li>
+    <li>Responde 404 a cualquier otra ruta.</li>
+  </ol>
+</div>
+<pre data-lang="nginx"><code>worker_processes 1;
+events { worker_connections 256; }
+
+http {
+    # (1)
+    log_format tienda escape=json
+        &#x27;{&quot;app&quot;:&quot;tienda-nginx&quot;,&quot;ts&quot;:&quot;$time_iso8601&quot;,&quot;ip&quot;:&quot;$remote_addr&quot;,&#x27;
+        &#x27;&quot;metodo&quot;:&quot;$request_method&quot;,&quot;ruta&quot;:&quot;$uri&quot;,&quot;estado&quot;:&quot;$status&quot;,&#x27;
+        &#x27;&quot;bytes&quot;:&quot;$body_bytes_sent&quot;,&quot;ua&quot;:&quot;$http_user_agent&quot;,&quot;dur&quot;:&quot;$request_time&quot;}&#x27;;
+    access_log /var/log/tienda/nginx-access.log tienda;
+    error_log /var/log/tienda/nginx-error.log warn;
+    server_tokens off;
+
+    server {
+        listen 80;
+        # (2)
+        location /api/ {
+            proxy_pass http://api:8000;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Host $host;
+        }
+        # (3)
+        location / {
+            return 404;
+        }
+    }
+}</code></pre>
+<ol class="code-key">
+  <li>El formato del log de acceso en JSON. <code>escape=json</code> escapa las comillas y barras que vengan en la ruta o el User-Agent, así un atacante no puede romper la línea. <code>app</code> vale <code>tienda-nginx</code>, distinto de la API, para que las reglas no se mezclen.</li>
+  <li>Todo lo que empieza con <code>/api/</code> va a la API, y Nginx pisa <code>X-Real-IP</code> con la IP que ve.</li>
+  <li>Lo demás es 404 sin tocar la API. Es justo lo que mira la regla de escaneo.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver nginx/nginx.conf completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="nginx" data-file="nginx/nginx.conf"><code>worker_processes 1;
+events { worker_connections 256; }
+
+http {
+    log_format tienda escape=json
+        &#x27;{&quot;app&quot;:&quot;tienda-nginx&quot;,&quot;ts&quot;:&quot;$time_iso8601&quot;,&quot;ip&quot;:&quot;$remote_addr&quot;,&#x27;
+        &#x27;&quot;metodo&quot;:&quot;$request_method&quot;,&quot;ruta&quot;:&quot;$uri&quot;,&quot;estado&quot;:&quot;$status&quot;,&#x27;
+        &#x27;&quot;bytes&quot;:&quot;$body_bytes_sent&quot;,&quot;ua&quot;:&quot;$http_user_agent&quot;,&quot;dur&quot;:&quot;$request_time&quot;}&#x27;;
+    access_log /var/log/tienda/nginx-access.log tienda;
+    error_log /var/log/tienda/nginx-error.log warn;
+    server_tokens off;
+
+    server {
+        listen 80;
+        location /api/ {
+            proxy_pass http://api:8000;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Host $host;
+        }
+        location / {
+            return 404;
+        }
+    }
+}</code></pre>
+  </div>
+</details>
+<div class="file-card" data-where="nginx api db logs">
+  <h4 class="file-card-path" id="archivo-compose-yaml">compose.yaml<span class="file-card-size">40 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Declara la base, la API, Nginx y los volúmenes de logs.</dd></div>
+    <div><dt>Quién lo usa</dt><dd><code>docker compose up</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>El <code>.env</code> con la clave de la base.</dd></div>
+    <div><dt>Qué sale</dt><dd>Tres contenedores y tres volúmenes.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Declara PostgreSQL con su clave del .env, su volumen y la semilla.</li>
+    <li>Declara la API, que escribe en su volumen de logs, y Nginx, publicado solo en 127.0.0.1:8088.</li>
+    <li>Nombra los volúmenes de logs para que Wazuh los monte.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code>name: tienda-norte
+
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: tienda
+      POSTGRES_USER: tienda
+      # (1)
+      POSTGRES_PASSWORD: ${TIENDA_DB_CLAVE:?Define TIENDA_DB_CLAVE en el archivo .env}
+    volumes:
+      - datos:/var/lib/postgresql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: [&quot;CMD-SHELL&quot;, &quot;pg_isready -U tienda -d tienda&quot;]
+      interval: 5s
+      retries: 10</code></pre>
+<ol class="code-key">
+  <li>La clave sale del <code>.env</code>. La sintaxis <code>:?</code> corta el arranque con un mensaje si no está definida, en lugar de arrancar con una clave vacía.</li>
+</ol>
+<pre data-lang="yaml"><code>  api:
+    build: ./api
+    environment:
+      TIENDA_DSN: postgresql://tienda:${TIENDA_DB_CLAVE}@db:5432/tienda
+    # (2)
+    volumes:
+      - logs-api:/var/log/tienda
+    depends_on:
+      db:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.30
+    # (3)
+    ports:
+      - &quot;127.0.0.1:8088:80&quot;
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - logs-nginx:/var/log/tienda
+    depends_on: [api]</code></pre>
+<ol class="code-key" style="counter-reset: ck 1">
+  <li>La API escribe en el volumen <code>logs-api</code>. No publica puertos: solo la ve Nginx, por la red interna.</li>
+  <li>El único puerto publicado, y solo en <code>127.0.0.1</code>: nadie de tu red llega a la tienda.</li>
+</ol>
+<pre data-lang="yaml"><code># (4)
+volumes:
+  datos:
+  logs-api:
+    name: tienda-logs-api
+  logs-nginx:
+    name: tienda-logs-nginx</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li>Los volúmenes de logs llevan un <code>name</code> fijo. Sin él, Compose les pone el prefijo del proyecto y el override de Wazuh no los encuentra con certeza.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver compose.yaml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file="compose.yaml"><code>name: tienda-norte
+
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: tienda
+      POSTGRES_USER: tienda
+      POSTGRES_PASSWORD: ${TIENDA_DB_CLAVE:?Define TIENDA_DB_CLAVE en el archivo .env}
+    volumes:
+      - datos:/var/lib/postgresql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: [&quot;CMD-SHELL&quot;, &quot;pg_isready -U tienda -d tienda&quot;]
+      interval: 5s
+      retries: 10
+  api:
+    build: ./api
+    environment:
+      TIENDA_DSN: postgresql://tienda:${TIENDA_DB_CLAVE}@db:5432/tienda
+    volumes:
+      - logs-api:/var/log/tienda
+    depends_on:
+      db:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.30
+    ports:
+      - &quot;127.0.0.1:8088:80&quot;
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - logs-nginx:/var/log/tienda
+    depends_on: [api]
+volumes:
+  datos:
+  logs-api:
+    name: tienda-logs-api
+  logs-nginx:
+    name: tienda-logs-nginx</code></pre>
+  </div>
+</details>
+<p>El <code>.env</code> y el <code>.gitignore</code> son cortos:</p>
+<pre data-lang="shell" data-file=".env"><code># No se sube al repositorio: está en .gitignore.
+TIENDA_DB_CLAVE=cambia-esta-clave-larga</code></pre>
+<pre data-lang="shell" data-file=".gitignore"><code>.env
+__pycache__/</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>cd sec-lab/tienda-norte
+docker compose up -d --build
+curl -s http://127.0.0.1:8088/api/salud
+curl -s -X POST http://127.0.0.1:8088/api/login -H &quot;Content-Type: application/json&quot; -d &#x27;{&quot;usuario&quot;:&quot;ana&quot;,&quot;clave&quot;:&quot;Norte-2026!&quot;}&#x27;</code></pre>
+  <p>La primera request responde <code>{"ok":true}</code> y la segunda, <code>{"token":"…"}</code> con un token largo. En Windows con PowerShell, usa <code>curl.exe</code> y escapa las comillas del JSON, o corre los comandos desde Git Bash.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>required variable TIENDA_DB_CLAVE is missing a value: Define TIENDA_DB_CLAVE en el archivo .env</code>: Falta el <code>.env</code> o está en otra carpeta: tiene que estar al lado de <code>compose.yaml</code>.</li>
+    <li><code>502 Bad Gateway</code>: La API no arrancó. Mira <code>docker compose logs api</code>: casi siempre es la base, que todavía no estaba lista, o un error de sintaxis en <code>app.py</code>.</li>
+    <li><code>PermissionError: [Errno 13] Permission denied: &#x27;/var/log/tienda/api.log&#x27;</code>: El volumen se creó antes con otro dueño. Bórralo con <code>docker compose down</code> y <code>docker volume rm tienda-logs-api</code>, y vuelve a levantar.</li>
+    <li><code>Usuario o clave incorrectos con la clave correcta</code>: La semilla solo corre con el volumen de datos vacío. Si cambiaste <code>init.sql</code> después, borra el volumen con <code>docker compose down -v</code>.</li>
+  </ul>
+</aside>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>La base con ana, beto y sus pedidos.</li>
+    <li>La API detrás de Nginx, solo en 127.0.0.1:8088.</li>
+    <li>Un evento JSON por login y por pedido ajeno, y una línea JSON por request en Nginx.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>docker compose exec api tail -n 2 /var/log/tienda/api.log
+docker compose exec nginx tail -n 1 /var/log/tienda/nginx-access.log</code></pre>
+  <p>La primera muestra la línea <code>login_ok</code> de ana del "Pruébalo ahora", con <code>"app":"tienda"</code>. La segunda, la última request a Nginx con <code>"app":"tienda-nginx"</code>. Si las dos son JSON de una línea, el hito está cerrado.</p>
+</aside>
+<aside class="hito" id="hito-2" data-toc="skip" aria-labelledby="hito-2-t">
+  <p class="hito-num">Hito 2 de 3, unos 60 min</p>
+  <p class="hito-title" id="hito-2-t">Wazuh leyendo la tienda</p>
+  <p>Wazuh en un solo nodo, leyendo los dos archivos de la tienda por volúmenes de solo lectura, con tres reglas propias probadas una por una.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-wazuh">Wazuh en un solo nodo</a></li>
+    <li><a href="#paso-leer">Que el manager lea la tienda</a></li>
+    <li><a href="#paso-reglas">Las reglas de Tienda Norte</a></li>
+  </ol>
+</aside>
+<h3 id="paso-wazuh">Paso 5. Wazuh en un solo nodo</h3>
+<div class="step-map" data-where="manager indexer dashboard">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Nada.</dd></div>
+    <div><dt>Sale</dt><dd>El manager, el indexer y el dashboard andando.</dd></div>
+    <div><dt>Cambia</dt><dd>La carpeta <code>wazuh-docker/</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-siem">Qué es un SIEM y qué trae Wazuh</a></dd></div>
+    <div><dt>Tiempo</dt><dd>25 min, casi todo esperando</dd></div>
+  </dl>
+</div>
+<p>Wazuh se instala con su repositorio oficial de Docker, en la versión exacta. Estos comandos son los de la documentación de wazuh-docker para un solo nodo <span class="badge badge--doc">Documentado</span>:</p>
+<pre data-lang="bash"><code>cd sec-lab
+git clone https://github.com/wazuh/wazuh-docker.git -b v4.14.10
+cd wazuh-docker/single-node
+
+# Solo en Linux: el indexer necesita más áreas de memoria (dura hasta reiniciar)
+sudo sysctl -w vm.max_map_count=262144
+# En Windows con Docker Desktop, lo mismo dentro de su máquina virtual:
+#   wsl -d docker-desktop sysctl -w vm.max_map_count=262144
+
+docker compose -f generate-indexer-certs.yml run --rm generator
+docker compose up -d</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Wazuh en Docker, en un solo nodo, con el repositorio oficial y una etiqueta fija.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Instalarlo en una máquina virtual con el script de instalación, que deja el laboratorio atado a esa máquina; o usar la rama <code>main</code>, que cambia sin aviso.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>El indexer no arranca si falta <code>vm.max_map_count</code>, y el dashboard tarda unos minutos en responder la primera vez. Las claves por defecto son públicas: valen solo en tu máquina.</dd></div>
+</dl>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker compose ps</code></pre>
+  <p>Tres servicios, <code>wazuh.manager</code>, <code>wazuh.indexer</code> y <code>wazuh.dashboard</code>, en estado <code>running</code>. Abre <code>https://localhost</code>, acepta el certificado propio y entra con <code>admin</code> y <code>SecretPassword</code>, las credenciales por defecto de wazuh-docker <span class="badge badge--doc">Documentado</span>.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>max virtual memory areas vm.max_map_count [65530] is too low</code>: Falta el <code>sysctl</code> de arriba; córrelo y reinicia el indexer con <code>docker compose restart wazuh.indexer</code>.</li>
+    <li><code>Wazuh dashboard server is not ready yet</code>: El indexer todavía arranca. Espera dos o tres minutos y recarga.</li>
+    <li><code>bind: address already in use (443)</code>: Otro programa usa el puerto 443. Ciérralo, o cambia el puerto del dashboard en el <code>docker-compose.override.yml</code> del paso siguiente.</li>
+  </ul>
+</aside>
+<h3 id="paso-leer">Paso 6. Que el manager lea la tienda</h3>
+<div class="step-map" data-where="logs manager">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Los dos volúmenes de logs de la tienda.</dd></div>
+    <div><dt>Sale</dt><dd>Cada línea nueva, leída por el logcollector del manager.</dd></div>
+    <div><dt>Cambia</dt><dd><code>docker-compose.override.yml</code> y <code>wazuh_manager.conf</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-docker">Docker Compose y los volúmenes</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="logs manager">
+  <h4 class="file-card-path" id="archivo-docker-compose-override-yml">docker-compose.override.yml<span class="file-card-size">14 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Monta en el manager los volúmenes de logs de la tienda y el archivo de reglas, todo de solo lectura.</dd></div>
+    <div><dt>Quién lo usa</dt><dd><code>docker compose</code>, que lo junta solo con el <code>docker-compose.yml</code> oficial.</dd></div>
+    <div><dt>Qué entra</dt><dd>Los volúmenes <code>tienda-logs-api</code> y <code>tienda-logs-nginx</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Los logs de la tienda dentro del manager.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Agrega al manager los dos volúmenes de logs, de solo lectura.</li>
+    <li>Agrega el archivo de reglas de la tienda.</li>
+    <li>Declara los volúmenes como externos.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code># Va en wazuh-docker/single-node/docker-compose.override.yml.
+# Compose lo junta solo con el docker-compose.yml oficial: no tocas ese archivo.
+services:
+  wazuh.manager:
+    volumes:
+      # (1)
+      - tienda-logs-api:/var/log/tienda/api:ro
+      - tienda-logs-nginx:/var/log/tienda/nginx:ro
+      # (2)
+      - ../../tienda-norte/wazuh/tienda_rules.xml:/var/ossec/etc/rules/tienda_rules.xml:ro
+
+# (3)
+volumes:
+  tienda-logs-api:
+    external: true
+  tienda-logs-nginx:
+    external: true</code></pre>
+<ol class="code-key">
+  <li>Cada volumen en su subcarpeta, con <code>:ro</code>: el manager lee y no puede borrar ni cambiar la evidencia.</li>
+  <li>El archivo de reglas va montado desde tu carpeta de la tienda, así lo editas en un solo lugar y queda en tu repositorio.</li>
+  <li><code>external: true</code> dice que los volúmenes ya existen y son de otro compose. Si la tienda no se levantó nunca, este compose falla en lugar de crear volúmenes vacíos.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver docker-compose.override.yml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file="docker-compose.override.yml"><code># Va en wazuh-docker/single-node/docker-compose.override.yml.
+# Compose lo junta solo con el docker-compose.yml oficial: no tocas ese archivo.
+services:
+  wazuh.manager:
+    volumes:
+      - tienda-logs-api:/var/log/tienda/api:ro
+      - tienda-logs-nginx:/var/log/tienda/nginx:ro
+      - ../../tienda-norte/wazuh/tienda_rules.xml:/var/ossec/etc/rules/tienda_rules.xml:ro
+
+volumes:
+  tienda-logs-api:
+    external: true
+  tienda-logs-nginx:
+    external: true</code></pre>
+  </div>
+</details>
+<p>El manager tiene que saber qué archivos seguir. En <code>config/wazuh_cluster/wazuh_manager.conf</code>, que wazuh-docker monta como <code>ossec.conf</code>, pega este bloque justo antes del último <code>&lt;/ossec_config&gt;</code>:</p>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Le dice al logcollector que siga el archivo de la API como JSON.</li>
+    <li>Y el de Nginx.</li>
+  </ol>
+</div>
+<pre data-lang="xml"><code>&lt;!-- (1) --&gt;
+&lt;localfile&gt;
+  &lt;log_format&gt;json&lt;/log_format&gt;
+  &lt;location&gt;/var/log/tienda/api/api.log&lt;/location&gt;
+&lt;/localfile&gt;
+&lt;!-- (2) --&gt;
+&lt;localfile&gt;
+  &lt;log_format&gt;json&lt;/log_format&gt;
+  &lt;location&gt;/var/log/tienda/nginx/nginx-access.log&lt;/location&gt;
+&lt;/localfile&gt;</code></pre>
+<ol class="code-key">
+  <li>El log de la API, con <code>log_format json</code>: el decoder json de Wazuh lo parte en campos.</li>
+  <li>El log de acceso de Nginx, igual.</li>
+</ol>
+<pre data-lang="bash"><code>cd sec-lab/wazuh-docker/single-node
+docker compose up -d                      # recrea el manager con el override
+docker compose exec wazuh.manager ls /var/log/tienda/api /var/log/tienda/nginx</code></pre>
+<aside class="callout callout--try">
+<p class="callout-label">Pruébalo ahora</p>
+<p>El último comando lista <code>api.log</code> y <code>nginx-access.log</code>. Si dice <code>No such file or directory</code>, el override no se aplicó: revisa que el archivo se llame exactamente <code>docker-compose.override.yml</code> y esté en <code>single-node/</code>.</p>
+</aside>
+<h3 id="paso-reglas">Paso 7. Las reglas de Tienda Norte</h3>
+<div class="step-map" data-where="manager">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Líneas decodificadas por el decoder json.</dd></div>
+    <div><dt>Sale</dt><dd>Alertas de nivel 3 a 12 con su técnica de ATT&amp;CK.</dd></div>
+    <div><dt>Cambia</dt><dd><code>wazuh/tienda_rules.xml</code>, <code>wazuh/muestras.jsonl</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-correlacion">La regla de correlación</a></dd></div>
+    <div><dt>Tiempo</dt><dd>25 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="manager">
+  <h4 class="file-card-path" id="archivo-wazuh-tienda-rules-xml">wazuh/tienda_rules.xml<span class="file-card-size">48 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Reconoce los eventos de la tienda, les pone nivel y cuenta los que se repiten.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>El motor de reglas del manager.</dd></div>
+    <div><dt>Qué entra</dt><dd>Líneas JSON de la API y de Nginx, ya decodificadas.</dd></div>
+    <div><dt>Qué sale</dt><dd>Alertas en <code>alerts.json</code> y en el indexer.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Reconoce las líneas de la API por su campo app.</li>
+    <li>Marca cada login fallido y sube el nivel cuando una IP junta ocho en dos minutos.</li>
+    <li>Marca cada pedido ajeno y sube el nivel cuando una cuenta junta cinco en cinco minutos.</li>
+    <li>Reconoce las líneas de Nginx, marca los 404 y sube el nivel cuando una IP junta veinte en un minuto.</li>
+  </ol>
+</div>
+<pre data-lang="xml"><code>&lt;!-- Reglas de Tienda Norte (SEC00). Los ids de 100000 a 120000 son los que Wazuh deja para reglas propias. --&gt;
+&lt;group name=&quot;tienda,&quot;&gt;
+  &lt;!-- (1) --&gt;
+  &lt;rule id=&quot;100100&quot; level=&quot;0&quot;&gt;
+    &lt;decoded_as&gt;json&lt;/decoded_as&gt;
+    &lt;field name=&quot;app&quot;&gt;^tienda$&lt;/field&gt;
+    &lt;description&gt;Tienda Norte: evento de la API&lt;/description&gt;
+  &lt;/rule&gt;
+  &lt;!-- (2) --&gt;
+  &lt;rule id=&quot;100101&quot; level=&quot;5&quot;&gt;
+    &lt;if_sid&gt;100100&lt;/if_sid&gt;
+    &lt;field name=&quot;evento&quot;&gt;^login_fallido$&lt;/field&gt;
+    &lt;description&gt;Tienda Norte: login fallido de $(usuario) desde $(ip)&lt;/description&gt;
+    &lt;group&gt;authentication_failed,&lt;/group&gt;
+  &lt;/rule&gt;
+  &lt;!-- (3) --&gt;
+  &lt;rule id=&quot;100102&quot; level=&quot;10&quot; frequency=&quot;8&quot; timeframe=&quot;120&quot;&gt;
+    &lt;if_matched_sid&gt;100101&lt;/if_matched_sid&gt;
+    &lt;same_field&gt;ip&lt;/same_field&gt;
+    &lt;description&gt;Tienda Norte: muchos logins fallidos desde $(ip) en 2 minutos&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1110.001&lt;/id&gt;&lt;/mitre&gt;
+    &lt;group&gt;authentication_failures,&lt;/group&gt;
+  &lt;/rule&gt;</code></pre>
+<ol class="code-key">
+  <li>La regla madre de la API: cualquier línea JSON con <code>app</code> igual a <code>tienda</code>. Nivel 0: la reconoce y no deja alerta. Las demás cuelgan de ella con <code>if_sid</code>.</li>
+  <li>Un login fallido, nivel 5. Queda en el historial y no despierta a nadie. <code>$(usuario)</code> y <code>$(ip)</code> ponen los campos en la descripción.</li>
+  <li>Fuerza bruta: 8 fallidos de la misma IP en 120 segundos suben a nivel 10. Con margen para quien se equivoca dos o tres veces.</li>
+</ol>
+<pre data-lang="xml"><code>  &lt;!-- (4) --&gt;
+  &lt;rule id=&quot;100103&quot; level=&quot;6&quot;&gt;
+    &lt;if_sid&gt;100100&lt;/if_sid&gt;
+    &lt;field name=&quot;evento&quot;&gt;^pedido_ajeno$&lt;/field&gt;
+    &lt;description&gt;Tienda Norte: $(usuario) pidió el pedido ajeno $(pedido)&lt;/description&gt;
+  &lt;/rule&gt;
+  &lt;rule id=&quot;100104&quot; level=&quot;12&quot; frequency=&quot;5&quot; timeframe=&quot;300&quot;&gt;
+    &lt;if_matched_sid&gt;100103&lt;/if_matched_sid&gt;
+    &lt;same_field&gt;usuario&lt;/same_field&gt;
+    &lt;description&gt;Tienda Norte: $(usuario) recorre pedidos ajenos&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1213&lt;/id&gt;&lt;/mitre&gt;
+  &lt;/rule&gt;</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li>Un pedido ajeno, nivel 6, y cinco de la misma cuenta en cinco minutos, nivel 12: es la fila 2 de 59.10 con un umbral de laboratorio en lugar de 500 por hora.</li>
+</ol>
+<pre data-lang="xml"><code>  &lt;!-- (5) --&gt;
+  &lt;rule id=&quot;100110&quot; level=&quot;0&quot;&gt;
+    &lt;decoded_as&gt;json&lt;/decoded_as&gt;
+    &lt;field name=&quot;app&quot;&gt;^tienda-nginx$&lt;/field&gt;
+    &lt;description&gt;Tienda Norte: acceso a Nginx&lt;/description&gt;
+  &lt;/rule&gt;
+  &lt;rule id=&quot;100111&quot; level=&quot;3&quot;&gt;
+    &lt;if_sid&gt;100110&lt;/if_sid&gt;
+    &lt;field name=&quot;estado&quot;&gt;^404$&lt;/field&gt;
+    &lt;description&gt;Tienda Norte: ruta que no existe, $(ruta)&lt;/description&gt;
+  &lt;/rule&gt;
+  &lt;!-- (6) --&gt;
+  &lt;rule id=&quot;100112&quot; level=&quot;8&quot; frequency=&quot;20&quot; timeframe=&quot;60&quot;&gt;
+    &lt;if_matched_sid&gt;100111&lt;/if_matched_sid&gt;
+    &lt;same_field&gt;ip&lt;/same_field&gt;
+    &lt;description&gt;Tienda Norte: $(ip) prueba muchas rutas que no existen&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1595.003&lt;/id&gt;&lt;/mitre&gt;
+  &lt;/rule&gt;
+&lt;/group&gt;</code></pre>
+<ol class="code-key" style="counter-reset: ck 4">
+  <li>La regla madre de Nginx y el 404 suelto, nivel 3.</li>
+  <li>Un escaneo: 20 rutas que no existen desde la misma IP en un minuto, nivel 8.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver wazuh/tienda_rules.xml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="xml" data-file="wazuh/tienda_rules.xml"><code>&lt;!-- Reglas de Tienda Norte (SEC00). Los ids de 100000 a 120000 son los que Wazuh deja para reglas propias. --&gt;
+&lt;group name=&quot;tienda,&quot;&gt;
+  &lt;rule id=&quot;100100&quot; level=&quot;0&quot;&gt;
+    &lt;decoded_as&gt;json&lt;/decoded_as&gt;
+    &lt;field name=&quot;app&quot;&gt;^tienda$&lt;/field&gt;
+    &lt;description&gt;Tienda Norte: evento de la API&lt;/description&gt;
+  &lt;/rule&gt;
+  &lt;rule id=&quot;100101&quot; level=&quot;5&quot;&gt;
+    &lt;if_sid&gt;100100&lt;/if_sid&gt;
+    &lt;field name=&quot;evento&quot;&gt;^login_fallido$&lt;/field&gt;
+    &lt;description&gt;Tienda Norte: login fallido de $(usuario) desde $(ip)&lt;/description&gt;
+    &lt;group&gt;authentication_failed,&lt;/group&gt;
+  &lt;/rule&gt;
+  &lt;rule id=&quot;100102&quot; level=&quot;10&quot; frequency=&quot;8&quot; timeframe=&quot;120&quot;&gt;
+    &lt;if_matched_sid&gt;100101&lt;/if_matched_sid&gt;
+    &lt;same_field&gt;ip&lt;/same_field&gt;
+    &lt;description&gt;Tienda Norte: muchos logins fallidos desde $(ip) en 2 minutos&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1110.001&lt;/id&gt;&lt;/mitre&gt;
+    &lt;group&gt;authentication_failures,&lt;/group&gt;
+  &lt;/rule&gt;
+  &lt;rule id=&quot;100103&quot; level=&quot;6&quot;&gt;
+    &lt;if_sid&gt;100100&lt;/if_sid&gt;
+    &lt;field name=&quot;evento&quot;&gt;^pedido_ajeno$&lt;/field&gt;
+    &lt;description&gt;Tienda Norte: $(usuario) pidió el pedido ajeno $(pedido)&lt;/description&gt;
+  &lt;/rule&gt;
+  &lt;rule id=&quot;100104&quot; level=&quot;12&quot; frequency=&quot;5&quot; timeframe=&quot;300&quot;&gt;
+    &lt;if_matched_sid&gt;100103&lt;/if_matched_sid&gt;
+    &lt;same_field&gt;usuario&lt;/same_field&gt;
+    &lt;description&gt;Tienda Norte: $(usuario) recorre pedidos ajenos&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1213&lt;/id&gt;&lt;/mitre&gt;
+  &lt;/rule&gt;
+  &lt;rule id=&quot;100110&quot; level=&quot;0&quot;&gt;
+    &lt;decoded_as&gt;json&lt;/decoded_as&gt;
+    &lt;field name=&quot;app&quot;&gt;^tienda-nginx$&lt;/field&gt;
+    &lt;description&gt;Tienda Norte: acceso a Nginx&lt;/description&gt;
+  &lt;/rule&gt;
+  &lt;rule id=&quot;100111&quot; level=&quot;3&quot;&gt;
+    &lt;if_sid&gt;100110&lt;/if_sid&gt;
+    &lt;field name=&quot;estado&quot;&gt;^404$&lt;/field&gt;
+    &lt;description&gt;Tienda Norte: ruta que no existe, $(ruta)&lt;/description&gt;
+  &lt;/rule&gt;
+  &lt;rule id=&quot;100112&quot; level=&quot;8&quot; frequency=&quot;20&quot; timeframe=&quot;60&quot;&gt;
+    &lt;if_matched_sid&gt;100111&lt;/if_matched_sid&gt;
+    &lt;same_field&gt;ip&lt;/same_field&gt;
+    &lt;description&gt;Tienda Norte: $(ip) prueba muchas rutas que no existen&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1595.003&lt;/id&gt;&lt;/mitre&gt;
+  &lt;/rule&gt;
+&lt;/group&gt;</code></pre>
+  </div>
+</details>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un evento suelto en nivel bajo y una regla de correlación que lo sube.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Una regla de nivel alto por cada login fallido, que llena el dashboard de alertas iguales; o contar en la API, que mezcla la detección con el negocio y no se puede ajustar sin un deploy.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Un umbral muy bajo despierta a alguien por cada persona que olvidó su clave; uno muy alto deja pasar la fuerza bruta lenta. Es la falla 2 de <a href="#comprueba-fallas">las fallas</a>.</dd></div>
+</dl>
+<p>Para probarlas sin tráfico, guarda tres líneas de ejemplo, una por tipo:</p>
+<pre data-lang="json" data-file="wazuh/muestras.jsonl"><code>{&quot;app&quot;:&quot;tienda&quot;,&quot;ts&quot;:&quot;2026-11-09T15:00:00.000+00:00&quot;,&quot;evento&quot;:&quot;login_fallido&quot;,&quot;usuario&quot;:&quot;ana&quot;,&quot;ip&quot;:&quot;172.18.0.1&quot;}
+{&quot;app&quot;:&quot;tienda&quot;,&quot;ts&quot;:&quot;2026-11-09T15:00:05.000+00:00&quot;,&quot;evento&quot;:&quot;pedido_ajeno&quot;,&quot;usuario&quot;:&quot;beto&quot;,&quot;pedido&quot;:1,&quot;ip&quot;:&quot;172.18.0.1&quot;}
+{&quot;app&quot;:&quot;tienda-nginx&quot;,&quot;ts&quot;:&quot;2026-11-09T15:00:09+00:00&quot;,&quot;ip&quot;:&quot;172.18.0.1&quot;,&quot;metodo&quot;:&quot;GET&quot;,&quot;ruta&quot;:&quot;/.env&quot;,&quot;estado&quot;:&quot;404&quot;,&quot;bytes&quot;:&quot;153&quot;,&quot;ua&quot;:&quot;Python-urllib/3.13&quot;,&quot;dur&quot;:&quot;0.000&quot;}</code></pre>
+<pre data-lang="bash"><code>cd sec-lab/wazuh-docker/single-node
+docker compose restart wazuh.manager
+docker compose exec wazuh.manager /var/ossec/bin/wazuh-logtest</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="json"><code>{&quot;app&quot;:&quot;tienda&quot;,&quot;ts&quot;:&quot;2026-11-09T15:00:00.000+00:00&quot;,&quot;evento&quot;:&quot;login_fallido&quot;,&quot;usuario&quot;:&quot;ana&quot;,&quot;ip&quot;:&quot;172.18.0.1&quot;}</code></pre>
+  <p>Pega la línea en <code>wazuh-logtest</code> y pulsa Enter. En la fase 2 aparece <code>name: 'json'</code> y los campos <code>evento</code>, <code>usuario</code> e <code>ip</code>; en la fase 3, <code>id: '100101'</code> y <code>level: '5'</code>, con la descripción <code>Tienda Norte: login fallido de ana desde 172.18.0.1</code>. Haz lo mismo con las otras dos: la de <code>pedido_ajeno</code> tiene que dar 100103 y la de Nginx, 100111. Sale con Ctrl+C.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Invalid rule ID / ERROR: (1220): Error loading the rules</code>: El XML está mal formado o un id se repite. Revisa <code>docker compose logs wazuh.manager</code>: dice el archivo y la línea.</li>
+    <li><code>La fase 3 dice &#x27;No rule matched&#x27; o una regla de Wazuh y no la tuya</code>: El campo <code>app</code> no coincide con <code>^tienda$</code>, o el archivo de reglas no está montado: <code>docker compose exec wazuh.manager ls /var/ossec/etc/rules/</code> tiene que listar <code>tienda_rules.xml</code>.</li>
+    <li><code>La fase 2 no muestra name: &#x27;json&#x27;</code>: La línea no es JSON válido; suele ser una comilla tipográfica que entró al copiar.</li>
+  </ul>
+</aside>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Wazuh en un solo nodo, con su dashboard.</li>
+    <li>El manager leyendo los dos archivos de la tienda, sin poder cambiarlos.</li>
+    <li>Tres reglas propias y sus tres madres, probadas con líneas de ejemplo.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>cd sec-lab/wazuh-docker/single-node
+docker compose exec wazuh.manager grep -c tienda /var/ossec/etc/rules/tienda_rules.xml
+docker compose exec wazuh.manager grep -A2 &quot;tienda/api&quot; /var/ossec/etc/ossec.conf</code></pre>
+  <p>El primero cuenta varias líneas con <code>tienda</code> (el número depende de tu copia). El segundo muestra tu bloque <code>&lt;localfile&gt;</code> con <code>/var/log/tienda/api/api.log</code>. Si los dos aparecen, el hito está cerrado.</p>
+</aside>
+<aside class="hito" id="hito-3" data-toc="skip" aria-labelledby="hito-3-t">
+  <p class="hito-num">Hito 3 de 3, unos 30 min</p>
+  <p class="hito-title" id="hito-3-t">La primera alerta, provocada</p>
+  <p>Un script que provoca las tres técnicas contra tu laboratorio, y las tres alertas encontradas en alerts.json y en el dashboard.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-provocar">El script que provoca</a></li>
+    <li><a href="#comprueba-tecnicas">Las tres técnicas, una por una</a></li>
+  </ol>
+</aside>
+<h3 id="paso-provocar">Paso 8. El script que provoca</h3>
+<div class="step-map" data-where="provocar nginx api logs">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Un nombre de técnica y un número de intentos.</dd></div>
+    <div><dt>Sale</dt><dd>Requests a la tienda y los códigos que respondió.</dd></div>
+    <div><dt>Cambia</dt><dd><code>provocar.py</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-attack">La técnica de ATT&amp;CK en cada regla</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="provocar nginx">
+  <h4 class="file-card-path" id="archivo-provocar-py">provocar.py<span class="file-card-size">54 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Manda la señal mínima de cada técnica contra tu laboratorio y se niega a hablar con otro host.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Tú, desde la terminal.</dd></div>
+    <div><dt>Qué entra</dt><dd><code>fuerza</code>, <code>ajenos</code>, <code>escaneo</code> o <code>todas</code>, y <code>-n</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Los códigos HTTP de cada request.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Fija la lista de hosts permitidos y una función que manda una request y devuelve el código.</li>
+    <li>Define las tres técnicas: logins fallidos, pedidos ajenos y rutas que no existen.</li>
+    <li>Lee los argumentos, comprueba el host y corre la técnica pedida.</li>
+  </ol>
+</div>
+<pre data-lang="python"><code>&quot;&quot;&quot;Genera señal contra TU laboratorio de Tienda Norte (SEC00). Solo habla con 127.0.0.1.&quot;&quot;&quot;
+import argparse
+import json
+import sys
+import urllib.error
+import urllib.request
+from urllib.parse import urlsplit
+
+# (1)
+PERMITIDOS = {&quot;127.0.0.1&quot;, &quot;localhost&quot;}
+
+
+def pedir(base, metodo, ruta, cuerpo=None, token=None):
+    datos = json.dumps(cuerpo).encode() if cuerpo is not None else None
+    req = urllib.request.Request(base + ruta, data=datos, method=metodo)
+    req.add_header(&quot;Content-Type&quot;, &quot;application/json&quot;)
+    if token:
+        req.add_header(&quot;Authorization&quot;, f&quot;Bearer {token}&quot;)
+    # (2)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read() or b&quot;null&quot;)
+    except urllib.error.HTTPError as e:
+        return e.code, None</code></pre>
+<ol class="code-key">
+  <li>La lista de hosts permitidos. No es una opción: el script no tiene forma de apuntar a otro lado sin cambiar el código.</li>
+  <li>Un 401 o un 404 no son errores para el script: son la respuesta que se espera, así que se devuelve el código en lugar de cortar.</li>
+</ol>
+<pre data-lang="python"><code>def fuerza(base, n):
+    # (3)
+    codigos = [pedir(base, &quot;POST&quot;, &quot;/api/login&quot;, {&quot;usuario&quot;: &quot;ana&quot;, &quot;clave&quot;: f&quot;intento-{i}&quot;})[0] for i in range(n)]
+    print(&quot;logins fallidos:&quot;, codigos)
+
+
+def ajenos(base, n):
+    estado, cuerpo = pedir(base, &quot;POST&quot;, &quot;/api/login&quot;, {&quot;usuario&quot;: &quot;beto&quot;, &quot;clave&quot;: &quot;Norte-2026!&quot;})
+    if estado != 200:
+        sys.exit(f&quot;beto no entró: {estado}&quot;)
+    # (4)
+    codigos = [pedir(base, &quot;GET&quot;, f&quot;/api/pedidos/{1 + i % 3}&quot;, token=cuerpo[&quot;token&quot;])[0] for i in range(n)]
+    print(&quot;pedidos de ana pedidos por beto:&quot;, codigos)
+
+
+def escaneo(base, n):
+    rutas = [&quot;/.env&quot;, &quot;/admin&quot;, &quot;/wp-login.php&quot;, &quot;/.git/config&quot;, &quot;/backup.zip&quot;, &quot;/phpmyadmin/&quot;]
+    # (5)
+    codigos = [pedir(base, &quot;GET&quot;, rutas[i % len(rutas)])[0] for i in range(max(n, 25))]
+    print(&quot;rutas que no existen:&quot;, codigos)</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>Fuerza bruta: logins de ana con claves que no son, desde la misma IP.</li>
+  <li>Pedidos ajenos: beto entra con su clave y pide los pedidos 1, 2 y 3, que son de ana, una y otra vez.</li>
+  <li>Escaneo: seis rutas típicas de un escáner, repetidas hasta 25 requests como mínimo, para pasar el umbral de 20.</li>
+</ol>
+<pre data-lang="python"><code>def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(&quot;tecnica&quot;, choices=[&quot;fuerza&quot;, &quot;ajenos&quot;, &quot;escaneo&quot;, &quot;todas&quot;])
+    ap.add_argument(&quot;--base&quot;, default=&quot;http://127.0.0.1:8088&quot;)
+    ap.add_argument(&quot;-n&quot;, type=int, default=12)
+    a = ap.parse_args()
+    # (6)
+    if urlsplit(a.base).hostname not in PERMITIDOS:
+        sys.exit(&quot;Este script solo habla con tu laboratorio en 127.0.0.1.&quot;)
+    tecnicas = {&quot;fuerza&quot;: fuerza, &quot;ajenos&quot;: ajenos, &quot;escaneo&quot;: escaneo}
+    for nombre in (list(tecnicas) if a.tecnica == &quot;todas&quot; else [a.tecnica]):
+        tecnicas[nombre](a.base, a.n)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre>
+<ol class="code-key" style="counter-reset: ck 5">
+  <li>La comprobación que hace segura a la herramienta: si <code>--base</code> no es 127.0.0.1 o localhost, sale sin mandar nada.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver provocar.py completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="python" data-file="provocar.py"><code>&quot;&quot;&quot;Genera señal contra TU laboratorio de Tienda Norte (SEC00). Solo habla con 127.0.0.1.&quot;&quot;&quot;
+import argparse
+import json
+import sys
+import urllib.error
+import urllib.request
+from urllib.parse import urlsplit
+
+PERMITIDOS = {&quot;127.0.0.1&quot;, &quot;localhost&quot;}
+
+
+def pedir(base, metodo, ruta, cuerpo=None, token=None):
+    datos = json.dumps(cuerpo).encode() if cuerpo is not None else None
+    req = urllib.request.Request(base + ruta, data=datos, method=metodo)
+    req.add_header(&quot;Content-Type&quot;, &quot;application/json&quot;)
+    if token:
+        req.add_header(&quot;Authorization&quot;, f&quot;Bearer {token}&quot;)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read() or b&quot;null&quot;)
+    except urllib.error.HTTPError as e:
+        return e.code, None
+def fuerza(base, n):
+    codigos = [pedir(base, &quot;POST&quot;, &quot;/api/login&quot;, {&quot;usuario&quot;: &quot;ana&quot;, &quot;clave&quot;: f&quot;intento-{i}&quot;})[0] for i in range(n)]
+    print(&quot;logins fallidos:&quot;, codigos)
+
+
+def ajenos(base, n):
+    estado, cuerpo = pedir(base, &quot;POST&quot;, &quot;/api/login&quot;, {&quot;usuario&quot;: &quot;beto&quot;, &quot;clave&quot;: &quot;Norte-2026!&quot;})
+    if estado != 200:
+        sys.exit(f&quot;beto no entró: {estado}&quot;)
+    codigos = [pedir(base, &quot;GET&quot;, f&quot;/api/pedidos/{1 + i % 3}&quot;, token=cuerpo[&quot;token&quot;])[0] for i in range(n)]
+    print(&quot;pedidos de ana pedidos por beto:&quot;, codigos)
+
+
+def escaneo(base, n):
+    rutas = [&quot;/.env&quot;, &quot;/admin&quot;, &quot;/wp-login.php&quot;, &quot;/.git/config&quot;, &quot;/backup.zip&quot;, &quot;/phpmyadmin/&quot;]
+    codigos = [pedir(base, &quot;GET&quot;, rutas[i % len(rutas)])[0] for i in range(max(n, 25))]
+    print(&quot;rutas que no existen:&quot;, codigos)
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(&quot;tecnica&quot;, choices=[&quot;fuerza&quot;, &quot;ajenos&quot;, &quot;escaneo&quot;, &quot;todas&quot;])
+    ap.add_argument(&quot;--base&quot;, default=&quot;http://127.0.0.1:8088&quot;)
+    ap.add_argument(&quot;-n&quot;, type=int, default=12)
+    a = ap.parse_args()
+    if urlsplit(a.base).hostname not in PERMITIDOS:
+        sys.exit(&quot;Este script solo habla con tu laboratorio en 127.0.0.1.&quot;)
+    tecnicas = {&quot;fuerza&quot;: fuerza, &quot;ajenos&quot;: ajenos, &quot;escaneo&quot;: escaneo}
+    for nombre in (list(tecnicas) if a.tecnica == &quot;todas&quot; else [a.tecnica]):
+        tecnicas[nombre](a.base, a.n)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre>
+  </div>
+</details>
+<aside class="callout callout--def">
+<p class="callout-label">Python de por medio</p>
+<p><code>[f(i) for i in range(n)]</code> es una lista por comprensión: llama a <code>f</code> n veces y junta los resultados. <code>argparse</code> arma la línea de comandos con su ayuda; <code>python provocar.py -h</code> la muestra.</p>
+</aside>
+<div data-exercise="sec00-p-escaneo"></div>
+<aside class="callout callout--prod">
+<p class="callout-label">Solo contra tu laboratorio</p>
+<p>El script manda requests de verdad. Úsalo solo contra la tienda de esta guía en tu máquina. Mandar logins fallidos o escaneos a un sistema que no es tuyo, aunque sea "para probar", es un ataque.</p>
+</aside>
+<h2 id="viaje">El viaje de un dato</h2>
+<p>El caso principal: el octavo login fallido de una IP en dos minutos, desde la terminal hasta la alerta en el dashboard.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 512" role="img" aria-labelledby="fs00st fs00sd">
+<title id="fs00st">El octavo login fallido, hasta el dashboard</title>
+<desc id="fs00sd">provocar.py manda el login a Nginx, que escribe su línea de acceso y lo pasa a la API. La API no encuentra coincidencia, escribe login_fallido y responde 401. El manager lee la línea, el decoder json la parte, coincide con la regla 100101 y, al ser la octava de esa IP en 120 segundos, con la 100102. La alerta se escribe en alerts.json y va al indexer. La persona la busca en el dashboard.</desc>
+<defs><marker id="fs00s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs00s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs00s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs00s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="21.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">provocar.py</text>
+<path class="dg-frame" d="M70.0 40 V502"/>
+<rect class="dg-box" x="126.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="175.0" y="29" text-anchor="middle" style="font-size:13.5px">Nginx</text>
+<path class="dg-frame" d="M175.0 40 V502"/>
+<rect class="dg-box" x="231.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">API</text>
+<path class="dg-frame" d="M280.0 40 V502"/>
+<rect class="dg-box" x="336.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Volumen</text>
+<path class="dg-frame" d="M385.0 40 V502"/>
+<rect class="dg-box" x="441.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">Manager</text>
+<path class="dg-frame" d="M490.0 40 V502"/>
+<rect class="dg-box" x="546.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="595.0" y="29" text-anchor="middle" style="font-size:13.5px">Indexer</text>
+<path class="dg-frame" d="M595.0 40 V502"/>
+<rect class="dg-box" x="651.5" y="8" width="97.0" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Dashboard</text>
+<path class="dg-frame" d="M700.0 40 V502"/>
+<path class="dg-edge" d="M73.0 72 L170.0 72" marker-end="url(#fs00s-a)"/>
+<rect x="67.0" y="55" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="122.5" y="66" text-anchor="middle">POST /api/login</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M178.0 106 L380.0 106" marker-end="url(#fs00s-q)"/>
+<rect x="224.5" y="89" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="100" text-anchor="middle">línea de acceso</text>
+<path class="dg-edge" d="M178.0 140 L275.0 140" marker-end="url(#fs00s-a)"/>
+<rect x="185.2" y="123" width="84.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="134" text-anchor="middle">+ X-Real-IP</text>
+<rect x="290.0" y="160" width="146" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="300.0" y="176">scrypt no coincide</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M283.0 208 L380.0 208" marker-end="url(#fs00s-q)"/>
+<rect x="283.6" y="191" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="332.5" y="202" text-anchor="middle">login_fallido</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M277.0 242 L75.0 242" marker-end="url(#fs00s-f)"/>
+<rect x="159.1" y="225" width="31.799999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="236" text-anchor="middle">401</text>
+<path class="dg-edge" d="M487.0 276 L390.0 276" marker-end="url(#fs00s-a)"/>
+<rect x="378.7" y="259" width="117.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="437.5" y="270" text-anchor="middle">logcollector lee</text>
+<rect x="500.0" y="296" width="104" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="510.0" y="312">decoder json</text>
+<rect x="500.0" y="330" width="230" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="510.0" y="346">100101, y 8.ª en 120 s: 100102</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M493.0 378 L590.0 378" marker-end="url(#fs00s-q)"/>
+<rect x="487.0" y="361" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="372" text-anchor="middle">alerta nivel 10</text>
+<path class="dg-edge" d="M697.0 412 L600.0 412" marker-end="url(#fs00s-a)"/>
+<rect x="595.3" y="395" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="647.5" y="406" text-anchor="middle">rule.id:100102</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M598.0 446 L695.0 446" marker-end="url(#fs00s-r)"/>
+<rect x="611.8" y="429" width="71.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="647.5" y="440" text-anchor="middle">la alerta</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC00.3.</b> El viaje completo. Las flechas punteadas son escrituras que no esperan respuesta.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Paso</th><th>De → a</th><th>Qué viaja</th><th>Dónde queda</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>provocar.py → Nginx</td><td><code>{"usuario":"ana","clave":"intento-7"}</code></td><td>En ningún lado: la clave no se escribe</td></tr>
+<tr><td>2</td><td>Nginx → volumen</td><td>Ruta, estado, IP, User-Agent</td><td><code>nginx-access.log</code></td></tr>
+<tr><td>3</td><td>Nginx → API</td><td>La request con <code>X-Real-IP</code></td><td>En memoria, mientras dura</td></tr>
+<tr><td>4</td><td>API → volumen</td><td><code>evento</code>, <code>usuario</code>, <code>ip</code></td><td><code>api.log</code></td></tr>
+<tr><td>5</td><td>Volumen → manager</td><td>La línea entera</td><td>La cola interna del manager</td></tr>
+<tr><td>6</td><td>Manager → indexer</td><td>La alerta con <code>rule.id</code>, <code>rule.level</code>, <code>rule.mitre.id</code> y los campos</td><td><code>alerts.json</code> y el índice <code>wazuh-alerts-*</code></td></tr>
+<tr><td>7</td><td>Indexer → dashboard</td><td>El resultado de la búsqueda</td><td>La pantalla de la persona</td></tr>
+</tbody>
+</table>
+</div>
+<p>Fíjate en el paso 1: la clave intentada no queda en ningún log. Guardar las claves fallidas convierte el log en una lista de claves casi correctas, y es un error común (<a href="../modules/m59-deteccion.html#fuentes">59.2</a>).</p>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<p>Seis decisiones del laboratorio, con lo que se descartó.</p>
+<div data-exercise="sec00-lab"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<p>Tres comprobaciones: las reglas con líneas de ejemplo, las tres técnicas provocadas de verdad y tres fallas a propósito. Ninguna cifra de esta sección viene de una corrida: lo que tiene que aparecer sale del código y de las reglas, y los tiempos los anotas tú.</p>
+<h3 id="comprueba-logtest">Las reglas, línea por línea</h3>
+<div class="step-map" data-where="manager">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Las líneas de <code>muestras.jsonl</code>.</dd></div>
+    <div><dt>Sale</dt><dd>La regla que coincide con cada una.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-reglas">Decoder, regla, nivel y alerta</a></dd></div>
+    <div><dt>Tiempo</dt><dd>5 min</dd></div>
+  </dl>
+</div>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Línea de ejemplo</th><th>Regla que tiene que coincidir</th><th>Nivel</th></tr></thead>
+<tbody>
+<tr><td><code>login_fallido</code> de ana</td><td>100101</td><td>5</td></tr>
+<tr><td><code>pedido_ajeno</code> de beto</td><td>100103</td><td>6</td></tr>
+<tr><td>Nginx, <code>/.env</code>, 404</td><td>100111</td><td>3</td></tr>
+<tr><td>La misma de <code>login_fallido</code>, pegada ocho veces seguidas</td><td>100102 en la octava</td><td>10</td></tr>
+</tbody>
+</table>
+</div>
+<p>La última fila sale de la regla: <code>wazuh-logtest</code> guarda el estado de la sesión, así que las coincidencias de la 100101 se cuentan como en el manager.</p>
+<h3 id="comprueba-tecnicas">Las tres técnicas, una por una</h3>
+<div class="step-map" data-where="provocar nginx api logs manager indexer dashboard">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd><code>provocar.py</code> con cada técnica.</dd></div>
+    <div><dt>Sale</dt><dd>Una alerta de nivel alto por técnica.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-correlacion">La regla de correlación</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<pre data-lang="bash"><code>cd sec-lab/tienda-norte
+python provocar.py fuerza
+python provocar.py ajenos
+python provocar.py escaneo
+
+cd ../wazuh-docker/single-node
+docker compose exec wazuh.manager grep -c '"id":"100102"' /var/ossec/logs/alerts/alerts.json
+docker compose exec wazuh.manager grep -c '"id":"100104"' /var/ossec/logs/alerts/alerts.json
+docker compose exec wazuh.manager grep -c '"id":"100112"' /var/ossec/logs/alerts/alerts.json</code></pre>
+<div data-exercise="sec00-p-regla"></div>
+<p>Lo que el diseño espera, leído del código: <code>fuerza</code> imprime doce 401, <code>ajenos</code> doce 404 y <code>escaneo</code> veinticinco 404. Cada <code>grep -c</code> tiene que dar 1 o más. En el dashboard, en el módulo de búsqueda de amenazas, filtra por <code>rule.id:100102</code> y abre la alerta: tiene que traer <code>rule.mitre.id</code> T1110.001 y la IP del puente de Docker.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Técnica</th><th>Regla</th><th>Alertas que viste</th><th>Segundos desde el script hasta el dashboard</th></tr></thead>
+<tbody>
+<tr><td>Fuerza bruta</td><td>100102</td><td></td><td></td></tr>
+<tr><td>Pedidos ajenos</td><td>100104</td><td></td><td></td></tr>
+<tr><td>Escaneo</td><td>100112</td><td></td><td></td></tr>
+</tbody>
+</table>
+</div>
+<p>La tabla queda vacía para tus números. El tiempo hasta el dashboard depende de tu máquina y de cuánto tarda el manager en enviar al indexer.</p>
+<h3 id="comprueba-fallas">Las fallas, a propósito</h3>
+<p>Tres formas reales de quedarse ciego. Cada una se provoca, se observa y se deshace.</p>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 1: el SIEM mira un archivo que ya no existe</p>
+<p><b>Provócala.</b> En la tienda, cambia la ruta de <code>TIENDA_LOG</code> en <code>compose.yaml</code> agregando a la API <code>TIENDA_LOG: /var/log/tienda/api-v2.log</code>, y vuelve a levantar. Corre <code>python provocar.py fuerza</code>.</p><p><b>Qué tiene que pasar.</b> La API responde doce 401 como siempre, pero <code>grep -c</code> de la 100102 no sube: el manager sigue el archivo viejo. Nada avisa. <b>Por qué importa.</b> Es la falla más común de un SIEM, una fuente que deja de llegar en silencio, y por eso cada fuente necesita su alerta de silencio (<a href="../modules/m59-deteccion.html#fuentes">59.2</a>); SEC05 la escribe. <b>Deshazla</b> borrando la línea y levantando de nuevo.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 2: un umbral que no ve la fuerza bruta lenta</p>
+<p><b>Provócala.</b> Manda los intentos de a uno, con una pausa: en Git Bash, <code>for i in $(seq 1 10); do python provocar.py fuerza -n 1; sleep 20; done</code>.</p><p><b>Qué tiene que pasar.</b> Diez fallidos en unos 200 segundos: nunca hay ocho dentro de 120, así que la 100102 no salta, aunque las diez 100101 están. <b>Por qué importa.</b> Todo umbral tiene un punto ciego del otro lado, y el atacante lo conoce si lee tus reglas. La respuesta no es bajar el umbral, sino sumar una regla con una ventana más larga, contando por <code>usuario</code> en lugar de por <code>ip</code>. Pruébalo como ejercicio: una 100105 con <code>frequency="10"</code>, <code>timeframe="3600"</code> y <code>same_field</code> <code>usuario</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 3: un log en texto plano</p>
+<p><b>Provócala.</b> En <code>registro.py</code>, cambia la marca (4) por <code>_log.info(f"{nombre} {campos}")</code>, reconstruye la API y corre <code>python provocar.py fuerza</code>.</p><p><b>Qué tiene que pasar.</b> El archivo sigue creciendo, pero el decoder json no puede partir las líneas: ninguna regla 1001xx coincide, y en <code>wazuh-logtest</code> la fase 2 ya no dice <code>json</code>. <b>Por qué importa.</b> Un cambio de formato en la aplicación, hecho por alguien que no sabe que el SIEM existe, apaga la detección. Por eso el formato es un contrato y lleva una prueba: en SEC01, el pipeline la corre. <b>Deshazla</b> volviendo la línea original.</p>
+</aside>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>La tienda y el SIEM, separados y unidos solo por volúmenes de solo lectura.</li>
+    <li>Tres reglas propias, probadas con líneas de ejemplo.</li>
+    <li>Las tres técnicas provocadas y sus alertas encontradas.</li>
+    <li>Tres fallas que dejan ciego al SIEM, provocadas y deshechas.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>cd sec-lab/wazuh-docker/single-node
+docker compose exec wazuh.manager grep -o &#x27;&quot;id&quot;:&quot;1001[0-9][0-9]&quot;&#x27; /var/ossec/logs/alerts/alerts.json | sort | uniq -c</code></pre>
+  <p>Una línea por cada regla propia que dejó alertas: al menos 100101, 100102, 100103, 100104, 100111 y 100112, cada una con su cuenta. Las madres 100100 y 100110 no aparecen, porque son de nivel 0.</p>
+</aside>
+<h2 id="limitaciones">Limitaciones</h2>
+<ul>
+<li><b>Lo que no hace.</b> No bloquea nada: detecta. No hay rate limiting en el login (lo pone el proxy en una tienda real, <a href="../modules/m08-resiliencia.html">M08</a>) ni respuesta automática. No mira el sistema operativo, los contenedores ni la nube: solo dos archivos.</li>
+<li><b>Dónde se rompe.</b> Las sesiones viven en memoria y se pierden al reiniciar la API. El login responde más rápido con un usuario que no existe, porque no calcula scrypt: un atacante puede enumerar usuarios por tiempo. Se arregla calculando un hash de mentira también en ese caso; queda como está para que el laboratorio sea corto.</li>
+<li><b>Riesgos que quedan.</b> El compose oficial de Wazuh publica sus puertos (443, 1514, 1515, 514 por UDP, 9200 y 55000) en todas las interfaces de tu máquina, con claves por defecto conocidas. En una red que no es tuya, apaga el laboratorio o cámbialas siguiendo la documentación de wazuh-docker antes de levantarlo.</li>
+<li><b>Los umbrales son de laboratorio.</b> 8 fallidos en 2 minutos y 5 pedidos ajenos en 5 minutos sirven para verlos saltar con doce requests; en producción se ajustan con el tráfico real (<a href="../modules/m59-deteccion.html#calidad">59.8</a>).</li>
+</ul>
+<h3 id="limitaciones-costo">Costo y tiempo, con la cuenta a mano</h3>
+<p>El laboratorio no cuesta dinero: todo corre en tu máquina. Lo que cuesta es memoria y disco. Una cuenta para el disco de las alertas, con supuestos dichos como supuestos: si cada alerta ocupa unos 1.5 KB en <code>alerts.json</code> (supuesto: una alerta de Wazuh con los campos de la regla y el JSON original), las 12 + 1 de fuerza bruta, 12 + 1 de ajenos y 25 + 1 de escaneo son unas 52 alertas, alrededor de 78 KB por corrida completa (52 × 1.5). Mil corridas son 78 MB: el disco no es el problema del laboratorio, la memoria del indexer sí. Mide el tamaño real con <code>docker compose exec wazuh.manager ls -l /var/ossec/logs/alerts/alerts.json</code> antes y después de una corrida, y anota tu número.</p>
+<h3 id="limitaciones-produccion">Qué cambia en producción</h3>
+<ul>
+<li>Un <span class="no-autolink">agente</span> de Wazuh por nodo en lugar de volúmenes compartidos: los logs viajan cifrados por el puerto 1514 y el <span class="no-autolink">agente</span> avisa si deja de mandar.</li>
+<li>El indexer en un clúster de tres nodos, con retención definida por política y copias, porque las alertas son evidencia (<a href="../modules/m60-respuesta-forense.html">M60</a>).</li>
+<li>Las claves por defecto cambiadas, el dashboard detrás del SSO y la API de Wazuh sin publicar.</li>
+<li>Las reglas en un repositorio con pruebas que corren en el pipeline: es <a href="../modules/m59-deteccion.html#detection-as-code">detection as code</a>, y lo arma SEC05.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="sec00">
+<p class="pj-repo-head">Sube <code>tienda-norte/</code> a tu repositorio, sin el <code>.env</code>. Marca cada comprobación cuando la veas en tu máquina.</p>
+<ul class="pj-checks">
+<li data-check="tienda">La tienda responde en 127.0.0.1:8088 y el login de ana devuelve un token.</li>
+<li data-check="json"><code>api.log</code> y <code>nginx-access.log</code> tienen una línea JSON por evento.</li>
+<li data-check="wazuh">Wazuh 4.14.10 anda y el dashboard abre en https://localhost.</li>
+<li data-check="leer">El manager lista los dos archivos de la tienda en <code>/var/log/tienda/</code>.</li>
+<li data-check="logtest">Las tres líneas de ejemplo coinciden con 100101, 100103 y 100111 en <code>wazuh-logtest</code>.</li>
+<li data-check="tecnicas">Las alertas 100102, 100104 y 100112 aparecen después de correr <code>provocar.py</code>.</li>
+<li data-check="fallas">Provocaste y deshiciste las tres fallas.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<p>Es la primera guía de la serie SEC, así que no hay una anterior en la serie. Se junta con estas, si las hiciste:</p>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con la Parte VII del curso</p>
+<p>El threat model de Tienda Norte está en <a href="../modules/m54-threat-modeling.html#tienda">54.8</a>, y las diez detecciones, en <a href="../modules/m59-deteccion.html#tienda">59.10</a>. Esta guía escribe la 2 y una versión de la 1 contra el login de la tienda.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con A14, observabilidad (opcional)</p>
+<p><a href="a14-observabilidad.html">A14</a> junta logs, métricas y traces de una API en Java para operarla. Aquí los logs son para seguridad: la misma idea de una línea estructurada por evento, con otro lector.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB06, control de acceso (opcional)</p>
+<p><a href="web06-control-acceso.html">WEB06</a> cierra BOLA en el sistema de prácticas. El <code>pedido_ajeno</code> de esta guía es la otra mitad: además de cerrarlo, ver quién lo intenta.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con el glosario</p>
+<p><a href="../glosario.html#t-siem">SIEM</a>, <a href="../glosario.html#t-mitre-attack">MITRE ATT&amp;CK</a>, <a href="../glosario.html#t-bola">BOLA</a> y <a href="../glosario.html#t-fatiga-alertas">fatiga de alertas</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/sec00.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

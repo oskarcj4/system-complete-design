@@ -1,0 +1,1088 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WEB08. Subir el CV y SSRF</title>
+<meta name="description" content="La subida ya valida bien; lo que falta es quién baja lo subido. Los documentos salen de htdocs y los entrega un script que pregunta, y la vista previa del sitio web de una institución nace sin SSRF.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="web08" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Subir el CV y SSRF</h1>
+        <p class="lead">Un CV con un nombre imposible de adivinar sigue siendo un CV público. Y una función que visita la URL que escribiste es una puerta a la red de tu servidor, si no pregunta adónde va.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>WEB08</dd></div>
+          <div><dt>Plan</dt><dd>Seguridad web</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>3 h</dd></div>
+          <div><dt>Módulos</dt><dd>M82, M80</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="web08">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Comprobar, con la lista de <a href="../modules/m82-archivos-ssrf.html#subidas">M82</a>, que la subida de archivos de tu API ya valida bien (tipo por contenido, firma, nombre aleatorio, PHP apagado en la carpeta) y encontrar lo que falta: quién puede bajar lo que se subió.</li>
+<li>Sacar los documentos de la carpeta que Apache sirve y entregarlos con un script que pregunta quién los pide, con las cabeceras que no dejan al navegador adivinar.</li>
+<li>Agregar una vista previa del sitio web de una institución que no se convierta en una puerta a tu red: esquema, puerto, IP resuelta, conexión a la IP validada y redirecciones validadas una por una.</li>
+<li>Probarlo con funciones puras y un DNS falso, con una matriz de <code>curl</code> y con tres fallas provocadas en tu laboratorio.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>La re-auditoría empezó por donde dice <a href="../modules/m82-archivos-ssrf.html#fallas">82.9</a>: buscar dónde un dato del usuario se vuelve una ruta en disco, una URL que el servidor visita o un <code>Location</code>. La subida está mejor que el ejemplo del módulo. <code>Upload::validate()</code> revisa el código de error de PHP, <code>is_uploaded_file</code>, el tamaño real, la extensión contra una lista, el tipo por contenido con <code>finfo</code> y la firma binaria de los primeros bytes. <code>Storage::guardar()</code> nunca usa el nombre original: la llave es <code>carpeta/año/mes/32 caracteres aleatorios.ext</code>. Y <code>uploads/.htaccess</code> niega todo menos <code>pdf</code>, <code>jpg</code> y <code>png</code>, apaga PHP y manda <code>nosniff</code>. No hay ningún <code>header('Location: …')</code> armado con un dato, ni un <code>curl</code> con una URL del usuario: el único <code>curl_init</code> va al bucket de S3 del <code>.env</code>.</p>
+<p>Lo que falta no está en la subida, sino en la bajada, y en una función que producto quiere agregar:</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="fw8at fw8ad">
+<title id="fw8at">La re-auditoría de archivos y URLs</title>
+<desc id="fw8ad">Una rejilla con seis filas. Validar la subida: seis controles en Upload::validate, ya bien. El nombre en disco: aleatorio, ya bien. Ejecutar lo subido: PHP apagado en uploads, ya bien. Quién baja un CV: cualquiera con el link, hueco 1, pasos 1 a 3. La vista previa del sitio web: no existe, se agrega sin SSRF, hueco 2, pasos 4 y 5. Redirecciones: ninguna toma el destino de la request, ya bien.</desc>
+<g class="dg-small"><text x="20" y="28">Qué se revisó</text><text x="300" y="28">Qué hay hoy</text><text x="600" y="28">Estado</text></g>
+<path class="dg-frame" d="M14 40 H756"/>
+<text class="dg-label" x="20" y="66">Validar la subida</text><text class="dg-tiny" x="300" y="66">seis controles en Upload::validate()</text>
+<rect x="596" y="50" width="150" height="26" rx="6" class="dg-ok"/><text class="dg-tiny" x="671" y="67" text-anchor="middle">ya bien</text>
+<text class="dg-label" x="20" y="108">El nombre en disco</text><text class="dg-tiny" x="300" y="108">32 caracteres aleatorios y la extensión</text>
+<rect x="596" y="92" width="150" height="26" rx="6" class="dg-ok"/><text class="dg-tiny" x="671" y="109" text-anchor="middle">ya bien</text>
+<text class="dg-label" x="20" y="150">Ejecutar lo subido</text><text class="dg-tiny" x="300" y="150">uploads/.htaccess: PHP apagado, lista</text>
+<rect x="596" y="134" width="150" height="26" rx="6" class="dg-ok"/><text class="dg-tiny" x="671" y="151" text-anchor="middle">ya bien</text>
+<text class="dg-label" x="20" y="192">Quién baja un CV</text><text class="dg-tiny" x="300" y="192">cualquiera que tenga el link</text>
+<rect x="596" y="176" width="150" height="26" rx="6" class="dg-bad"/><text class="dg-tiny" x="671" y="193" text-anchor="middle">hueco 1, pasos 1 a 3</text>
+<text class="dg-label" x="20" y="234">Vista previa de sitio_web</text><text class="dg-tiny" x="300" y="234">no existe: se agrega, sin SSRF</text>
+<rect x="596" y="218" width="150" height="26" rx="6" class="dg-warnbox"/><text class="dg-tiny" x="671" y="235" text-anchor="middle">hueco 2, pasos 4 y 5</text>
+<text class="dg-label" x="20" y="276">Redirecciones</text><text class="dg-tiny" x="300" y="276">ninguna toma el destino de la request</text>
+<rect x="596" y="260" width="150" height="26" rx="6" class="dg-ok"/><text class="dg-tiny" x="671" y="277" text-anchor="middle">ya bien</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB08.1.</b> La re-auditoría, en una rejilla. Las tres primeras filas son el patrón de <a href="../modules/m82-archivos-ssrf.html#tipo-real">82.2</a> y <a href="../modules/m82-archivos-ssrf.html#guardar">82.3</a>, ya hecho. La roja deja pasar algo hoy; la amarilla es una función nueva que conviene nacer bien.</figcaption>
+</figure>
+<ul>
+<li><b>H1. Los documentos son públicos.</b> <code>Storage::guardar()</code> devuelve <code>http://localhost/SistemaControlPracticas/uploads/postulaciones/cv/…pdf</code>, y eso es lo que se guarda en <code>cv_url</code>. Apache lo sirve a cualquiera, con sesión o sin ella. El nombre tiene 128 bits aleatorios y nadie lo adivina, pero un link no es un control: no vence, se reenvía por correo, queda en el historial y en los registros de un proxy, y sigue abriendo el CV cuando la postulación se retiró o el reclutador dejó la empresa. Es lo que <a href="../modules/m80-control-acceso.html#traversal">M80</a> llama un id difícil de adivinar: no responde la pregunta "¿esta persona puede ver este objeto?". Lo mismo pasa con la constancia de estudios y con el documento de respaldo de una solicitud de publicación.</li>
+<li><b>H2. La vista previa que viene.</b> Producto quiere que el panel de administración muestre el título del sitio web de una institución antes de guardarlo, para atrapar enlaces rotos. Es exactamente la función de la figura 82.3: el servidor visita una URL que escribió una persona. La administradora de la aplicación no es la administradora de la red: no debería poder leer, con un formulario, lo que solo se ve desde dentro del servidor.</li>
+</ul>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 342" role="img" aria-labelledby="fw8st fw8sd">
+<title id="fw8st">La vista previa, ingenua y validada</title>
+<desc id="fw8sd">Con la versión ingenua, la administradora manda una URL de un sitio que responde con una redirección a un servicio interno. PHP la sigue sola y devuelve como vista previa lo que respondió el servicio interno. Con la versión validada, cada salto pasa por destinoPermitido: la IP resuelta es interna y la API responde 422 sin conectar.</desc>
+<defs><marker id="fw8s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw8s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fw8s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fw8s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Panel (admin)</text>
+<path class="dg-frame" d="M70.0 40 V332"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">API (PHP)</text>
+<path class="dg-frame" d="M280.0 40 V332"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">atacante.test</text>
+<path class="dg-frame" d="M490.0 40 V332"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Servicio interno</text>
+<path class="dg-frame" d="M700.0 40 V332"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#fw8s-a)"/>
+<rect x="0.700000000000017" y="55" width="348.59999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">POST vista_previa {url: atacante.test/redirige.php}</text>
+<path class="dg-edge" d="M283.0 106 L485.0 106" marker-end="url(#fw8s-a)"/>
+<rect x="322.9" y="89" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">GET /redirige.php</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 140 L285.0 140" marker-end="url(#fw8s-r)"/>
+<rect x="270.1" y="123" width="229.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="134" text-anchor="middle">302 Location: 127.0.0.1/interno/…</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M283.0 174 L695.0 174" marker-end="url(#fw8s-f)"/>
+<rect x="345.4" y="157" width="289.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="168" text-anchor="middle">GET /interno/metadatos.php (lo sigue solo)</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M697.0 208 L285.0 208" marker-end="url(#fw8s-f)"/>
+<rect x="431.2" y="191" width="117.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="202" text-anchor="middle">{AccessKeyId: …}</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M277.0 242 L75.0 242" marker-end="url(#fw8s-f)"/>
+<rect x="66.7" y="225" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="236" text-anchor="middle">200, extracto: las credenciales</text>
+<rect x="290.0" y="262" width="349" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="300.0" y="278">después: resuelve a 127.0.0.1, 422 sin conectar</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB08.2.</b> Lo que se ve en la falla 1. El problema no es la primera URL, que parece un sitio cualquiera: es que la librería sigue la redirección sin preguntar. Por eso la versión del paso 4 desactiva el seguimiento automático y valida cada salto con la misma función.</figcaption>
+</figure>
+<h2 id="endpoints">Los endpoints</h2>
+<div class="table-wrap">
+<table class="t pj-ep">
+<thead><tr><th>Método y ruta</th><th>Qué hace</th><th>Respuestas</th></tr></thead>
+<tbody>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>archivos.php?postulacion=ID&amp;doc=cv</code></td><td>El CV de una postulación. También <code>doc=constancia</code>. Con <code>&amp;descargar=1</code>, como descarga.</td><td>200 con el archivo · 400 documento no válido · 401 sin sesión · 403 no es tuyo · 404 no existe</td></tr>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>archivos.php?solicitud=ID&amp;doc=respaldo</code></td><td>El documento de respaldo de una solicitud de publicación.</td><td>Los mismos</td></tr>
+<tr><td><span class="ep-method" data-m="POST">POST</span><code>vista_previa.php</code></td><td><code>{"url": "https://…"}</code>. El host y el <code>&lt;title&gt;</code> del sitio. Solo administración, con token CSRF.</td><td>200 <code>{host, estado, titulo}</code> · 403 · 422 URL no permitida, con el motivo · 502 no se pudo obtener</td></tr>
+</tbody>
+</table>
+</div>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Request</th><th>Hoy (leído del código)</th><th>Después</th></tr></thead>
+<tbody>
+<tr><td><code>GET /SistemaControlPracticas/uploads/postulaciones/cv/…pdf</code>, sin sesión</td><td>200, el PDF</td><td>403: la carpeta niega todo y los archivos ya no están ahí</td></tr>
+<tr><td><code>GET archivos.php?postulacion=ID&amp;doc=cv</code> como otra estudiante</td><td>no existe</td><td>403</td></tr>
+<tr><td><code>POST vista_previa.php</code> con <code>http://127.0.0.1/…</code></td><td>no existe</td><td>422, <code>el destino es una dirección interna</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="dependencias">Qué necesitas</h2>
+<p>El laboratorio de <a href="web00-laboratorio.html">WEB00</a> con <a href="web01-lo-que-no-debe-verse.html">WEB01</a> (los códigos HTTP y <code>Response::serverError</code>), <a href="web03-csrf.html">WEB03</a> (el host <code>atacante.test</code>) y <a href="web04-cors.html">WEB04</a> (<code>aplicarCors</code>, que es la primera línea de cada endpoint) aplicadas. Las cuatro sesiones de laboratorio de <a href="web06-control-acceso.html#infra-sesiones">WEB06</a>. Nada que instalar: <code>curl</code> y <code>filter</code> vienen con el PHP de XAMPP.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Pieza</th><th>Para qué</th><th>Cómo comprobarla</th></tr></thead>
+<tbody>
+<tr><td>PHP 8.3 de XAMPP</td><td><code>FILTER_FLAG_GLOBAL_RANGE</code> (desde PHP 8.2) <span class="badge badge--doc">Documentado</span> y <code>CURLOPT_PROTOCOLS_STR</code></td><td><code>C:\xampp\php\php.exe -r "var_dump(defined('CURLOPT_PROTOCOLS_STR'));"</code> dice <code>bool(true)</code></td></tr>
+<tr><td><code>curl.cainfo</code> en <code>php.ini</code></td><td>Que la vista previa pueda verificar el certificado de un sitio <code>https</code></td><td><code>findstr /b curl.cainfo C:\xampp\php\php.ini</code> muestra una ruta a un archivo que existe</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="infraestructura">La infraestructura</h2>
+<h3 id="infra-cv">Un CV de verdad</h3>
+<p>La matriz necesita una postulación con un archivo real. Como <code>estudiante</code>, postúlate a una oferta del <code>reclutador</code> con cualquier PDF tuyo que no tenga datos personales (uno de una página con "CV de prueba" alcanza). Después, en "Mis postulaciones", haz clic derecho en "Ver CV" y copia el link. Ábrelo en una ventana privada, sin sesión:</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Lo que espera el diseño</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>El link empieza con <code>http://localhost/SistemaControlPracticas/uploads/postulaciones/cv/</code></td><td>&nbsp;</td></tr>
+<tr><td>La ventana privada muestra el PDF: no hay sesión y no importa</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<p>Ese es H1, ya comprobado. Guarda el link: la matriz lo vuelve a pedir al final.</p>
+<h3 id="infra-interno">Un servicio interno de mentira</h3>
+<p>En la nube, el servidor ve cosas que internet no ve: el servicio de metadatos en <code>169.254.169.254</code> (<a href="../modules/m82-archivos-ssrf.html#imds">82.5</a>), un Redis sin contraseña, un panel de administración "que solo se usa desde dentro". En tu máquina todo es local, así que el laboratorio lo imita con una carpeta que Apache solo sirve a quien está en la misma máquina, con unas credenciales falsas a propósito: lo que importa es si el servidor llega, no lo que hay.</p>
+<pre data-lang="shell" data-file="C:/xampp/htdocs/interno/.htaccess"><code># Un servicio "interno" de laboratorio (WEB08): solo responde a quien está en esta máquina,
+# como el servicio de metadatos de la nube solo responde desde dentro de la máquina virtual.
+Require local</code></pre>
+<pre data-lang="php" data-file="C:/xampp/htdocs/interno/metadatos.php"><code>&lt;?php
+// Hace de servicio de metadatos de la nube (M82, 82.5). Las credenciales son falsas a propósito.
+header('Content-Type: application/json');
+echo json_encode(['Code' =&gt; 'Success', 'AccessKeyId' =&gt; 'LAB-NO-ES-UNA-LLAVE', 'Token' =&gt; 'lab-' . date('His')]);</code></pre>
+<p>Y dos archivos en la página atacante de <a href="web03-csrf.html">WEB03</a>: un sitio "público" que redirige adentro, y un texto inocuo para probar <code>file://</code> sin leer nada que importe.</p>
+<pre data-lang="php" data-file="C:/xampp/htdocs/atacante/redirige.php"><code>&lt;?php
+// WEB08: un sitio "público" que manda al servidor a la red interna con una redirección.
+header('Location: http://127.0.0.1/interno/metadatos.php', true, 302);</code></pre>
+<pre data-lang="shell" data-file="C:/xampp/htdocs/atacante/inocuo.txt"><code>Archivo de laboratorio de WEB08. Si ves esto en una vista previa, el servidor leyó un archivo de su disco.</code></pre>
+<pre data-lang="shell"><code>curl.exe -s http://127.0.0.1/interno/metadatos.php</code></pre>
+<p>El diseño espera un JSON con <code>"AccessKeyId":"LAB-NO-ES-UNA-LLAVE"</code>. <code>Require local</code> (de <code>mod_authz_host</code>, Apache 2.4) deja pasar las conexiones que llegan a una dirección de la misma máquina <span class="badge badge--doc">Documentado</span>: desde tu navegador también responde, porque tu navegador está en la misma máquina. En un servidor real, la diferencia entre "el navegador del atacante" y "el servidor" es toda la gracia.</p>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<h3 id="paso-carpeta">Paso 1. Los archivos, fuera de htdocs</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 260" role="img" aria-labelledby="fw8bt fw8bd">
+<title id="fw8bt">Antes y después de servir un CV</title>
+<desc id="fw8bd">Antes, el navegador pide el link de uploads y Apache entrega el archivo sin preguntar nada. Después, el link va a archivos.php, que revisa la sesión y si el documento es de quien lo pide, y recién entonces lee el archivo de una carpeta fuera de htdocs. El link viejo de uploads da 403.</desc>
+<defs><marker id="fw8ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw8bf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker></defs>
+<path class="dg-edge" d="M150 65 L250 65" marker-end="url(#fw8ba)"/>
+<rect x="160" y="47" width="80" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="200" y="59" text-anchor="middle">GET el link</text>
+<path class="dg-edge" stroke-dasharray="6 4" style="stroke:var(--fail)" d="M400 65 L520 65" marker-end="url(#fw8bf)"/>
+<rect x="389" y="47" width="142" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="460" y="59" text-anchor="middle">lo lee, sin preguntar</text>
+<path class="dg-edge" d="M150 205 L250 205" marker-end="url(#fw8ba)"/>
+<rect x="163" y="187" width="74" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="200" y="199" text-anchor="middle">pide el CV</text>
+<path class="dg-edge" d="M400 205 L520 205" marker-end="url(#fw8ba)"/>
+<rect x="408" y="187" width="105" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="460" y="199" text-anchor="middle">solo si es tuyo</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="40" width="130" height="50" rx="8"/>
+<text class="dg-label" x="85.0" y="63.0" text-anchor="middle">Navegador</text>
+<text class="dg-tiny" x="85.0" y="78.0" text-anchor="middle">con o sin sesión</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="250" y="40" width="150" height="50" rx="8"/>
+<text class="dg-label" x="325.0" y="63.0" text-anchor="middle">Apache</text>
+<text class="dg-tiny" x="325.0" y="78.0" text-anchor="middle">uploads/ público</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="520" y="40" width="220" height="50" rx="8"/>
+<text class="dg-label" x="630.0" y="63.0" text-anchor="middle">htdocs/…/uploads</text>
+<text class="dg-tiny" x="630.0" y="78.0" text-anchor="middle">el PDF</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="20" y="180" width="130" height="50" rx="8"/>
+<text class="dg-label" x="85.0" y="203.0" text-anchor="middle">Navegador</text>
+<text class="dg-tiny" x="85.0" y="218.0" text-anchor="middle">con sesión</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="250" y="180" width="150" height="50" rx="8"/>
+<text class="dg-label" x="325.0" y="203.0" text-anchor="middle">archivos.php</text>
+<text class="dg-tiny" x="325.0" y="218.0" text-anchor="middle">sesión, dueño</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="520" y="180" width="220" height="50" rx="8"/>
+<text class="dg-label" x="630.0" y="203.0" text-anchor="middle">C:/xampp/practicas-archivos</text>
+<text class="dg-tiny" x="630.0" y="218.0" text-anchor="middle">fuera de htdocs</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB08.3.</b> Arriba, hoy: la pregunta "¿es tuyo?" no se hace en ningún lado. Abajo, después del paso 3: el único camino al archivo pasa por un script que la hace. Mover la carpeta es lo que vuelve obligatorio ese camino.</figcaption>
+</figure>
+<p>Primero, que Apache no pueda servir los archivos aunque alguien tenga el link. <code>Storage</code> ya lee la carpeta de <code>STORAGE_LOCAL_PATH</code>; basta con apuntarla fuera de <code>htdocs</code>. En el archivo de secretos de <a href="web01-lo-que-no-debe-verse.html">WEB01</a>:</p>
+<pre data-lang="shell" data-file="C:/xampp/secretos/practicas.env (línea nueva)"><code># Documentos subidos, fuera de la carpeta que Apache sirve (WEB08). Solo los entrega archivos.php.
+STORAGE_LOCAL_PATH=C:/xampp/practicas-archivos</code></pre>
+<p><code>STORAGE_PUBLIC_URL</code> no cambia. Los links que ya están en la base siguen empezando igual, y <code>Storage</code> los usa para sacar la llave; solo dejan de abrirse directo. Ahora copia lo que ya se subió, desde la raíz del proyecto:</p>
+<pre data-lang="shell"><code>robocopy uploads C:\xampp\practicas-archivos /E /XF .htaccess
+(Get-ChildItem uploads -Recurse -File -Exclude .htaccess).Count
+(Get-ChildItem C:\xampp\practicas-archivos -Recurse -File).Count</code></pre>
+<p><code>robocopy</code> termina con el código 1 cuando copió archivos, y eso no es un error. Los dos números tienen que ser iguales. Con eso, borra las carpetas de dentro de <code>uploads</code>, que dejan de hacer falta:</p>
+<aside class="callout callout--fail">
+<p class="callout-label">Antes de borrar</p>
+<p>Esto borra los documentos de <code>uploads</code>. Haz el paso solo si los dos conteos coinciden y abriste un archivo de la carpeta nueva. Si tienes dudas, renombra la carpeta (<code>uploads-viejo</code>) en lugar de borrarla, y bórrala cuando la matriz dé todo <code>ok</code>.</p>
+</aside>
+<pre data-lang="shell"><code>Get-ChildItem uploads -Directory | Remove-Item -Recurse</code></pre>
+<p>Y la carpeta <code>uploads</code> queda como red de seguridad: si algún día se configura mal <code>STORAGE_LOCAL_PATH</code> y un archivo vuelve a caer ahí, Apache no lo entrega. El <code>.htaccess</code> entero queda así:</p>
+<pre data-lang="shell" data-file="uploads/.htaccess"><code># Los documentos viven en STORAGE_LOCAL_PATH, fuera de htdocs, y los entrega archivos.php (WEB08).
+# Esta carpeta ya no sirve nada: si un archivo cae aquí por error, Apache tampoco lo entrega.
+Options -Indexes -ExecCGI
+Require all denied
+
+&lt;IfModule php_module&gt;
+    php_flag engine off
+&lt;/IfModule&gt;</code></pre>
+<p><code>php_module</code> es el nombre con el que <code>httpd-xampp.conf</code> carga PHP (<code>LoadModule php_module</code>), así que ese <code>IfModule</code> se cumple en tu XAMPP. Los <code>RemoveHandler</code> del archivo anterior no hacían falta: XAMPP asocia PHP con <code>SetHandler</code> dentro de un <code>FilesMatch</code>, que <code>RemoveHandler</code> no deshace; lo que apagaba PHP era el <code>engine off</code>, y ahora además nada se entrega.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Mover los archivos fuera de <code>htdocs</code> y negar la carpeta vieja entera.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Dejar la carpeta pública y confiar en que el nombre es imposible de adivinar: eso es H1. O dejarla pública y agregar el script: el link viejo seguiría abriendo el archivo sin pasar por él.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que <code>STORAGE_LOCAL_PATH</code> no se lea (un error de tipeo en el nombre) y <code>Storage</code> siga escribiendo en <code>uploads</code>. Lo ves en la matriz: el CV nuevo da 404 en <code>archivos.php</code> o el link directo da 403 aunque el archivo exista. Revisa que la línea esté en el archivo de secretos que lee <code>Env</code>.</dd></div>
+</dl>
+<h3 id="paso-reglas">Paso 2. Quién puede ver qué</h3>
+<p>Las reglas van en funciones puras, como en <a href="web06-control-acceso.html#paso-reglas">WEB06</a>, para probarlas sin base. Lo que deciden:</p>
+<div class="pseudo"><ol>
+<li><code>DOCUMENTOS_SERVIBLES</code>: los tres documentos que se pueden pedir, con la tabla de la que cuelgan y la columna que guarda el link. La columna sale de esta constante, nunca de la request (<a href="web07-inyecciones.html">WEB07</a>).</li>
+<li><code>puedeVerDocumento</code>: una postulación la ven la estudiante que se postuló, quien creó la oferta y un admin; una solicitud, quien la pidió y un admin. Lo demás, no.</li>
+<li><code>tipoServible</code>: el tipo con el que se sirve sale de una lista por extensión. Un <code>.html</code> o un <code>.svg</code> no sale nunca, aunque alguien logre escribirlo en la carpeta.</li>
+<li><code>cabecerasArchivo</code>: el tipo, <code>nosniff</code>, <code>inline</code> o <code>attachment</code> con un nombre armado por el código, sin caché compartida y <code>Cross-Origin-Resource-Policy: same-site</code>.</li>
+</ol></div>
+<pre data-lang="php" data-file="api/core/reglas-archivos.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+/**
+ * Reglas para servir los documentos subidos (WEB08). Son funciones puras, sin base
+ * ni disco, para probarlas con tests/archivos_test.php.
+ */
+
+/** Tipos que se sirven, por la extensión de la llave. Lo que no está aquí no sale nunca. */
+const TIPOS_SERVIBLES = [
+    'pdf' =&gt; 'application/pdf',
+    'jpg' =&gt; 'image/jpeg',
+    'png' =&gt; 'image/png',
+];
+
+/** Documentos que se pueden pedir: nombre en la URL =&gt; [de dónde cuelga, columna que guarda el link]. */
+const DOCUMENTOS_SERVIBLES = [
+    'cv'         =&gt; ['postulacion', 'cv_url'],
+    'constancia' =&gt; ['postulacion', 'constancia_estudios_url'],
+    'respaldo'   =&gt; ['solicitud', 'documento_respaldo_url'],
+];
+
+/** El tipo MIME con el que se sirve una llave, o null si su extensión no está en la lista. */
+function tipoServible(string $llave): ?string
+{
+    $ext = strtolower(pathinfo($llave, PATHINFO_EXTENSION));
+    return TIPOS_SERVIBLES[$ext] ?? null;
+}
+
+/**
+ * ¿Puede esta sesión ver el documento?
+ *   postulacion: la estudiante que se postuló, quien creó la oferta o un admin.
+ *   solicitud:   quien pidió el permiso o un admin.
+ *
+ * @param array{estudiante_id?: int, creado_por?: int, usuario_id?: int} $duenos
+ */
+function puedeVerDocumento(string $origen, array $duenos, int $propio, bool $esAdmin): bool
+{
+    if ($esAdmin) {
+        return true;
+    }
+    return match ($origen) {
+        'postulacion' =&gt; $propio === ($duenos['estudiante_id'] ?? -1) || $propio === ($duenos['creado_por'] ?? -1),
+        'solicitud'   =&gt; $propio === ($duenos['usuario_id'] ?? -1),
+        default       =&gt; false,
+    };
+}
+
+/**
+ * Las cabeceras de la respuesta, sin enviarlas. El nombre sugerido lo arma quien llama
+ * con piezas validadas (documento, id, extensión); nunca es el nombre original del archivo.
+ *
+ * @return list&lt;string&gt;
+ */
+function cabecerasArchivo(string $mime, int $bytes, bool $descargar, string $nombre): array
+{
+    return [
+        'Content-Type: ' . $mime,
+        'Content-Length: ' . $bytes,
+        'X-Content-Type-Options: nosniff',
+        'Content-Disposition: ' . ($descargar ? 'attachment' : 'inline') . '; filename="' . $nombre . '"',
+        'Cache-Control: private, no-store',
+        'Cross-Origin-Resource-Policy: same-site',
+    ];
+}</code></pre>
+<p>Las dos últimas cabeceras: <code>Cache-Control: private, no-store</code> le dice a un proxy o a la caché del navegador que no guarde una copia de un CV; <code>Cross-Origin-Resource-Policy: same-site</code> le dice al navegador que no entregue el archivo a una página de otro sitio que lo pida como <code>&lt;img&gt;</code> o <code>&lt;iframe&gt;</code> <span class="badge badge--doc">Documentado</span>. El frontend en <code>localhost:5173</code> y la API en <code>localhost</code> son el mismo sitio (<a href="../modules/m74-origen-cookies.html">M74</a>), así que la vista previa del panel sigue funcionando.</p>
+<p>Después, <code>Storage</code> necesita entregar la ruta en disco de un link guardado. Agrega este método dentro de la clase, antes del bloque <code>// Configuración (.env)</code>:</p>
+<pre data-lang="php" data-file="api/core/storage.php (método nuevo)"><code>    /**
+     * Ruta en disco del archivo de un link guardado, o null si el link no es del almacenamiento
+     * local actual o el archivo no existe. Para que un script que ya revisó el permiso lo sirva (WEB08).
+     */
+    public static function rutaLocal(string $url): ?string
+    {
+        if (self::driver() !== 'local') {
+            return null;                              // en S3 se sirve con una URL firmada (Limitaciones)
+        }
+        $llave = self::llaveDeUrl($url, self::urlPublica());
+        if ($llave === null) {
+            return null;
+        }
+        $base = realpath(self::carpetaLocal());
+        $ruta = realpath(self::carpetaLocal() . '/' . $llave);
+        if ($base === false || $ruta === false || !str_starts_with($ruta, $base . DIRECTORY_SEPARATOR) || !is_file($ruta)) {
+            return null;                              // PATRON_LLAVE ya impide "..": esto es la segunda red
+        }
+        return $ruta;
+    }</code></pre>
+<p><code>PATRON_LLAVE</code> ya no deja pasar <code>..</code> ni <code>\</code>, así que la llave no puede salir de la carpeta. El <code>realpath</code> con <code>str_starts_with</code> es el de <a href="../modules/m80-control-acceso.html#traversal">80.8</a>: una segunda red por si alguien afloja el patrón algún día.</p>
+<pre data-lang="php" data-file="tests/archivos_test.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../api/core/reglas-archivos.php';
+
+$fallos = 0;
+function caso(string $nombre, bool $esperado, bool $obtenido): void
+{
+    global $fallos;
+    $ok = $esperado === $obtenido;
+    if (!$ok) {
+        $fallos++;
+    }
+    printf("%s %s\n", $ok ? 'ok    ' : 'FALLA ', $nombre);
+}
+
+# Una postulación de la estudiante 3 a una oferta del reclutador 2; una solicitud de la 5.
+$postulacion = ['estudiante_id' =&gt; 3, 'creado_por' =&gt; 2];
+$solicitud   = ['usuario_id' =&gt; 5];
+
+caso('la estudiante ve su CV',                    true,  puedeVerDocumento('postulacion', $postulacion, 3, false));
+caso('quien creó la oferta ve el CV',             true,  puedeVerDocumento('postulacion', $postulacion, 2, false));
+caso('otra estudiante no',                        false, puedeVerDocumento('postulacion', $postulacion, 5, false));
+caso('el admin sí',                               true,  puedeVerDocumento('postulacion', $postulacion, 1, true));
+caso('quien pidió el permiso ve su respaldo',     true,  puedeVerDocumento('solicitud', $solicitud, 5, false));
+caso('el reclutador no ve un respaldo ajeno',     false, puedeVerDocumento('solicitud', $solicitud, 2, false));
+caso('un origen que nadie nombró: no',            false, puedeVerDocumento('otro', $postulacion, 3, false));
+caso('dueños vacíos: no',                         false, puedeVerDocumento('postulacion', [], 3, false));
+
+caso('pdf se sirve como PDF',                     true,  tipoServible('postulaciones/cv/2026/11/ab.pdf') === 'application/pdf');
+caso('PNG en mayúsculas también',                 true,  tipoServible('x/ab.PNG') === 'image/png');
+caso('html no se sirve',                          true,  tipoServible('x/ab.html') === null);
+caso('svg no se sirve',                           true,  tipoServible('x/ab.svg') === null);
+
+$h = cabecerasArchivo('application/pdf', 1024, false, 'cv-7.pdf');
+caso('inline por defecto, con el nombre armado',  true,  in_array('Content-Disposition: inline; filename="cv-7.pdf"', $h, true));
+caso('nosniff siempre',                           true,  in_array('X-Content-Type-Options: nosniff', $h, true));
+caso('descargar=1 pide attachment',               true,  in_array('Content-Disposition: attachment; filename="cv-7.pdf"',
+                                                              cabecerasArchivo('application/pdf', 1024, true, 'cv-7.pdf'), true));
+
+echo $fallos === 0 ? "Todo bien\n" : "$fallos casos fallaron\n";
+exit($fallos === 0 ? 0 : 1);</code></pre>
+<pre data-lang="shell"><code>C:\xampp\php\php.exe tests\archivos_test.php</code></pre>
+<p>Quince líneas <code>ok</code> y <code>Todo bien</code>. La prueba no toca la base ni el disco: si falla, es la regla.</p>
+<h3 id="paso-servir">Paso 3. Una sola puerta</h3>
+<p>El script que entrega los documentos. El orden importa: sesión, documento válido, que exista, que sea tuyo, y recién entonces se toca el disco.</p>
+<pre data-lang="php" data-file="api/endpoints/archivos.php"><code>&lt;?php
+
+require_once __DIR__ . "/../core/cors.php";
+aplicarCors(['GET']);
+
+require_once __DIR__ . "/../core/connection.php";
+require_once __DIR__ . "/../core/auth-middleware.php";
+require_once __DIR__ . "/../core/permisos.php";
+require_once __DIR__ . "/../core/storage.php";
+require_once __DIR__ . "/../core/reglas-archivos.php";
+
+/**
+ * GET archivos.php?postulacion=ID&amp;doc=cv|constancia[&amp;descargar=1]
+ * GET archivos.php?solicitud=ID&amp;doc=respaldo[&amp;descargar=1]
+ *
+ * Sirve un documento subido después de revisar quién lo pide. Los archivos viven
+ * fuera de htdocs (STORAGE_LOCAL_PATH): este script es la única puerta.
+ */
+if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
+    Response::invalidMethod();
+}
+$connection = Connection::load();
+$auth = requireAuth();                                   // 401 sin sesión
+
+$doc = (string)($_GET['doc'] ?? '');
+if (!isset(DOCUMENTOS_SERVIBLES[$doc])) {
+    Response::error("Documento no válido", -1, 400);
+}
+[$origen, $columna] = DOCUMENTOS_SERVIBLES[$doc];       // $columna sale de la constante, no de la request
+$id = (int)($_GET[$origen] ?? 0);                        // ?postulacion= o ?solicitud=, según el documento
+
+if ($origen === 'postulacion') {
+    $duenos = duenosPostulacion($connection, $id);       // 404 si no existe
+    $fila = filaUnica($connection, "SELECT $columna AS url FROM postulaciones WHERE id = ?", [$id]);
+} else {
+    $duenos = ['usuario_id' =&gt; duenoSolicitud($connection, $id)];
+    $fila = filaUnica($connection, "SELECT $columna AS url FROM solicitudes_publicacion WHERE id = ?", [$id]);
+}
+exigirPermiso(puedeVerDocumento($origen, $duenos, (int)$auth['id'], esAdmin($auth)));   // 403
+
+$ruta = Storage::rutaLocal((string)($fila['url'] ?? ''));
+$mime = $ruta !== null ? tipoServible($ruta) : null;
+if ($ruta === null || $mime === null) {
+    Response::error("Archivo no disponible", -1, 404);
+}
+
+$nombre = $doc . '-' . $id . '.' . strtolower(pathinfo($ruta, PATHINFO_EXTENSION));
+foreach (cabecerasArchivo($mime, (int)filesize($ruta), isset($_GET['descargar']), $nombre) as $cabecera) {
+    header($cabecera);
+}
+readfile($ruta);</code></pre>
+<ul>
+<li><b>404 y 403 vienen de los helpers que ya tienes.</b> <code>duenosPostulacion</code> y <code>duenoSolicitud</code> cortan con 404 si el registro no existe; <code>exigirPermiso</code>, con 403. Es la misma convención del resto de la API (<a href="../modules/m80-control-acceso.html">M80</a> discute cuándo conviene 404 para todo).</li>
+<li><b><code>readfile</code> después de las cabeceras.</b> <code>Response::error</code> manda JSON y termina; si se llega a <code>readfile</code>, ya no hay salida previa, y las cabeceras de <code>cabecerasArchivo</code> reemplazan cualquier <code>Content-Type</code> anterior.</li>
+<li><b>Inline, salvo que se pida descargar.</b> El panel de postulantes muestra el CV en un <code>&lt;iframe&gt;</code>; con <code>attachment</code> esa vista previa dejaría de funcionar. Es seguro porque solo salen PDF, JPG y PNG que pasaron la firma binaria, con <code>nosniff</code>.</li>
+</ul>
+<p>Ahora el frontend. Los links a documentos están en cinco componentes, y todos usan el link guardado. En <code>frontend/src/api/generic-api.js</code>, debajo de <code>BASE_API</code>:</p>
+<pre data-lang="javascript" data-file="frontend/src/api/generic-api.js (debajo de BASE_API)"><code>// Link a un documento subido. Lo sirve archivos.php después de revisar quién lo pide (WEB08).
+// origen: "postulacion" o "solicitud"; doc: "cv", "constancia" o "respaldo".
+export function urlArchivo(origen, id, doc, { descargar = false } = {}) {
+  const q = new URLSearchParams({ [origen]: String(id), doc });
+  if (descargar) q.set("descargar", "1");
+  return `${BASE_API}/archivos.php?${q}`;
+}</code></pre>
+<p>Los cambios en los componentes son mecánicos, y un script los hace con la misma idea de <code>migrar-cors.ps1</code> (<a href="web04-cors.html">WEB04</a>): cada texto viejo tiene que aparecer exactamente las veces esperadas, o no escribe nada.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Componente</th><th>Qué cambia</th></tr></thead>
+<tbody>
+<tr><td><code>PostulacionCard.jsx</code>, <code>TablaPostulantes.jsx</code></td><td>El import, y <code>href={…cv_url}</code> y <code>href={…constancia_estudios_url}</code> pasan a <code>urlArchivo("postulacion", id, …)</code></td></tr>
+<tr><td><code>PostulantesVentana.jsx</code></td><td>El link guardado queda como <code>refDocumento</code>, que sirve para saber si es PDF por su extensión; el <code>iframe</code>, la imagen y el botón ↗ usan <code>urlArchivo</code></td></tr>
+<tr><td><code>BuzonSolicitudes.jsx</code>, <code>SolicitudPublicacionForm.jsx</code></td><td><code>href={…documento_respaldo_url}</code> pasa a <code>urlArchivo("solicitud", id, "respaldo")</code> (dos veces en el formulario)</td></tr>
+</tbody>
+</table>
+</div>
+<pre data-lang="shell" data-file="lab/migrar-enlaces.ps1"><code># Cambia los links a documentos del frontend por urlArchivo(...) (WEB08).
+# Uso: .\lab\migrar-enlaces.ps1            (solo muestra)
+#      .\lab\migrar-enlaces.ps1 -Aplicar   (escribe los archivos)
+param([switch]$Aplicar)
+
+$c = 'frontend\src\components'
+$imp = 'import { urlArchivo } from "../api/generic-api";'
+# viejo = $null: la línea nueva va al principio del archivo.  n: cuántas veces tiene que aparecer.
+$cambios = @(
+  @{ f = 'PostulacionCard.jsx';  n = 1; viejo = $null; nuevo = $imp }
+  @{ f = 'PostulacionCard.jsx';  n = 1; viejo = 'href={postulacion.cv_url}';  nuevo = 'href={urlArchivo("postulacion", postulacion.id, "cv")}' }
+  @{ f = 'PostulacionCard.jsx';  n = 1; viejo = 'href={postulacion.constancia_estudios_url}'; nuevo = 'href={urlArchivo("postulacion", postulacion.id, "constancia")}' }
+  @{ f = 'TablaPostulantes.jsx'; n = 1; viejo = $null; nuevo = $imp }
+  @{ f = 'TablaPostulantes.jsx'; n = 1; viejo = 'href={p.cv_url}'; nuevo = 'href={urlArchivo("postulacion", p.id, "cv")}' }
+  @{ f = 'TablaPostulantes.jsx'; n = 1; viejo = 'href={p.constancia_estudios_url}'; nuevo = 'href={urlArchivo("postulacion", p.id, "constancia")}' }
+  @{ f = 'PostulantesVentana.jsx'; n = 1; viejo = 'import { apiFetch } from "../api/generic-api";'; nuevo = 'import { apiFetch, urlArchivo } from "../api/generic-api";' }
+  @{ f = 'PostulantesVentana.jsx'; n = 1; viejo = '  const urlDocumento ='; nuevo = '  const refDocumento =' }
+  @{ f = 'PostulantesVentana.jsx'; n = 1; viejo = 'seleccionada?.constancia_estudios_url : null;'; nuevo = 'seleccionada?.constancia_estudios_url : null;~  const urlDocumento = refDocumento ? urlArchivo("postulacion", seleccionada.id, documento) : null;' }
+  @{ f = 'PostulantesVentana.jsx'; n = 1; viejo = 'href={d.url}'; nuevo = 'href={urlArchivo("postulacion", seleccionada.id, d.id)}' }
+  @{ f = 'PostulantesVentana.jsx'; n = 1; viejo = 'esPdf(urlDocumento)'; nuevo = 'esPdf(refDocumento)' }
+  @{ f = 'BuzonSolicitudes.jsx'; n = 1; viejo = 'import { apiFetch } from "../api/generic-api";'; nuevo = 'import { apiFetch, urlArchivo } from "../api/generic-api";' }
+  @{ f = 'BuzonSolicitudes.jsx'; n = 1; viejo = 'href={seleccionada.documento_respaldo_url}'; nuevo = 'href={urlArchivo("solicitud", seleccionada.id, "respaldo")}' }
+  @{ f = 'SolicitudPublicacionForm.jsx'; n = 1; viejo = 'import { apiFetch } from "../api/generic-api";'; nuevo = 'import { apiFetch, urlArchivo } from "../api/generic-api";' }
+  @{ f = 'SolicitudPublicacionForm.jsx'; n = 2; viejo = 'href={solicitudExistente.documento_respaldo_url}'; nuevo = 'href={urlArchivo("solicitud", solicitudExistente.id, "respaldo")}' }
+)
+
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+$textos = @{}
+$bien = $true
+foreach ($x in $cambios) {
+  $ruta = Join-Path $c $x.f
+  if (-not $textos.ContainsKey($ruta)) { $textos[$ruta] = [IO.File]::ReadAllText((Resolve-Path $ruta)) }
+  $t = $textos[$ruta]
+  $nl = if ($t.Contains("`r`n")) { "`r`n" } else { "`n" }        # respeta el fin de línea del archivo
+  $nuevo = $x.nuevo.Replace('~', $nl)
+  if ($null -eq $x.viejo) {
+    if ($t.StartsWith($nuevo)) { "{0,-30} ya tiene el import" -f $x.f; continue }
+    $textos[$ruta] = $nuevo + $nl + $t
+  } else {
+    $veces = ([regex]::Matches($t, [regex]::Escape($x.viejo))).Count
+    if ($veces -ne $x.n) { "{0,-30} REVISAR: '{1}' aparece {2} veces, se esperaban {3}" -f $x.f, $x.viejo, $veces, $x.n; $bien = $false; continue }
+    $textos[$ruta] = $t.Replace($x.viejo, $nuevo)
+  }
+  "{0,-30} {1}" -f $x.f, $(if ($x.viejo) { $x.viejo } else { '(import al principio)' })
+}
+
+if (-not $bien) { "Nada se escribió: arregla las líneas REVISAR a mano o vuelve el archivo a como estaba."; exit 1 }
+if ($Aplicar) {
+  foreach ($ruta in $textos.Keys) { [IO.File]::WriteAllText((Resolve-Path $ruta), $textos[$ruta], $utf8) }
+  "Escritos {0} archivos." -f $textos.Count
+} else {
+  "Solo se mostró. Corre con -Aplicar para escribir."
+}</code></pre>
+<pre data-lang="shell"><code>powershell -ExecutionPolicy Bypass -File lab\migrar-enlaces.ps1
+powershell -ExecutionPolicy Bypass -File lab\migrar-enlaces.ps1 -Aplicar
+git diff --stat frontend</code></pre>
+<p>La primera corrida solo muestra: quince líneas, una por cambio, y ningún <code>REVISAR</code>. La segunda escribe cinco archivos, y <code>git diff --stat</code> muestra esos cinco y <code>generic-api.js</code>. Si lo corres otra vez después, dice <code>REVISAR</code> en todo y no escribe nada: los textos viejos ya no están.</p>
+<aside class="callout callout--fail">
+<p class="callout-label">Errores típicos</p>
+<ul class="pj-errs">
+<li><code>REVISAR: '…' aparece 0 veces</code> en la primera corrida: ese componente ya no es como el de la re-auditoría (lo cambiaste en otra guía o a mano). Haz ese cambio a mano mirando la tabla y quita su línea del script.</li>
+<li>Letras raras en los mensajes del script (<code>escribiÃ³</code>): Windows PowerShell 5 lee el <code>.ps1</code> como ANSI. Guárdalo como "UTF-8 con BOM" o córrelo con <code>pwsh</code>; las comparaciones no tienen acentos y no cambian.</li>
+<li>El <code>iframe</code> del panel queda en blanco y en Network <code>archivos.php</code> da 401: la cookie no viaja. Pasa si abriste el panel en <code>127.0.0.1:5173</code> y la API en <code>localhost</code>, que son sitios distintos. Usa <code>localhost</code> en los dos.</li>
+</ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un script que revisa el permiso en cada request, y links que apuntan al script.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Una URL firmada que vence en minutos, como la de <a href="../modules/m09-objetos.html">M09</a>: es lo correcto con S3, pero con la carpeta local agrega una clave y un reloj que mantener sin ganar nada. O guardar en la base el link nuevo en lugar del viejo: obliga a migrar filas, y el link guardado no debería saber cómo se sirve.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Un componente que se olvidó y sigue usando el link guardado: su botón da 403 (la carpeta vieja). Lo ves al recorrer el panel; <code>grep -rn "_url}" frontend/src</code> muestra los que quedan.</dd></div>
+</dl>
+<h3 id="paso-url">Paso 4. Validar una URL que vas a visitar</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="fw8ct fw8cd">
+<title id="fw8ct">Las preguntas de destinoPermitido, en orden</title>
+<desc id="fw8cd">Una fila de cajas: se entiende la URL, el esquema es http o https, no trae usuario ni contraseña, el puerto es 80 o 443, el nombre resuelve, todas las IP son públicas. Si todo pasa, curl conecta a la IP validada con CURLOPT_RESOLVE. Si responde con una redirección, la URL nueva vuelve al principio, hasta tres veces. Cualquier no termina en 422 con el motivo.</desc>
+<defs><marker id="fw8ca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="14" y="40" width="104" height="54" rx="8"/><text class="dg-label" x="66" y="64" text-anchor="middle">¿Se entiende?</text><text class="dg-tiny" x="66" y="81" text-anchor="middle">parse_url</text>
+<rect class="dg-box" x="140" y="40" width="104" height="54" rx="8"/><text class="dg-label" x="192" y="64" text-anchor="middle">¿http(s)?</text><text class="dg-tiny" x="192" y="81" text-anchor="middle">no file://</text>
+<rect class="dg-box" x="266" y="40" width="104" height="54" rx="8"/><text class="dg-label" x="318" y="64" text-anchor="middle">¿Sin usuario?</text><text class="dg-tiny" x="318" y="81" text-anchor="middle">ni a@b</text>
+<rect class="dg-box" x="392" y="40" width="104" height="54" rx="8"/><text class="dg-label" x="444" y="64" text-anchor="middle">¿80 o 443?</text><text class="dg-tiny" x="444" y="81" text-anchor="middle">ni 6379</text>
+<rect class="dg-box" x="518" y="40" width="104" height="54" rx="8"/><text class="dg-label" x="570" y="64" text-anchor="middle">¿Resuelve?</text><text class="dg-tiny" x="570" y="81" text-anchor="middle">a IPv4</text>
+<rect class="dg-box dg-box--em" x="644" y="40" width="112" height="54" rx="8"/><text class="dg-label" x="700" y="64" text-anchor="middle">¿Todas públicas?</text><text class="dg-tiny" x="700" y="81" text-anchor="middle">GLOBAL_RANGE</text>
+<path class="dg-edge" d="M118 67 L138 67" marker-end="url(#fw8ca)"/><path class="dg-edge" d="M244 67 L264 67" marker-end="url(#fw8ca)"/>
+<path class="dg-edge" d="M370 67 L390 67" marker-end="url(#fw8ca)"/><path class="dg-edge" d="M496 67 L516 67" marker-end="url(#fw8ca)"/>
+<path class="dg-edge" d="M622 67 L642 67" marker-end="url(#fw8ca)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="470" y="150" width="286" height="54" rx="8"/><text class="dg-label" x="613" y="174" text-anchor="middle">curl a la IP validada</text><text class="dg-tiny" x="613" y="191" text-anchor="middle">CURLOPT_RESOLVE, sin seguir redirecciones</text>
+<path class="dg-edge" d="M700 94 L700 148" marker-end="url(#fw8ca)"/>
+<rect class="dg-bad" x="14" y="150" width="200" height="54" rx="8"/><text class="dg-label" x="114" y="174" text-anchor="middle">422</text><text class="dg-tiny" x="114" y="191" text-anchor="middle">con el motivo</text>
+<path class="dg-feedback" d="M66 94 L66 148" marker-end="url(#fw8ca)"/>
+<text class="dg-tiny" x="74" y="126">cualquier no</text>
+<path class="dg-feedback" d="M470 190 C 380 230, 300 230, 300 120 L 300 96" marker-end="url(#fw8ca)"/>
+<text class="dg-tiny" x="312" y="236">302: la URL nueva vuelve al principio, hasta tres veces</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB08.4.</b> Las reglas de la figura 82.4 de <a href="../modules/m82-archivos-ssrf.html#ssrf-defensa">82.6</a>, como código. La caja resaltada es la que importa: se valida la IP a la que se va a conectar, no el texto que escribió la persona, y la conexión va a esa misma IP.</figcaption>
+</figure>
+<p>El archivo junta la función de <a href="../modules/m82-archivos-ssrf.html#ssrf-defensa">82.6</a> con lo que agregó probarla. En orden:</p>
+<div class="pseudo"><ol>
+<li><code>destinoPermitido</code> recibe el resolvedor de DNS como parámetro. En el servidor es <code>gethostbynamel</code>; en la prueba, una tabla. Así se prueban nombres que apuntan adentro sin tener un DNS propio.</li>
+<li>Revisa <b>todas</b> las IP del nombre, no la primera: un nombre con una pública y una interna no sirve, porque otra librería podría elegir la otra.</li>
+<li><code>ipPublica</code> suma una regla a <code>FILTER_FLAG_GLOBAL_RANGE</code>: rechaza multicast, <code>224.0.0.0/4</code>, que la bandera deja pasar (lo muestra el caso de multicast de la prueba si quitas esa línea).</li>
+<li><code>obtenerExterna</code> no deja que curl siga redirecciones: lee el <code>Location</code>, arma la URL siguiente con <code>siguienteUrl</code> y la vuelve a validar desde cero, hasta tres veces.</li>
+<li>Lee como mucho 512&#8239;KB: la función de escritura devuelve 0 cuando se pasa, y curl corta la descarga.</li>
+</ol></div>
+<pre data-lang="php" data-file="api/core/url-externa.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+/**
+ * Visitar una URL que mandó un usuario sin que el servidor visite su propia red (M82, 82.6).
+ * destinoPermitido(), siguienteUrl() y tituloDeHtml() son puras: tests/url_externa_test.php
+ * las prueba con un resolvedor de DNS falso, sin red.
+ */
+
+final class UrlNoPermitida extends DomainException {}
+
+/** Bytes que se leen del sitio como máximo: para un &lt;title&gt; sobra. */
+const VISTA_PREVIA_MAX_BYTES = 512 * 1024;
+
+/**
+ * Valida la URL y resuelve su host. Devuelve lo necesario para conectar a la IP validada.
+ *
+ * @param callable(string): (list&lt;string&gt;|false) $resolver como gethostbynamel
+ * @return array{host: string, puerto: int, ip: string}
+ */
+function destinoPermitido(string $url, callable $resolver): array
+{
+    $p = parse_url($url);
+    if ($p === false || !isset($p['scheme'], $p['host'])) {
+        throw new UrlNoPermitida('la URL no se entiende');
+    }
+    $esquema = strtolower($p['scheme']);
+    if ($esquema !== 'http' &amp;&amp; $esquema !== 'https') {
+        throw new UrlNoPermitida('solo http y https');
+    }
+    if (isset($p['user']) || isset($p['pass'])) {
+        throw new UrlNoPermitida('la URL no puede traer usuario ni contraseña');
+    }
+    $puerto = $p['port'] ?? ($esquema === 'https' ? 443 : 80);
+    if ($puerto !== 80 &amp;&amp; $puerto !== 443) {
+        throw new UrlNoPermitida('solo los puertos 80 y 443');
+    }
+
+    $host = strtolower($p['host']);
+    $ips = $resolver($host);
+    if (!is_array($ips) || $ips === []) {
+        throw new UrlNoPermitida('el nombre no resuelve a una IPv4');
+    }
+    foreach ($ips as $ip) {              // todas: si una es interna, el nombre no sirve
+        if (!ipPublica($ip)) {
+            throw new UrlNoPermitida('el destino es una dirección interna');
+        }
+    }
+    return ['host' =&gt; $host, 'puerto' =&gt; $puerto, 'ip' =&gt; $ips[0]];
+}
+
+/** IPv4 de internet: ni privada, ni reservada, ni local, ni multicast. */
+function ipPublica(string $ip): bool
+{
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_GLOBAL_RANGE) === false) {
+        return false;
+    }
+    $n = ip2long($ip);
+    return $n &lt; ip2long('224.0.0.0') || $n &gt; ip2long('239.255.255.255');   // GLOBAL_RANGE deja pasar multicast
+}
+
+/**
+ * La URL del siguiente salto de una redirección, o null si no se puede seguir.
+ * Acepta un Location absoluto (http o https) o una ruta que empieza con una sola "/".
+ */
+function siguienteUrl(string $actual, string $location): ?string
+{
+    $location = trim($location);
+    if (preg_match('#^https?://#i', $location) === 1) {
+        return $location;
+    }
+    if (str_starts_with($location, '/') &amp;&amp; !str_starts_with($location, '//')) {
+        $p = parse_url($actual);
+        $puerto = isset($p['port']) ? ':' . $p['port'] : '';
+        return $p['scheme'] . '://' . $p['host'] . $puerto . $location;
+    }
+    return null;                         // "//otro.host", "javascript:", relativas sin "/"
+}
+
+/** El &lt;title&gt; de una página como texto plano corto, o null si no tiene. */
+function tituloDeHtml(string $html): ?string
+{
+    if (preg_match('#&lt;title[^&gt;]*&gt;(.*?)&lt;/title&gt;#is', $html, $m) !== 1) {
+        return null;
+    }
+    $texto = html_entity_decode(strip_tags($m[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $texto = trim((string)preg_replace('/\s+/u', ' ', $texto));
+    return $texto === '' ? null : mb_substr($texto, 0, 120);
+}
+
+/**
+ * Pide la URL conectando a la IP validada. Sigue hasta $saltos redirecciones, validando
+ * cada una, y lee como mucho VISTA_PREVIA_MAX_BYTES.
+ *
+ * @return array{estado: int, cuerpo: string, url: string}
+ * @throws UrlNoPermitida si la URL o una redirección no pasa la validación
+ * @throws RuntimeException si no se pudo conectar
+ */
+function obtenerExterna(string $url, ?callable $resolver = null, int $saltos = 3): array
+{
+    $resolver ??= 'gethostbynamel';      // un callable no puede ser el valor por defecto
+    for ($vuelta = 0; $vuelta &lt;= $saltos; $vuelta++) {
+        $d = destinoPermitido($url, $resolver);
+        $cuerpo = '';
+        $location = '';
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RESOLVE        =&gt; ["{$d['host']}:{$d['puerto']}:{$d['ip']}"],   // conecta a la IP validada
+            CURLOPT_IPRESOLVE      =&gt; CURL_IPRESOLVE_V4,
+            CURLOPT_PROTOCOLS_STR  =&gt; 'http,https',
+            CURLOPT_FOLLOWLOCATION =&gt; false,                                       // cada salto se valida arriba
+            CURLOPT_CONNECTTIMEOUT =&gt; 2,
+            CURLOPT_TIMEOUT        =&gt; 4,
+            CURLOPT_USERAGENT      =&gt; 'SistemaControlPracticas-vista-previa',
+            CURLOPT_HEADERFUNCTION =&gt; function ($ch, string $linea) use (&amp;$location): int {
+                if (stripos($linea, 'Location:') === 0) {
+                    $location = trim(substr($linea, 9));
+                }
+                return strlen($linea);
+            },
+            CURLOPT_WRITEFUNCTION  =&gt; function ($ch, string $trozo) use (&amp;$cuerpo): int {
+                $cuerpo .= $trozo;
+                return strlen($cuerpo) &gt; VISTA_PREVIA_MAX_BYTES ? 0 : strlen($trozo);   // 0 corta la descarga
+            },
+        ]);
+        $ok = curl_exec($ch);
+        $estado = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($ok === false &amp;&amp; strlen($cuerpo) &lt;= VISTA_PREVIA_MAX_BYTES) {
+            throw new RuntimeException("no se pudo conectar: $error");
+        }
+        if ($estado &gt;= 300 &amp;&amp; $estado &lt; 400 &amp;&amp; $location !== '') {
+            $url = siguienteUrl($url, $location) ?? throw new UrlNoPermitida('una redirección que no se puede seguir');
+            continue;
+        }
+        return ['estado' =&gt; $estado, 'cuerpo' =&gt; substr($cuerpo, 0, VISTA_PREVIA_MAX_BYTES), 'url' =&gt; $url];
+    }
+    throw new UrlNoPermitida('demasiadas redirecciones');
+}</code></pre>
+<aside class="callout callout--def">
+<p class="callout-label">PHP de por medio</p>
+<p><code>callable $resolver = 'gethostbynamel'</code> no compila: PHP no acepta un string como valor por defecto de un parámetro de tipo <code>callable</code>. Por eso el parámetro es <code>?callable $resolver = null</code> y la primera línea es <code>$resolver ??= 'gethostbynamel'</code>. Y <code>siguienteUrl(…) ?? throw new …</code> usa <code>throw</code> como expresión, que existe desde PHP 8.0.</p>
+</aside>
+<pre data-lang="php" data-file="tests/url_externa_test.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../api/core/url-externa.php';
+
+$fallos = 0;
+function caso(string $nombre, bool $esperado, bool $obtenido): void
+{
+    global $fallos;
+    $ok = $esperado === $obtenido;
+    if (!$ok) {
+        $fallos++;
+    }
+    printf("%s %s\n", $ok ? 'ok    ' : 'FALLA ', $nombre);
+}
+
+# Un DNS falso: cada nombre resuelve a lo que diga esta tabla, sin red.
+$dns = [
+    'sitio.example'        =&gt; ['93.184.215.14'],
+    'localhost'            =&gt; ['127.0.0.1'],
+    'interno.example'      =&gt; ['10.0.2.15'],
+    'mitad.example'        =&gt; ['93.184.215.14', '10.0.0.7'],   // una pública y una interna
+    'metadatos.example'    =&gt; ['169.254.169.254'],             // un nombre público que apunta adentro
+    'grupo.example'        =&gt; ['224.0.0.251'],                 // multicast
+];
+# Como gethostbynamel, una IPv4 escrita tal cual resuelve a sí misma.
+$resolver = fn(string $host): array|false =&gt; $dns[$host]
+    ?? (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false ? [$host] : false);
+
+$pasa = function (string $url) use ($resolver): bool {
+    try {
+        destinoPermitido($url, $resolver);
+        return true;
+    } catch (UrlNoPermitida) {
+        return false;
+    }
+};
+
+caso('un sitio público, https',                   true,  $pasa('https://sitio.example/'));
+caso('un sitio público, http y puerto 80',        true,  $pasa('http://sitio.example:80/quienes-somos'));
+caso('file:// no es http',                        false, $pasa('file:///C:/xampp/htdocs/atacante/inocuo.txt'));
+caso('gopher:// tampoco',                         false, $pasa('gopher://sitio.example/'));
+caso('un puerto que no es 80 ni 443',             false, $pasa('http://sitio.example:6379/'));
+caso('usuario y contraseña en la URL',            false, $pasa('http://admin:x@sitio.example/'));
+caso('el truco de la arroba',                     false, $pasa('http://sitio.example@169.254.169.254/'));
+caso('localhost',                                 false, $pasa('http://localhost/'));
+caso('una IP de la red interna',                  false, $pasa('http://10.0.2.15/'));
+caso('el servicio de metadatos',                  false, $pasa('http://169.254.169.254/latest/meta-data/'));
+caso('un nombre público que apunta a metadatos',  false, $pasa('http://metadatos.example/'));
+caso('un nombre con una IP pública y una interna', false, $pasa('http://mitad.example/'));
+caso('multicast (GLOBAL_RANGE lo deja pasar)',    false, $pasa('http://grupo.example/'));
+caso('IPv6 de loopback',                          false, $pasa('http://[::1]/'));
+caso('un nombre que no resuelve',                 false, $pasa('http://no-existe.example/'));
+caso('sin esquema',                               false, $pasa('sitio.example/'));
+
+caso('redirección absoluta: se valida de nuevo',  false, $pasa((string)siguienteUrl('https://sitio.example/a', 'http://169.254.169.254/')));
+caso('redirección a una ruta: mismo host',        true,  siguienteUrl('https://sitio.example:443/a', '/b') === 'https://sitio.example:443/b');
+caso('redirección "//otro.host" no se sigue',     true,  siguienteUrl('https://sitio.example/a', '//169.254.169.254/') === null);
+caso('redirección a javascript: no se sigue',     true,  siguienteUrl('https://sitio.example/a', 'javascript:alert(1)') === null);
+
+caso('el título, con entidades y espacios',       true,  tituloDeHtml("&lt;html&gt;&lt;title&gt;\n Prácticas &amp;amp; empleo &lt;/title&gt;") === 'Prácticas &amp; empleo');
+caso('el título sin etiquetas adentro',           true,  tituloDeHtml('&lt;title&gt;&lt;b&gt;Hola&lt;/b&gt;&lt;/title&gt;') === 'Hola');
+caso('sin título, null',                          true,  tituloDeHtml('&lt;p&gt;nada&lt;/p&gt;') === null);
+
+echo $fallos === 0 ? "Todo bien\n" : "$fallos casos fallaron\n";
+exit($fallos === 0 ? 0 : 1);</code></pre>
+<pre data-lang="shell"><code>C:\xampp\php\php.exe tests\url_externa_test.php</code></pre>
+<p>Veintitrés líneas <code>ok</code>. Fíjate en tres casos que una validación casera deja pasar: <code>http://sitio.example@169.254.169.254/</code>, donde el host real es lo que va después de la arroba; <code>metadatos.example</code>, un nombre cualquiera que alguien configuró para que resuelva a <code>169.254.169.254</code>; y la redirección absoluta, que solo se frena porque cada salto vuelve a pasar por la función.</p>
+<aside class="callout callout--prod">
+<p class="callout-label">En producción real</p>
+<p>La validación es la segunda capa. La primera es que el servidor no pueda salir a donde no debe: un proxy de salida con lista de destinos (el filtrado de salida de <a href="../modules/m32-firewalls.html">M32</a>), IMDSv2 con un salto de red en la nube (<a href="../modules/m82-archivos-ssrf.html#imds">82.5</a>) y un rol de máquina con lo mínimo (<a href="../modules/m37-nube.html">M37</a>). Si la validación tiene un hueco que nadie vio, esas capas deciden cuánto se pierde.</p>
+</aside>
+<h3 id="paso-vista">Paso 5. La vista previa</h3>
+<p>El endpoint es corto porque todo lo difícil está en el paso 4. Lo que decide aquí es qué se le cuenta a quien llama:</p>
+<ul>
+<li><b>Un 422 dice el motivo,</b> porque habla de la URL que mandaste (el esquema, el puerto, que resuelve adentro): no le enseña nada de tu red que no supiera al escribirla.</li>
+<li><b>Un 502 no dice nada más.</b> Cerrado, lento o inexistente responden igual. Si cada caso tuviera su mensaje, la vista previa serviría para escanear puertos de sitios públicos, la SSRF ciega de <a href="../modules/m82-archivos-ssrf.html#ssrf">82.4</a>. El detalle va al registro, como JSON (<a href="web07-inyecciones.html">WEB07</a>).</li>
+<li><b>Nunca devuelve el cuerpo,</b> solo el título, recortado a 120 caracteres.</li>
+</ul>
+<pre data-lang="php" data-file="api/endpoints/vista_previa.php"><code>&lt;?php
+
+require_once __DIR__ . "/../core/cors.php";
+aplicarCors(['POST']);
+
+require_once __DIR__ . "/../core/connection.php";
+require_once __DIR__ . "/../core/request.php";
+require_once __DIR__ . "/../core/auth-middleware.php";
+require_once __DIR__ . "/../core/permisos.php";
+require_once __DIR__ . "/../core/url-externa.php";
+
+/**
+ * POST vista_previa.php   {"url": "https://..."}
+ * El host y el &lt;title&gt; de un sitio, para revisar el sitio web de una institución antes
+ * de guardarlo. Solo administración (quien edita instituciones), con CSRF.
+ * Nunca devuelve el cuerpo de lo que visitó.
+ */
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    Response::invalidMethod();
+}
+$connection = Connection::load();
+requireAuth([ROL_ADMIN]);
+$data = readJsonInput('POST');
+
+$url = trim(inputString($data, 'url'));
+if ($url === '' || mb_strlen($url) &gt; 255) {
+    Response::error("La URL es obligatoria y no debe superar 255 caracteres", -1, 400);
+}
+
+try {
+    $r = obtenerExterna($url);
+} catch (UrlNoPermitida $e) {
+    Response::error("URL no permitida: " . $e-&gt;getMessage(), -4, 422);   // el motivo habla de la URL, no de tu red
+} catch (RuntimeException $e) {
+    error_log('[vista_previa] ' . json_encode(['url' =&gt; $url, 'error' =&gt; $e-&gt;getMessage()], JSON_UNESCAPED_SLASHES));
+    Response::error("No se pudo obtener la vista previa", -1, 502);      // igual si está cerrado, lento o no existe
+} catch (Throwable $e) {
+    Response::serverError($e);
+}
+
+Response::success([
+    'host'   =&gt; (string)parse_url($r['url'], PHP_URL_HOST),
+    'estado' =&gt; $r['estado'],
+    'titulo' =&gt; tituloDeHtml($r['cuerpo']),
+]);</code></pre>
+<p>En el panel, un botón "Probar" al lado del sitio web de cada institución. Componente nuevo:</p>
+<pre data-lang="javascript" data-file="frontend/src/components/VistaPreviaSitio.jsx"><code>import { useState } from "react";
+import { apiFetch } from "../api/generic-api";
+
+// Botón "Probar" del sitio web de una institución: pide a vista_previa.php el título del sitio (WEB08).
+// El título llega como texto y React lo escapa al pintarlo (WEB05).
+export default function VistaPreviaSitio({ url }) {
+  const [estado, setEstado] = useState({ cargando: false, texto: "" });
+
+  async function probar() {
+    setEstado({ cargando: true, texto: "" });
+    try {
+      const r = await apiFetch("vista_previa.php", { method: "POST", body: { url } });
+      setEstado({ cargando: false, texto: r.data.titulo || `${r.data.host}, sin título` });
+    } catch (e) {
+      setEstado({ cargando: false, texto: e.message });       // el mensaje del 422 o del 502
+    }
+  }
+
+  return (
+    &lt;span className="inline-flex items-center gap-2"&gt;
+      &lt;button
+        type="button"
+        onClick={probar}
+        disabled={estado.cargando}
+        className="cursor-pointer rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-50"
+      &gt;
+        {estado.cargando ? "Probando…" : "Probar"}
+      &lt;/button&gt;
+      {estado.texto &amp;&amp; &lt;span className="text-xs text-slate-500"&gt;{estado.texto}&lt;/span&gt;}
+    &lt;/span&gt;
+  );
+}</code></pre>
+<p>En <code>PanelAdmin.jsx</code>, el import con los demás y una columna más en las de instituciones, después de "Contacto":</p>
+<pre data-lang="javascript" data-file="frontend/src/components/PanelAdmin.jsx (import)"><code>import VistaPreviaSitio from "./VistaPreviaSitio";</code></pre>
+<pre data-lang="javascript" data-file="frontend/src/components/PanelAdmin.jsx (columnas de instituciones)"><code>            { etiqueta: "Sitio web", valor: (f) =&gt; (f.sitio_web ? &lt;VistaPreviaSitio url={f.sitio_web} /&gt; : "") },</code></pre>
+<p>Pruébalo como <code>admin</code>: en "Instituciones", edita una y pon <code>https://example.com/</code> como sitio web, guarda y aprieta "Probar". El diseño espera el título de la página (hoy, "Example Domain") o, sin internet, "No se pudo obtener la vista previa". Después pon <code>http://127.0.0.1/interno/metadatos.php</code>: el validador de <code>instituciones.php</code> lo acepta (es una URL http válida), y "Probar" responde "URL no permitida: el destino es una dirección interna".</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Validar en el momento de visitar, no al guardar.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Rechazar al guardar las URLs que resuelven adentro: el DNS de un nombre puede cambiar entre que se guarda y que se visita. Guardar no es peligroso; visitar sí, y es ahí donde se valida.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el certificado de un sitio <code>https</code> no se pueda verificar y todo dé 502: el registro dice <code>SSL certificate problem</code>. Es <code>curl.cainfo</code> en <code>php.ini</code> (la tabla de <a href="#dependencias">Qué necesitas</a>). La salida no es apagar la verificación.</dd></div>
+</dl>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="web08-archivos"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-matriz">La matriz</h3>
+<p>Dieciocho filas con las cuatro sesiones: siete de documentos, el link viejo, las cabeceras del CV y diez de vista previa. Ninguna fila de vista previa sale de tu máquina salvo la última, la de <code>example.com</code>: las demás se rechazan antes de conectar.</p>
+<pre data-lang="shell" data-file="lab/web08.ps1"><code>param([string]$Base = "http://localhost/SistemaControlPracticas/api/endpoints")
+
+$sesiones = @{ estudiante = "lab\login.json"; estudiante2 = "lab\estudiante2.json"; reclutador = "lab\reclutador.json"; admin = "lab\admin.json" }
+$token = @{}
+foreach ($s in $sesiones.Keys) {
+    &amp; curl.exe -s -o NUL -c "lab\jar-$s.txt" -H "Content-Type: application/json" --data-binary "@$($sesiones[$s])" "$Base/login.php"
+    $token[$s] = (&amp; curl.exe -s -b "lab\jar-$s.txt" "$Base/login.php" | ConvertFrom-Json).data.csrfToken
+    if (-not $token[$s]) { Write-Host "No entró $s. Revisa $($sesiones[$s]) y el límite de intentos de WEB02."; exit 1 }
+}
+
+# La postulación más nueva de estudiante (id 3): la de la infraestructura, con su PDF
+$p = @((&amp; curl.exe -s -b "lab\jar-estudiante.txt" "$Base/postulaciones.php?estudiante_id=3" | ConvertFrom-Json).data)[0]
+if (-not $p) { Write-Host "estudiante no tiene postulaciones: haz la infraestructura."; exit 1 }
+$postu = $p.id
+
+function Fila([string]$Quien, [string]$Metodo, [string]$Ruta, [string]$Esperado, [string]$Cuerpo = "") {
+    $a = @("-s", "-o", "NUL", "-w", "%{http_code}", "-X", $Metodo)
+    if ($Quien -ne "anonimo") { $a += @("-b", "lab\jar-$Quien.txt", "-H", "X-CSRF-Token: $($token[$Quien])") }
+    if ($Cuerpo) {
+        # Por archivo: Windows PowerShell 5 quita las comillas de un argumento con JSON
+        [IO.File]::WriteAllText((Join-Path $PWD "lab\cuerpo.json"), $Cuerpo)
+        $a += @("-H", "Content-Type: application/json", "--data-binary", "@lab\cuerpo.json")
+    }
+    $obtenido = &amp; curl.exe @a "$Base/$Ruta"
+    $marca = if ($obtenido -eq $Esperado) { "ok " } else { "MAL" }
+    $que = if ($Cuerpo) { $Cuerpo } else { $Ruta }
+    "{0}  {1,-12} {2,-5} {3,-58} esperado {4}  obtenido {5}" -f $marca, $Quien, $Metodo, $que, $Esperado, $obtenido
+}
+
+"--- Documentos (postulación $postu)"
+Fila anonimo     GET "archivos.php?postulacion=$postu&amp;doc=cv"   401
+Fila estudiante  GET "archivos.php?postulacion=$postu&amp;doc=cv"   200
+Fila estudiante2 GET "archivos.php?postulacion=$postu&amp;doc=cv"   403
+Fila reclutador  GET "archivos.php?postulacion=$postu&amp;doc=cv"   200
+Fila admin       GET "archivos.php?postulacion=$postu&amp;doc=cv"   200
+Fila estudiante  GET "archivos.php?postulacion=$postu&amp;doc=nada" 400
+Fila estudiante  GET "archivos.php?postulacion=999999&amp;doc=cv"   404
+$directo = &amp; curl.exe -s -o NUL -w "%{http_code}" $p.cv_url
+"{0}  {1,-12} {2,-5} {3,-58} esperado 403  obtenido {4}" -f $(if ($directo -eq "403") { "ok " } else { "MAL" }), "anonimo", "GET", "el link guardado, directo a uploads/", $directo
+
+"--- Cabeceras del CV"
+&amp; curl.exe -s -o NUL -D - -b "lab\jar-estudiante.txt" "$Base/archivos.php?postulacion=$postu&amp;doc=cv" |
+    Select-String -Pattern '^(Content-Type|Content-Disposition|X-Content-Type-Options|Cache-Control):'
+
+"--- Vista previa"
+Fila estudiante POST "vista_previa.php" 403 '{"url":"https://example.com/"}'
+foreach ($u in @("http://127.0.0.1/interno/metadatos.php", "http://localhost/interno/metadatos.php",
+                 "http://atacante.test/redirige.php", "http://169.254.169.254/latest/meta-data/",
+                 "http://example.com:8080/", "http://admin:x@example.com/",
+                 "http://example.com@127.0.0.1/", "file:///C:/xampp/htdocs/atacante/inocuo.txt")) {
+    Fila admin POST "vista_previa.php" 422 ('{"url":"' + $u + '"}')
+}
+Fila admin POST "vista_previa.php" 200 '{"url":"https://example.com/"}'</code></pre>
+<pre data-lang="shell"><code>powershell -ExecutionPolicy Bypass -File lab\web08.ps1</code></pre>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Lo que espera el diseño</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>Las ocho filas de documentos dicen <code>ok</code>, con el link viejo en 403</td><td>&nbsp;</td></tr>
+<tr><td>Las cabeceras: <code>Content-Type: application/pdf</code>, <code>Content-Disposition: inline; filename="cv-ID.pdf"</code>, <code>X-Content-Type-Options: nosniff</code>, <code>Cache-Control: private, no-store</code></td><td>&nbsp;</td></tr>
+<tr><td>Las nueve primeras filas de vista previa dicen <code>ok</code> (403 y ocho 422)</td><td>&nbsp;</td></tr>
+<tr><td>La última: <code>ok</code> con 200, o <code>MAL</code> con 502 si no tienes internet</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-fallas">Fallas provocadas</h3>
+<p><b>Falla 1. La vista previa ingenua.</b> En <code>vista_previa.php</code>, reemplaza el bloque <code>try</code> entero (con sus tres <code>catch</code>) y el <code>Response::success</code> del final por la versión que se escribe en cinco minutos:</p>
+<pre data-lang="php" data-file="api/endpoints/vista_previa.php (solo para la falla 1)"><code>&lt;?php
+// SOLO PARA LA FALLA 1 de WEB08, en tu laboratorio. Reemplaza el try de vista_previa.php y bórralo al terminar.
+try {
+    $cuerpo = (string)file_get_contents($url);         // sigue redirecciones, acepta file:// y cualquier puerto
+    Response::success(['titulo' =&gt; null, 'extracto' =&gt; mb_substr(strip_tags($cuerpo), 0, 300)]);
+} catch (Throwable $e) {
+    Response::serverError($e);
+}</code></pre>
+<p>Con las sesiones que dejó la matriz, manda tres URLs como <code>admin</code>:</p>
+<pre data-lang="shell"><code>$api = "http://localhost/SistemaControlPracticas/api/endpoints"
+$t = (curl.exe -s -b lab\jar-admin.txt "$api/login.php" | ConvertFrom-Json).data.csrfToken
+function Previa([string]$u) {
+    [IO.File]::WriteAllText((Join-Path $PWD "lab\cuerpo.json"), '{"url":"' + $u + '"}')
+    curl.exe -s -b lab\jar-admin.txt -H "X-CSRF-Token: $t" -H "Content-Type: application/json" --data-binary "@lab\cuerpo.json" "$api/vista_previa.php"
+    ""
+}
+Previa "http://127.0.0.1/interno/metadatos.php"
+Previa "file:///C:/xampp/htdocs/atacante/inocuo.txt"
+Previa "http://atacante.test/redirige.php"</code></pre>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>URL</th><th>Lo que espera el diseño con la ingenua</th><th>Con la del paso 5</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td><code>127.0.0.1/interno/…</code></td><td>200, el extracto trae <code>LAB-NO-ES-UNA-LLAVE</code></td><td>422, dirección interna</td><td>&nbsp;</td></tr>
+<tr><td><code>file:///…/inocuo.txt</code></td><td>200, el extracto trae el texto del archivo</td><td>422, solo http y https</td><td>&nbsp;</td></tr>
+<tr><td><code>atacante.test/redirige.php</code></td><td>200, las credenciales: <code>file_get_contents</code> siguió la redirección</td><td>422: <code>atacante.test</code> resuelve a <code>127.0.0.1</code></td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<p>El envoltorio <code>http</code> de PHP sigue redirecciones por defecto (<code>follow_location</code> vale 1, hasta 20 saltos) <span class="badge badge--doc">Documentado</span>, y <code>file_get_contents</code> abre <code>file://</code> igual que una URL. Por eso la versión ingenua no tiene un error que señalar: hace exactamente lo que dice. Vuelve a poner el bloque del paso 5 y repite: tres 422. En tu laboratorio, el primer salto de la tercera fila ya es local; en internet sería un sitio público de verdad, y lo frenaría la validación del segundo salto, que es el caso "redirección absoluta" de la prueba.</p>
+<p><b>Falla 2. Una puerta sin pregunta.</b> En <code>archivos.php</code>, comenta la línea de <code>exigirPermiso(...)</code> y corre la matriz. La fila de <code>estudiante2</code> da 200: una estudiante baja el CV de otra cambiando el número de la URL. El archivo está fuera de <code>htdocs</code> y el script exige sesión, y no alcanza: lo que cierra H1 es la pregunta del dueño, no la carpeta. Vuelve la línea.</p>
+<p><b>Falla 3. Mirar el texto.</b> En <code>destinoPermitido</code>, cambia el <code>foreach</code> con <code>ipPublica</code> por lo primero que se le ocurre a cualquiera:</p>
+<pre data-lang="php" data-file="api/core/url-externa.php (solo para la falla 3)"><code>    if ($host === 'localhost' || str_starts_with($host, '127.')) {     // FALLA 3: mirar el texto
+        throw new UrlNoPermitida('el destino es una dirección interna');
+    }</code></pre>
+<p>Corre la prueba. Leyendo el código, el diseño espera seis <code>FALLA</code>: la IP de la red interna, el servicio de metadatos, el nombre público que apunta a metadatos, el nombre con una IP pública y una interna, multicast y la redirección absoluta. Ninguna de esas URLs dice "localhost". Vuelve el <code>foreach</code>.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>1. Ingenua: las tres URLs</td><td>&nbsp;</td></tr>
+<tr><td>1. Con el paso 5: las tres URLs</td><td>&nbsp;</td></tr>
+<tr><td>2. Sin <code>exigirPermiso</code>: la fila de <code>estudiante2</code></td><td>&nbsp;</td></tr>
+<tr><td>3. Mirar el texto: los casos que fallan</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="limites">Limitaciones</h2>
+<ul>
+<li><b>S3 no está cubierto.</b> Con <code>STORAGE_DRIVER=s3</code>, <code>Storage::rutaLocal</code> devuelve <code>null</code> y <code>archivos.php</code> da 404. Lo que corresponde ahí es que el script revise el permiso y responda con una redirección a una URL firmada que vence en minutos (<a href="../modules/m09-objetos.html">M09</a>), con el bucket privado.</li>
+<li><b>No hay antivirus.</b> La subida confirma que un PDF empieza como PDF, no que no tenga nada malo adentro. Un reclutador que abre el CV lo abre con el visor de su navegador; si el sistema crece, el paso siguiente es escanear al subir.</li>
+<li><b>La vista previa no tiene límite de uso.</b> Es solo de administración, pero cada clic es una request saliente de hasta cuatro segundos. Si se abriera a más roles, necesitaría un límite por usuario (<a href="web02-sesion.html">WEB02</a> tiene el de login) y guardar el resultado un rato.</li>
+<li><b>IPv6 se descarta.</b> <code>gethostbynamel</code> solo devuelve IPv4 y curl va forzado a IPv4: un sitio que solo tiene IPv6 da 422. Es la misma decisión de <a href="../modules/m82-archivos-ssrf.html#ssrf-defensa">82.6</a>.</li>
+<li><b>Lo que el script no ve.</b> Una SSRF también puede venir de otra función que llame a <code>file_get_contents</code> o <code>curl</code> con un dato: la búsqueda de 82.9 hay que repetirla cuando se agregue una.</li>
+<li><b>Costo.</b> <code>archivos.php</code> suma dos consultas por clave primaria por documento, y la vista previa, lo que tarde el sitio, con un tope de cuatro segundos.</li>
+<li><b>Nada se ejecutó contra tu sistema al escribir esta guía.</b> Las dos pruebas puras y el script de migración se corrieron sobre copias; los estados de la matriz y de las fallas salen de leer el código, y las tablas son tuyas.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="web08">
+<p class="pj-repo-head">Lo que tiene que quedar</p>
+<ul class="pj-checks">
+<li data-check="carpeta">Los documentos están en <code>C:\xampp\practicas-archivos</code> y <code>uploads/.htaccess</code> niega todo.</li>
+<li data-check="pruebas"><code>archivos_test.php</code> y <code>url_externa_test.php</code> dicen <code>Todo bien</code>.</li>
+<li data-check="enlaces"><code>migrar-enlaces.ps1 -Aplicar</code> escribió cinco componentes, y el panel muestra los CV.</li>
+<li data-check="matriz"><code>web08.ps1</code> da <code>ok</code> en todo (o solo <code>MAL</code> en <code>example.com</code> sin internet).</li>
+<li data-check="fallas">Provocaste las tres fallas y llenaste las tablas.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<p>Esta guía funciona sola. Si quieres juntarla con otras:</p>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con WEB01, lo que no debe verse</p>
+<p>Los 401, 403 y 422 de la matriz existen porque WEB01 cambió <code>Response</code> a códigos HTTP reales, y el archivo de secretos fuera de <code>htdocs</code> es el mismo movimiento que este paso 1 hace con los documentos.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB05, XSS</p>
+<p>El título de la vista previa es texto de un sitio ajeno. Llega como JSON y React lo escapa; si algún día se pintara con <code>dangerouslySetInnerHTML</code>, sería la falla de WEB05 con otro origen.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB06, control de acceso</p>
+<p><code>puedeVerDocumento</code> es una regla más de la misma familia: el dueño en la pregunta, no en el id. La falla 2 es la BOLA de WEB06 con un archivo.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB07, inyecciones</p>
+<p><code>archivos.php</code> interpola el nombre de una columna, y está bien por la misma razón que las columnas de WEB07: sale de una constante. El 502 de la vista previa registra en JSON.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M82, archivos, SSRF y redirecciones</p>
+<p>La teoría de todo lo que se hizo aquí, con las nueve formas de escribir una dirección interna y el DNS rebinding, está en <a href="../modules/m82-archivos-ssrf.html">M82</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/web08.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

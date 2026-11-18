@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WEB10. Carreras y lógica de negocio</title>
+<meta name="description" content="Cuatro carreras contra el sistema de prácticas provocadas con curl --parallel, y las tres herramientas que las cierran: la llave única, el UPDATE condicional y la transacción con SELECT … FOR UPDATE.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="web10" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Carreras y lógica de negocio</h1>
+        <p class="lead">Cada request hace lo correcto por separado; la regla se rompe cuando dos leen lo mismo antes de que cualquiera escriba.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>WEB10</dd></div>
+          <div><dt>Plan</dt><dd>Seguridad web</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>2.5 h</dd></div>
+          <div><dt>Módulos</dt><dd>M83, M39</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="web10">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Provocar cuatro carreras contra tu laboratorio con un solo <code>curl --parallel</code>, y ver en la base lo que dejan: dos cambios de estado que entran, una postulación aceptada y retirada a la vez, un estudiante que se reactiva diez veces.</li>
+<li>Distinguir las tres herramientas que las cierran (la llave única, el <code>UPDATE</code> condicional y la transacción con <code>SELECT … FOR UPDATE</code>) y saber cuál le toca a cada carrera.</li>
+<li>Escribir la regla de negocio del cambio de estado como una función pura, con el estado que vio el reclutador, y probarla sin servidor.</li>
+<li>Comprobar que una transacción sin lock no alcanza, provocándolo.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>El sistema de prácticas ya hace casi todo bien por separado: cada request valida, autoriza (<a href="web06-control-acceso.html">WEB06</a>) y escribe con consultas preparadas (<a href="web07-inyecciones.html">WEB07</a>). Lo que no está probado es qué pasa cuando dos requests tocan la misma fila en el mismo instante. Es una condición de carrera de negocio (<a href="../modules/m83-otros-ataques.html#carreras">83.6</a>): ninguna request hace nada mal, y aun así la regla del negocio se rompe, porque las dos leen el mismo estado antes de que cualquiera lo cambie.</p>
+<p>Leyendo <code>models/postulaciones.php</code>, la re-auditoría encuentra una cosa ya resuelta y tres que no:</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="fw10at fw10ad">
+<title id="fw10at">La re-auditoría de las carreras</title>
+<desc id="fw10ad">Una rejilla con seis filas. Dos altas nuevas a la vez: ya bien, por la llave única y el error 1062 convertido en 409. Reactivar una postulación retirada: el UPDATE no tiene condición, paso 2. Dos cambios de estado a la vez: leer, decidir y escribir sin lock, paso 3. Retirar mientras se acepta: el UPDATE del estado no mira si sigue activa, paso 3. Volver a pendiente: cualquier transición vale, paso 1. Archivos de la request que pierde: quedan huérfanos, limitación.</desc>
+<g class="dg-small"><text x="20" y="28">Qué pasa a la vez</text><text x="290" y="28">Qué hace hoy el código</text><text x="600" y="28">Estado</text></g>
+<path class="dg-frame" d="M14 40 H756"/>
+<text class="dg-label" x="20" y="66">Dos altas nuevas</text><text class="dg-tiny" x="290" y="66">UNIQUE (oportunidad, estudiante); 1062 a 409</text>
+<rect x="596" y="50" width="150" height="26" rx="6" class="dg-ok"/><text class="dg-tiny" x="671" y="67" text-anchor="middle">ya bien</text>
+<text class="dg-label" x="20" y="108">Reactivar una retirada</text><text class="dg-tiny" x="290" y="108">UPDATE … WHERE id = ?, sin condición</text>
+<rect x="596" y="92" width="150" height="26" rx="6" class="dg-bad"/><text class="dg-tiny" x="671" y="109" text-anchor="middle">falta, paso 2</text>
+<text class="dg-label" x="20" y="150">Dos cambios de estado</text><text class="dg-tiny" x="290" y="150">SELECT, if en PHP, UPDATE; sin lock</text>
+<rect x="596" y="134" width="150" height="26" rx="6" class="dg-bad"/><text class="dg-tiny" x="671" y="151" text-anchor="middle">falta, paso 3</text>
+<text class="dg-label" x="20" y="192">Retirar mientras se acepta</text><text class="dg-tiny" x="290" y="192">el UPDATE del estado no mira estado = 1</text>
+<rect x="596" y="176" width="150" height="26" rx="6" class="dg-bad"/><text class="dg-tiny" x="671" y="193" text-anchor="middle">falta, paso 3</text>
+<text class="dg-label" x="20" y="234">Volver a pendiente</text><text class="dg-tiny" x="290" y="234">cualquier estado pasa a cualquier otro</text>
+<rect x="596" y="218" width="150" height="26" rx="6" class="dg-warnbox"/><text class="dg-tiny" x="671" y="235" text-anchor="middle">falta, paso 1</text>
+<text class="dg-label" x="20" y="276">Los archivos del que pierde</text><text class="dg-tiny" x="290" y="276">se subieron antes de saber</text>
+<rect x="596" y="260" width="150" height="26" rx="6" class="dg-box"/><text class="dg-tiny" x="671" y="277" text-anchor="middle">limitación</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB10.1.</b> La primera fila ya está bien desde antes de esta serie: la llave única <code>uk_oportunidad_estudiante</code> del esquema y el <code>catch</code> del error 1062 en <code>registrar</code>. Es el ejemplo a copiar: la base decide, no un <code>if</code> en PHP. La fila amarilla no es una carrera, pero el paso 3 la necesita.</figcaption>
+</figure>
+<ul>
+<li><b>H1. Un cambio de estado se decide con lo que se leyó antes.</b> <code>changeState</code> lee el estado, compara en PHP y después escribe. Dos reclutadores (o dos pestañas, o un doble clic) que confirman a la vez leen los dos <code>pendiente</code> y escriben los dos: el estudiante recibe "aceptada" y "rechazada", y el historial dice dos veces que antes estaba pendiente.</li>
+<li><b>H2. Una postulación retirada se puede aceptar.</b> El retiro (<code>delete</code>) ya es un <code>UPDATE</code> condicional (<code>AND estado_postulacion = 'pendiente'</code>), pero el cambio de estado no mira si la fila sigue activa: si el estudiante la retira entre la lectura y la escritura del reclutador, queda retirada y aceptada, y le llega "¡Postulación aceptada!" por algo que ya no existe.</li>
+<li><b>H3. Una reactivación entra tantas veces como se pida.</b> Volver a postularse a una oferta retirada reactiva la fila vieja con un <code>UPDATE … WHERE id = ?</code>. Diez requests a la vez dan diez respuestas de éxito, diez avisos al reclutador y diez CVs subidos, de los que solo queda el último.</li>
+</ul>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 444" role="img" aria-labelledby="fw10st fw10sd">
+<title id="fw10st">Dos reclutadores confirman a la vez, con la fila bloqueada</title>
+<desc id="fw10sd">Dos pestañas mandan un cambio de estado a la vez. La primera abre una transacción y lee la postulación con SELECT FOR UPDATE: pendiente. La segunda hace lo mismo y espera, porque la fila está bloqueada. La primera escribe el estado, el historial y el aviso, y confirma. La segunda recién entonces lee: aceptada, que no es lo que vio, y responde 409.</desc>
+<defs><marker id="fw10s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw10s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fw10s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fw10s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Pestaña A</text>
+<path class="dg-frame" d="M70.0 40 V434"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Pestaña B</text>
+<path class="dg-frame" d="M280.0 40 V434"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">changeState</text>
+<path class="dg-frame" d="M490.0 40 V434"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M700.0 40 V434"/>
+<path class="dg-edge" d="M73.0 72 L485.0 72" marker-end="url(#fw10s-a)"/>
+<rect x="178.3" y="55" width="203.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="66" text-anchor="middle">PUT aceptada, desde pendiente</text>
+<path class="dg-edge" d="M283.0 106 L485.0 106" marker-end="url(#fw10s-a)"/>
+<rect x="280.0" y="89" width="210.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">PUT rechazada, desde pendiente</text>
+<path class="dg-edge" d="M493.0 140 L695.0 140" marker-end="url(#fw10s-a)"/>
+<rect x="516.4" y="123" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="134" text-anchor="middle">A: SELECT … FOR UPDATE</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 174 L495.0 174" marker-end="url(#fw10s-r)"/>
+<rect x="493.3" y="157" width="203.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="168" text-anchor="middle">A: pendiente (fila bloqueada)</text>
+<path class="dg-edge" d="M493.0 208 L695.0 208" marker-end="url(#fw10s-a)"/>
+<rect x="516.4" y="191" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="202" text-anchor="middle">B: SELECT … FOR UPDATE</text>
+<rect x="558.0" y="228" width="132" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="568.0" y="244">B espera el lock</text>
+<path class="dg-edge" d="M493.0 276 L695.0 276" marker-end="url(#fw10s-a)"/>
+<rect x="473.5" y="259" width="243.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="270" text-anchor="middle">A: UPDATE, historial, aviso, COMMIT</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 310 L75.0 310" marker-end="url(#fw10s-r)"/>
+<rect x="264.1" y="293" width="31.799999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="304" text-anchor="middle">200</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 344 L495.0 344" marker-end="url(#fw10s-r)"/>
+<rect x="552.7" y="327" width="84.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="338" text-anchor="middle">B: aceptada</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M487.0 378 L285.0 378" marker-end="url(#fw10s-f)"/>
+<rect x="270.1" y="361" width="229.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="372" text-anchor="middle">409: cambió mientras la revisabas</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB10.2.</b> Lo que deja el paso 3. El lock pone en fila a las dos requests, y el estado que manda el frontend (<code>desde</code>) hace que la segunda no escriba sobre algo que no vio. Sin el lock, la B leería <code>pendiente</code> al mismo tiempo que la A.</figcaption>
+</figure>
+<h2 id="endpoints">Los endpoints</h2>
+<div class="table-wrap">
+<table class="t pj-ep">
+<thead><tr><th>Método y ruta</th><th>Qué hace</th><th>Respuestas</th></tr></thead>
+<tbody>
+<tr><td><span class="ep-method" data-m="PUT">PUT</span><code>postulaciones.php</code></td><td><code>accion=estado</code>: el reclutador cambia el estado. Ahora manda también <code>desde</code>, el estado que tenía la postulación cuando la miró.</td><td>200 · 400 sin <code>desde</code> · 404 · 409 cambió, mismo estado o vuelta a pendiente</td></tr>
+<tr><td><span class="ep-method" data-m="POST">POST</span><code>postulaciones.php</code></td><td>Alta o reactivación (multipart, WEB08). Sin cambios en el contrato: solo deja de reactivar dos veces.</td><td>200 · 409 ya se postuló</td></tr>
+<tr><td><span class="ep-method" data-m="DELETE">DELETE</span><code>postulaciones.php?id=</code></td><td>El estudiante retira su postulación pendiente. Sin cambios: ya era un <code>UPDATE</code> condicional.</td><td>200 · 404 ya en proceso</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="dependencias">Qué necesitas</h2>
+<p>El laboratorio con <a href="web00-laboratorio.html">WEB00</a> a <a href="web08-subir-cv-ssrf.html">WEB08</a> aplicadas: la cuenta <code>estudiante2</code> de <a href="web06-control-acceso.html">WEB06</a> y la postulación con un PDF de <a href="web08-subir-cv-ssrf.html#infraestructura">la infraestructura de WEB08</a>. La oferta de esa postulación tiene que seguir activa y con fecha de cierre hoy o después.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Pieza</th><th>Para qué</th><th>Cómo comprobarla</th></tr></thead>
+<tbody>
+<tr><td><code>curl.exe</code> 7.68 o más nuevo</td><td><code>--parallel --parallel-immediate</code> manda todas las requests a la vez, en una sola llamada <span class="badge badge--doc">Documentado</span></td><td><code>curl.exe --version</code>; el de Windows 11 es 8.x</td></tr>
+<tr><td><code>mysql.exe</code> de XAMPP</td><td>El script prepara cada carrera y cuenta lo que quedó en la base</td><td><code>C:\xampp\mysql\bin\mysql.exe -u root -h 127.0.0.1 -P 3308 -e "SELECT COUNT(*) FROM control_practicas_db.postulaciones;"</code></td></tr>
+<tr><td><code>lab\cv-prueba.pdf</code></td><td>El CV de las altas en paralelo</td><td>Copia ahí el PDF de prueba de WEB08, sin datos personales</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="infraestructura">La infraestructura</h2>
+<h3 id="infra-script">El script de las carreras</h3>
+<p>Cuatro carreras, cada una preparada con una consulta a tu base local y comprobada con otra. El script cambia filas: úsalo solo contra el laboratorio.</p>
+<div class="pseudo"><ol>
+<li>Entra con <code>estudiante</code>, <code>estudiante2</code> y <code>reclutador</code>, y busca la postulación de WEB08.</li>
+<li><b>Estado:</b> la deja en <code>pendiente</code> y manda N cambios a la vez, mitad <code>aceptada</code> y mitad <code>rechazada</code>. Cuenta los 200, las filas nuevas del historial y los avisos al estudiante.</li>
+<li><b>Retirar:</b> la deja en <code>pendiente</code> y manda a la vez el retiro del estudiante y la aceptación del reclutador. Mira si quedó retirada y aceptada.</li>
+<li><b>Reactivar:</b> la deja retirada y manda N altas del estudiante a la misma oferta. Cuenta los 200 y los avisos al reclutador.</li>
+<li><b>Alta (control):</b> borra la postulación de <code>estudiante2</code> a esa oferta y manda N altas. La llave única ya la cubre: es la fila verde de la figura WEB10.1.</li>
+</ol></div>
+<pre data-lang="shell" data-file="lab/web10.ps1"><code># Provoca cuatro carreras contra tu laboratorio y revisa qué quedó en la base (WEB10).
+# Uso: .\lab\web10.ps1                     (las cuatro, 10 requests a la vez)
+#      .\lab\web10.ps1 -Carrera estado -N 20
+# Solo contra tu propio laboratorio: cambia filas de la base local para preparar cada carrera.
+param([ValidateSet('todas', 'estado', 'retirar', 'reactivar', 'alta')][string]$Carrera = 'todas',
+      [int]$N = 10, [string]$Pdf = "lab\cv-prueba.pdf",
+      [string]$Base = "http://localhost/SistemaControlPracticas/api/endpoints")
+
+$mysql = 'C:\xampp\mysql\bin\mysql.exe'
+function Sql([string]$Consulta) {
+    # Sin comillas dobles dentro de la consulta: Windows PowerShell 5 las rompe al pasarlas
+    &amp; $mysql -u root -h 127.0.0.1 -P 3308 -N -B control_practicas_db -e $Consulta
+}
+if (-not (Test-Path $Pdf)) { Write-Host "Falta ${Pdf}: copia ahí el PDF de prueba de WEB08."; exit 1 }
+
+$sesiones = @{ estudiante = "lab\login.json"; estudiante2 = "lab\estudiante2.json"; reclutador = "lab\reclutador.json" }
+$token = @{}
+foreach ($s in $sesiones.Keys) {
+    &amp; curl.exe -s -o NUL -c "lab\jar-$s.txt" -H "Content-Type: application/json" --data-binary "@$($sesiones[$s])" "$Base/login.php"
+    $token[$s] = (&amp; curl.exe -s -b "lab\jar-$s.txt" "$Base/login.php" | ConvertFrom-Json).data.csrfToken
+    if (-not $token[$s]) { Write-Host "No entró $s. Revisa $($sesiones[$s])."; exit 1 }
+}
+
+# La postulación más nueva de estudiante (id 3): la de la infraestructura de WEB08
+$fila = Sql "SELECT p.id, p.oportunidad_id, o.creado_por FROM postulaciones p JOIN oportunidades o ON o.id = p.oportunidad_id WHERE p.estudiante_id = 3 ORDER BY p.id DESC LIMIT 1"
+if (-not $fila) { Write-Host "estudiante no tiene postulaciones: haz la infraestructura de WEB08."; exit 1 }
+$postu, $oferta, $creador = $fila -split "`t"
+$est2 = Sql "SELECT id FROM usuarios WHERE username = 'estudiante2'"
+"Postulación $postu, oferta $oferta (creada por el usuario $creador), estudiante2 = $est2, $N requests a la vez"
+
+# Manda todos los pedidos a la vez con una sola llamada a curl y devuelve los códigos HTTP
+function EnParalelo([object[]]$Pedidos) {
+    $a = @('--parallel', '--parallel-immediate', '--parallel-max', '100')
+    for ($i = 0; $i -lt $Pedidos.Count; $i++) {
+        $p = $Pedidos[$i]
+        if ($i -gt 0) { $a += '--next' }
+        $a += @('-s', '-o', 'NUL', '-w', '%{http_code}\n', '-X', $p.Metodo,
+                '-b', "lab\jar-$($p.Quien).txt", '-H', "X-CSRF-Token: $($token[$p.Quien])")
+        if ($p.Json) {
+            $f = "lab\carrera-$i.json"
+            [IO.File]::WriteAllText((Join-Path $PWD $f), $p.Json)
+            $a += @('-H', 'Content-Type: application/json', '--data-binary', "@$f")
+        }
+        foreach ($c in @($p.Form)) { if ($c) { $a += @('-F', $c) } }
+        $a += "$Base/$($p.Ruta)"
+    }
+    @(&amp; curl.exe @a | Where-Object { $_ })
+}
+
+function Alta([string]$Quien) {
+    @{ Quien = $Quien; Metodo = 'POST'; Ruta = 'postulaciones.php'
+       Form = @("oportunidad_id=$oferta", 'carrera_id=1', 'edad=21', 'ciclo_universitario=6', "cv=@$Pdf;type=application/pdf") }
+}
+
+$script:mal = 0
+function Veredicto([string]$Que, [bool]$Bien, [string]$Visto) {
+    if (-not $Bien) { $script:mal++ }
+    "{0}  {1,-52} {2}" -f $(if ($Bien) { 'ok ' } else { 'MAL' }), $Que, $Visto
+}
+function Cuenta([string[]]$Codigos) { ($Codigos | Group-Object | Sort-Object Name | ForEach-Object { "$($_.Name) x$($_.Count)" }) -join ', ' }
+function Aciertos([string[]]$Codigos) { @($Codigos | Where-Object { $_ -eq '200' }).Count }
+
+if ($Carrera -in 'todas', 'estado') {
+    "--- 1. Dos reclutadores cambian el estado a la vez (aceptada y rechazada, vista pendiente)"
+    Sql "UPDATE postulaciones SET estado = 1, estado_postulacion = 'pendiente' WHERE id = $postu" | Out-Null
+    $h0 = Sql "SELECT COALESCE(MAX(id), 0) FROM historial_estado_postulacion"
+    $n0 = Sql "SELECT COALESCE(MAX(id), 0) FROM notificaciones"
+    $pedidos = for ($i = 0; $i -lt $N; $i++) {
+        $nuevo = if ($i % 2) { 'rechazada' } else { 'aceptada' }
+        @{ Quien = 'reclutador'; Metodo = 'PUT'; Ruta = 'postulaciones.php'
+           Json = '{"accion":"estado","id":' + $postu + ',"estado_postulacion":"' + $nuevo + '","desde":"pendiente","comentario":""}' }
+    }
+    $c = EnParalelo $pedidos
+    $hist = [int](Sql "SELECT COUNT(*) FROM historial_estado_postulacion WHERE postulacion_id = $postu AND id &gt; $h0")
+    $avisos = [int](Sql "SELECT COUNT(*) FROM notificaciones WHERE usuario_id = 3 AND id &gt; $n0")
+    Veredicto 'un solo cambio entra' ((Aciertos $c) -eq 1) (Cuenta $c)
+    Veredicto 'una sola fila nueva en el historial' ($hist -eq 1) "$hist filas"
+    Veredicto 'un solo aviso al estudiante' ($avisos -eq 1) "$avisos avisos"
+    "     quedó: $(Sql "SELECT estado_postulacion FROM postulaciones WHERE id = $postu")"
+}
+
+if ($Carrera -in 'todas', 'retirar') {
+    "--- 2. El estudiante retira la postulación mientras el reclutador la acepta"
+    Sql "UPDATE postulaciones SET estado = 1, estado_postulacion = 'pendiente' WHERE id = $postu" | Out-Null
+    $c = EnParalelo @(
+        @{ Quien = 'estudiante'; Metodo = 'DELETE'; Ruta = "postulaciones.php?id=$postu" },
+        @{ Quien = 'reclutador'; Metodo = 'PUT'; Ruta = 'postulaciones.php'
+           Json = '{"accion":"estado","id":' + $postu + ',"estado_postulacion":"aceptada","desde":"pendiente","comentario":""}' })
+    $estado, $etapa = (Sql "SELECT estado, estado_postulacion FROM postulaciones WHERE id = $postu") -split "`t"
+    Veredicto 'gana uno de los dos' ((Aciertos $c) -eq 1) (Cuenta $c)
+    Veredicto 'no queda retirada y aceptada a la vez' (-not ($estado -eq '0' -and $etapa -ne 'pendiente')) "estado=$estado, $etapa"
+}
+
+if ($Carrera -in 'todas', 'reactivar') {
+    "--- 3. El estudiante vuelve a postularse a una oferta que había retirado, $N veces a la vez"
+    Sql "UPDATE postulaciones SET estado = 0, estado_postulacion = 'pendiente' WHERE id = $postu" | Out-Null
+    $n0 = Sql "SELECT COALESCE(MAX(id), 0) FROM notificaciones"
+    $c = EnParalelo (1..$N | ForEach-Object { Alta 'estudiante' })
+    $avisos = [int](Sql "SELECT COUNT(*) FROM notificaciones WHERE usuario_id = $creador AND id &gt; $n0")
+    Veredicto 'una sola reactivación' ((Aciertos $c) -eq 1) (Cuenta $c)
+    Veredicto 'un solo aviso al reclutador' ($avisos -eq 1) "$avisos avisos"
+}
+
+if ($Carrera -in 'todas', 'alta') {
+    "--- 4. Control: estudiante2 se postula por primera vez, $N veces a la vez (la llave única)"
+    Sql "DELETE FROM postulaciones WHERE oportunidad_id = $oferta AND estudiante_id = $est2" | Out-Null
+    $c = EnParalelo (1..$N | ForEach-Object { Alta 'estudiante2' })
+    $filas = [int](Sql "SELECT COUNT(*) FROM postulaciones WHERE oportunidad_id = $oferta AND estudiante_id = $est2")
+    Veredicto 'una sola alta' ((Aciertos $c) -eq 1) (Cuenta $c)
+    Veredicto 'una sola fila' ($filas -eq 1) "$filas filas"
+}
+
+Remove-Item lab\carrera-*.json -ErrorAction SilentlyContinue
+""
+if ($script:mal -eq 0) { "Todo bien." } else { "$script:mal comprobaciones fallaron." }</code></pre>
+<aside class="callout callout--def">
+<p class="callout-label">PowerShell de por medio</p>
+<p><code>EnParalelo</code> arma una sola llamada a <code>curl.exe</code>: <code>--parallel</code> y <code>--parallel-immediate</code> valen para todas las transferencias, y cada <code>--next</code> empieza una nueva con sus propias opciones (su cookie, su token, su cuerpo). <code>-w '%{http_code}\n'</code> imprime el código de cada una al terminar, en el orden en que terminan. Los cuerpos JSON van por archivo por lo mismo que en <a href="web06-control-acceso.html">WEB06</a>: Windows PowerShell 5 quita las comillas de un argumento con JSON.</p>
+</aside>
+<h3 id="infra-pausa">Ensanchar la ventana</h3>
+<p>Entre el <code>SELECT</code> y el <code>UPDATE</code> de <code>changeState</code> pasan microsegundos: diez requests a la vez pueden caer en esa ventana o no, según tu máquina. Para que la carrera se vea siempre, la guía la ensancha a propósito con una pausa de 300&#8239;ms en los dos lugares donde se decide con lo leído. Es una línea de laboratorio: se pone ahora, se deja puesta mientras arreglas (así compruebas el arreglo con la ventana abierta) y se borra al final.</p>
+<pre data-lang="php" data-file="api/models/postulaciones.php (dos lugares, solo en el laboratorio)"><code>usleep(300000); // WEB10: ensancha la ventana de la carrera; se borra al terminar la guía</code></pre>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Dónde</th><th>Justo después de</th></tr></thead>
+<tbody>
+<tr><td><code>changeState</code></td><td><code>$postulacion = $stmt-&gt;fetch(PDO::FETCH_ASSOC);</code>, la lectura del estado</td></tr>
+<tr><td><code>registrar</code></td><td><code>if ($previa) {</code>, la primera línea de la reactivación</td></tr>
+</tbody>
+</table>
+</div>
+<pre data-lang="shell"><code>powershell -ExecutionPolicy Bypass -File lab\web10.ps1</code></pre>
+<p>Con la pausa y sin el arreglo, el diseño espera <code>MAL</code> en las carreras 1, 2 y 3, y <code>ok</code> en la 4. Leído del código: en la 1, cada request lee <code>pendiente</code> durante la pausa de las demás, así que todas entran; en la 2, el retiro termina durante la pausa del cambio de estado, y el <code>UPDATE</code> sin condición acepta una fila retirada; en la 3, todas ven la fila retirada antes de que la primera la reactive. Cuántos <code>200</code> salen depende de cuántas requests atienda Apache a la vez: anótalo.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Carrera</th><th>Lo que viste (sin el arreglo)</th></tr></thead>
+<tbody>
+<tr><td>1. Códigos, filas del historial y avisos</td><td>&nbsp;</td></tr>
+<tr><td>2. Códigos y cómo quedó la fila</td><td>&nbsp;</td></tr>
+<tr><td>3. Códigos y avisos al reclutador</td><td>&nbsp;</td></tr>
+<tr><td>4. Códigos y filas (control)</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<aside class="callout callout--fail">
+<p class="callout-label">Errores típicos</p>
+<ul class="pj-errs">
+<li><code>curl: option --parallel-immediate: is unknown</code>: el <code>curl.exe</code> que encuentra PowerShell es anterior a 7.68 (a veces el de Git). Usa <code>C:\Windows\System32\curl.exe</code> o actualízalo.</li>
+<li>La carrera 3 o la 4 dan todo <code>404</code>: la oferta ya cerró o dejó de estar activa. Abre otra oferta con el reclutador, postúlate a ella como en WEB08 y vuelve a correr.</li>
+<li>Todo da <code>403 Origen no permitido</code>: <code>ORIGENES_PERMITIDOS</code> no se cargó; <code>curl</code> no manda <code>Origin</code> ni <code>Sec-Fetch-Site</code>, y <code>requireOrigenConfiable</code> de WEB03 lo deja pasar solo si el archivo de secretos está bien.</li>
+<li>Los mensajes del script salen con letras raras en Windows PowerShell 5: es la codificación del archivo, no un error. Guárdalo como UTF-8 con BOM o córrelo con <code>pwsh</code>.</li>
+</ul>
+</aside>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 320" role="img" aria-labelledby="fw10bt fw10bd">
+<title id="fw10bt">Qué herramienta cierra cada carrera</title>
+<desc id="fw10bd">Tres herramientas, de la más simple a la más pesada. La llave única cierra las altas duplicadas. El UPDATE condicional cierra la reactivación: la condición del WHERE es la decisión. La transacción con SELECT FOR UPDATE cierra el cambio de estado y el retiro simultáneo, porque la decisión necesita leer varias columnas y escribir en dos tablas.</desc>
+<defs><marker id="fw10ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw10bf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker></defs>
+<path class="dg-edge" d="M270 67 L480 67" marker-end="url(#fw10ba)"/>
+<rect x="288" y="49" width="173" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="375" y="61" text-anchor="middle">la base rechaza la segunda</text>
+<path class="dg-edge" d="M270 167 L480 167" marker-end="url(#fw10ba)"/>
+<rect x="332" y="149" width="86" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="375" y="161" text-anchor="middle">0 filas: 409</text>
+<path class="dg-edge" d="M270 267 L480 267" marker-end="url(#fw10ba)"/>
+<rect x="292" y="249" width="167" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="375" y="261" text-anchor="middle">la segunda espera y relee</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="40" width="250" height="54" rx="8"/>
+<text class="dg-label" x="145.0" y="65.0" text-anchor="middle">Llave única</text>
+<text class="dg-tiny" x="145.0" y="80.0" text-anchor="middle">UNIQUE (oportunidad, estudiante)</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="140" width="250" height="54" rx="8"/>
+<text class="dg-label" x="145.0" y="165.0" text-anchor="middle">UPDATE condicional</text>
+<text class="dg-tiny" x="145.0" y="180.0" text-anchor="middle">… WHERE id = ? AND estado = 0</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="240" width="250" height="54" rx="8"/>
+<text class="dg-label" x="145.0" y="265.0" text-anchor="middle">Transacción y FOR UPDATE</text>
+<text class="dg-tiny" x="145.0" y="280.0" text-anchor="middle">leer, decidir, escribir, COMMIT</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="480" y="40" width="270" height="54" rx="8"/>
+<text class="dg-label" x="615.0" y="65.0" text-anchor="middle">Dos altas nuevas</text>
+<text class="dg-tiny" x="615.0" y="80.0" text-anchor="middle">ya estaba</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="480" y="140" width="270" height="54" rx="8"/>
+<text class="dg-label" x="615.0" y="165.0" text-anchor="middle">Reactivar una retirada</text>
+<text class="dg-tiny" x="615.0" y="180.0" text-anchor="middle">paso 2</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="480" y="240" width="270" height="54" rx="8"/>
+<text class="dg-label" x="615.0" y="265.0" text-anchor="middle">Cambio de estado y retiro</text>
+<text class="dg-tiny" x="615.0" y="280.0" text-anchor="middle">paso 3, con la regla del paso 1</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB10.3.</b> La regla de <a href="../modules/m83-otros-ataques.html#carreras">83.6</a>: que la base decida en una sola sentencia si se puede, y con un lock cuando no se puede. La reactivación cabe en un <code>WHERE</code>; el cambio de estado no, porque necesita el estado actual para el historial y para el aviso.</figcaption>
+</figure>
+<h3 id="paso-reglas">Paso 1. La regla del cambio de estado, en una función pura</h3>
+<p>Antes de tocar la base, la regla: qué cambios se permiten. Hoy <code>changeState</code> solo rechaza el mismo estado. Faltan dos cosas que el paso 3 necesita:</p>
+<ul>
+<li><b>El estado que vio quien confirma.</b> Con un lock, la segunda request lee el estado nuevo, pero el reclutador que la mandó estaba mirando el viejo: aceptar o rechazar sobre algo que no vio es la carrera de H1 por otro camino. El frontend manda <code>desde</code>, y si no coincide con lo que hay, 409.</li>
+<li><b>No volver a pendiente.</b> <code>pendiente</code> es el único estado en el que el estudiante puede editar sus documentos (<code>buscarEditable</code>) o retirarse (<code>delete</code>). Volver ahí reabriría las dos cosas después de una revisión. La interfaz nunca lo ofrece; la regla lo hace cumplir.</li>
+</ul>
+<pre data-lang="php" data-file="api/core/reglas-postulacion.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+/**
+ * Reglas de negocio del cambio de estado de una postulación (WEB10).
+ *
+ * Funciones puras: no tocan la base ni la sesión, así se prueban sin servidor.
+ * El modelo las llama con el estado que leyó bajo SELECT ... FOR UPDATE, que es
+ * el estado real en ese momento y nadie lo puede cambiar hasta el commit.
+ */
+
+const ESTADOS_POSTULACION = ['pendiente', 'en_revision', 'aceptada', 'rechazada'];
+
+/**
+ * Qué impide pasar una postulación de $actual a $nuevo, si algo lo impide.
+ *
+ * @param string $actual el estado de la fila, leído bajo el lock
+ * @param string $desde  el estado que vio quien pide el cambio (lo manda el frontend)
+ * @param string $nuevo  el estado pedido
+ * @return array{0:int,1:string}|null [código HTTP, mensaje], o null si se puede
+ */
+function problemaCambioEstado(string $actual, string $desde, string $nuevo): ?array
+{
+    if (!in_array($nuevo, ESTADOS_POSTULACION, true)) {
+        return [400, 'El estado no es valido'];
+    }
+    if (!in_array($desde, ESTADOS_POSTULACION, true)) {
+        return [400, 'Falta el estado que tenía la postulación cuando la viste'];
+    }
+    # Otra persona (u otra pestaña) la cambió entre que la viste y que confirmaste
+    if ($desde !== $actual) {
+        return [409, 'La postulación cambió mientras la revisabas: ahora está ' . str_replace('_', ' ', $actual) . '. Recarga la lista.'];
+    }
+    if ($nuevo === $actual) {
+        return [409, 'La postulación ya tiene ese estado'];
+    }
+    # Pendiente es el único estado en el que el estudiante puede editarla o retirarla
+    if ($nuevo === 'pendiente') {
+        return [409, 'Una postulación revisada no vuelve a pendiente'];
+    }
+    return null;
+}</code></pre>
+<p>El arreglo <code>ESTADOS_POSTULACION</code> se mudó aquí: borra la constante privada del mismo nombre de la clase <code>Postulaciones</code>, que solo usaba <code>changeState</code>. Y la prueba, que termina con las dos pestañas de la figura WEB10.2 jugadas en serie:</p>
+<pre data-lang="php" data-file="tests/reglas_postulacion_test.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../api/core/reglas-postulacion.php';
+
+$fallos = 0;
+function caso(string $nombre, bool $bien): void
+{
+    global $fallos;
+    if (!$bien) {
+        $fallos++;
+    }
+    printf("%s %s\n", $bien ? 'ok    ' : 'FALLA ', $nombre);
+}
+
+function codigo(?array $problema): int
+{
+    return $problema === null ? 200 : $problema[0];
+}
+
+caso('pendiente a aceptada, visto pendiente: se puede',     problemaCambioEstado('pendiente', 'pendiente', 'aceptada') === null);
+caso('pendiente a en revisión: se puede',                   problemaCambioEstado('pendiente', 'pendiente', 'en_revision') === null);
+caso('aceptada a rechazada, visto aceptada: se puede',      problemaCambioEstado('aceptada', 'aceptada', 'rechazada') === null);
+caso('la vio pendiente, ya está aceptada: 409',             codigo(problemaCambioEstado('aceptada', 'pendiente', 'rechazada')) === 409);
+caso('el 409 dice el estado de ahora',                      str_contains(problemaCambioEstado('en_revision', 'pendiente', 'aceptada')[1] ?? '', 'en revision'));
+caso('al mismo estado: 409',                                codigo(problemaCambioEstado('aceptada', 'aceptada', 'aceptada')) === 409);
+caso('de vuelta a pendiente: 409',                          codigo(problemaCambioEstado('en_revision', 'en_revision', 'pendiente')) === 409);
+caso('un estado que no existe: 400',                        codigo(problemaCambioEstado('pendiente', 'pendiente', 'contratada')) === 400);
+caso('sin el estado visto: 400',                            codigo(problemaCambioEstado('pendiente', '', 'aceptada')) === 400);
+caso('el estado visto inventado: 400',                      codigo(problemaCambioEstado('pendiente', 'cualquiera', 'aceptada')) === 400);
+
+# Dos reclutadores ven la misma postulación en pendiente y confirman a la vez.
+# Con el lock, el segundo lee lo que dejó el primero.
+$estado = 'pendiente';
+$respuestas = [];
+foreach (['aceptada', 'rechazada'] as $pedido) {
+    $problema = problemaCambioEstado($estado, 'pendiente', $pedido);
+    $respuestas[] = codigo($problema);
+    if ($problema === null) {
+        $estado = $pedido;
+    }
+}
+caso('dos cambios desde pendiente, en serie: 200 y 409',    $respuestas === [200, 409] &amp;&amp; $estado === 'aceptada');
+
+echo $fallos === 0 ? "Todo bien\n" : "$fallos casos fallaron\n";
+exit($fallos === 0 ? 0 : 1);</code></pre>
+<pre data-lang="shell"><code>C:\xampp\php\php.exe tests\reglas_postulacion_test.php</code></pre>
+<p>Once líneas <code>ok</code> y <code>Todo bien</code>.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Comparar con el estado que vio el reclutador (<code>desde</code>), además de bloquear la fila.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Solo el lock: pone las requests en fila, pero la segunda escribe igual sobre el estado nuevo, y el estudiante recibe "aceptada" y al segundo "rechazada". O control optimista con un número de versión en la fila: es lo mismo con una columna más; aquí el estado ya hace de versión, porque cada cambio lo cambia.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Un cliente viejo que no manda <code>desde</code>: recibe 400 en lugar de cambiar el estado. Es lo que se quiere, pero el frontend del paso 4 tiene que llegar en el mismo despliegue que el backend.</dd></div>
+</dl>
+<h3 id="paso-reactivar">Paso 2. La reactivación, con un UPDATE condicional</h3>
+<p>La reactivación decide una sola cosa: si la fila sigue retirada. Eso cabe en el <code>WHERE</code>, así que no hace falta lock: <code>AND estado = 0</code>, y si la base no cambió ninguna fila, otra request se le adelantó. Es el patrón del asiento de <a href="../modules/m39-manejo-pagos.html">M39</a> y del cupo de <a href="../modules/m83-otros-ataques.html#carreras">83.6</a>. El método entero, en <code>models/postulaciones.php</code>:</p>
+<pre data-lang="php" data-file="api/models/postulaciones.php (registrar)"><code>    public function registrar(int $oportunidad_id, int $estudiante_id, ?array $previa, array $formulario, array $documentos) {
+        $campos = array_merge($formulario, $this-&gt;validarDocumentos($documentos));
+        $columnas = array_keys($campos);
+
+        try {
+            if ($previa) {
+                # WEB10: reactiva solo si sigue retirada. Si dos requests leyeron la misma
+                # postulación retirada, la base deja pasar a una y la otra cambia 0 filas.
+                $set = implode(', ', array_map(static fn($c) =&gt; "$c = ?", $columnas));
+                $query = "UPDATE postulaciones SET estado = 1, estado_postulacion = 'pendiente', fecha_postulacion = NOW(), $set
+                          WHERE id = ? AND estado = 0";
+                $stmt = $this-&gt;connection-&gt;prepare($query);
+                $stmt-&gt;execute([...array_values($campos), (int)$previa['id']]);
+
+                if ($stmt-&gt;rowCount() === 0) {
+                    $this-&gt;response-&gt;error("El estudiante ya se postuló a esta oportunidad", -1, 409);
+                }
+
+                $this-&gt;avisarCreador($oportunidad_id, $estudiante_id);
+                $this-&gt;response-&gt;success("Postulación registrada con éxito");
+            }
+
+            $query = "INSERT INTO postulaciones (oportunidad_id, estudiante_id, " . implode(', ', $columnas) . ")
+                      VALUES (?, ?, " . implode(', ', array_fill(0, count($columnas), '?')) . ")";
+            $stmt = $this-&gt;connection-&gt;prepare($query);
+            $stmt-&gt;execute([$oportunidad_id, $estudiante_id, ...array_values($campos)]);
+
+            if ($stmt-&gt;rowCount() === 0) {
+                $this-&gt;response-&gt;error("No se pudo registrar la postulación", -1, 500);
+            }
+
+            $this-&gt;avisarCreador($oportunidad_id, $estudiante_id);
+            $this-&gt;response-&gt;success("Postulación registrada con éxito");
+        } catch (PDOException $e) {
+            # La llave única uk_oportunidad_estudiante: otra request insertó primero
+            if (($e-&gt;errorInfo[1] ?? 0) === 1062) {
+                $this-&gt;response-&gt;error("El estudiante ya se postuló a esta oportunidad", -1, 409);
+            }
+            Response::error("Error", -1, 500);
+            //Response::debugError($e);
+        }
+    }</code></pre>
+<p>Con la pausa puesta, deja la línea después de <code>if ($previa) {</code> como estaba: así la carrera 3 sigue con la ventana abierta y el <code>WHERE</code> tiene que hacer el trabajo solo.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd><code>WHERE id = ? AND estado = 0</code> y mirar <code>rowCount()</code>.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Volver a leer la fila justo antes del <code>UPDATE</code>: achica la ventana pero no la cierra, porque entre esa lectura y la escritura cabe otra request. O un <code>SELECT … FOR UPDATE</code> en <code>validarAlta</code>: funciona, pero el lock quedaría tomado mientras se suben los archivos, y otra request del mismo estudiante esperaría a que termine de subir.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd><code>rowCount()</code> en MariaDB cuenta las filas <em>cambiadas</em>, no las encontradas: un <code>UPDATE</code> que deja todo igual da 0. Aquí no pasa, porque <code>estado</code> va de 0 a 1 siempre. Si copias el patrón a un <code>UPDATE</code> que puede no cambiar nada, compara con <code>SELECT ROW_COUNT()</code> o ajusta <code>PDO::MYSQL_ATTR_FOUND_ROWS</code>.</dd></div>
+</dl>
+<h3 id="paso-estado">Paso 3. El cambio de estado, en una transacción con la fila bloqueada</h3>
+<p>El cambio de estado no cabe en un <code>WHERE</code>: necesita el estado anterior para el historial, el estudiante para el aviso, y escribe en tres tablas. Así que lee, decide y escribe dentro de una transacción, con la lectura bloqueando la fila:</p>
+<div class="pseudo"><ol>
+<li>Lo que no depende de la fila, fuera de la transacción: el id y que quien actualiza siga activo.</li>
+<li><code>BEGIN</code> y <code>SELECT … FOR UPDATE</code>: el estado real ahora, con la fila bloqueada hasta el <code>COMMIT</code>. Si no está activa (el estudiante la retiró), 404.</li>
+<li><code>problemaCambioEstado</code> del paso 1, con lo que se leyó y lo que vio el reclutador.</li>
+<li><code>UPDATE</code>, historial y aviso, y <code>COMMIT</code>. Cualquier corte antes deshace todo con <code>cortar</code>.</li>
+</ol></div>
+<p>Es un lock pesimista: se bloquea antes de decidir, porque se espera que choquen. Un <code>SELECT</code> común dentro de una transacción no alcanza. En InnoDB, con el nivel de aislamiento por defecto (<code>REPEATABLE READ</code>), una lectura sin lock lee una foto consistente de MVCC y no espera a nadie; una lectura con <code>FOR UPDATE</code> lee la última versión confirmada y bloquea la fila <span class="badge badge--doc">Documentado</span>. La falla 1 lo muestra.</p>
+<pre data-lang="php" data-file="api/models/postulaciones.php (cortar y changeState)"><code>    /** Deshace la transacción abierta, si hay una, y responde con el error. */
+    private function cortar(string $mensaje, int $httpCode): never {
+        if ($this-&gt;connection-&gt;inTransaction()) {
+            $this-&gt;connection-&gt;rollBack();
+        }
+        $this-&gt;response-&gt;error($mensaje, -1, $httpCode);
+    }
+
+    # Cambiar estado y dejar registro en historial_estado_postulacion
+    # WEB10: leer, decidir y escribir dentro de una transacción, con la fila bloqueada
+    public function changeState(array $arrayData){
+        $id                 = (int)($arrayData["id"] ?? 0);
+        $estado_postulacion = trim($arrayData["estado_postulacion"] ?? '');
+        $desde              = trim($arrayData["desde"] ?? '');
+        $comentario         = trim($arrayData["comentario"] ?? '');
+        $actualizado_por    = (int)($arrayData["actualizado_por"] ?? 0);
+
+        if ($id &lt;= 0) {
+            $this-&gt;response-&gt;error("El ID es invalido", -1, 400);
+        }
+
+        if ($actualizado_por &lt;= 0) {
+            $this-&gt;response-&gt;error("El usuario que actualiza es obligatorio", -1, 400);
+        }
+
+        try {
+            $stmt = $this-&gt;connection-&gt;prepare("SELECT id FROM usuarios WHERE id = ? AND estado = 1 AND estado_cuenta = 'activo'");
+            $stmt-&gt;execute([$actualizado_por]);
+            if (!$stmt-&gt;fetch(PDO::FETCH_ASSOC)) {
+                $this-&gt;response-&gt;error("El usuario que actualiza no existe o no está activo", -1, 404);
+            }
+
+            $this-&gt;connection-&gt;beginTransaction();
+
+            # FOR UPDATE: bloquea la fila hasta el commit. Otro cambio de estado, el retiro
+            # del estudiante o una edición esperan aquí, y después leen lo que quedó.
+            $stmt = $this-&gt;connection-&gt;prepare("SELECT estado_postulacion, estudiante_id, oportunidad_id
+                                                FROM postulaciones
+                                                WHERE id = ? AND estado = 1
+                                                FOR UPDATE");
+            $stmt-&gt;execute([$id]);
+            $postulacion = $stmt-&gt;fetch(PDO::FETCH_ASSOC);
+
+            if (!$postulacion) {
+                $this-&gt;cortar("Postulación no encontrada", 404);
+            }
+
+            $problema = problemaCambioEstado($postulacion['estado_postulacion'], $desde, $estado_postulacion);
+            if ($problema !== null) {
+                $this-&gt;cortar($problema[1], $problema[0]);
+            }
+
+            $stmt = $this-&gt;connection-&gt;prepare("UPDATE postulaciones SET estado_postulacion = ? WHERE id = ?");
+            $stmt-&gt;execute([$estado_postulacion, $id]);
+
+            $query = "INSERT INTO historial_estado_postulacion (postulacion_id, estado_anterior, estado_nuevo, comentario, actualizado_por)
+                      VALUES (?, ?, ?, ?, ?)";
+            $stmt = $this-&gt;connection-&gt;prepare($query);
+            $stmt-&gt;execute([$id, $postulacion['estado_postulacion'], $estado_postulacion, $comentario !== '' ? $comentario : null, $actualizado_por]);
+
+            # El título se lee aparte: un FOR UPDATE con JOIN bloquearía también la oferta
+            $stmt = $this-&gt;connection-&gt;prepare("SELECT titulo FROM oportunidades WHERE id = ?");
+            $stmt-&gt;execute([(int)$postulacion['oportunidad_id']]);
+            $titulo_oferta = (string)$stmt-&gt;fetchColumn();
+
+            # Notificación al estudiante, en la misma transacción: si algo falla, no se avisa nada
+            $titulo = $estado_postulacion === 'aceptada' ? "🎉 ¡Postulación Aceptada!" : "Actualización de tu postulación";
+            $mensaje = $comentario !== ''
+                ? $comentario
+                : "Tu postulación para \"{$titulo_oferta}\" cambió a: " . str_replace('_', ' ', $estado_postulacion) . ".";
+            crearNotificacion($this-&gt;connection, (int)$postulacion['estudiante_id'], $titulo, $mensaje,
+                "#/oferta/" . (int)$postulacion['oportunidad_id']);
+
+            $this-&gt;connection-&gt;commit();
+
+            $this-&gt;response-&gt;success("Estado de la postulación actualizado");
+        } catch (PDOException $e) {
+            if ($this-&gt;connection-&gt;inTransaction()) {
+                $this-&gt;connection-&gt;rollBack();
+            }
+            Response::error("Error", -1, 500);
+            //Response::debugError($e);
+        }
+    }</code></pre>
+<p>Arriba del archivo, junto a los otros <code>require_once</code>:</p>
+<pre data-lang="php" data-file="api/models/postulaciones.php (arriba)"><code>require_once __DIR__ . "/../core/reglas-postulacion.php";</code></pre>
+<p>Con la pausa puesta, ponla después del <code>fetch</code> del <code>SELECT … FOR UPDATE</code>, que es la lectura nueva. Ahora la pausa pasa con la fila bloqueada: las otras requests esperan detrás, y la carrera 1 tarda unos 300&#8239;ms por request (la cuenta: 10 requests en fila, unos 3 segundos en total).</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd><code>SELECT … FOR UPDATE</code> sobre <code>postulaciones</code> solo, y el título de la oferta en otra consulta.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Un <code>FOR UPDATE</code> con el <code>JOIN</code> a <code>oportunidades</code>, como estaba la lectura: bloquearía también la fila de la oferta, y dos cambios de estado de postulaciones distintas a la misma oferta se esperarían entre sí sin motivo. O <code>LOCK TABLES</code>: frena todas las postulaciones de todos.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Una request que se queda con el lock (un aviso que tarda, una pausa olvidada): las demás esperan hasta <code>innodb_lock_wait_timeout</code>, 50 segundos por defecto <span class="badge badge--doc">Documentado</span>, y después reciben un error que aquí sale como 500. Por eso dentro de la transacción solo va lo que toca la base.</dd></div>
+</dl>
+<h3 id="paso-frontend">Paso 4. El frontend manda lo que vio</h3>
+<p>El endpoint pasa <code>desde</code> al modelo, en el <code>case 'PUT'</code> de <code>endpoints/postulaciones.php</code>:</p>
+<pre data-lang="php" data-file="api/endpoints/postulaciones.php (case PUT, accion=estado)"><code>                $postulacion-&gt;changeState([
+                    'id'                 =&gt; inputString($data, 'id'),
+                    'estado_postulacion' =&gt; inputString($data, 'estado_postulacion'),
+                    'desde'              =&gt; inputString($data, 'desde'), # el estado que vio el reclutador (WEB10)
+                    'comentario'         =&gt; inputString($data, 'comentario'),
+                    'actualizado_por'    =&gt; (string)$propio # sale de la cookie
+                ]);</code></pre>
+<p>Y los dos lugares del frontend que cambian el estado mandan el que tenía la postulación en pantalla:</p>
+<pre data-lang="javascript" data-file="frontend/src/components/PostulantesVentana.jsx (confirmarAccion)"><code>        body: { accion: "estado", id: seleccionadaId, estado_postulacion: accion, desde: seleccionada.estado_postulacion, comentario: comentario.trim() },</code></pre>
+<pre data-lang="javascript" data-file="frontend/src/components/GestionPostulantes.jsx (el PUT de postulaciones.php)"><code>        body: {
+          accion: "estado",
+          id: postulacion.id,
+          estado_postulacion: nuevoEstado,
+          desde: postulacion.estado_postulacion, // WEB10: el estado que tenía en pantalla
+          comentario: comentario.trim(),
+        },</code></pre>
+<p>Los dos ya muestran <code>err.message</code> cuando la API responde un error, así que el 409 aparece como "La postulación cambió mientras la revisabas: ahora está aceptada. Recarga la lista." Compruébalo a mano: abre la misma oferta como reclutador en dos pestañas, acepta en una y rechaza en la otra sin recargar.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Lo que espera el diseño</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>La primera pestaña: el mensaje de éxito</td><td>&nbsp;</td></tr>
+<tr><td>La segunda: el mensaje del 409, y el historial con un solo cambio</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="web10-carreras"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-matriz">Las carreras, con la ventana abierta</h3>
+<p>Con la pausa todavía en los dos lugares nuevos, corre el script. La ventana sigue de 300&#8239;ms: si pasa así, pasa con la ventana real, que es mucho más chica.</p>
+<pre data-lang="shell"><code>powershell -ExecutionPolicy Bypass -File lab\web10.ps1
+powershell -ExecutionPolicy Bypass -File lab\web10.ps1 -N 30</code></pre>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Lo que espera el diseño</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>1. Un <code>200</code> y el resto <code>409</code>; una fila en el historial; un aviso</td><td>&nbsp;</td></tr>
+<tr><td>2. Un <code>200</code> y un <code>404</code>; la fila retirada en <code>pendiente</code>, o activa y aceptada</td><td>&nbsp;</td></tr>
+<tr><td>3. Un <code>200</code> y el resto <code>409</code>; un aviso al reclutador</td><td>&nbsp;</td></tr>
+<tr><td>4. Un <code>200</code> y el resto <code>409</code>; una fila</td><td>&nbsp;</td></tr>
+<tr><td>Al final, <code>Todo bien.</code>, también con <code>-N 30</code></td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<p>Ahora borra las dos pausas y comprueba que no quedó ninguna:</p>
+<pre data-lang="shell"><code>Select-String -Path api\models\*.php -Pattern usleep
+powershell -ExecutionPolicy Bypass -File lab\web10.ps1</code></pre>
+<p>El diseño espera ninguna línea del <code>Select-String</code> y otra vez <code>Todo bien.</code></p>
+<h3 id="comprueba-fallas">Fallas provocadas</h3>
+<p>Las tres con la pausa puesta otra vez después del <code>fetch</code> del <code>FOR UPDATE</code> y al principio de la reactivación, para que la ventana no dependa de la suerte.</p>
+<p><b>Falla 1. Una transacción sin lock.</b> Borra solo las palabras <code>FOR UPDATE</code> del <code>SELECT</code> de <code>changeState</code>, y deja el <code>beginTransaction</code> y el <code>commit</code>. Corre <code>lab\web10.ps1 -Carrera estado</code>. El diseño espera <code>MAL</code> en las tres líneas: cada request lee <code>pendiente</code> en su propia foto consistente, ninguna espera a nadie, y la regla de <code>desde</code> deja pasar a todas porque todas vieron lo mismo que leyeron. Es la diferencia de <a href="#paso-estado">el paso 3</a>: la transacción hace que todo se confirme o se deshaga junto, el lock hace que nadie lea en el medio. Vuelve a poner <code>FOR UPDATE</code>.</p>
+<p><b>Falla 2. Una reactivación sin condición.</b> En <code>registrar</code>, cambia <code>WHERE id = ? AND estado = 0</code> por <code>WHERE id = ?</code> y corre <code>lab\web10.ps1 -Carrera reactivar</code>. El diseño espera varios <code>200</code> y varios avisos, como antes del arreglo: el <code>rowCount()</code> sigue ahí, pero sin la condición siempre cambia una fila. Vuelve la condición.</p>
+<p><b>Falla 3. Sin mirar lo que vio el reclutador.</b> En <code>problemaCambioEstado</code>, cambia <code>if ($desde !== $actual) {</code> por <code>if (false) {</code>. La prueba pura da tres <code>FALLA</code>: "la vio pendiente, ya está aceptada: 409", "el 409 dice el estado de ahora" y "dos cambios desde pendiente, en serie: 200 y 409". La carrera 1 también da <code>MAL</code>, pero distinto que en la falla 1: ahora las requests entran de a una, y el historial queda coherente (cada fila con el estado anterior de verdad), pero entra más de un cambio y el estudiante recibe más de un aviso. Vuelve la línea.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>1. Sin <code>FOR UPDATE</code>: códigos, historial y avisos</td><td>&nbsp;</td></tr>
+<tr><td>2. Sin <code>AND estado = 0</code>: códigos y avisos</td><td>&nbsp;</td></tr>
+<tr><td>3. Sin <code>desde</code>: la prueba, y el historial de la carrera 1</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<p>Al terminar, borra las pausas otra vez y repite el <code>Select-String</code>.</p>
+<h2 id="limites">Limitaciones</h2>
+<ul>
+<li><b>Los archivos de la request que pierde quedan huérfanos.</b> El alta valida, sube los archivos y recién después escribe: la que recibe 409 ya subió su CV. Cada corrida de las carreras 3 y 4 deja hasta 2&#8239;(N&#8239;&#8722;&#8239;1) PDFs sin dueño (la cuenta: N − 1 perdedoras en cada una). Ya está anotado en <code>docs/SUBIDA_ARCHIVOS.md</code>, sección 9; el arreglo es borrar el archivo en el 409 o barrer los que ninguna fila nombra.</li>
+<li><b>La oferta no se bloquea.</b> <code>validarAlta</code> lee si la oferta sigue activa sin lock: una oferta que se cierra en el mismo instante puede recibir una última postulación. Para esta aplicación es aceptable; si no lo fuera, el alta tomaría un <code>FOR UPDATE</code> de la oferta, o el cierre se haría con un <code>UPDATE</code> condicional que las postulaciones respeten.</li>
+<li><b>No hay cupos.</b> El esquema no tiene un límite de plazas por oferta. Si se agrega, aceptar consume el cupo con el <code>UPDATE … WHERE cupos &gt; 0</code> de <a href="../modules/m83-otros-ataques.html#carreras">83.6</a>, dentro de la misma transacción del paso 3.</li>
+<li><b>La lista del reclutador queda vieja.</b> Después de un 409, la pantalla sigue mostrando el estado anterior hasta que recarga: el mensaje lo pide, pero no recarga sola.</li>
+<li><b>Una carrera que no se provocó no se probó.</b> El script cubre las cuatro de la re-auditoría. Cualquier otro "leer, decidir en PHP y escribir" (las solicitudes de publicación, el cambio de contraseña) tiene la misma forma, y se busca igual: un <code>SELECT</code> seguido de un <code>if</code> y de un <code>UPDATE</code> sin la condición en el <code>WHERE</code>.</li>
+<li><b>Costo.</b> Un lock de fila durante una transacción de cuatro sentencias. Dos cambios de estado a la misma postulación esperan uno detrás del otro; a postulaciones distintas, no.</li>
+<li><b>Nada se ejecutó contra tu sistema al escribir esta guía.</b> La prueba pura se corrió sobre copias; lo que muestran las carreras sale de leer el código, y las tablas son tuyas.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="web10">
+<p class="pj-repo-head">Lo que tiene que quedar</p>
+<ul class="pj-checks">
+<li data-check="reglas"><code>reglas-postulacion.php</code> existe y <code>reglas_postulacion_test.php</code> dice <code>Todo bien</code>.</li>
+<li data-check="antes">Corriste las carreras sin el arreglo y anotaste lo que entró.</li>
+<li data-check="despues"><code>web10.ps1</code> termina con <code>Todo bien.</code> con la pausa y sin ella, y con <code>-N 30</code>.</li>
+<li data-check="pausa"><code>Select-String -Path api\models\*.php -Pattern usleep</code> no encuentra nada.</li>
+<li data-check="fallas">Provocaste las tres fallas y llenaste las tablas.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<p>Esta guía funciona sola. Si quieres juntarla con otras:</p>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con WEB06, control de acceso</p>
+<p>WEB06 decide quién puede cambiar el estado (el creador de la oferta); esta guía, qué pasa cuando dos que pueden lo hacen a la vez. Las dos comprobaciones van en ese orden en el <code>case 'PUT'</code>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB07, inyecciones</p>
+<p>Sin la emulación de PDO, las consultas de esta guía se preparan de verdad en el servidor, y el <code>FOR UPDATE</code> viaja tal cual.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB08, subir el CV</p>
+<p>Las altas en paralelo usan el PDF de WEB08 y pasan por los mismos controles; los huérfanos de la limitación viven en su carpeta.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M83 y M39</p>
+<p>La teoría de la carrera y del <code>UPDATE</code> condicional está en <a href="../modules/m83-otros-ataques.html#carreras">83.6</a>, y el mismo patrón con asientos y dinero en <a href="../modules/m39-manejo-pagos.html">M39</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M05</p>
+<p>El aislamiento de las transacciones y por qué un <code>SELECT</code> dentro de una no ve lo que confirma otra está en <a href="../modules/m05-bases-de-datos.html">M05</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/web10.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

@@ -109,7 +109,21 @@
     return tokens(src, re, ['c-c', 'c-m', 'c-s', 'c-h']);
   }
 
-  var HL = { java: hlJava, javascript: hlJs, yaml: hlYaml, xml: hlXml, bash: hlBash, nginx: hlNginx, ini: hlIni, toml: hlToml, dockerfile: hlDocker };
+  /* HCL de Terraform: comentarios (#, // y bloques), cadenas con ${…}, tipos de bloque al inicio de línea, booleanos y números. */
+  var HCL_KW = /^(terraform|provider|resource|data|variable|output|locals|module|moved|import|check|required_providers|backend|dynamic|for_each|count|depends_on|lifecycle|validation|for|in|if)$/;
+  function hlHcl(src) {
+    var re = /((?:#|\/\/)[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\\n])*")|(\b(?:true|false|null)\b)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][\w-]*)/g;
+    return tokens(src, re, ['c-c', 'c-s', 'c-b', 'c-n', function (w) { return HCL_KW.test(w) ? span('c-m', w) : SD.escape(w); }]);
+  }
+
+  /* Rego v1 (OPA y Conftest): comentarios, cadenas, palabras clave y números. */
+  var REGO_KW = /^(package|import|if|contains|some|every|in|not|default|else|with|as|true|false|null|future)$/;
+  function hlRego(src) {
+    var re = /(#[^\n]*)|("(?:\\.|[^"\\\n])*"|`[^`]*`)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][\w]*)/g;
+    return tokens(src, re, ['c-c', 'c-s', 'c-n', function (w) { return REGO_KW.test(w) ? span('c-m', w) : SD.escape(w); }]);
+  }
+
+  var HL = { java: hlJava, javascript: hlJs, yaml: hlYaml, xml: hlXml, bash: hlBash, nginx: hlNginx, ini: hlIni, toml: hlToml, dockerfile: hlDocker, hcl: hlHcl, rego: hlRego };
 
   function highlight(root) {
     root.querySelectorAll('pre[data-lang]').forEach(function (pre) {
@@ -284,7 +298,7 @@
     series('Java y Spring Boot', 'indice', java[0], java[1]);
     d.tracks.forEach(function (t) { part(t.label, t.title, t.line, t.items, 'module'); });
     part('Al final', 'Sistemas completos', '--label-3', d.capstones, 'checkpoint');
-    [['aiTracks', 'AI Engineering', 'ia-engineering'], ['mlTracks', 'ML System Design', 'ml-system-design']].forEach(function (s) {
+    [['aiTracks', 'AI Engineering', 'ia-engineering'], ['mlTracks', 'ML System Design', 'ml-system-design'], ['secTracks', 'Blue Team y DevSecOps', 'devsecops'], ['webTracks', 'Seguridad web', 'seguridad-web']].forEach(function (s) {
       var tracks = d[s[0]] || [];
       if (!tracks.length) return;
       var c = count(tracks);

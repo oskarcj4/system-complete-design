@@ -1,0 +1,2030 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEC03. Infraestructura como código revisada</title>
+<meta name="description" content="Terraform para la nube de Tienda Norte, un plan sin cuenta en cada pull request, Checkov con una lista corta y reglas propias en Rego con Conftest.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="sec03" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Infraestructura como código revisada</h1>
+        <p class="lead">El bucket público se rechaza en el pull request, no en el incidente.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>SEC03</dd></div>
+          <div><dt>Plan</dt><dd>Blue Team y DevSecOps</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>2 h 10 min</dd></div>
+          <div><dt>Módulos</dt><dd>M37, M55</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="sec03">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Describir en Terraform la nube de Tienda Norte: red, bucket privado, PostgreSQL administrado y una política de IAM acotada.</li>
+<li>Correr <code>terraform plan</code> en cada pull request sin credenciales de una cuenta real, con el lock file en solo lectura.</li>
+<li>Cortar el build con una lista corta de reglas de Checkov y dejar el resto como aviso.</li>
+<li>Escribir reglas propias en Rego v1 sobre el plan en JSON, con sus pruebas, y correrlas con Conftest.</li>
+<li>Provocar seis errores de configuración y ver cuál herramienta corta cada uno.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>Tienda Norte corre en tu máquina desde <a href="sec00-laboratorio.html">SEC00</a>. El paso siguiente es una nube: un bucket para las fotos de los productos, una base PostgreSQL administrada, la red que separa la API de la base y un permiso de IAM para que la API lea y escriba fotos. Cada una de esas piezas tiene su error clásico: el bucket que queda público, el puerto 22 abierto a internet, la base con IP pública, la política con <code>s3:*</code>.</p>
+<p>En <a href="../modules/m37-nube.html#modelo">M37</a> viste por qué esos errores son los que más incidentes causan en la nube. Esta guía los saca del incidente y los pone en el pull request: la infraestructura se escribe como código, el plan se calcula sin tocar ninguna cuenta y dos revisores automáticos lo leen antes de que alguien lo apruebe. Es la misma idea del gate de <a href="sec01-pipeline.html#ae-gate">SEC01</a>, aplicada a la nube.</p>
+<p>No se crea nada en AWS. Todo corre en contenedores, en tu máquina y en GitHub Actions.</p>
+<figure class="figure" data-arch>
+<div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="fs03t fs03d">
+<title id="fs03t">La arquitectura de SEC03</title>
+<desc id="fs03d">Un pull request que toca infra arranca el workflow infra. El workflow corre Terraform en un contenedor, que baja el provider de AWS del registro con el hash del lock file y calcula el plan sin credenciales reales. Checkov lee el HCL y Conftest lee el plan en JSON. El resultado vuelve al pull request como un check verde o rojo. La cuenta de AWS no se toca. Seis flechas numeradas.</desc>
+<defs><marker id="fs03a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-edge" d="M170 90 L250 90" marker-end="url(#fs03a)"/>
+<path class="dg-edge" d="M420 90 L520 90" marker-end="url(#fs03a)"/>
+<path class="dg-edge" d="M335 118 L335 200" marker-end="url(#fs03a)"/>
+<path class="dg-edge" d="M250 228 L170 228" marker-end="url(#fs03a)"/>
+<path class="dg-edge" d="M420 228 L520 228" marker-end="url(#fs03a)"/>
+<path class="dg-edge" d="M250 76 C200 30 120 30 105 60" marker-end="url(#fs03a)"/>
+<g data-part="pr"><rect class="dg-layer" x="30" y="62" width="140" height="56" rx="8" style="--c: var(--l-external)"/><text class="dg-label" x="100" y="86" text-anchor="middle">Pull request</text><text class="dg-tiny dg-mono" x="100" y="102" text-anchor="middle">toca infra/</text></g>
+<g data-part="workflow"><rect class="dg-layer" x="250" y="62" width="170" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="335" y="86" text-anchor="middle">Workflow infra</text><text class="dg-tiny dg-mono" x="335" y="102" text-anchor="middle">infra.sh</text></g>
+<g data-part="terraform"><rect class="dg-layer" x="520" y="62" width="170" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="605" y="86" text-anchor="middle">Terraform</text><text class="dg-tiny dg-mono" x="605" y="102" text-anchor="middle">init, plan, show</text></g>
+<g data-part="plan"><rect class="dg-layer" x="250" y="200" width="170" height="56" rx="8" style="--c: var(--l-db)"/><text class="dg-label" x="335" y="224" text-anchor="middle">Plan en JSON</text><text class="dg-tiny dg-mono" x="335" y="240" text-anchor="middle">infra/plan.json</text></g>
+<g data-part="checkov"><rect class="dg-layer" x="30" y="200" width="140" height="56" rx="8" style="--c: var(--l-gpu)"/><text class="dg-label" x="100" y="224" text-anchor="middle">Checkov</text><text class="dg-tiny dg-mono" x="100" y="240" text-anchor="middle">lee el HCL</text></g>
+<g data-part="conftest"><rect class="dg-layer" x="520" y="200" width="170" height="56" rx="8" style="--c: var(--l-gpu)"/><text class="dg-label" x="605" y="224" text-anchor="middle">Conftest</text><text class="dg-tiny dg-mono" x="605" y="240" text-anchor="middle">policy/*.rego</text></g>
+<g data-part="aws"><rect class="dg-warnbox" x="520" y="310" width="170" height="56" rx="8"/><text class="dg-label" x="605" y="334" text-anchor="middle">Cuenta de AWS</text><text class="dg-tiny dg-mono" x="605" y="350" text-anchor="middle">no se toca</text></g>
+<g data-part="registro"><rect class="dg-layer" x="250" y="310" width="170" height="56" rx="8" style="--c: var(--l-external)"/><text class="dg-label" x="335" y="334" text-anchor="middle">registry.terraform.io</text><text class="dg-tiny dg-mono" x="335" y="350" text-anchor="middle">provider aws 6.73.0</text></g>
+<path class="dg-edge" stroke-dasharray="6 4" d="M560 118 C540 260 470 300 420 330" marker-end="url(#fs03a)"/>
+<g class="pl-pin"><circle cx="210" cy="90" r="10"/><text x="210" y="94" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="470" cy="90" r="10"/><text x="470" y="94" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="470" cy="300" r="10"/><text x="470" y="304" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="210" cy="228" r="10"/><text x="210" y="232" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="470" cy="228" r="10"/><text x="470" y="232" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="150" cy="40" r="10"/><text x="150" y="44" text-anchor="middle">6</text></g>
+<text class="dg-tiny" x="605" y="384" text-anchor="middle">ninguna flecha llega aquí</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC03.1.</b> Lo que corre en cada pull request. Terraform calcula el plan sin la cuenta (la caja naranja no recibe ninguna flecha), baja el provider con el hash del lock file (3), y Checkov (4) y Conftest (5) leen dos cosas distintas: el código y el plan. El check vuelve al pull request (6).</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>#</th><th>De → a</th><th>Protocolo y formato</th><th>Ejemplo</th><th>Con qué permiso</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Pull request → workflow</td><td>Evento <code>pull_request</code> con filtro de rutas</td><td>Un cambio en <code>infra/datos.tf</code></td><td><code>contents: read</code>, nada más</td></tr>
+<tr><td>2</td><td>Workflow → Terraform</td><td>Contenedor de Docker</td><td><code>infra.sh plan</code></td><td>Credenciales simuladas por variables de entorno</td></tr>
+<tr><td>3</td><td>Terraform → registry.terraform.io</td><td>HTTPS</td><td>El provider <code>hashicorp/aws</code> 6.73.0</td><td>Público; el hash lo fija <code>.terraform.lock.hcl</code></td></tr>
+<tr><td>4</td><td>Checkov → HCL</td><td>Lectura de archivos</td><td><code>checkov -d infra --check …</code></td><td>Solo lectura del repositorio</td></tr>
+<tr><td>5</td><td>Conftest → plan</td><td>JSON de <code>terraform show -json</code></td><td><code>conftest test infra/plan.json</code></td><td>Solo lectura</td></tr>
+<tr><td>6</td><td>Workflow → pull request</td><td>Estado del check</td><td>Rojo con el mensaje de la regla</td><td>El <code>GITHUB_TOKEN</code> del job</td></tr>
+</tbody>
+</table>
+</div>
+<p><b>Las fronteras.</b> Lo único que sale de tu máquina es la descarga del provider (y de las imágenes de las herramientas). El plan se calcula con credenciales que no existen, así que un pull request con código malicioso no tiene ninguna cuenta a la que llegar. El plan en JSON tiene los valores de las variables: aquí no hay secretos en ellas, y la clave de la base no pasa por Terraform (lo verás en <a href="#paso-recursos">el paso 2</a>).</p>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="fs03vt fs03vd">
+<title id="fs03vt">Un pull request con un bucket público</title>
+<desc id="fs03vd">Una persona abre un pull request que deja el bucket público. El workflow corre el plan sin cuenta, Checkov encuentra la regla CKV_AWS_54 y el check vuelve rojo al pull request antes de que alguien lo apruebe.</desc>
+<defs><marker id="fs03v-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs03v-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs03v-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs03v-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Persona</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="165.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="227.5" y="29" text-anchor="middle" style="font-size:13.5px">GitHub</text>
+<path class="dg-frame" d="M227.5 40 V366"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">infra.yml</text>
+<path class="dg-frame" d="M385.0 40 V366"/>
+<rect class="dg-box" x="480.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="542.5" y="29" text-anchor="middle" style="font-size:13.5px">Terraform</text>
+<path class="dg-frame" d="M542.5 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Checkov</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<path class="dg-edge" d="M73.0 72 L222.5 72" marker-end="url(#fs03v-a)"/>
+<rect x="7.450000000000017" y="55" width="282.59999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="66" text-anchor="middle">pull request: block_public_policy = false</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M230.5 106 L380.0 106" marker-end="url(#fs03v-q)"/>
+<rect x="224.35000000000002" y="89" width="163.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="306.25" y="100" text-anchor="middle">pull_request (infra/**)</text>
+<path class="dg-edge" d="M388.0 140 L537.5 140" marker-end="url(#fs03v-a)"/>
+<rect x="362.05" y="123" width="203.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="463.75" y="134" text-anchor="middle">init -lockfile=readonly, plan</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M539.5 174 L390.0 174" marker-end="url(#fs03v-r)"/>
+<rect x="375.25" y="157" width="177.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="463.75" y="168" text-anchor="middle">plan.json (sin tocar AWS)</text>
+<path class="dg-edge" d="M388.0 208 L695.0 208" marker-end="url(#fs03v-a)"/>
+<rect x="480.4" y="191" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="202" text-anchor="middle">checkov --check …</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M697.0 242 L390.0 242" marker-end="url(#fs03v-f)"/>
+<rect x="480.4" y="225" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="236" text-anchor="middle">FAILED CKV_AWS_54</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M382.0 276 L232.5 276" marker-end="url(#fs03v-f)"/>
+<rect x="267.25" y="259" width="78.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="306.25" y="270" text-anchor="middle">check rojo</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M224.5 310 L75.0 310" marker-end="url(#fs03v-f)"/>
+<rect x="80.05000000000001" y="293" width="137.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="304" text-anchor="middle">no se puede mezclar</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC03.2.</b> La versión corta. La completa está en <a href="#viaje">El viaje de un dato</a>.</figcaption>
+</figure>
+<h2 id="antes">Antes de empezar</h2>
+<h3 id="ae-repaso">Lo que viene de SEC00, SEC01 y SEC02</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 211" role="img" aria-labelledby="fs03rt fs03rd">
+<title id="fs03rt">Lo que viene de las guías anteriores</title>
+<desc id="fs03rd">La tienda: SEC00 la levanta con Compose; ahora se describe su versión en la nube. El gate: SEC01 corta con una lista corta; Checkov usa el mismo criterio. Lo fijado: SEC01 y SEC02 fijan herramientas por versión, SHA y digest; aquí el lock file fija el provider.</desc>
+<defs><marker id="fs03ra" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="16" width="232.667" height="179" rx="8"/>
+<text class="dg-group" x="32.0" y="40" text-anchor="start">La tienda</text>
+<text class="dg-tiny" x="32.0" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="32.0" y="80" text-anchor="start">SEC00 la levanta con Compose: API,</text><text class="dg-tiny" x="32.0" y="95" text-anchor="start">PostgreSQL y Nginx en tu máquina.</text>
+<text class="dg-tiny" x="32.0" y="122" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="32.0" y="140" text-anchor="start">Las mismas piezas, descritas para</text><text class="dg-tiny" x="32.0" y="155" text-anchor="start">la nube: la base pasa a RDS y las</text><text class="dg-tiny" x="32.0" y="170" text-anchor="start">fotos a S3.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="16" width="232.667" height="179" rx="8"/>
+<text class="dg-group" x="280.66666666666663" y="40" text-anchor="start">El gate</text>
+<text class="dg-tiny" x="280.66666666666663" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="280.66666666666663" y="80" text-anchor="start">SEC01 corta el build con pocas</text><text class="dg-tiny" x="280.66666666666663" y="95" text-anchor="start">reglas que se cumplen y deja el</text><text class="dg-tiny" x="280.66666666666663" y="110" text-anchor="start">resto como aviso.</text>
+<text class="dg-tiny" x="280.66666666666663" y="137" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="280.66666666666663" y="155" text-anchor="start">Checkov corta con una lista corta;</text><text class="dg-tiny" x="280.66666666666663" y="170" text-anchor="start">las demás reglas quedan en el log.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="16" width="232.667" height="179" rx="8"/>
+<text class="dg-group" x="529.3333333333333" y="40" text-anchor="start">Lo fijado</text>
+<text class="dg-tiny" x="529.3333333333333" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="529.3333333333333" y="80" text-anchor="start">SEC01 y SEC02 fijan acciones por</text><text class="dg-tiny" x="529.3333333333333" y="95" text-anchor="start">SHA e imágenes por digest.</text>
+<text class="dg-tiny" x="529.3333333333333" y="122" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="529.3333333333333" y="140" text-anchor="start">El lock file fija la versión y los</text><text class="dg-tiny" x="529.3333333333333" y="155" text-anchor="start">hashes del provider de AWS.</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC03.3.</b> Tres cosas que vuelven.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Dónde se vio</th></tr></thead>
+<tbody>
+<tr><td>Las piezas de Tienda Norte</td><td><a href="sec00-laboratorio.html#paso-base">SEC00, paso 1</a></td></tr>
+<tr><td>El gate y el umbral</td><td><a href="sec01-pipeline.html#ae-gate">SEC01, el gate</a></td></tr>
+<tr><td>Fijar lo que corre</td><td><a href="sec01-pipeline.html#ae-fijar">SEC01, fijar</a> y <a href="sec02-sbom-firma.html#paso-pines">SEC02, paso 3</a></td></tr>
+</tbody>
+</table>
+</div>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 168" role="img" aria-labelledby="fs03pt fs03pd">
+<title id="fs03pt">Lámina SEC03.A: las piezas de la infraestructura como código</title>
+<desc id="fs03pd">Seis piezas: el HCL que describe la nube, el provider que habla con AWS, el state que recuerda lo creado, el plan con lo que va a cambiar, Checkov que lee el código y Conftest que lee el plan.</desc>
+<defs><marker id="fs03pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="136.33333333333331" y="42" text-anchor="middle">HCL</text>
+<text class="dg-tiny dg-mono" x="136.33333333333331" y="60" text-anchor="middle">infra/*.tf</text>
+<g class="pl-pin"><circle cx="36" cy="32" r="10"/><text x="36" y="36" text-anchor="middle">1</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="384.99999999999994" y="42" text-anchor="middle">Provider</text>
+<text class="dg-tiny dg-mono" x="384.99999999999994" y="60" text-anchor="middle">hashicorp/aws</text>
+<g class="pl-pin"><circle cx="284.667" cy="32" r="10"/><text x="284.667" y="36" text-anchor="middle">2</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="633.6666666666666" y="42" text-anchor="middle">State</text>
+<text class="dg-tiny dg-mono" x="633.6666666666666" y="60" text-anchor="middle">terraform.tfstate</text>
+<g class="pl-pin"><circle cx="533.333" cy="32" r="10"/><text x="533.333" y="36" text-anchor="middle">3</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="136.33333333333331" y="118" text-anchor="middle">Plan</text>
+<text class="dg-tiny dg-mono" x="136.33333333333331" y="136" text-anchor="middle">plan.json</text>
+<g class="pl-pin"><circle cx="36" cy="108" r="10"/><text x="36" y="112" text-anchor="middle">4</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="384.99999999999994" y="118" text-anchor="middle">Checkov</text>
+<text class="dg-tiny dg-mono" x="384.99999999999994" y="136" text-anchor="middle">reglas CKV_*</text>
+<g class="pl-pin"><circle cx="284.667" cy="108" r="10"/><text x="284.667" y="112" text-anchor="middle">5</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="633.6666666666666" y="118" text-anchor="middle">Conftest</text>
+<text class="dg-tiny dg-mono" x="633.6666666666666" y="136" text-anchor="middle">policy/*.rego</text>
+<g class="pl-pin"><circle cx="533.333" cy="108" r="10"/><text x="533.333" y="112" text-anchor="middle">6</text></g>
+</svg>
+</div>
+<figcaption><b>Lámina SEC03.A.</b> Las piezas de la infraestructura como código, en el orden en que aparecen.</figcaption>
+</figure>
+<ol class="plate-key">
+  <li><b>HCL</b><span>El lenguaje de Terraform: bloques que describen lo que tiene que existir, no los pasos para crearlo. <a href="#ae-iac">Infraestructura como código</a></span></li>
+  <li><b>Provider</b><span>El plugin que traduce el HCL a llamadas a la API de AWS. Se baja en <code>terraform init</code>. <a href="#paso-proyecto">Paso 1</a></span></li>
+  <li><b>State</b><span>El archivo donde Terraform recuerda qué creó y con qué id. Puede tener secretos en texto claro. <a href="#ae-iac">Infraestructura como código</a></span></li>
+  <li><b>Plan</b><span>La diferencia entre el HCL y el state: qué se crea, cambia o borra. Se exporta a JSON. <a href="#ae-plan">El plan sin cuenta</a></span></li>
+  <li><b>Checkov</b><span>Un escáner con cientos de reglas ya escritas que lee el HCL. <a href="#ae-politicas">Políticas como código</a></span></li>
+  <li><b>Conftest</b><span>Corre reglas propias en Rego sobre cualquier JSON; aquí, el plan. <a href="#ae-politicas">Políticas como código</a></span></li>
+</ol>
+<h3 id="antes-instalar">Qué tienes que tener</h3>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Herramienta</th><th>Para qué</th><th>Cómo compruebas que está</th></tr></thead>
+<tbody>
+<tr><td>El repositorio <code>tienda-norte</code> de SEC01</td><td>Donde van <code>infra/</code>, <code>policy/</code> y el workflow</td><td><code>git remote -v</code> apunta a tu repositorio</td></tr>
+<tr><td>Linux o WSL (Ubuntu) en Windows</td><td>Correr <code>seguridad/infra.sh</code>, que monta la carpeta en los contenedores</td><td><code>uname -s</code> dice <code>Linux</code></td></tr>
+<tr><td>Docker, visible desde esa terminal</td><td>Terraform, Checkov y Conftest corren como contenedores</td><td><code>docker version</code> muestra cliente y servidor</td></tr>
+</tbody>
+</table>
+</div>
+<p>No necesitas una cuenta de AWS, ni instalar Terraform, Checkov o Conftest: las tres herramientas vienen en sus imágenes oficiales.</p>
+<h3 id="ae-iac">Infraestructura como código</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un plano de una casa contra una lista de instrucciones para el albañil. El plano dice cómo tiene que quedar; si ya hay una pared, nadie la vuelve a levantar. Terraform lee el plano (el HCL), mira la casa (el state) y te dice qué falta.</p>
+</aside>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 130" role="img" aria-labelledby="fs03it fs03id">
+<title id="fs03it">Cómo trabaja Terraform</title>
+<desc id="fs03id">Terraform lee el HCL, lo compara con el state y arma el plan. Con apply, el provider llama a la API de AWS y el state se actualiza. En esta guía nunca se llega a apply.</desc>
+<defs><marker id="fs03ia" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="96.25" y="46" text-anchor="middle">HCL</text>
+<text class="dg-tiny" x="96.25" y="66" text-anchor="middle">lo que tiene que</text>
+<text class="dg-tiny" x="96.25" y="81" text-anchor="middle">existir</text>
+<path class="dg-edge" d="M174.5 55 H208.5" marker-end="url(#fs03ia)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="212.5" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="288.75" y="46" text-anchor="middle">State</text>
+<text class="dg-tiny" x="288.75" y="66" text-anchor="middle">lo que ya existe, según</text>
+<text class="dg-tiny" x="288.75" y="81" text-anchor="middle">Terraform</text>
+<path class="dg-edge" d="M367 55 H401" marker-end="url(#fs03ia)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="405" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="481.25" y="46" text-anchor="middle">Plan</text>
+<text class="dg-tiny" x="481.25" y="66" text-anchor="middle">crear, cambiar, borrar</text>
+<path class="dg-edge" d="M559.5 55 H593.5" marker-end="url(#fs03ia)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="597.5" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="673.75" y="46" text-anchor="middle">Apply</text>
+<text class="dg-tiny" x="673.75" y="66" text-anchor="middle">aquí no se llega</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC03.4.</b> El HCL y el state entran, el plan sale. Esta guía se detiene en el plan: es lo que se revisa.</figcaption>
+</figure>
+<p>Cada recurso tiene una dirección, como <code>aws_db_instance.tienda</code>: el tipo y el nombre que le das en el HCL. Para Terraform esa dirección es la identidad del recurso. Si cambias el nombre, el plan dice borrar uno y crear otro, salvo que lo declares con un bloque <code>moved</code> (lo verás en la falla 6).</p>
+<p>El state guarda todos los atributos de lo que creó, incluidas las claves que pasaron por Terraform. Por eso en esta guía ninguna clave pasa por Terraform, y por eso en producción el state vive en un backend cifrado con acceso restringido (<a href="#limitaciones-produccion">Qué cambia en producción</a>).</p>
+<h3 id="ae-plan">El plan sin cuenta</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un simulador de vuelo: el piloto practica la ruta entera y el instructor revisa cada maniobra, pero el avión nunca despega. Si el piloto se equivoca, no se cae nada.</p>
+</aside>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 332" role="img" aria-labelledby="fs03f1t fs03f1d">
+<title id="fs03f1t">Ficha: el plan sin cuenta</title>
+<desc id="fs03f1d">Ficha de el plan sin cuenta. Qué entra: El HCL de infra/, un state vacío y credenciales que no existen. Qué hace: El provider se configura sin pedir la identidad a AWS; Terraform calcula qué recursos crear. Qué sale: tfplan (binario) y plan.json, con cada recurso, sus acciones y sus valores. Ejemplo: AWS_ACCESS_KEY_ID=simulada terraform plan -out=tfplan Plan: 15 to add, 0 to change, 0 to destroy.  (la cuenta la haces tú, ver paso 3) Qué falla sin él: Llaves de una cuenta en un secreto del repositorio, al alcance de cualquier pull request. Dónde vive: infra/providers.tf, marca (2); seguridad/infra.sh. Pasos 1 y 3.</desc>
+<defs><marker id="fs03f1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="108" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">El HCL de infra/, un state</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">vacío y credenciales que no</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">existen.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="108" rx="8"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">El provider se configura sin</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">pedir la identidad a AWS;</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">Terraform calcula qué recursos</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">crear.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="108" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">tfplan (binario) y plan.json,</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">con cada recurso, sus acciones</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">y sus valores.</text>
+<path class="dg-edge" d="M234 70 H275" marker-end="url(#fs03f1a)"/>
+<path class="dg-edge" d="M493 70 H534" marker-end="url(#fs03f1a)"/>
+<rect class="dg-box" x="20" y="138" width="730" height="78" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="158" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="178" style="white-space:pre">AWS_ACCESS_KEY_ID=simulada terraform plan -out=tfplan</text>
+<text class="dg-tiny dg-mono" x="32" y="194" style="white-space:pre">Plan: 15 to add, 0 to change, 0 to destroy.  (la cuenta la haces tú, ver paso 3)</text>
+<rect class="dg-warnbox" x="20" y="230" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="250" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="270" text-anchor="start">Llaves de una cuenta en un secreto del repositorio, al</text>
+<text class="dg-tiny" x="32" y="286" text-anchor="start">alcance de cualquier pull request.</text>
+<rect class="dg-box" x="393" y="230" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="250" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="270" text-anchor="start">infra/providers.tf, marca (2); seguridad/infra.sh.</text>
+<text class="dg-tiny" x="405" y="286" text-anchor="start">Pasos 1 y 3.</text>
+</svg>
+</div>
+<figcaption><b>Ficha SEC03.F1.</b> El plan sin cuenta.</figcaption>
+</figure>
+<p>El provider de AWS, por defecto, le pregunta a AWS quién eres antes de hacer nada (la llamada <code>sts:GetCallerIdentity</code>). Con <code>skip_credentials_validation</code> y <code>skip_requesting_account_id</code> no lo hace <span class="badge badge--doc">Documentado</span>, y como el state está vacío, el plan no tiene nada que leer de la cuenta: todo es crear. Funciona mientras el código no use data sources que consultan la cuenta (por ejemplo <code>aws_ami</code> o <code>aws_caller_identity</code>). El día que los use, el paso siguiente es un rol de solo lectura con OIDC, como explica <a href="../modules/m37-nube.html#iam">37.2</a>; nunca llaves de administrador.</p>
+<h3 id="ae-politicas">Políticas como código</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un corrector ortográfico y la guía de estilo de tu editorial. El corrector ya sabe miles de reglas del idioma; la guía de estilo dice cosas que solo valen para tu casa, como "no usamos la región de Virginia".</p>
+</aside>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 180" role="img" aria-labelledby="fs03ct fs03cd">
+<title id="fs03ct">Checkov y Conftest leen cosas distintas</title>
+<desc id="fs03cd">Checkov lee el HCL con reglas ya escritas por su proyecto. Conftest lee el plan en JSON con reglas escritas por ti en Rego, y ve los valores resueltos y las acciones.</desc>
+<defs><marker id="fs03ca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="357" height="148" rx="8"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="393" y="16" width="357" height="148" rx="8"/>
+<text class="dg-group" x="32" y="40" text-anchor="start">Checkov</text>
+<text class="dg-group" x="405" y="40" text-anchor="start">Conftest</text>
+<text class="dg-small" x="32" y="66" text-anchor="start">Lee el HCL de infra/</text>
+<text class="dg-small" x="32" y="86" text-anchor="start">Cientos de reglas ya escritas (CKV_AWS_*)</text>
+<text class="dg-small" x="32" y="106" text-anchor="start">Ve el código, no lo que va a pasar</text>
+<text class="dg-small" x="32" y="126" text-anchor="start">No sabe si un recurso se borra</text>
+<text class="dg-small" x="32" y="146" text-anchor="start">Rápido, sin plan ni provider</text>
+<text class="dg-small" x="405" y="66" text-anchor="start">Lee el plan en JSON</text>
+<text class="dg-small" x="405" y="86" text-anchor="start">Tus reglas, en Rego v1</text>
+<text class="dg-small" x="405" y="106" text-anchor="start">Ve valores resueltos (variables, for_each)</text>
+<text class="dg-small" x="405" y="126" text-anchor="start">Ve las acciones: create, update, delete</text>
+<text class="dg-small" x="405" y="146" text-anchor="start">Se prueba con conftest verify</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC03.5.</b> Las dos lecturas. Una regla que necesita saber si algo se borra solo puede vivir en Conftest.</figcaption>
+</figure>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 348" role="img" aria-labelledby="fs03f2t fs03f2d">
+<title id="fs03f2t">Ficha: una regla de Conftest</title>
+<desc id="fs03f2d">Ficha de una regla de Conftest. Qué entra: El plan en JSON y un archivo .rego con reglas deny. Qué hace: Cada regla busca un patrón en el plan; si lo encuentra, agrega un mensaje al conjunto deny. Qué sale: La lista de mensajes; si hay alguno, Conftest sale con código 1. Ejemplo: deny contains msg if {   some rc in input.resource_changes   "delete" in rc.change.actions  ... Qué falla sin él: Las reglas de la casa en un README, que nadie lee en el momento de aprobar. Dónde vive: policy/tienda.rego y policy/tienda_test.rego. Paso 5.</desc>
+<defs><marker id="fs03f2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="108" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">El plan en JSON y un archivo</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">.rego con reglas deny.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="108" rx="8"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Cada regla busca un patrón en</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">el plan; si lo encuentra,</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">agrega un mensaje al conjunto</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">deny.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="108" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">La lista de mensajes; si hay</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">alguno, Conftest sale con</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">código 1.</text>
+<path class="dg-edge" d="M234 70 H275" marker-end="url(#fs03f2a)"/>
+<path class="dg-edge" d="M493 70 H534" marker-end="url(#fs03f2a)"/>
+<rect class="dg-box" x="20" y="138" width="730" height="94" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="158" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="178" style="white-space:pre">deny contains msg if {</text>
+<text class="dg-tiny dg-mono" x="32" y="194" style="white-space:pre">  some rc in input.resource_changes</text>
+<text class="dg-tiny dg-mono" x="32" y="210" style="white-space:pre">  "delete" in rc.change.actions  ...</text>
+<rect class="dg-warnbox" x="20" y="246" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="266" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="286" text-anchor="start">Las reglas de la casa en un README, que nadie lee en</text>
+<text class="dg-tiny" x="32" y="302" text-anchor="start">el momento de aprobar.</text>
+<rect class="dg-box" x="393" y="246" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="266" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="286" text-anchor="start">policy/tienda.rego y policy/tienda_test.rego. Paso 5.</text>
+</svg>
+</div>
+<figcaption><b>Ficha SEC03.F2.</b> Una regla de Conftest.</figcaption>
+</figure>
+<p>Rego es el lenguaje de OPA, el motor de políticas que trae Conftest. Una regla <code>deny contains msg if { … }</code> se lee así: "el conjunto <code>deny</code> contiene <code>msg</code> si todas estas líneas son verdaderas". Cada línea es una condición; si una falla, la regla no agrega nada. Conftest 0.71 trae OPA 1.x, que usa la sintaxis de Rego v1 sin <code>import rego.v1</code> <span class="badge badge--doc">Documentado</span>.</p>
+<h2 id="endpoints">Los endpoints</h2>
+<p>Esta guía no agrega endpoints. La tienda sigue siendo la de <a href="sec00-laboratorio.html#endpoints">SEC00</a>; lo nuevo describe dónde viviría en la nube.</p>
+<h2 id="dependencias">Dependencias</h2>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Herramienta</th><th>Versión</th><th>Cómo corre</th><th>Para qué</th></tr></thead>
+<tbody>
+<tr><td>Terraform</td><td>1.17.1</td><td>Imagen <code>hashicorp/terraform:1.17.1</code></td><td>Formato, validación y plan</td></tr>
+<tr><td>Provider <code>hashicorp/aws</code></td><td>6.73.0</td><td>Lo baja <code>terraform init</code></td><td>Los recursos de AWS</td></tr>
+<tr><td>Checkov</td><td>3.4.3</td><td>Imagen <code>bridgecrew/checkov:3.4.3</code></td><td>Reglas ya escritas sobre el HCL</td></tr>
+<tr><td>Conftest</td><td>0.71.1</td><td>Imagen <code>openpolicyagent/conftest:v0.71.1</code></td><td>Reglas propias en Rego sobre el plan</td></tr>
+<tr><td>actions/checkout</td><td>7.0.1, SHA <code>3d3c42e5…</code></td><td>Acción</td><td>Bajar el código, como en SEC01</td></tr>
+</tbody>
+</table>
+</div>
+<p>Versiones tomadas de las páginas de releases de cada proyecto en noviembre de 2026 <span class="badge badge--doc">Documentado</span>. Cuando tengas las tres imágenes bajadas, fíjalas por digest como en <a href="sec02-sbom-firma.html#paso-pines">SEC02, paso 3</a>, y deja que Dependabot las mantenga.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<pre data-lang="text"><code>tienda-norte/
+├── .github/workflows/
+│   └── infra.yml                  # el workflow del pull request (paso 6)
+├── infra/
+│   ├── versions.tf                # Terraform y el provider, exactos (paso 1)
+│   ├── providers.tf               # el provider sin cuenta (paso 1)
+│   ├── variables.tf               # región, entorno, sin_cuenta, bucket (paso 1)
+│   ├── red.tf                     # VPC, subredes y security groups (paso 2)
+│   ├── datos.tf                   # bucket de fotos y PostgreSQL (paso 2)
+│   ├── iam.tf                     # el rol y la política de la API (paso 2)
+│   ├── .terraform.lock.hcl        # lo genera el paso 3, va al repositorio
+│   └── casos/                     # dos planes de ejemplo para la falla 6
+├── policy/
+│   ├── tienda.rego                # reglas propias (paso 5)
+│   └── tienda_test.rego           # sus pruebas (paso 5)
+└── seguridad/
+    └── infra.sh                   # plan, Checkov y Conftest en contenedores (pasos 3 a 5)</code></pre>
+<p>Lo que se describe es una nube pequeña: una VPC con dos subredes privadas (RDS pide dos zonas), tres security groups encadenados (el balanceador, la API y la base), un bucket privado para las fotos, una instancia de PostgreSQL y un rol para la API. No hay balanceador ni contenedores de la API: esos recursos no cambian lo que se revisa aquí.</p>
+<pre data-lang="text"><code># agrega al .gitignore del repositorio
+infra/.terraform/
+infra/tfplan
+infra/plan.json
+*.tfstate
+*.tfstate.backup</code></pre>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<aside class="hito" id="hito-1" data-toc="skip" aria-labelledby="hito-1-t">
+  <p class="hito-num">Hito 1 de 3, unos 45 min</p>
+  <p class="hito-title" id="hito-1-t">La nube de Tienda Norte, escrita</p>
+  <p>El proyecto de Terraform con el provider sin cuenta y los recursos, cada uno con su decisión de seguridad.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-proyecto">El proyecto de Terraform</a></li>
+    <li><a href="#paso-recursos">Los recursos</a></li>
+  </ol>
+</aside>
+<h3 id="paso-proyecto">Paso 1. El proyecto de Terraform</h3>
+<div class="step-map" data-where="terraform aws">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Una carpeta vacía <code>infra/</code>.</dd></div>
+    <div><dt>Sale</dt><dd>Tres archivos que configuran Terraform y el provider.</dd></div>
+    <div><dt>Cambia</dt><dd><code>infra/versions.tf</code>, <code>providers.tf</code>, <code>variables.tf</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-plan">El plan sin cuenta</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<p>Tres archivos chicos. Terraform lee todos los <code>.tf</code> de la carpeta como si fueran uno; separarlos es para las personas.</p>
+<div class="file-card" data-where="terraform registro">
+  <h4 class="file-card-path" id="archivo-infra-versions-tf">infra/versions.tf<span class="file-card-size">9 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Fija la versión de Terraform y la del provider de AWS.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Terraform, en cada comando.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Un error si alguien corre otra versión.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Exige Terraform 1.17.1.</li>
+    <li>Declara el provider de AWS en una versión exacta.</li>
+  </ol>
+</div>
+<pre data-lang="hcl"><code>terraform {
+# (1)
+  required_version = "1.17.1"
+  required_providers {
+# (2)
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.73.0"
+    }
+  }
+}</code></pre>
+<ol class="code-key">
+  <li>Con la versión exacta, una persona con otro Terraform recibe un error claro en lugar de un plan distinto.</li>
+  <li>Igual que en SEC01: <code>==</code> y no un rango. El lock file del paso 3 suma los hashes del archivo que se baja.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver infra/versions.tf completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="hcl" data-file="infra/versions.tf"><code>terraform {
+  required_version = "1.17.1"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.73.0"
+    }
+  }
+}</code></pre>
+  </div>
+</details>
+<div class="file-card" data-where="terraform aws">
+  <h4 class="file-card-path" id="archivo-infra-providers-tf">infra/providers.tf<span class="file-card-size">13 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Configura el provider de AWS para que funcione sin una cuenta en el pull request.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Terraform, al calcular el plan.</dd></div>
+    <div><dt>Qué entra</dt><dd>La región y la variable <code>sin_cuenta</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Un provider listo para planear.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Usa la región de la variable.</li>
+    <li>Si <code>sin_cuenta</code> es verdadera, no valida credenciales ni pide la identidad.</li>
+    <li>Pone dos etiquetas en todo lo que cree.</li>
+  </ol>
+</div>
+<pre data-lang="hcl"><code># El provider de AWS. En el pull request corre sin cuenta: credenciales simuladas y sin preguntar la identidad.
+provider "aws" {
+# (1)
+  region = var.region
+# (2)
+  skip_credentials_validation = var.sin_cuenta
+  skip_requesting_account_id  = var.sin_cuenta
+  skip_metadata_api_check     = var.sin_cuenta
+# (3)
+  default_tags {
+    tags = {
+      proyecto = "tienda-norte"
+      entorno  = var.entorno
+    }
+  }
+}</code></pre>
+<ol class="code-key">
+  <li>La región sale de una variable y no está escrita aquí. Así la regla (2) de Conftest la ve en el plan.</li>
+  <li>Las tres opciones evitan la llamada a STS, la validación de las llaves y la consulta al servicio de metadatos de EC2. Con <code>sin_cuenta = false</code> el mismo archivo sirve para una cuenta real.</li>
+  <li>Las etiquetas por defecto van a todos los recursos: sirven para saber de quién es cada cosa cuando aparece en la factura.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver infra/providers.tf completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="hcl" data-file="infra/providers.tf"><code># El provider de AWS. En el pull request corre sin cuenta: credenciales simuladas y sin preguntar la identidad.
+provider "aws" {
+  region = var.region
+  skip_credentials_validation = var.sin_cuenta
+  skip_requesting_account_id  = var.sin_cuenta
+  skip_metadata_api_check     = var.sin_cuenta
+  default_tags {
+    tags = {
+      proyecto = "tienda-norte"
+      entorno  = var.entorno
+    }
+  }
+}</code></pre>
+  </div>
+</details>
+<div class="file-card" data-where="terraform">
+  <h4 class="file-card-path" id="archivo-infra-variables-tf">infra/variables.tf<span class="file-card-size">21 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Declara las cuatro entradas del proyecto con sus valores por defecto.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Terraform, y tú con <code>-var</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Lo que pases con <code>-var</code> o nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Valores para el resto de los archivos.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>La región, con un valor por defecto.</li>
+    <li>El entorno, validado contra una lista.</li>
+    <li>Si el plan corre sin cuenta.</li>
+    <li>El nombre del bucket.</li>
+  </ol>
+</div>
+<pre data-lang="hcl"><code># (1)
+variable "region" {
+  type    = string
+  default = "sa-east-1"
+}
+# (2)
+variable "entorno" {
+  type    = string
+  default = "prueba"
+  validation {
+    condition     = contains(["prueba", "produccion"], var.entorno)
+    error_message = "entorno tiene que ser prueba o produccion."
+  }
+}</code></pre>
+<ol class="code-key">
+  <li>La región por defecto es São Paulo. Que sea la permitida no lo decide la variable, sino la regla (2) de Conftest: así la lista vive en un solo lugar para todos los proyectos.</li>
+  <li>Una validación de variable corta antes del plan. Sirve para errores de tipeo; no ve recursos ni acciones.</li>
+</ol>
+<pre data-lang="hcl"><code># (3)
+variable "sin_cuenta" {
+  type        = bool
+  default     = true
+  description = "true en el pull request: el plan corre con credenciales simuladas."
+}
+# (4)
+variable "bucket_fotos" {
+  type    = string
+  default = "tienda-norte-fotos-prueba"
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>Por defecto, sin cuenta. Para una cuenta real hay que decirlo a propósito: <code>-var sin_cuenta=false</code>.</li>
+  <li>Los nombres de bucket son únicos en todo AWS. En una cuenta real tendrías que cambiarlo; en el plan no importa.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver infra/variables.tf completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="hcl" data-file="infra/variables.tf"><code>variable "region" {
+  type    = string
+  default = "sa-east-1"
+}
+variable "entorno" {
+  type    = string
+  default = "prueba"
+  validation {
+    condition     = contains(["prueba", "produccion"], var.entorno)
+    error_message = "entorno tiene que ser prueba o produccion."
+  }
+}
+variable "sin_cuenta" {
+  type        = bool
+  default     = true
+  description = "true en el pull request: el plan corre con credenciales simuladas."
+}
+variable "bucket_fotos" {
+  type    = string
+  default = "tienda-norte-fotos-prueba"
+}</code></pre>
+  </div>
+</details>
+<aside class="callout callout--def">
+<p class="callout-label">HCL de por medio</p>
+<p><code>var.region</code> es una referencia a una variable, y <code>"${var.region}a"</code> (lo verás en el paso 2) es una interpolación dentro de una cadena, como un f-string de Python. Un bloque <code>{ … }</code> con <code>clave = valor</code> es un objeto, parecido a un diccionario.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Versiones exactas de Terraform y del provider, y el provider sin cuenta detrás de una variable.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Un rango como <code>~> 6.0</code>: el plan de hoy y el de mañana podrían salir de dos providers distintos, con valores por defecto distintos.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Si alguien pone <code>sin_cuenta = false</code> por defecto, el pipeline empieza a fallar por falta de credenciales: que falle es lo correcto, no hay que "arreglarlo" con llaves.</dd></div>
+</dl>
+<h3 id="paso-recursos">Paso 2. Los recursos</h3>
+<div class="step-map" data-where="terraform">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>El proyecto del paso 1.</dd></div>
+    <div><dt>Sale</dt><dd>La nube de Tienda Norte descrita en tres archivos.</dd></div>
+    <div><dt>Cambia</dt><dd><code>infra/red.tf</code>, <code>datos.tf</code>, <code>iam.tf</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-iac">Infraestructura como código</a></dd></div>
+    <div><dt>Tiempo</dt><dd>30 min</dd></div>
+  </dl>
+</div>
+<p>Cada recurso trae la decisión de seguridad que lo acompaña. Los errores de la sección de fallas son, uno por uno, lo contrario de estas decisiones.</p>
+<div class="file-card" data-where="terraform">
+  <h4 class="file-card-path" id="archivo-infra-red-tf">infra/red.tf<span class="file-card-size">69 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Crea la red: una VPC, dos subredes privadas y tres security groups encadenados.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Los recursos de <code>datos.tf</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>La región.</dd></div>
+    <div><dt>Qué sale</dt><dd>La VPC, las subredes y los grupos <code>alb</code>, <code>api</code> y <code>db</code>.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Una VPC con un rango privado.</li>
+    <li>Dos subredes privadas, una por zona.</li>
+    <li>El grupo del balanceador: HTTPS desde internet.</li>
+    <li>El grupo de la API: solo desde el balanceador.</li>
+    <li>El grupo de la base: solo desde la API.</li>
+  </ol>
+</div>
+<pre data-lang="hcl"><code># (1)
+resource "aws_vpc" "tienda" {
+  cidr_block           = "10.20.0.0/16"
+  enable_dns_hostnames = true
+  tags                 = { Name = "tienda-norte" }
+}
+# (2)
+resource "aws_subnet" "privada" {
+  for_each          = { a = "10.20.1.0/24", b = "10.20.2.0/24" }
+  vpc_id            = aws_vpc.tienda.id
+  cidr_block        = each.value
+  availability_zone = "${var.region}${each.key}"
+  tags              = { Name = "tienda-privada-${each.key}" }
+}</code></pre>
+<ol class="code-key">
+  <li>Un rango de direcciones privado para todo lo de la tienda.</li>
+  <li><code>for_each</code> crea dos subredes desde un mapa: <code>aws_subnet.privada["a"]</code> y <code>["b"]</code>. La zona se arma con la región, así que cambiar de región no deja zonas de otra.</li>
+</ol>
+<pre data-lang="hcl"><code># (3)
+resource "aws_security_group" "alb" {
+  name        = "tienda-alb"
+  description = "HTTPS desde internet hacia el balanceador"
+  vpc_id      = aws_vpc.tienda.id
+  ingress {
+    description = "HTTPS publico"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  egress {
+    description = "Hacia la API dentro de la VPC"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.tienda.cidr_block]
+  }
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>Lo único abierto a internet es el 443 del balanceador. La salida va a la VPC y no al grupo de la API: si cada grupo nombrara al otro, Terraform encontraría un ciclo.</li>
+</ol>
+<pre data-lang="hcl"><code># (4)
+resource "aws_security_group" "api" {
+  name        = "tienda-api"
+  description = "La API recibe solo del balanceador"
+  vpc_id      = aws_vpc.tienda.id
+  ingress {
+    description     = "Desde el balanceador"
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+  egress {
+    description = "HTTPS hacia S3 y la base en la VPC"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li>La entrada de la API nombra al grupo del balanceador, no a un rango: aunque una máquina tenga una IP de la VPC, si no está en ese grupo, no entra. Es la segmentación de <a href="../modules/m37-nube.html#red">37.3</a>.</li>
+</ol>
+<pre data-lang="hcl"><code>  egress {
+    description = "PostgreSQL dentro de la VPC"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.tienda.cidr_block]
+  }
+}</code></pre>
+<pre data-lang="hcl"><code># (5)
+resource "aws_security_group" "db" {
+  name        = "tienda-db"
+  description = "PostgreSQL solo desde la API"
+  vpc_id      = aws_vpc.tienda.id
+  ingress {
+    description     = "Desde la API"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.api.id]
+  }
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 4">
+  <li>Sin bloque <code>egress</code>: Terraform borra la regla de salida que AWS pone por defecto, así que la base no inicia conexiones <span class="badge badge--doc">Documentado</span>. Responder a la API sí puede: los security groups tienen estado.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver infra/red.tf completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="hcl" data-file="infra/red.tf"><code>resource "aws_vpc" "tienda" {
+  cidr_block           = "10.20.0.0/16"
+  enable_dns_hostnames = true
+  tags                 = { Name = "tienda-norte" }
+}
+resource "aws_subnet" "privada" {
+  for_each          = { a = "10.20.1.0/24", b = "10.20.2.0/24" }
+  vpc_id            = aws_vpc.tienda.id
+  cidr_block        = each.value
+  availability_zone = "${var.region}${each.key}"
+  tags              = { Name = "tienda-privada-${each.key}" }
+}
+resource "aws_security_group" "alb" {
+  name        = "tienda-alb"
+  description = "HTTPS desde internet hacia el balanceador"
+  vpc_id      = aws_vpc.tienda.id
+  ingress {
+    description = "HTTPS publico"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  egress {
+    description = "Hacia la API dentro de la VPC"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.tienda.cidr_block]
+  }
+}
+resource "aws_security_group" "api" {
+  name        = "tienda-api"
+  description = "La API recibe solo del balanceador"
+  vpc_id      = aws_vpc.tienda.id
+  ingress {
+    description     = "Desde el balanceador"
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+  egress {
+    description = "HTTPS hacia S3 y la base en la VPC"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  egress {
+    description = "PostgreSQL dentro de la VPC"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.tienda.cidr_block]
+  }
+}
+resource "aws_security_group" "db" {
+  name        = "tienda-db"
+  description = "PostgreSQL solo desde la API"
+  vpc_id      = aws_vpc.tienda.id
+  ingress {
+    description     = "Desde la API"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.api.id]
+  }
+}</code></pre>
+  </div>
+</details>
+<div class="file-card" data-where="terraform">
+  <h4 class="file-card-path" id="archivo-infra-datos-tf">infra/datos.tf<span class="file-card-size">46 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Crea el bucket privado de las fotos y la base PostgreSQL.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>La API, cuando exista.</dd></div>
+    <div><dt>Qué entra</dt><dd>El nombre del bucket, el entorno, las subredes y el grupo <code>db</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Un bucket cifrado y versionado sin acceso público, y una instancia de RDS privada.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>El bucket de fotos.</li>
+    <li>El bloqueo de acceso público, con las cuatro opciones.</li>
+    <li>Cifrado y versionado.</li>
+    <li>La base en las subredes privadas, con la clave manejada por AWS.</li>
+    <li>Sin IP pública y cifrada.</li>
+    <li>Copias de siete días y protegida contra el borrado.</li>
+  </ol>
+</div>
+<pre data-lang="hcl"><code># (1)
+resource "aws_s3_bucket" "fotos" {
+  bucket = var.bucket_fotos
+}
+# (2)
+resource "aws_s3_bucket_public_access_block" "fotos" {
+  bucket                  = aws_s3_bucket.fotos.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}</code></pre>
+<ol class="code-key">
+  <li>El bucket solo, sin ACL ni política: las fotos se sirven con URL firmadas, como en <a href="../modules/m09-objetos.html">M09</a>, y nunca con el bucket público.</li>
+  <li>Las cuatro opciones del bloqueo de acceso público. Cada una es una regla de Checkov (CKV_AWS_53 a 56), y la falta del recurso entero es otra (CKV2_AWS_6). La falla 1 apaga una.</li>
+</ol>
+<pre data-lang="hcl"><code># (3)
+resource "aws_s3_bucket_server_side_encryption_configuration" "fotos" {
+  bucket = aws_s3_bucket.fotos.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+resource "aws_s3_bucket_versioning" "fotos" {
+  bucket = aws_s3_bucket.fotos.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>Cifrado con la llave de S3 y versiones de cada objeto, para recuperar una foto borrada o pisada. Una llave propia de KMS (<a href="../modules/m37-nube.html#kms">37.5</a>) es lo siguiente; Checkov lo avisa sin cortar.</li>
+</ol>
+<pre data-lang="hcl"><code>resource "aws_db_subnet_group" "tienda" {
+  name       = "tienda-${var.entorno}"
+  subnet_ids = [for s in aws_subnet.privada : s.id]
+}
+resource "aws_db_instance" "tienda" {
+  identifier             = "tienda-${var.entorno}"
+  engine                 = "postgres"
+  engine_version         = "17"
+  instance_class         = "db.t4g.micro"
+  allocated_storage      = 20
+  db_name                = "tienda"
+  db_subnet_group_name   = aws_db_subnet_group.tienda.name
+  vpc_security_group_ids = [aws_security_group.db.id]
+# (4)
+  username                    = "tienda_admin"
+  manage_master_user_password = true</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li>La clave del usuario administrador la genera AWS y la guarda en Secrets Manager, rotada. No hay variable ni valor: la clave no pasa por Terraform y no queda en el state <span class="badge badge--doc">Documentado</span>.</li>
+</ol>
+<pre data-lang="hcl"><code># (5)
+  publicly_accessible = false
+  storage_encrypted   = true
+# (6)
+  backup_retention_period   = 7
+  deletion_protection       = true
+  skip_final_snapshot       = false
+  final_snapshot_identifier = "tienda-${var.entorno}-final"
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 4">
+  <li>Sin IP pública (CKV_AWS_17, la falla 3) y con el disco cifrado (CKV_AWS_16).</li>
+  <li>Siete días de copias (la regla (7) de Conftest pide al menos eso) y protección contra el borrado: AWS rechaza borrar la instancia hasta que alguien apague esta opción. Si se borra igual, queda una copia final.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver infra/datos.tf completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="hcl" data-file="infra/datos.tf"><code>resource "aws_s3_bucket" "fotos" {
+  bucket = var.bucket_fotos
+}
+resource "aws_s3_bucket_public_access_block" "fotos" {
+  bucket                  = aws_s3_bucket.fotos.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+resource "aws_s3_bucket_server_side_encryption_configuration" "fotos" {
+  bucket = aws_s3_bucket.fotos.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+resource "aws_s3_bucket_versioning" "fotos" {
+  bucket = aws_s3_bucket.fotos.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+resource "aws_db_subnet_group" "tienda" {
+  name       = "tienda-${var.entorno}"
+  subnet_ids = [for s in aws_subnet.privada : s.id]
+}
+resource "aws_db_instance" "tienda" {
+  identifier             = "tienda-${var.entorno}"
+  engine                 = "postgres"
+  engine_version         = "17"
+  instance_class         = "db.t4g.micro"
+  allocated_storage      = 20
+  db_name                = "tienda"
+  db_subnet_group_name   = aws_db_subnet_group.tienda.name
+  vpc_security_group_ids = [aws_security_group.db.id]
+  username                    = "tienda_admin"
+  manage_master_user_password = true
+  publicly_accessible = false
+  storage_encrypted   = true
+  backup_retention_period   = 7
+  deletion_protection       = true
+  skip_final_snapshot       = false
+  final_snapshot_identifier = "tienda-${var.entorno}-final"
+}</code></pre>
+  </div>
+</details>
+<div class="file-card" data-where="terraform">
+  <h4 class="file-card-path" id="archivo-infra-iam-tf">infra/iam.tf<span class="file-card-size">30 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Crea el rol de la API y una política que solo lee y escribe fotos.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>La API, cuando corra en ECS.</dd></div>
+    <div><dt>Qué entra</dt><dd>El nombre del bucket.</dd></div>
+    <div><dt>Qué sale</dt><dd>Un rol con una política de dos acciones sobre un prefijo.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>El ARN del bucket, armado desde su nombre.</li>
+    <li>El rol que puede asumir una tarea de ECS.</li>
+    <li>La política: dos acciones, sobre los objetos del bucket.</li>
+    <li>La política pegada al rol.</li>
+  </ol>
+</div>
+<pre data-lang="hcl"><code># (1)
+locals {
+  fotos_arn = "arn:aws:s3:::${var.bucket_fotos}"
+}
+# (2)
+resource "aws_iam_role" "api" {
+  name = "tienda-api"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}</code></pre>
+<ol class="code-key">
+  <li>El ARN se arma con el nombre y no con <code>aws_s3_bucket.fotos.arn</code>: ese atributo se conoce recién al crear el bucket, y la política saldría en el plan como "conocida después del apply", sin texto que revisar. La regla (6) de Conftest corta ese caso.</li>
+  <li>Quién puede usar el rol: las tareas de ECS. La política de confianza es la mitad de un permiso; la otra mitad es lo que el rol puede hacer.</li>
+</ol>
+<pre data-lang="hcl"><code># (3)
+resource "aws_iam_policy" "api" {
+  name = "tienda-api-fotos"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "FotosDeLaTienda"
+      Effect   = "Allow"
+      Action   = ["s3:GetObject", "s3:PutObject"]
+      Resource = "${local.fotos_arn}/*"
+    }]
+  })
+}
+# (4)
+resource "aws_iam_role_policy_attachment" "api" {
+  role       = aws_iam_role.api.name
+  policy_arn = aws_iam_policy.api.arn
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>Mínimo privilegio, como en <a href="../modules/m37-nube.html#iam">37.2</a>: dos acciones con nombre, sobre los objetos de un bucket. Ni <code>s3:*</code> ni <code>"Resource": "*"</code>. La falla 4 cambia esto.</li>
+  <li>El adjunto: sin él, la política existe pero nadie la usa.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver infra/iam.tf completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="hcl" data-file="infra/iam.tf"><code>locals {
+  fotos_arn = "arn:aws:s3:::${var.bucket_fotos}"
+}
+resource "aws_iam_role" "api" {
+  name = "tienda-api"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+resource "aws_iam_policy" "api" {
+  name = "tienda-api-fotos"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "FotosDeLaTienda"
+      Effect   = "Allow"
+      Action   = ["s3:GetObject", "s3:PutObject"]
+      Resource = "${local.fotos_arn}/*"
+    }]
+  })
+}
+resource "aws_iam_role_policy_attachment" "api" {
+  role       = aws_iam_role.api.name
+  policy_arn = aws_iam_policy.api.arn
+}</code></pre>
+  </div>
+</details>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Error: Cycle: aws_security_group.alb, aws_security_group.api</code>: Dos grupos se nombran entre sí. Deja que uno de los dos apunte a un rango, como el egress de <code>alb</code>.</li>
+    <li><code>Error: Conflicting configuration arguments … manage_master_user_password</code>: Hay un <code>password</code> además de <code>manage_master_user_password</code>: borra el <code>password</code>.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>La clave de la base la maneja AWS, y el ARN de la política se arma con el nombre del bucket.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Una variable <code>sensitive</code> con la clave: no se imprime en el plan, pero queda en el state en texto claro.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Si alguien vuelve a usar <code>aws_s3_bucket.fotos.arn</code> en la política, la política sale sin texto en el plan; sin la regla (6), Conftest no tendría nada que leer y pasaría en verde.</dd></div>
+</dl>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>El proyecto con Terraform y el provider fijados.</li>
+    <li>La red, el bucket, la base y el rol, cada uno con su decisión.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>ls infra/*.tf | wc -l</code></pre>
+  <p>Tiene que dar 6.</p>
+</aside>
+<aside class="hito" id="hito-2" data-toc="skip" aria-labelledby="hito-2-t">
+  <p class="hito-num">Hito 2 de 3, unos 40 min</p>
+  <p class="hito-title" id="hito-2-t">El plan y Checkov</p>
+  <p>El script que corre todo en contenedores, el lock file, el primer plan sin cuenta y la lista corta de Checkov.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-plan">El plan sin cuenta</a></li>
+    <li><a href="#paso-checkov">Checkov con una lista corta</a></li>
+  </ol>
+</aside>
+<h3 id="paso-plan">Paso 3. El plan sin cuenta</h3>
+<div class="step-map" data-where="workflow terraform registro plan">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Los seis archivos de <code>infra/</code>.</dd></div>
+    <div><dt>Sale</dt><dd><code>.terraform.lock.hcl</code> y el primer <code>plan.json</code>.</dd></div>
+    <div><dt>Cambia</dt><dd><code>seguridad/infra.sh</code>, <code>infra/.terraform.lock.hcl</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-plan">El plan sin cuenta</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="workflow terraform checkov conftest">
+  <h4 class="file-card-path" id="archivo-seguridad-infra-sh">seguridad/infra.sh<span class="file-card-size">45 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Corre Terraform, Checkov y Conftest en contenedores, igual en tu máquina y en el pipeline.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Tú y el workflow <code>infra.yml</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Un subcomando: <code>lock</code>, <code>plan</code>, <code>checkov</code>, <code>conftest</code> o <code>todo</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd><code>infra/plan.json</code> y un código de salida: 0 si todo pasa.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Fija las tres imágenes.</li>
+    <li>Define la lista corta de Checkov.</li>
+    <li>Corre Terraform en un contenedor con credenciales simuladas.</li>
+    <li>Genera el lock file para dos plataformas.</li>
+    <li>Calcula el plan y lo exporta a JSON.</li>
+    <li>Corre Checkov dos veces: la lista que corta y todo como aviso.</li>
+    <li>Corre las pruebas de las reglas y después las reglas sobre el plan.</li>
+    <li>Elige qué correr según el subcomando.</li>
+  </ol>
+</div>
+<pre data-lang="bash"><code>#!/usr/bin/env bash
+# Revisa infra/ con Terraform, Checkov y Conftest, todo en contenedores.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+# (1)
+TF=hashicorp/terraform:1.17.1
+CHECKOV=bridgecrew/checkov:3.4.3
+CONFTEST=openpolicyagent/conftest:v0.71.1
+# (2)
+GATE=CKV_AWS_16,CKV_AWS_17,CKV_AWS_24,CKV_AWS_25,CKV_AWS_41
+GATE=$GATE,CKV_AWS_53,CKV_AWS_54,CKV_AWS_55,CKV_AWS_56
+GATE=$GATE,CKV_AWS_62,CKV_AWS_63,CKV2_AWS_6</code></pre>
+<ol class="code-key">
+  <li>Las versiones en un solo lugar, como en SEC02. Cuando las fijes por digest, el cambio va aquí.</li>
+  <li>Doce reglas que cortan: cifrado y acceso público de RDS, SSH y RDP abiertos a internet, llaves escritas en el provider, el bloqueo de acceso público de S3 y los comodines de IAM. Cada una tiene su fila en la tabla del paso 4.</li>
+</ol>
+<pre data-lang="bash"><code># (3)
+tf() {
+  docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+    -v "$PWD:/w" -w /w/infra \
+    -e AWS_ACCESS_KEY_ID=simulada -e AWS_SECRET_ACCESS_KEY=simulada \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 "$TF" "$@"
+}
+# (4)
+lock() {
+  tf init -backend=false
+  tf providers lock -platform=linux_amd64 -platform=linux_arm64
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>El repositorio se monta en <code>/w</code> y Terraform corre en <code>/w/infra</code>. <code>--user</code> hace que los archivos que crea sean tuyos y no de root. Las credenciales se llaman <code>simulada</code>: no existen, y si algo intentara usarlas contra AWS, fallaría.</li>
+  <li>Se corre una vez, y cada vez que cambies la versión del provider. Escribe en el lock file los hashes del provider para Linux en x86 y en ARM, que son las dos plataformas donde corre el contenedor.</li>
+</ol>
+<pre data-lang="bash"><code># (5)
+plan() {
+  tf fmt -check -recursive
+  tf init -backend=false -lockfile=readonly
+  tf validate
+  tf plan -out=tfplan "$@"
+  tf show -json tfplan &gt; infra/plan.json
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 4">
+  <li>Cuatro comprobaciones en orden: el formato, el provider que coincide con el lock file, que el HCL sea válido y el plan. <code>-lockfile=readonly</code> falla si el provider no coincide con lo que está en el repositorio. <code>"$@"</code> deja pasar opciones como <code>-var region=us-east-1</code>. El JSON se escribe desde fuera del contenedor, con la redirección de tu shell.</li>
+</ol>
+<pre data-lang="bash"><code># (6)
+revisar_checkov() {
+  docker run --rm -v "$PWD:/w" -w /w "$CHECKOV" \
+    -d infra --framework terraform --check "$GATE" --compact --quiet
+  docker run --rm -v "$PWD:/w" -w /w "$CHECKOV" \
+    -d infra --framework terraform --soft-fail --compact --quiet
+}
+# (7)
+revisar_conftest() {
+  docker run --rm -v "$PWD:/w" -w /w "$CONFTEST" verify --policy policy
+  docker run --rm -v "$PWD:/w" -w /w "$CONFTEST" test --policy policy infra/plan.json
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 5">
+  <li>La primera corrida solo tiene las doce reglas y sale con 1 si alguna falla. La segunda corre todas con <code>--soft-fail</code>, que siempre sale con 0: es la lista de avisos.</li>
+  <li>Primero las pruebas de las reglas (<code>verify</code>): si una regla está mal escrita, no tiene sentido confiar en su veredicto. Después, las reglas sobre el plan del paso anterior.</li>
+</ol>
+<pre data-lang="bash"><code># (8)
+case "${1:-todo}" in
+  lock) lock ;;
+  plan) shift; plan "$@" ;;
+  checkov) revisar_checkov ;;
+  conftest) revisar_conftest ;;
+  todo) plan; revisar_checkov; revisar_conftest ;;
+  *) echo "uso: infra.sh [lock|plan|checkov|conftest|todo]" &gt;&amp;2; exit 2 ;;
+esac</code></pre>
+<ol class="code-key" style="counter-reset: ck 7">
+  <li>Sin argumento, corre todo. Con <code>set -e</code>, el primer comando que falla corta el script con su código, así que <code>todo</code> se detiene en la primera herramienta que encuentra algo.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver seguridad/infra.sh completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="bash" data-file="seguridad/infra.sh"><code>#!/usr/bin/env bash
+# Revisa infra/ con Terraform, Checkov y Conftest, todo en contenedores.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+TF=hashicorp/terraform:1.17.1
+CHECKOV=bridgecrew/checkov:3.4.3
+CONFTEST=openpolicyagent/conftest:v0.71.1
+GATE=CKV_AWS_16,CKV_AWS_17,CKV_AWS_24,CKV_AWS_25,CKV_AWS_41
+GATE=$GATE,CKV_AWS_53,CKV_AWS_54,CKV_AWS_55,CKV_AWS_56
+GATE=$GATE,CKV_AWS_62,CKV_AWS_63,CKV2_AWS_6
+tf() {
+  docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+    -v "$PWD:/w" -w /w/infra \
+    -e AWS_ACCESS_KEY_ID=simulada -e AWS_SECRET_ACCESS_KEY=simulada \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 "$TF" "$@"
+}
+lock() {
+  tf init -backend=false
+  tf providers lock -platform=linux_amd64 -platform=linux_arm64
+}
+plan() {
+  tf fmt -check -recursive
+  tf init -backend=false -lockfile=readonly
+  tf validate
+  tf plan -out=tfplan "$@"
+  tf show -json tfplan &gt; infra/plan.json
+}
+revisar_checkov() {
+  docker run --rm -v "$PWD:/w" -w /w "$CHECKOV" \
+    -d infra --framework terraform --check "$GATE" --compact --quiet
+  docker run --rm -v "$PWD:/w" -w /w "$CHECKOV" \
+    -d infra --framework terraform --soft-fail --compact --quiet
+}
+revisar_conftest() {
+  docker run --rm -v "$PWD:/w" -w /w "$CONFTEST" verify --policy policy
+  docker run --rm -v "$PWD:/w" -w /w "$CONFTEST" test --policy policy infra/plan.json
+}
+case "${1:-todo}" in
+  lock) lock ;;
+  plan) shift; plan "$@" ;;
+  checkov) revisar_checkov ;;
+  conftest) revisar_conftest ;;
+  todo) plan; revisar_checkov; revisar_conftest ;;
+  *) echo "uso: infra.sh [lock|plan|checkov|conftest|todo]" &gt;&amp;2; exit 2 ;;
+esac</code></pre>
+  </div>
+</details>
+<aside class="callout callout--def">
+<p class="callout-label">Bash de por medio</p>
+<p><code>"$@"</code> son todos los argumentos que recibió la función, cada uno entre comillas. <code>shift</code> descarta el primero (el subcomando), así que <code>infra.sh plan -var region=us-east-1</code> le pasa a <code>plan</code> solo <code>-var region=us-east-1</code>. La barra invertida al final de una línea la continúa en la siguiente.</p>
+</aside>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>chmod +x seguridad/infra.sh
+seguridad/infra.sh lock
+seguridad/infra.sh plan</code></pre>
+  <p>Primero <code>lock</code> baja el provider 6.73.0 y escribe <code>infra/.terraform.lock.hcl</code> con varios <code>h1:</code> y <code>zh:</code>. Después, <code>plan</code> no imprime nada en <code>fmt</code>, dice <code>Success! The configuration is valid.</code> y termina con una línea <code>Plan: N to add, 0 to change, 0 to destroy.</code> Cuenta tú cuántos recursos declaraste para saber qué N esperar: cada <code>resource</code> es uno, y el <code>for_each</code> de las subredes son dos. Al final tiene que existir <code>infra/plan.json</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Error: Inconsistent dependency lock file</code>: El provider no coincide con el lock file. Si cambiaste la versión a propósito, vuelve a correr <code>infra.sh lock</code> y sube el archivo en el mismo pull request.</li>
+    <li><code>Error: No valid credential sources found</code>: <code>sin_cuenta</code> no está en <code>true</code>, o el provider no usa la variable. Revisa la marca (2) de <code>providers.tf</code>.</li>
+    <li><code>Error: Terraform exited with code 3 (fmt)</code>: <code>fmt -check</code> encontró un archivo sin formato. Corre <code>docker run --rm -v "$PWD:/w" -w /w/infra hashicorp/terraform:1.17.1 fmt</code> y sube el cambio.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>El lock file en el repositorio y <code>init -lockfile=readonly</code> en cada corrida.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Ignorar el lock file: cada máquina bajaría el provider con su propio hash, y un archivo cambiado en el registro pasaría sin que nadie lo note.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Si generas el lock file solo para tu plataforma (por ejemplo, <code>darwin_arm64</code>), el pipeline en Linux falla. Por eso <code>lock</code> pide las dos de Linux.</dd></div>
+</dl>
+<pre data-lang="bash"><code>git add infra/.terraform.lock.hcl infra/*.tf seguridad/infra.sh .gitignore
+git commit -m "infra: la nube de Tienda Norte en Terraform"</code></pre>
+<h3 id="paso-checkov">Paso 4. Checkov con una lista corta</h3>
+<div class="step-map" data-where="checkov">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>El HCL de <code>infra/</code>.</dd></div>
+    <div><dt>Sale</dt><dd>Las doce reglas en verde y una lista de avisos.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada: la lista está en <code>infra.sh</code>, marca (2).</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-politicas">Políticas como código</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<p>Checkov trae más de mil reglas para Terraform. Si todas cortaran, el primer pull request fallaría por cosas que el laboratorio no necesita (registros de acceso del bucket, llaves propias de KMS, monitoreo mejorado de RDS) y el equipo aprendería a ignorar el check. La lista corta es el mismo criterio que el gate de <a href="sec01-pipeline.html#ae-gate">SEC01</a>: pocas reglas, todas sobre errores que abren la puerta.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Regla</th><th>Qué mira</th><th>Por qué corta</th></tr></thead>
+<tbody>
+<tr><td>CKV_AWS_16</td><td>RDS cifrada en disco</td><td>Un snapshot copiado sin cifrar es la base entera</td></tr>
+<tr><td>CKV_AWS_17</td><td>RDS sin IP pública</td><td>La base queda alcanzable desde internet</td></tr>
+<tr><td>CKV_AWS_24, CKV_AWS_25</td><td>Sin 22 ni 3389 desde <code>0.0.0.0/0</code></td><td>SSH y RDP abiertos son lo primero que se escanea</td></tr>
+<tr><td>CKV_AWS_41</td><td>Sin llaves escritas en el provider</td><td>Una llave en el HCL es una llave en el historial de Git</td></tr>
+<tr><td>CKV_AWS_53 a 56</td><td>Las cuatro opciones del bloqueo de acceso público</td><td>El bucket público es el incidente clásico de S3</td></tr>
+<tr><td>CKV2_AWS_6</td><td>Que el bucket tenga un bloqueo de acceso público</td><td>Borrar el recurso entero apaga las cuatro de arriba</td></tr>
+<tr><td>CKV_AWS_62, CKV_AWS_63</td><td>IAM sin <code>"*"</code> en acción ni administración total</td><td>Un permiso total convierte cualquier fallo de la API en la cuenta entera</td></tr>
+</tbody>
+</table>
+</div>
+<p>Los nombres de las reglas y lo que mira cada una salen del catálogo de Checkov <span class="badge badge--doc">Documentado</span>. Antes de subir la lista, corre <code>docker run --rm bridgecrew/checkov:3.4.3 --list --framework terraform</code> y busca cada id: si una regla cambió de nombre en una versión nueva, aquí lo ves.</p>
+<div data-exercise="sec03-p-aviso"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>seguridad/infra.sh checkov</code></pre>
+  <p>La primera corrida muestra <code>Passed checks: N, Failed checks: 0</code> y sale con 0. La segunda muestra una lista de <code>FAILED</code> (por ejemplo <code>CKV_AWS_18</code>, registros de acceso de S3, y <code>CKV_AWS_118</code>, monitoreo de RDS) y también sale con 0. Anota cuántas reglas fallan en la segunda: son tu lista de avisos.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Check: CKV_AWS_41 … FAILED</code>: Escribiste <code>access_key</code> o <code>secret_key</code> en el bloque <code>provider</code>. Las credenciales simuladas van por variables de entorno, como en <code>infra.sh</code>, marca (3).</li>
+    <li><code>unrecognized arguments: --check</code>: La lista tiene espacios. Las reglas van separadas solo por comas.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una lista de doce reglas que corta y el resto como aviso.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Cortar con todas: el check queda rojo para siempre y se aprueba igual. O ninguna: Checkov como informe que nadie abre.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Una regla de la lista que da un falso positivo bloquea a todo el equipo. La salida es una excepción en el recurso, <code>#checkov:skip=CKV_AWS_XX: motivo</code>, revisada en el pull request como las de SEC01, y no sacar la regla de la lista.</dd></div>
+</dl>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>El plan se calcula sin cuenta y con el provider del lock file.</li>
+    <li>Checkov corta con doce reglas y avisa con el resto.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>seguridad/infra.sh plan &amp;&amp; seguridad/infra.sh checkov; echo "salida: $?"</code></pre>
+  <p>Tiene que terminar con <code>salida: 0</code>.</p>
+</aside>
+<aside class="hito" id="hito-3" data-toc="skip" aria-labelledby="hito-3-t">
+  <p class="hito-num">Hito 3 de 3, unos 45 min</p>
+  <p class="hito-title" id="hito-3-t">Reglas propias y el pipeline</p>
+  <p>Las reglas de la casa en Rego con sus pruebas, y el workflow que corre todo en cada pull request.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-conftest">Conftest con reglas propias</a></li>
+    <li><a href="#paso-workflow">El workflow del pull request</a></li>
+  </ol>
+</aside>
+<h3 id="paso-conftest">Paso 5. Conftest con reglas propias</h3>
+<div class="step-map" data-where="conftest plan">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>El <code>plan.json</code> del paso 3.</dd></div>
+    <div><dt>Sale</dt><dd>Siete reglas y seis pruebas en verde.</dd></div>
+    <div><dt>Cambia</dt><dd><code>policy/tienda.rego</code>, <code>policy/tienda_test.rego</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-politicas">Políticas como código</a></dd></div>
+    <div><dt>Tiempo</dt><dd>30 min</dd></div>
+  </dl>
+</div>
+<p>Las reglas que solo valen para Tienda Norte van aquí: la región, las clases de base que se pueden pagar, lo que no se borra. Se escriben sobre el plan porque es lo único que tiene los valores finales y las acciones.</p>
+<div class="file-card" data-where="conftest plan">
+  <h4 class="file-card-path" id="archivo-policy-tienda-rego">policy/tienda.rego<span class="file-card-size">54 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Las reglas de Tienda Norte sobre el plan: región, clase de la base, nada borrado, IAM sin comodines y copias.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Conftest, en <code>infra.sh conftest</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>El plan en JSON como <code>input</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>El conjunto <code>deny</code> con un mensaje por cada problema.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Define las listas permitidas.</li>
+    <li>Corta si la región no está en la lista.</li>
+    <li>Corta si la base usa una clase fuera de la lista.</li>
+    <li>Corta si el plan borra una base o un bucket.</li>
+    <li>Corta si una política de IAM permite una acción que termina en asterisco.</li>
+    <li>Corta si una política no se puede leer en el plan.</li>
+    <li>Corta si la base tiene menos de siete días de copias.</li>
+  </ol>
+</div>
+<pre data-lang="rego"><code># Reglas propias de Tienda Norte sobre el plan de Terraform (terraform show -json).
+package main
+
+# (1)
+regiones := {"sa-east-1"}
+
+clases := {"db.t4g.micro", "db.t4g.small"}
+
+con_datos := {"aws_db_instance", "aws_s3_bucket"}
+
+# (2)
+deny contains msg if {
+	region := input.variables.region.value
+	not region in regiones
+	msg := sprintf("la región %s no está permitida", [region])
+}</code></pre>
+<ol class="code-key">
+  <li>Tres conjuntos. Cambiar la lista es un pull request con su revisión, como cambiar el código.</li>
+  <li>Lee la variable ya resuelta en el plan: <code>input.variables.region.value</code>. Es una sola, así que da un mensaje como mucho. Si alguien escribiera la región fija en el provider, esta regla no la vería; por eso el provider usa la variable.</li>
+</ol>
+<pre data-lang="rego"><code># (3)
+deny contains msg if {
+	some rc in input.resource_changes
+	rc.type == "aws_db_instance"
+	clase := rc.change.after.instance_class
+	not clase in clases
+	msg := sprintf("%s usa la clase %s, fuera de la lista", [rc.address, clase])
+}
+
+# (4)
+deny contains msg if {
+	some rc in input.resource_changes
+	rc.type in con_datos
+	"delete" in rc.change.actions
+	msg := sprintf("el plan borra %s: si es un cambio de nombre, usa un bloque moved", [rc.address])
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li><code>resource_changes</code> tiene una entrada por recurso, con su tipo, su dirección y <code>change.after</code>: los valores que va a tener. Una clase grande es un costo que se aprueba sin verlo.</li>
+  <li><code>change.actions</code> es una lista: <code>["create"]</code>, <code>["update"]</code>, <code>["delete"]</code> o, en un reemplazo, <code>["delete", "create"]</code>. La regla corta los dos últimos para lo que tiene datos. Es la regla que ningún escáner del HCL puede escribir.</li>
+</ol>
+<pre data-lang="rego"><code># (5)
+deny contains msg if {
+	some rc in input.resource_changes
+	rc.type == "aws_iam_policy"
+	some st in json.unmarshal(rc.change.after.policy).Statement
+	st.Effect == "Allow"
+	some accion in acciones(st)
+	endswith(accion, "*")
+	msg := sprintf("%s permite %s: nombra las acciones", [rc.address, accion])
+}
+
+acciones(st) := st.Action if is_array(st.Action)
+
+acciones(st) := [st.Action] if is_string(st.Action)</code></pre>
+<ol class="code-key" style="counter-reset: ck 4">
+  <li>La política viene como texto JSON dentro del plan: <code>json.unmarshal</code> la convierte. <code>Action</code> puede ser una cadena o una lista; la función <code>acciones</code> devuelve siempre una lista. <code>endswith(accion, "*")</code> corta <code>*</code>, <code>s3:*</code> y <code>s3:Get*</code>, que CKV_AWS_63 no mira.</li>
+</ol>
+<pre data-lang="rego"><code># (6)
+deny contains msg if {
+	some rc in input.resource_changes
+	rc.type == "aws_iam_policy"
+	rc.change.after_unknown.policy
+	msg := sprintf("%s: la política se conoce recién al aplicar y no se puede revisar", [rc.address])
+}
+
+# (7)
+deny contains msg if {
+	some rc in input.resource_changes
+	rc.type == "aws_db_instance"
+	rc.change.after.backup_retention_period &lt; 7
+	msg := sprintf("%s guarda copias por menos de 7 días", [rc.address])
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 5">
+  <li>Si la política depende de algo que no existe todavía, el plan no trae su texto y la regla (5) no tendría qué leer: pasaría en verde sin revisar nada. <code>after_unknown</code> marca con <code>true</code> los atributos que faltan. Esta regla convierte "no sé" en "no".</li>
+  <li>Siete días de copias. Las reglas sobre <code>after</code> no corren para un recurso que se borra, porque su <code>after</code> es <code>null</code>: de eso se encarga la (4).</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver policy/tienda.rego completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="rego" data-file="policy/tienda.rego"><code># Reglas propias de Tienda Norte sobre el plan de Terraform (terraform show -json).
+package main
+
+regiones := {"sa-east-1"}
+
+clases := {"db.t4g.micro", "db.t4g.small"}
+
+con_datos := {"aws_db_instance", "aws_s3_bucket"}
+
+deny contains msg if {
+	region := input.variables.region.value
+	not region in regiones
+	msg := sprintf("la región %s no está permitida", [region])
+}
+deny contains msg if {
+	some rc in input.resource_changes
+	rc.type == "aws_db_instance"
+	clase := rc.change.after.instance_class
+	not clase in clases
+	msg := sprintf("%s usa la clase %s, fuera de la lista", [rc.address, clase])
+}
+
+deny contains msg if {
+	some rc in input.resource_changes
+	rc.type in con_datos
+	"delete" in rc.change.actions
+	msg := sprintf("el plan borra %s: si es un cambio de nombre, usa un bloque moved", [rc.address])
+}
+deny contains msg if {
+	some rc in input.resource_changes
+	rc.type == "aws_iam_policy"
+	some st in json.unmarshal(rc.change.after.policy).Statement
+	st.Effect == "Allow"
+	some accion in acciones(st)
+	endswith(accion, "*")
+	msg := sprintf("%s permite %s: nombra las acciones", [rc.address, accion])
+}
+
+acciones(st) := st.Action if is_array(st.Action)
+
+acciones(st) := [st.Action] if is_string(st.Action)
+deny contains msg if {
+	some rc in input.resource_changes
+	rc.type == "aws_iam_policy"
+	rc.change.after_unknown.policy
+	msg := sprintf("%s: la política se conoce recién al aplicar y no se puede revisar", [rc.address])
+}
+
+deny contains msg if {
+	some rc in input.resource_changes
+	rc.type == "aws_db_instance"
+	rc.change.after.backup_retention_period &lt; 7
+	msg := sprintf("%s guarda copias por menos de 7 días", [rc.address])
+}</code></pre>
+  </div>
+</details>
+<aside class="callout callout--def">
+<p class="callout-label">Rego de por medio</p>
+<p><code>some rc in lista</code> recorre la lista; <code>x in conjunto</code> pregunta si está; <code>not</code> niega una condición. Las líneas de una regla se cumplen todas o la regla no agrega nada, como un <code>and</code> largo. <code>msg := …</code> asigna. Si un campo no existe (por ejemplo, <code>after</code> es <code>null</code>), la línea no se cumple y la regla no falla con error: simplemente no agrega mensajes.</p>
+</aside>
+<div class="file-card" data-where="conftest">
+  <h4 class="file-card-path" id="archivo-policy-tienda-test-rego">policy/tienda_test.rego<span class="file-card-size">55 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Prueba cada regla con un plan mínimo, sin Terraform.</dd></div>
+    <div><dt>Quién lo usa</dt><dd><code>conftest verify</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Planes de ejemplo escritos en el mismo archivo.</dd></div>
+    <div><dt>Qué sale</dt><dd>Cada prueba pasa o falla, con su nombre.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Un plan mínimo que tiene que pasar.</li>
+    <li>El mismo plan con otra región.</li>
+    <li>Una base que se borra.</li>
+    <li>Una política con s3:* y otra con acciones exactas.</li>
+    <li>Una política que no se conoce en el plan.</li>
+  </ol>
+</div>
+<pre data-lang="rego"><code>package main
+
+# (1)
+base := {
+	"variables": {"region": {"value": "sa-east-1"}},
+	"resource_changes": [{
+		"address": "aws_db_instance.tienda",
+		"type": "aws_db_instance",
+		"change": {
+			"actions": ["create"],
+			"after": {"instance_class": "db.t4g.micro", "backup_retention_period": 7},
+			"after_unknown": {},
+		},
+	}],
+}
+
+test_plan_base_pasa if {
+	count(deny) == 0 with input as base
+}</code></pre>
+<ol class="code-key">
+  <li>Un plan con la forma de <code>terraform show -json</code>, recortado a lo que leen las reglas. Si este no pasa, alguna regla corta lo que no tiene que cortar.</li>
+</ol>
+<pre data-lang="rego"><code># (2)
+test_region_ajena if {
+	entrada := json.patch(base, [{"op": "replace", "path": "/variables/region/value", "value": "us-east-1"}])
+	"la región us-east-1 no está permitida" in deny with input as entrada
+}
+
+# (3)
+test_borrar_base if {
+	entrada := {"variables": base.variables, "resource_changes": [{
+		"address": "aws_db_instance.tienda",
+		"type": "aws_db_instance",
+		"change": {"actions": ["delete"], "after": null, "after_unknown": {}},
+	}]}
+	count(deny) == 1 with input as entrada
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 1">
+  <li><code>json.patch</code> copia el plan base y cambia una sola cosa. La prueba pide el mensaje exacto: si alguien cambia el texto, la prueba lo avisa.</li>
+  <li>Un borrado con <code>after</code> en <code>null</code>: tiene que dar un mensaje, y solo uno (las reglas (3) y (7) no tienen que romperse con el <code>null</code>).</li>
+</ol>
+<pre data-lang="rego"><code># (4)
+politica(accion) := {"variables": base.variables, "resource_changes": [{
+	"address": "aws_iam_policy.api",
+	"type": "aws_iam_policy",
+	"change": {"actions": ["create"], "after_unknown": {}, "after": {"policy": json.marshal({
+		"Version": "2012-10-17",
+		"Statement": [{"Effect": "Allow", "Action": accion, "Resource": "arn:aws:s3:::fotos/*"}],
+	})}},
+}]}
+
+test_comodin_s3 if {
+	count(deny) == 1 with input as politica("s3:*")
+}
+
+test_acciones_exactas_pasan if {
+	count(deny) == 0 with input as politica(["s3:GetObject", "s3:PutObject"])
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li>Una función que arma un plan con una política; la acción entra como cadena o como lista, que son las dos formas que admite IAM. <code>json.marshal</code> la convierte en el texto que trae el plan real.</li>
+</ol>
+<pre data-lang="rego"><code># (5)
+test_politica_desconocida if {
+	entrada := {"variables": base.variables, "resource_changes": [{
+		"address": "aws_iam_policy.api",
+		"type": "aws_iam_policy",
+		"change": {"actions": ["create"], "after": {}, "after_unknown": {"policy": true}},
+	}]}
+	count(deny) == 1 with input as entrada
+}</code></pre>
+<ol class="code-key" style="counter-reset: ck 4">
+  <li>El caso que la regla (6) existe para cortar: sin texto de la política, un solo mensaje.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver policy/tienda_test.rego completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="rego" data-file="policy/tienda_test.rego"><code>package main
+
+base := {
+	"variables": {"region": {"value": "sa-east-1"}},
+	"resource_changes": [{
+		"address": "aws_db_instance.tienda",
+		"type": "aws_db_instance",
+		"change": {
+			"actions": ["create"],
+			"after": {"instance_class": "db.t4g.micro", "backup_retention_period": 7},
+			"after_unknown": {},
+		},
+	}],
+}
+
+test_plan_base_pasa if {
+	count(deny) == 0 with input as base
+}
+test_region_ajena if {
+	entrada := json.patch(base, [{"op": "replace", "path": "/variables/region/value", "value": "us-east-1"}])
+	"la región us-east-1 no está permitida" in deny with input as entrada
+}
+
+test_borrar_base if {
+	entrada := {"variables": base.variables, "resource_changes": [{
+		"address": "aws_db_instance.tienda",
+		"type": "aws_db_instance",
+		"change": {"actions": ["delete"], "after": null, "after_unknown": {}},
+	}]}
+	count(deny) == 1 with input as entrada
+}
+politica(accion) := {"variables": base.variables, "resource_changes": [{
+	"address": "aws_iam_policy.api",
+	"type": "aws_iam_policy",
+	"change": {"actions": ["create"], "after_unknown": {}, "after": {"policy": json.marshal({
+		"Version": "2012-10-17",
+		"Statement": [{"Effect": "Allow", "Action": accion, "Resource": "arn:aws:s3:::fotos/*"}],
+	})}},
+}]}
+
+test_comodin_s3 if {
+	count(deny) == 1 with input as politica("s3:*")
+}
+
+test_acciones_exactas_pasan if {
+	count(deny) == 0 with input as politica(["s3:GetObject", "s3:PutObject"])
+}
+test_politica_desconocida if {
+	entrada := {"variables": base.variables, "resource_changes": [{
+		"address": "aws_iam_policy.api",
+		"type": "aws_iam_policy",
+		"change": {"actions": ["create"], "after": {}, "after_unknown": {"policy": true}},
+	}]}
+	count(deny) == 1 with input as entrada
+}</code></pre>
+  </div>
+</details>
+<div data-exercise="sec03-p-comodin"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>seguridad/infra.sh conftest</code></pre>
+  <p><code>verify</code> dice <code>6 tests, 6 passed, 0 warnings, 0 failures, 0 exceptions</code>. Después, <code>test</code> sobre el plan dice <code>N tests, N passed, 0 warnings, 0 failures, 0 exceptions</code>, donde N es la cantidad de reglas <code>deny</code> que evaluó. Anota el número.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>rego_parse_error: unexpected identifier token</code>: Una regla sin <code>if</code> o sin <code>contains</code>. En Rego v1 las dos palabras son obligatorias en <code>deny contains msg if { … }</code>.</li>
+    <li><code>FAIL - infra/plan.json - main - aws_iam_policy.api: la política se conoce recién al aplicar</code>: La política usa un atributo que no existe todavía, como <code>aws_s3_bucket.fotos.arn</code>. Arma el ARN con el nombre, como en la marca (1) de <code>iam.tf</code>.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Reglas propias en Rego sobre el plan, con pruebas que corren antes que las reglas.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Escribirlas como reglas de Checkov en Python: Checkov lee el HCL y no ve las acciones del plan. O dejarlas en el README.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Una regla mal escrita no da error, da silencio: una condición que nunca se cumple pasa siempre en verde. Por eso cada regla tiene al menos una prueba que espera un mensaje.</dd></div>
+</dl>
+<h3 id="paso-workflow">Paso 6. El workflow del pull request</h3>
+<div class="step-map" data-where="pr workflow">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Lo de los pasos 1 a 5.</dd></div>
+    <div><dt>Sale</dt><dd>Un check <code>infra / revisar</code> en cada pull request.</dd></div>
+    <div><dt>Cambia</dt><dd><code>.github/workflows/infra.yml</code> y la regla de la rama</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-plan">El plan sin cuenta</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<p>El workflow no repite comandos: llama al mismo script que corres tú. Si el pipeline falla, lo reproduces en tu máquina con el mismo comando.</p>
+<div class="file-card" data-where="pr workflow">
+  <h4 class="file-card-path" id="archivo-github-workflows-infra-yml">.github/workflows/infra.yml<span class="file-card-size">23 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Corre el plan, Checkov y Conftest en cada pull request que toca la infraestructura.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>GitHub Actions.</dd></div>
+    <div><dt>Qué entra</dt><dd>El pull request.</dd></div>
+    <div><dt>Qué sale</dt><dd>Un check verde o rojo, con un paso por herramienta.</dd></div>
+  </dl>
+</div>
+<pre data-lang="yaml" data-file=".github/workflows/infra.yml"><code>name: infra
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "policy/**"
+      - "seguridad/infra.sh"
+      - ".github/workflows/infra.yml"
+permissions:
+  contents: read
+jobs:
+  revisar:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Terraform plan sin cuenta
+        run: seguridad/infra.sh plan
+      - name: Checkov
+        run: seguridad/infra.sh checkov
+      - name: Conftest
+        run: seguridad/infra.sh conftest</code></pre>
+<p>Tres pasos y no uno, para que el check diga cuál herramienta cortó sin abrir el log. Los permisos son solo de lectura y no hay secretos: el job no tiene nada que robar. El filtro <code>paths</code> evita correrlo cuando el pull request solo cambia la API.</p>
+<p>Por último, en Settings → Branches, suma <code>revisar</code> a los checks obligatorios de la regla de <code>main</code> que armaste en <a href="sec01-pipeline.html#paso-proteger">SEC01</a>. Ojo: con el filtro de rutas, un pull request que no toca <code>infra/</code> no corre el check, y GitHub lo deja esperando. Si te pasa, quita el filtro <code>paths</code> y deja que corra siempre: tarda un par de minutos.</p>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>git checkout -b infra-inicial
+git add .github/workflows/infra.yml policy/
+git commit -m "infra: workflow y reglas propias"
+git push -u origin infra-inicial</code></pre>
+  <p>Abre el pull request. En la pestaña Checks, <code>infra / revisar</code> tiene que correr los tres pasos en verde. Si el paso de Terraform falla en <code>init</code>, el lock file no se subió.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un workflow de tres pasos que llama al script, sin permisos de escritura ni secretos.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Acciones de terceros para cada herramienta: más SHA que fijar y un comportamiento distinto al de tu máquina.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Un pull request desde un fork corre el workflow con el código del fork. Aquí no importa, porque no hay credenciales; si un día las hay, el workflow con credenciales no puede correr sobre código sin revisar.</dd></div>
+</dl>
+<h2 id="viaje">El viaje de un dato</h2>
+<p>El caso principal: un pull request que cambia la política de la API a <code>s3:*</code>, y la regla propia que lo corta.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 444" role="img" aria-labelledby="fs03st fs03sd">
+<title id="fs03st">Un comodín de IAM, del pull request al check rojo</title>
+<desc id="fs03sd">La persona abre el pull request. GitHub arranca infra.yml. El workflow corre Terraform sin cuenta, que baja el provider con el hash del lock file y escribe plan.json. Checkov pasa, porque CKV_AWS_63 solo mira el asterisco solo. Conftest corre las pruebas y después las reglas: la regla 5 encuentra s3:* y el check vuelve rojo.</desc>
+<defs><marker id="fs03s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs03s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs03s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs03s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="11.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Persona</text>
+<path class="dg-frame" d="M70.0 40 V434"/>
+<rect class="dg-box" x="137.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="196.0" y="29" text-anchor="middle" style="font-size:13.5px">GitHub</text>
+<path class="dg-frame" d="M196.0 40 V434"/>
+<rect class="dg-box" x="263.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="322.0" y="29" text-anchor="middle" style="font-size:13.5px">infra.yml</text>
+<path class="dg-frame" d="M322.0 40 V434"/>
+<rect class="dg-box" x="389.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="448.0" y="29" text-anchor="middle" style="font-size:13.5px">Terraform</text>
+<path class="dg-frame" d="M448.0 40 V434"/>
+<rect class="dg-box" x="515.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="574.0" y="29" text-anchor="middle" style="font-size:13.5px">Checkov</text>
+<path class="dg-frame" d="M574.0 40 V434"/>
+<rect class="dg-box" x="641.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Conftest</text>
+<path class="dg-frame" d="M700.0 40 V434"/>
+<path class="dg-edge" d="M73.0 72 L191.0 72" marker-end="url(#fs03s-a)"/>
+<rect x="70.9" y="55" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="133.0" y="66" text-anchor="middle">Action = [&quot;s3:*&quot;]</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M199.0 106 L317.0 106" marker-end="url(#fs03s-q)"/>
+<rect x="213.4" y="89" width="91.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="259.0" y="100" text-anchor="middle">pull_request</text>
+<path class="dg-edge" d="M325.0 140 L443.0 140" marker-end="url(#fs03s-a)"/>
+<rect x="336.1" y="123" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="134" text-anchor="middle">infra.sh plan</text>
+<rect x="458.0" y="160" width="230" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="468.0" y="176">provider 6.73.0, hash del lock</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M445.0 208 L327.0 208" marker-end="url(#fs03s-r)"/>
+<rect x="349.3" y="191" width="71.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="202" text-anchor="middle">plan.json</text>
+<path class="dg-edge" d="M325.0 242 L569.0 242" marker-end="url(#fs03s-a)"/>
+<rect x="389.2" y="225" width="117.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="448.0" y="236" text-anchor="middle">infra.sh checkov</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M571.0 276 L327.0 276" marker-end="url(#fs03s-r)"/>
+<rect x="389.2" y="259" width="117.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="448.0" y="270" text-anchor="middle">Failed checks: 0</text>
+<path class="dg-edge" d="M325.0 310 L695.0 310" marker-end="url(#fs03s-a)"/>
+<rect x="432.4" y="293" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="511.0" y="304" text-anchor="middle">verify, test plan.json</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M697.0 344 L327.0 344" marker-end="url(#fs03s-f)"/>
+<rect x="386.2" y="327" width="249.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="511.0" y="338" text-anchor="middle">FAIL aws_iam_policy.api permite s3:*</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M319.0 378 L201.0 378" marker-end="url(#fs03s-f)"/>
+<rect x="180.4" y="361" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="259.0" y="372" text-anchor="middle">check rojo en Conftest</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC03.6.</b> El viaje completo. Checkov deja pasar <code>s3:*</code>; la regla propia, no.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Paso</th><th>De → a</th><th>Qué viaja</th><th>Dónde queda</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Persona → GitHub</td><td>El cambio en <code>infra/iam.tf</code></td><td>La rama del pull request</td></tr>
+<tr><td>2</td><td>Terraform → registry.terraform.io</td><td>El pedido del provider</td><td>El contenedor; se borra al terminar</td></tr>
+<tr><td>3</td><td>Terraform → workflow</td><td>El plan, con la política como texto</td><td><code>infra/plan.json</code> en el runner</td></tr>
+<tr><td>4</td><td>Checkov → workflow</td><td>El resultado de las doce reglas</td><td>El log del paso</td></tr>
+<tr><td>5</td><td>Conftest → workflow</td><td>El mensaje de la regla (5)</td><td>El log y el estado del check</td></tr>
+<tr><td>6</td><td>Workflow → GitHub</td><td>El check rojo</td><td>El pull request, que no se puede mezclar</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="sec03-iac"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-verde">El punto de partida</h3>
+<div class="step-map" data-where="workflow terraform checkov conftest">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La rama <code>main</code> con todo lo de esta guía.</dd></div>
+    <div><dt>Sale</dt><dd>Los tres pasos en verde.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-politicas">Políticas como código</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Lo que el diseño espera</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td><code>infra.sh plan</code></td><td><code>0 to change, 0 to destroy</code> y N recursos a crear</td><td></td></tr>
+<tr><td>Checkov, la lista corta</td><td><code>Failed checks: 0</code></td><td></td></tr>
+<tr><td>Checkov, los avisos</td><td>Una lista de reglas y salida 0</td><td></td></tr>
+<tr><td><code>conftest verify</code></td><td>6 pruebas, 6 pasan</td><td></td></tr>
+<tr><td><code>conftest test</code></td><td>0 failures</td><td></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-fallas">Las fallas, a propósito</h3>
+<p>Cada falla va en una rama propia con su pull request, o en tu máquina con <code>seguridad/infra.sh todo</code>. Deshazla antes de la siguiente.</p>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 1: el bucket con política pública</p>
+<p><b>Provócala.</b> En <code>infra/datos.tf</code>, cambia <code>block_public_policy = true</code> por <code>false</code>.</p><p><b>Qué tiene que pasar.</b> Checkov corta con <code>CKV_AWS_54</code> sobre <code>aws_s3_bucket_public_access_block.fotos</code>. Si en lugar de eso borras el recurso entero, corta <code>CKV2_AWS_6</code> sobre el bucket. <b>Por qué importa.</b> Con esa opción apagada, alguien puede ponerle al bucket una política con <code>"Principal": "*"</code> y las fotos (o lo que se suba después) quedan a la vista. <b>Deshazla</b> con <code>git checkout infra/datos.tf</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 2: SSH abierto a internet</p>
+<p><b>Provócala.</b> En el grupo <code>api</code> de <code>infra/red.tf</code>, agrega un <code>ingress</code> con <code>from_port = 22</code>, <code>to_port = 22</code>, <code>protocol = "tcp"</code>, <code>cidr_blocks = ["0.0.0.0/0"]</code> y una <code>description</code>.</p><p><b>Qué tiene que pasar.</b> Checkov corta con <code>CKV_AWS_24</code> sobre <code>aws_security_group.api</code>. <b>Por qué importa.</b> Es lo primero que barren los escáneres de internet. La forma de entrar a una máquina sin abrir el 22 es Session Manager o un bastión, como en <a href="../modules/m37-nube.html#red">37.3</a>. <b>Deshazla</b> borrando el bloque.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 3: la base con IP pública</p>
+<p><b>Provócala.</b> En <code>infra/datos.tf</code>, cambia <code>publicly_accessible = false</code> por <code>true</code>.</p><p><b>Qué tiene que pasar.</b> Checkov corta con <code>CKV_AWS_17</code> sobre <code>aws_db_instance.tienda</code>. <b>Por qué importa.</b> Con IP pública, el único control que queda es el security group. Un cambio en ese grupo y la base está en internet. <b>Deshazla</b> volviendo a <code>false</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 4: s3:* en la política de la API</p>
+<p><b>Provócala.</b> En <code>infra/iam.tf</code>, cambia la acción por <code>Action = ["s3:*"]</code>.</p><p><b>Qué tiene que pasar.</b> Checkov pasa: <code>CKV_AWS_63</code> mira el asterisco solo, y <code>CKV_AWS_62</code> el par asterisco en acción y recurso. Conftest corta con <code>aws_iam_policy.api permite s3:*: nombra las acciones</code>. <b>Por qué importa.</b> <code>s3:*</code> incluye <code>s3:DeleteObject</code> y <code>s3:PutBucketPolicy</code>: una inyección en la API podría borrar las fotos o hacer público el bucket. Es la razón de tener reglas propias. <b>Deshazla</b> volviendo a las dos acciones.</p>
+</aside>
+<div data-exercise="sec03-p-region"></div>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 5: otra región</p>
+<p><b>Provócala.</b> Sin cambiar ningún archivo: <code>seguridad/infra.sh plan -var region=us-east-1</code> y después <code>seguridad/infra.sh conftest</code>.</p><p><b>Qué tiene que pasar.</b> El plan se calcula igual (no hay cuenta que diga que no) y Conftest corta con un solo mensaje: <code>la región us-east-1 no está permitida</code>. Las zonas cambian solas a <code>us-east-1a</code> y <code>b</code> por cómo se arman. <b>Por qué importa.</b> La región decide qué leyes aplican a los datos y dónde está tu monitoreo. Sin la regla, una persona con otro valor por defecto en su máquina crea una tienda paralela que nadie vigila. <b>Deshazla</b> volviendo a correr <code>infra.sh plan</code> sin la variable.</p>
+</aside>
+<div data-exercise="sec03-p-moved"></div>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 6: renombrar la base sin moved</p>
+<p><b>Por qué con dos archivos de ejemplo.</b> Un plan solo dice "borrar" si el state ya tiene la base, y este laboratorio nunca crea nada. Los dos archivos de abajo tienen la forma que da <code>terraform show -json</code> en una cuenta con la base creada, recortados a lo que leen las reglas. Guárdalos en <code>infra/casos/</code>.</p><div class="file-card" data-where="conftest plan">
+  <h4 class="file-card-path" id="archivo-infra-casos-renombre-json">infra/casos/renombre.json<span class="file-card-size">23 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>El plan de un cambio de nombre sin <code>moved</code>: borra una base y crea otra.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Conftest, en esta falla.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Dos entradas: <code>delete</code> y <code>create</code>.</dd></div>
+  </dl>
+</div>
+<pre data-lang="json" data-file="infra/casos/renombre.json"><code>{
+  "format_version": "1.2",
+  "variables": { "region": { "value": "sa-east-1" } },
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.tienda",
+      "type": "aws_db_instance",
+      "name": "tienda",
+      "change": { "actions": ["delete"], "before": { "identifier": "tienda-prueba" }, "after": null, "after_unknown": {} }
+    },
+    {
+      "address": "aws_db_instance.principal",
+      "type": "aws_db_instance",
+      "name": "principal",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "identifier": "tienda-prueba", "instance_class": "db.t4g.micro", "backup_retention_period": 7 },
+        "after_unknown": { "id": true }
+      }
+    }
+  ]
+}</code></pre>
+<div class="file-card" data-where="conftest plan">
+  <h4 class="file-card-path" id="archivo-infra-casos-moved-json">infra/casos/moved.json<span class="file-card-size">18 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>El plan del mismo cambio con un bloque <code>moved</code>: la base cambia de dirección y nada más.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Conftest, en esta falla.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una entrada con <code>previous_address</code> y <code>no-op</code>.</dd></div>
+  </dl>
+</div>
+<pre data-lang="json" data-file="infra/casos/moved.json"><code>{
+  "format_version": "1.2",
+  "variables": { "region": { "value": "sa-east-1" } },
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.principal",
+      "previous_address": "aws_db_instance.tienda",
+      "type": "aws_db_instance",
+      "name": "principal",
+      "change": {
+        "actions": ["no-op"],
+        "before": { "identifier": "tienda-prueba", "instance_class": "db.t4g.micro", "backup_retention_period": 7 },
+        "after": { "identifier": "tienda-prueba", "instance_class": "db.t4g.micro", "backup_retention_period": 7 },
+        "after_unknown": {}
+      }
+    }
+  ]
+}</code></pre>
+<p><b>Provócala.</b> <code>docker run --rm -v "$PWD:/w" -w /w openpolicyagent/conftest:v0.71.1 test --policy policy infra/casos/renombre.json infra/casos/moved.json</code>.</p><p><b>Qué tiene que pasar.</b> <code>renombre.json</code> falla con <code>el plan borra aws_db_instance.tienda: si es un cambio de nombre, usa un bloque moved</code>; <code>moved.json</code> pasa. <b>Por qué importa.</b> Para Terraform, la dirección es la identidad: un renombre inocente en el HCL es un <code>DROP</code> de la base en la cuenta. <code>deletion_protection</code> haría fallar el apply a mitad de camino; la regla lo corta antes, en el pull request. El arreglo en el HCL es este bloque, junto al recurso renombrado:</p><pre data-lang="hcl"><code>moved {
+  from = aws_db_instance.tienda
+  to   = aws_db_instance.principal
+}</code></pre>
+<p><b>No hay nada que deshacer</b>: los archivos de ejemplo quedan como casos de prueba.</p>
+</aside>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Qué la corta</th><th>¿Cortó?</th><th>Lo que decía</th></tr></thead>
+<tbody>
+<tr><td>1. Bucket con política pública</td><td>Checkov, CKV_AWS_54</td><td></td><td></td></tr>
+<tr><td>2. SSH abierto</td><td>Checkov, CKV_AWS_24</td><td></td><td></td></tr>
+<tr><td>3. Base con IP pública</td><td>Checkov, CKV_AWS_17</td><td></td><td></td></tr>
+<tr><td>4. <code>s3:*</code></td><td>Conftest, regla (5)</td><td></td><td></td></tr>
+<tr><td>5. Otra región</td><td>Conftest, regla (2)</td><td></td><td></td></tr>
+<tr><td>6. Renombrar sin <code>moved</code></td><td>Conftest, regla (4)</td><td></td><td></td></tr>
+</tbody>
+</table>
+</div>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>La nube de Tienda Norte descrita y revisada sin una cuenta.</li>
+    <li>Doce reglas de Checkov y siete propias, con sus pruebas.</li>
+    <li>Seis errores de configuración, cada uno cortado donde tenía que cortarse.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>seguridad/infra.sh todo; echo "salida: $?"</code></pre>
+  <p>Con todas las fallas deshechas, <code>salida: 0</code>.</p>
+</aside>
+<h2 id="limitaciones">Limitaciones</h2>
+<ul>
+<li><b>Lo que no hace.</b> No crea nada. Un plan que pasa no dice que el apply funcione: AWS puede rechazar una combinación (una versión de PostgreSQL que no existe en esa clase, un nombre de bucket ya tomado) que solo aparece al aplicar.</li>
+<li><b>Dónde se rompe.</b> El plan sin cuenta deja de servir el día que el código use data sources que leen la cuenta, o cuando haya un state con recursos: ahí el plan tiene que leer lo que existe, y hace falta un rol de solo lectura.</li>
+<li><b>Riesgos que quedan.</b> Las revisiones miran el código, no la cuenta. Un cambio hecho a mano en la consola no pasa por el pull request; eso se detecta comparando la cuenta con el state (<code>terraform plan</code> periódico) o con AWS Config.</li>
+<li><b>Lo que Checkov no ve.</b> Lee el HCL, así que una regla que depende de un valor calculado puede pasar o fallar distinto que en el plan. Checkov también puede leer el plan en JSON (<code>--framework terraform_plan</code>), que es el paso siguiente si encuentras diferencias.</li>
+</ul>
+<h3 id="limitaciones-costo">Costo y tiempo, con la cuenta a mano</h3>
+<p>Con supuestos dichos como supuestos: si bajar las tres imágenes y el provider tarda 1 minuto, el plan 30 segundos, Checkov 1 minuto entre sus dos corridas y Conftest 10 segundos, cada pull request que toca <code>infra/</code> usa unos 3 minutos de runner. Con 30 pull requests al mes son 90 minutos, gratis en un repositorio público y dentro de los minutos incluidos en uno privado. Lo que sí costaría es la nube descrita, que aquí no se crea: reemplaza estos supuestos por tus minutos y, si un día aplicas, saca el costo de la calculadora de AWS con la clase y el disco de <code>datos.tf</code>.</p>
+<h3 id="limitaciones-produccion">Qué cambia en producción</h3>
+<ul>
+<li>El state en un backend remoto (S3 con bloqueo, o Terraform Cloud), cifrado y con acceso solo para el rol que aplica.</li>
+<li>Dos roles con OIDC de GitHub: uno de solo lectura para el plan de cada pull request y otro para el apply, que solo corre en <code>main</code> después de la aprobación, con un environment protegido.</li>
+<li>El plan del pull request comentado en el mismo pull request, para que la persona que revisa lea qué cambia en la cuenta y no solo el diff del HCL.</li>
+<li>Detección de deriva: un plan programado cada día que avisa si la cuenta se apartó del código.</li>
+<li>Las reglas de Rego en un repositorio propio, compartido por todos los proyectos, con su versión.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="sec03">
+<p class="pj-repo-head">El mismo repositorio de la tienda. Marca cada comprobación cuando la veas.</p>
+<ul class="pj-checks">
+<li data-check="plan"><code>infra.sh plan</code> calcula el plan sin cuenta y escribe <code>plan.json</code>.</li>
+<li data-check="lock"><code>.terraform.lock.hcl</code> está en el repositorio y <code>init -lockfile=readonly</code> pasa.</li>
+<li data-check="checkov">Checkov corta con la lista corta y avisa con el resto.</li>
+<li data-check="conftest"><code>conftest verify</code> pasa las seis pruebas.</li>
+<li data-check="workflow">El check <code>infra / revisar</code> corre en un pull request y es obligatorio en <code>main</code>.</li>
+<li data-check="fallas">Las seis fallas cortaron donde tenían que cortar.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con SEC00, SEC01 y SEC02</p>
+<p>Las piezas son las de <a href="sec00-laboratorio.html#paso-base">SEC00</a>, el criterio del gate es el de <a href="sec01-pipeline.html#ae-gate">SEC01</a> y la forma de fijar lo que corre, la de <a href="sec02-sbom-firma.html#paso-pines">SEC02</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con la Parte IV del curso</p>
+<p>El modelo de responsabilidad compartida, IAM con mínimo privilegio, la segmentación de red y KMS están en <a href="../modules/m37-nube.html#modelo">M37</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con la Parte VII del curso</p>
+<p>Dónde va cada herramienta en el ciclo de vida, en <a href="../modules/m55-appsec.html#pipeline">55.8</a>; el threat model que dice qué proteger, en <a href="../modules/m54-threat-modeling.html">M54</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con el glosario</p>
+<p><a href="../glosario.html#t-minimo-privilegio">Mínimo privilegio</a> y <a href="../glosario.html#t-cis-benchmark">CIS Benchmark</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/sec03.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

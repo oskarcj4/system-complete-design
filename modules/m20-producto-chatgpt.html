@@ -183,6 +183,16 @@
         <figcaption><b>Figura 20.2.</b> La cuenta del párrafo anterior, eslabón por eslabón. Solo los 800 millones son un dato publicado; las conversaciones por usuario, los mensajes y los 2 KB son supuestos del diseño. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
       </figure>
 
+<p><b>Paso a paso.</b> Si nunca hiciste una cuenta de este tipo (un back-of-the-envelope, la estimación de servilleta de M00), así se rehace cada eslabón con una calculadora:</p>
+<ol class="steps">
+  <li><span class="step-title">Conversaciones por semana</span>800 millones de usuarios × 3 conversaciones = 2&#8239;400 millones.</li>
+  <li><span class="step-title">Mensajes por semana</span>Cada conversación de 8 turnos tiene 8 mensajes del usuario y 8 respuestas: 16 mensajes. 2&#8239;400 millones × 16 = 38&#8239;400 millones.</li>
+  <li><span class="step-title">Segundos de una semana</span>7 días × 24 horas × 3&#8239;600 segundos = 604&#8239;800 segundos.</li>
+  <li><span class="step-title">Por segundo</span>38&#8239;400 millones ÷ 604&#8239;800 ≈ 63&#8239;490 mensajes por segundo (redondeado, 63&#8239;500), y 2&#8239;400 millones ÷ 604&#8239;800 ≈ 3&#8239;968 conversaciones nuevas por segundo (unas 4&#8239;000).</li>
+  <li><span class="step-title">Bytes por semana</span>38&#8239;400 millones × 2&#8239;KB = 76&#8239;800 millones de KB = 76.8&#8239;TB, que se redondea a 77&#8239;TB.</li>
+</ol>
+<p>La conclusión no depende de los decimales: aunque los supuestos estuvieran errados por un factor de 2 o de 3, decenas de miles de escrituras por segundo y decenas de terabytes por semana no entran en una sola base. Por eso la pregunta siguiente es por qué clave repartir los datos.</p>
+
 <h2 id="esquema"><span class="sec-num">20.2</span>El esquema de datos</h2>
 
       <aside class="callout callout--simple">
@@ -220,6 +230,26 @@
     </table>
   </div>
 </figure>
+
+<p><b>Cómo leer esta ficha.</b> Cada fila es una columna de la tabla. <span class="key">PK</span> marca la clave primaria (lo que identifica una fila) y <span class="key key--fk">FK</span> una clave foránea (apunta a una fila de otra tabla: <code>user_id</code> a la tabla de usuarios). La columna "Para qué" es la que más importa: dice qué lectura o escritura del producto necesita ese campo. Dos detalles suelen confundir la primera vez:</p>
+<ul>
+  <li><b>Borrado lógico.</b> Cuando el usuario borra una conversación, no se hace un <code>DELETE</code>: se escribe la fecha en <code>deleted_at</code> y las consultas filtran <code>WHERE deleted_at IS NULL</code>. La fila desaparece de la pantalla al instante, y un proceso en segundo plano (el job) la borra de verdad cuando vence el plazo de retención.</li>
+  <li><b>El título asíncrono.</b> El título no se genera mientras el usuario espera su primera respuesta: se pide después, a un modelo chico, y se escribe cuando llega. Por eso una conversación nueva aparece unos segundos como "Nuevo chat".</li>
+</ul>
+
+      <aside class="callout callout--def">
+        <p class="callout-label"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 2H3v12h2.5M10.5 2H13v12h-2.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Definición</p>
+        <p class="def-term">UUIDv7 <span class="def-en">UUID version 7</span></p>
+        <p class="def-one">Un identificador de 128 bits que empieza con la hora de creación en milisegundos (los primeros 48 bits) y sigue con bits aleatorios. <span class="badge badge--doc">Documentado</span> (RFC 9562)</p>
+        <dl class="def-rows">
+          <dt>Intuición</dt>
+          <dd>Un UUID clásico (v4) es todo azar, como sacar un número de una bolsa. Un UUIDv7 es como un número de turno que empieza con la hora: dos ids creados uno después del otro quedan ordenados, sin que ningún servidor tenga que coordinar un contador.</dd>
+          <dt>Ejemplo</dt>
+          <dd>Con v4, cada conversación nueva cae en un lugar cualquiera del índice, que es un árbol ordenado (B-tree): la base tiene que abrir hueco en páginas viejas, que se parten y quedan a medio llenar. Con v7, cada id nuevo es mayor que el anterior y se agrega al final del índice, como un id autoincremental.</dd>
+          <dt>Por qué importa en producción</dt>
+          <dd>Con miles de inserciones por segundo, escribir siempre al final mantiene en memoria solo las últimas páginas del índice y lo deja compacto. Eso es lo que la tabla resume como "el orden por tiempo mantiene los índices compactos".</dd>
+        </dl>
+      </aside>
 
 <aside class="callout callout--tradeoff">
   <p class="callout-label">Trade-off</p>
@@ -404,7 +434,86 @@ SELECT role, content FROM rama ORDER BY created_at;</code></pre>
     rama.reverse()                       # de la raíz a la hoja
     return recortar(rama, max_tokens)    # M16: resumir o descartar lo más viejo</code></pre>
 
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="fjr20at fjr20ad">
+<title id="fjr20at">Cómo se arma el contexto desde la rama</title>
+<desc id="fjr20ad">Arriba, la lista tal como se arma: se empieza en la última respuesta de la rama visible y se sigue parent_id hacia atrás, visitando la pregunta editada, la respuesta regenerada, el primer mensaje del usuario y las instrucciones del sistema. Abajo, la misma lista dada vuelta: empieza en las instrucciones del sistema y termina en la última respuesta, que es el orden en que se manda al modelo. Las ramas hermanas de la figura 20.4 no se visitan.</desc>
+<defs><marker id="fjr20aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="25" y="24" text-anchor="start">1. Desde la hoja, seguir parent_id hasta la raíz: así se arma la lista</text>
+<rect class="dg-box" x="25" y="36" width="120" height="48" rx="8"/>
+<text class="dg-label" x="85" y="56" text-anchor="middle">Asistente</text>
+<text class="dg-tiny" x="85" y="73" text-anchor="middle">respuesta (hoja)</text>
+<text class="dg-tiny" x="85" y="102" text-anchor="middle">visita 1</text>
+<rect class="dg-box" x="175" y="36" width="120" height="48" rx="8"/>
+<text class="dg-label" x="235" y="56" text-anchor="middle">Usuario</text>
+<text class="dg-tiny" x="235" y="73" text-anchor="middle">editado: ¿en bus?</text>
+<text class="dg-tiny" x="235" y="102" text-anchor="middle">visita 2</text>
+<rect class="dg-box" x="325" y="36" width="120" height="48" rx="8"/>
+<text class="dg-label" x="385" y="56" text-anchor="middle">Asistente</text>
+<text class="dg-tiny" x="385" y="73" text-anchor="middle">regenerada</text>
+<text class="dg-tiny" x="385" y="102" text-anchor="middle">visita 3</text>
+<rect class="dg-box" x="475" y="36" width="120" height="48" rx="8"/>
+<text class="dg-label" x="535" y="56" text-anchor="middle">Usuario</text>
+<text class="dg-tiny" x="535" y="73" text-anchor="middle">plan de viaje</text>
+<text class="dg-tiny" x="535" y="102" text-anchor="middle">visita 4</text>
+<rect class="dg-box" x="625" y="36" width="120" height="48" rx="8"/>
+<text class="dg-label" x="685" y="56" text-anchor="middle">Sistema</text>
+<text class="dg-tiny" x="685" y="73" text-anchor="middle">instrucciones</text>
+<text class="dg-tiny" x="685" y="102" text-anchor="middle">visita 5</text>
+<path class="dg-edge" d="M147 60 H171" marker-end="url(#fjr20aa)"/>
+<path class="dg-edge" d="M297 60 H321" marker-end="url(#fjr20aa)"/>
+<path class="dg-edge" d="M447 60 H471" marker-end="url(#fjr20aa)"/>
+<path class="dg-edge" d="M597 60 H621" marker-end="url(#fjr20aa)"/>
+<text class="dg-tiny" x="745" y="122" text-anchor="end">cada flecha: "su padre es"</text>
+<text class="dg-group" x="25" y="146" text-anchor="start">2. reverse(): dar vuelta la lista para que empiece en la raíz</text>
+<rect class="dg-box dg-box--em" x="25" y="158" width="120" height="48" rx="8"/>
+<text class="dg-label" x="85" y="178" text-anchor="middle">Sistema</text>
+<text class="dg-tiny" x="85" y="195" text-anchor="middle">instrucciones</text>
+<text class="dg-tiny" x="85" y="224" text-anchor="middle">posición 1 del prompt</text>
+<rect class="dg-box dg-box--em" x="175" y="158" width="120" height="48" rx="8"/>
+<text class="dg-label" x="235" y="178" text-anchor="middle">Usuario</text>
+<text class="dg-tiny" x="235" y="195" text-anchor="middle">plan de viaje</text>
+<text class="dg-tiny" x="235" y="224" text-anchor="middle">posición 2 del prompt</text>
+<rect class="dg-box dg-box--em" x="325" y="158" width="120" height="48" rx="8"/>
+<text class="dg-label" x="385" y="178" text-anchor="middle">Asistente</text>
+<text class="dg-tiny" x="385" y="195" text-anchor="middle">regenerada</text>
+<text class="dg-tiny" x="385" y="224" text-anchor="middle">posición 3 del prompt</text>
+<rect class="dg-box dg-box--em" x="475" y="158" width="120" height="48" rx="8"/>
+<text class="dg-label" x="535" y="178" text-anchor="middle">Usuario</text>
+<text class="dg-tiny" x="535" y="195" text-anchor="middle">editado: ¿en bus?</text>
+<text class="dg-tiny" x="535" y="224" text-anchor="middle">posición 4 del prompt</text>
+<rect class="dg-box dg-box--em" x="625" y="158" width="120" height="48" rx="8"/>
+<text class="dg-label" x="685" y="178" text-anchor="middle">Asistente</text>
+<text class="dg-tiny" x="685" y="195" text-anchor="middle">respuesta (hoja)</text>
+<text class="dg-tiny" x="685" y="224" text-anchor="middle">posición 5 del prompt</text>
+<path class="dg-edge" d="M147 182 H171" marker-end="url(#fjr20aa)"/>
+<path class="dg-edge" d="M297 182 H321" marker-end="url(#fjr20aa)"/>
+<path class="dg-edge" d="M447 182 H471" marker-end="url(#fjr20aa)"/>
+<path class="dg-edge" d="M597 182 H621" marker-end="url(#fjr20aa)"/>
+<rect class="dg-box" x="25" y="244" width="720" height="44" rx="8"/>
+<text class="dg-small" x="385" y="271" text-anchor="middle">Las ramas hermanas (primera versión, ¿y en tren?, ¿y en avión?) no se visitan.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 20.4b.</b> La rama resaltada de la figura 20.4, recorrida por el código de arriba. Se camina hacia atrás porque cada mensaje sabe quién es su padre pero no cuál de sus hijos está a la vista; al final se da vuelta la lista. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
+      </figure>
+
+<p><b>Paso a paso de la consulta recursiva.</b> Un <code>WITH RECURSIVE</code> tiene dos partes unidas por <code>UNION ALL</code>: la semilla (el primer <code>SELECT</code>) y la parte recursiva, que se repite usando lo que se agregó en la vuelta anterior. Con la rama de la figura 20.4b, y el usuario a punto de mandar un mensaje nuevo cuyo padre es la última respuesta:</p>
+<ol class="steps">
+  <li><span class="step-title">Semilla</span>Trae una sola fila: la de <code>id = $2</code>, la última respuesta del asistente. La rama tiene 1 mensaje.</li>
+  <li><span class="step-title">Primera vuelta</span>El <code>JOIN</code> busca el mensaje cuyo <code>id</code> es el <code>parent_id</code> de esa fila: la pregunta editada "¿en bus?". La rama tiene 2.</li>
+  <li><span class="step-title">Vueltas siguientes</span>Lo mismo con cada fila nueva: la respuesta regenerada, el primer mensaje del usuario y las instrucciones del sistema. La rama tiene 5.</li>
+  <li><span class="step-title">Fin</span>Las instrucciones del sistema tienen <code>parent_id</code> null: el <code>JOIN</code> no encuentra a nadie, la vuelta no agrega filas y la recursión se detiene sola.</li>
+  <li><span class="step-title">Orden</span><code>ORDER BY created_at</code> deja la lista de la raíz a la hoja, porque un padre siempre se creó antes que sus hijos. Es lo mismo que hace <code>rama.reverse()</code> en Python.</li>
+</ol>
+<p>La versión en Python hace lo mismo en memoria: el diccionario <code>por_id</code> sirve de índice para encontrar al padre de un mensaje en un solo paso, y el <code>while</code> termina cuando llega a la raíz, porque <code>por_id.get(None)</code> devuelve <code>None</code>. Los mensajes "primera versión", "¿y en tren?" y "¿y en avión?" se trajeron de la base pero nunca se visitan, así que no llegan al modelo.</p>
+
 <p>El árbol tiene una consecuencia para el <dfn data-term="prefix-caching">prefix caching</dfn>: dos ramas hermanas comparten todo el prefijo hasta el punto donde se separan. Regenerar una respuesta reutiliza el KV cache del prompt completo si la request cae en la misma réplica (M19).</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Piensa en un profesor que corrige dos trabajos copiados hasta la página 9 y distintos desde la 10. Si recuerda lo que leyó en el primero, en el segundo salta directo a la página 10. Regenerar es ese caso extremo: el prompt de la respuesta nueva es idéntico al de la vieja (la misma rama hasta el mismo mensaje del usuario), así que la réplica que ya lo leyó no tiene que volver a calcular nada del prompt y solo genera tokens nuevos. Si la request cae en otra réplica, es otro profesor: tiene que leer todo desde la página 1.</p>
+</aside>
 
 <h2 id="turno"><span class="sec-num">20.4</span>Un turno de punta a punta</h2>
 

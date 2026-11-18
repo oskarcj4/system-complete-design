@@ -279,5 +279,107 @@ SD.data.projects = {
           stack: ['Redpanda', 'Redis', 'LightGBM', 'FastAPI', 'OpenTelemetry', 'k6'] }
       ]
     }
+  ],
+
+  /* Guías de Blue Team y DevSecOps (sección #devsecops de proyectos.html): la serie SEC, defensiva, sobre la
+     Tienda Norte mínima de SEC00. Misma forma que aiTracks. Plan en PLAN_DEVSECOPS.md. */
+  secTracks: [
+    {
+      id: 'sec', label: 'Blue Team y DevSecOps', title: 'Tienda Norte, vigilada y endurecida', line: '--line-p7',
+      intro: 'Una guía por idea de la Parte VII, sobre una tienda pequeña que levantas en tu máquina: el pipeline, la cadena de suministro, la infraestructura, el clúster, la detección y la respuesta. Cada técnica se simula solo contra tu laboratorio y termina en la alerta que la ve. Publicadas SEC00 a SEC08: la serie está completa.',
+      items: [
+        { id: 'sec00', num: 'SEC00', title: 'El laboratorio: Tienda Norte y su SIEM', tier: 'core', status: 'ready', href: 'proyectos/sec00-laboratorio.html', repoName: 'sec00-laboratorio', repo: '', mods: ['m59', 'm54'], front: false,
+          excuse: 'Una tienda pequeña, sus logs en un solo lugar y la primera alerta que salta sola.',
+          learn: 'Tienda Norte mínima en FastAPI con PostgreSQL y Nginx, un evento JSON por cada cosa que importa, Wazuh 4.14 en un solo nodo leyendo esos logs por volúmenes de solo lectura, tres reglas propias (una de correlación) probadas con wazuh-logtest, un script que provoca fuerza bruta, pedidos ajenos y escaneo solo contra tu laboratorio, y tres fallas que dejan ciego al SIEM.',
+          stack: ['Docker Compose', 'Wazuh 4.14', 'FastAPI', 'PostgreSQL', 'Nginx'] },
+        { id: 'sec01', num: 'SEC01', title: 'Un pipeline que falla el build', tier: 'core', status: 'ready', href: 'proyectos/sec01-pipeline.html', repoName: 'sec01-pipeline', repo: '', mods: ['m55', 'm56'], front: false,
+          excuse: 'El commit con una clave adentro no llega a main.',
+          learn: 'GitHub Actions con cinco jobs sobre Tienda Norte: pytest para el formato del log, gitleaks sobre toda la historia, Semgrep con reglas propias, Trivy sobre la imagen y ZAP baseline sobre la tienda levantada, con excepciones que vencen y cinco fallas plantadas.',
+          stack: ['GitHub Actions', 'Semgrep', 'gitleaks', 'Trivy', 'ZAP'] },
+        { id: 'sec02', num: 'SEC02', title: 'SBOM, firma y verificación', tier: 'core', status: 'ready', href: 'proyectos/sec02-sbom-firma.html', repoName: 'sec02-sbom-firma', repo: '', mods: ['m56'], front: false,
+          excuse: 'Saber qué hay en la imagen y que la firmaste tú.',
+          learn: 'La imagen de Tienda Norte con su SBOM de Syft, Grype antes de subirla, la firma sin llaves de cosign, la provenance de GitHub y un despliegue que solo levanta lo que verifica.',
+          stack: ['Syft', 'Grype', 'cosign', 'SLSA'] },
+        { id: 'sec03', num: 'SEC03', title: 'Infraestructura como código revisada', tier: 'core', status: 'ready', href: 'proyectos/sec03-iac.html', repoName: 'sec03-iac', repo: '', mods: ['m37', 'm55'], front: false,
+          excuse: 'El bucket público se rechaza en el pull request, no en el incidente.',
+          learn: 'Terraform para la nube de Tienda Norte (red, bucket privado, RDS e IAM), un plan sin cuenta con el lock file en solo lectura en cada pull request, Checkov con una lista corta que corta, siete reglas propias en Rego v1 con sus pruebas en Conftest y seis errores de configuración plantados.',
+          stack: ['Terraform', 'Checkov', 'Conftest', 'OPA'] },
+        { id: 'sec04', num: 'SEC04', title: 'Un clúster endurecido y vigilado', tier: 'core', status: 'ready', href: 'proyectos/sec04-cluster.html', repoName: 'sec04-cluster', repo: '', mods: ['m57', 'm56'], front: false,
+          excuse: 'Un pod comprometido que no llega a ningún lado.',
+          learn: 'Tienda Norte en k3s: Pod Security restricted, una ValidatingAdmissionPolicy con dos imágenes por digest, la firma de SEC02 exigida con un ImageValidatingPolicy de Kyverno, NetworkPolicy que niegan todo y abren tres conexiones, y Falco con una regla propia para las shells en la tienda; seis fallas, cada una cortada por su capa.',
+          stack: ['k3s', 'Kyverno', 'Falco'] },
+        { id: 'sec05', num: 'SEC05', title: 'Detection as code', tier: 'core', status: 'ready', href: 'proyectos/sec05-deteccion.html', repoName: 'sec05-deteccion', repo: '', mods: ['m59'], front: false,
+          excuse: 'Las reglas de detección en el repositorio, con pruebas.',
+          learn: 'Las reglas de Tienda Norte en Sigma con sus correlaciones, probadas con pySigma y su backend de SQLite sobre casos positivos y negativos que casi alertan, un job nuevo en el pipeline que vigila el par de cada regla en Wazuh, Falco en el SIEM, una alerta de silencio por fuente y una emulación por técnica, con la forma de Atomic Red Team, solo contra el laboratorio.',
+          stack: ['Sigma', 'pySigma', 'Atomic Red Team', 'Wazuh'] },
+        { id: 'sec06', num: 'SEC06', title: 'Un incidente de punta a punta', tier: 'core', status: 'ready', href: 'proyectos/sec06-incidente.html', repoName: 'sec06-incidente', repo: '', mods: ['m60'], front: false,
+          excuse: 'Del aviso a la línea de tiempo, sin pisar la evidencia.',
+          learn: 'auditd y osquery en el servidor de la tienda y leídos por Wazuh, un incidente jugado con guion solo contra tu laboratorio, el triaje con osquery, la contención con pause, la evidencia en orden de volatilidad con su hash y su custodia, la línea de tiempo en UTC con cinco fuentes comparada con el guion, y el postmortem con acciones.',
+          stack: ['auditd', 'osquery', 'Wazuh'] },
+        { id: 'sec07', num: 'SEC07', title: 'Señuelos', tier: 'core', status: 'ready', href: 'proyectos/sec07-senuelos.html', repoName: 'sec07-senuelos', repo: '', mods: ['m59', 'm38'], front: false,
+          excuse: 'Una credencial que nadie debería usar, y la alerta cuando alguien la usa.',
+          learn: 'Cuatro señuelos en Tienda Norte: una cuenta sin clave posible, un token en el repositorio que la API reconoce sin delatarse, una vista de PostgreSQL que escribe RAISE LOG al leerse y un archivo de llaves falsas vigilado por auditd; cada uno con su regla de nivel 12 en Wazuh, su par en Sigma con casos, su emulación, sus falsos positivos medidos y su fila en un inventario.',
+          stack: ['Wazuh', 'PostgreSQL', 'Python'] },
+        { id: 'sec08', num: 'SEC08', title: 'Un agente de triaje de alertas', tier: 'extra', status: 'ready', href: 'proyectos/sec08-triaje.html', repoName: 'sec08-triaje', repo: '', mods: ['m59', 'm25'], front: false,
+          excuse: 'El agente lee las alertas; contener lo apruebas tú.',
+          learn: 'Un agente en LangGraph que lee las alertas del indexer de Wazuh con su CA, junta la regla y las relacionadas, y propone severidad y una de tres acciones con Claude o un modelo local; la alerta va al prompt entre etiquetas y escapada, pausar la API espera un interrupt y lleva una clave de idempotencia en SQLite, el grafo se prueba sin modelo y el juicio se mide con pass^k en seis casos, uno con inyección.',
+          stack: ['Python 3.13', 'LangGraph', 'Wazuh'] }
+      ]
+    }
+  ],
+
+  /* Guías de seguridad web (sección #seguridad-web de proyectos.html): la serie WEB, en PHP, sobre el sistema de
+     control de prácticas del usuario, que es su repositorio oficial. Misma forma que aiTracks. Plan en PLAN_SEGURIDAD_WEB.md. */
+  webTracks: [
+    {
+      id: 'web', label: 'Seguridad web', title: 'Tu sistema de prácticas, atacado y cerrado', line: '--line-p9',
+      intro: 'Una guía por hueco, en PHP 8.3 sobre tu propio repositorio: cada una provoca la falla en tu laboratorio, la cierra con un cambio pequeño y lo prueba. Publicadas WEB00 a WEB10: la serie está completa.',
+      items: [
+        { id: 'web00', num: 'WEB00', title: 'El laboratorio', tier: 'core', status: 'ready', href: 'proyectos/web00-laboratorio.html', repoName: 'web00-laboratorio', repo: 'https://github.com/oskarcj4/Sistema-Control-Practicas', mods: ['m73', 'm74', 'm80'], front: false,
+          excuse: 'Tu sistema andando, un sitio atacante en otro host y un script que mira tu servidor desde afuera.',
+          learn: 'XAMPP con PHP 8.3, MariaDB, el frontend de Vite con su proxy, un host virtual atacante.test para las pruebas entre orígenes, la re-auditoría del repositorio y dos fallas del entorno provocadas.',
+          stack: ['PHP 8.3', 'XAMPP', 'MariaDB'] },
+        { id: 'web01', num: 'WEB01', title: 'Lo que no debe verse', tier: 'core', status: 'ready', href: 'proyectos/web01-lo-que-no-debe-verse.html', repoName: 'web01-lo-que-no-debe-verse', repo: 'https://github.com/oskarcj4/Sistema-Control-Practicas', mods: ['m73', 'm78', 'm83'], front: false,
+          excuse: 'Lo que tu servidor entrega sin que nadie lo pida.',
+          learn: 'Una respuesta central con Content-Type y códigos HTTP reales, errores al registro y no al cliente, el arranque que se niega con la clave del ejemplo, .git y archivos sueltos fuera del alcance de Apache, y expose_php apagado.',
+          stack: ['PHP 8.3', 'XAMPP', 'MariaDB'] },
+        { id: 'web02', num: 'WEB02', title: 'Sesión y login seguros', tier: 'core', status: 'ready', href: 'proyectos/web02-sesion.html', repoName: 'web02-sesion', repo: 'https://github.com/oskarcj4/Sistema-Control-Practicas', mods: ['m74', 'm81'], front: false,
+          excuse: 'Una cookie firmada que se puede revocar, y un login que no se deja adivinar.',
+          learn: 'Versión de sesión en la base, cierre de todas las sesiones al cambiar la contraseña, límite de intentos por cuenta y por IP, hash de relleno contra la enumeración, la IP comparada entera y sin session_start.',
+          stack: ['PHP 8.3', 'XAMPP', 'MariaDB'] },
+        { id: 'web03', num: 'WEB03', title: 'CSRF', tier: 'core', status: 'ready', href: 'proyectos/web03-csrf.html', repoName: 'web03-csrf', repo: 'https://github.com/oskarcj4/Sistema-Control-Practicas', mods: ['m74', 'm76'], front: false,
+          excuse: 'Qué detiene una request que el navegador manda sin que la víctima lo sepa.',
+          learn: 'El token que ya tienes, Origin y Sec-Fetch-Site como segunda barrera, la lista de orígenes en un solo lugar, una matriz de pruebas con curl y el ataque desde atacante.test.',
+          stack: ['PHP 8.3', 'XAMPP', 'MariaDB'] },
+        { id: 'web04', num: 'WEB04', title: 'CORS', tier: 'core', status: 'ready', href: 'proyectos/web04-cors.html', repoName: 'web04-cors', repo: 'https://github.com/oskarcj4/Sistema-Control-Practicas', mods: ['m75'], front: false,
+          excuse: 'Catorce copias de la misma cabecera, y una con un error.',
+          learn: 'Un cors.php único con la lista exacta de orígenes, Vary: Origin, el preflight respondido antes de la sesión, una prueba de CLI con los orígenes que engañan a una comparación mal hecha y la migración de los 14 endpoints con un script.',
+          stack: ['PHP 8.3', 'XAMPP', 'MariaDB'] },
+        { id: 'web05', num: 'WEB05', title: 'XSS en el feed de oportunidades', tier: 'core', status: 'ready', href: 'proyectos/web05-xss.html', repoName: 'web05-xss', repo: 'https://github.com/oskarcj4/Sistema-Control-Practicas', mods: ['m77', 'm78'], front: false,
+          excuse: 'Un título de oferta con HTML adentro.',
+          learn: 'Un payload mínimo contra React y contra la API abierta como página, enlaceSeguro() para las URL que vienen de la base, diez sumideros migrados con un script, dos reglas de oxlint y una prueba con node --test.',
+          stack: ['PHP 8.3', 'XAMPP', 'MariaDB'] },
+        { id: 'web06', num: 'WEB06', title: 'Control de acceso', tier: 'core', status: 'ready', href: 'proyectos/web06-control-acceso.html', repoName: 'web06-control-acceso', repo: 'https://github.com/oskarcj4/Sistema-Control-Practicas', mods: ['m80'], front: false,
+          excuse: 'La rejilla de M80, aplicada endpoint por endpoint.',
+          learn: 'Encontrar los huecos que sobreviven a una API bien autorizada y cerrarlos autorizando la acción que se ejecuta, con una matriz de curl de cuatro sesiones.',
+          stack: ['PHP 8.3', 'XAMPP', 'MariaDB'] },
+        { id: 'web07', num: 'WEB07', title: 'Inyecciones', tier: 'core', status: 'ready', href: 'proyectos/web07-inyecciones.html', repoName: 'web07-inyecciones', repo: 'https://github.com/oskarcj4/Sistema-Control-Practicas', mods: ['m79'], front: false,
+          excuse: 'PDO bien configurado y los identificadores con lista permitida.',
+          learn: 'Cerrar los bordes que una consulta preparada no cubre: emulación, comodines de LIKE, ORDER BY con lista, la bitácora y un registro en JSON.',
+          stack: ['PHP 8.3', 'XAMPP', 'MariaDB'] },
+        { id: 'web08', num: 'WEB08', title: 'Subir el CV y SSRF', tier: 'core', status: 'ready', href: 'proyectos/web08-subir-cv-ssrf.html', repoName: 'web08-subir-cv-ssrf', repo: 'https://github.com/oskarcj4/Sistema-Control-Practicas', mods: ['m82', 'm80'], front: false,
+          excuse: 'Un CV público para quien tenga el link, y una vista previa que podría mirar adentro.',
+          learn: 'Sacar los documentos de htdocs y servirlos con autorización, y validar una URL saliente por su IP resuelta, conectando a esa IP y revisando cada redirección.',
+          stack: ['PHP 8.3', 'XAMPP', 'MariaDB'] },
+        { id: 'web09', num: 'WEB09', title: 'Cabeceras', tier: 'core', status: 'ready', href: 'proyectos/web09-cabeceras.html', repoName: 'web09-cabeceras', repo: 'https://github.com/oskarcj4/Sistema-Control-Practicas', mods: ['m78', 'm83'], front: false,
+          excuse: 'Cualquier sitio enmarca la aplicación, y un XSS que se escape corre sin nada que lo frene.',
+          learn: 'Servir el build en el mismo origen que la API, desplegar una CSP primero en report-only y después en bloqueo, y mandar las cabeceras de la API desde un solo lugar.',
+          stack: ['PHP 8.3', 'XAMPP', 'MariaDB'] },
+        { id: 'web10', num: 'WEB10', title: 'Carreras y lógica de negocio', tier: 'core', status: 'ready', href: 'proyectos/web10-carreras.html', repoName: 'web10-carreras', repo: 'https://github.com/oskarcj4/Sistema-Control-Practicas', mods: ['m83', 'm39'], front: false,
+          excuse: 'Dos reclutadores confirman a la vez, y el estudiante recibe "aceptada" y "rechazada" por la misma postulación.',
+          learn: 'Provocar cuatro carreras con curl --parallel y cerrarlas con la herramienta que le toca a cada una: la llave única, el UPDATE condicional o la transacción con SELECT … FOR UPDATE.',
+          stack: ['PHP 8.3', 'XAMPP', 'MariaDB'] }
+      ]
+    }
   ]
 };

@@ -86,6 +86,20 @@
         </table>
       </div>
 
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Piensa en la memoria de las 4 GPUs como un estacionamiento. Los pesos del modelo son autos que nunca se mueven y ocupan casi la mitad. El resto son lugares libres para las conversaciones: cada token de cada conversación activa ocupa un lugar (su KV cache). Cuántas conversaciones caben depende de cuántos lugares quedan y de cuántos tokens trae cada una.</p>
+      </aside>
+
+      <p><b>Cómo leer esta tabla, paso a paso.</b> Cada fila usa la anterior; las cuentas se pueden rehacer con una calculadora:</p>
+      <ol class="steps">
+        <li><span class="step-title">Pesos</span>Cada parámetro en BF16 ocupa 2 bytes: 70.6 mil millones × 2 = 141.2 mil millones de bytes, unos 141 GB. Eso no cambia nunca mientras la réplica corre.</li>
+        <li><span class="step-title">KV cache por token</span>Por cada token, el modelo guarda dos vectores (K y V) en cada una de sus 80 capas; cada uno tiene 8 cabezas de 128 números, de 2 bytes cada número: 2 × 80 × 8 × 128 × 2 = 327&#8239;680 bytes, unos 320 kB por token.</li>
+        <li><span class="step-title">Cuántos tokens caben</span>Lo que queda libre, ~137 GB, dividido por lo que pesa un token: 137&#8239;000&#8239;000&#8239;000 ÷ 327&#8239;680 ≈ 418&#8239;000 tokens repartidos entre todas las conversaciones de la réplica.</li>
+        <li><span class="step-title">Cuántas conversaciones</span>Si cada conversación activa trae en promedio ~6&#8239;500 tokens de contexto: 418&#8239;000 ÷ 6&#8239;500 ≈ 64. De ahí sale el "64 streams por réplica" que usa todo el módulo.</li>
+        <li><span class="step-title">Prefill</span>Leer el prompt cuesta ~2 operaciones por parámetro y por token: 2 × 70.6 mil millones = 141.2 mil millones de FLOPs por token. Las 4 GPUs, al 50&#8239;% de su pico, hacen 4 × 989 × 0.5 ≈ 1&#8239;978 billones de FLOPs por segundo: 1&#8239;978 billones ÷ 141.2 mil millones ≈ 14&#8239;000 tokens por segundo.</li>
+      </ol>
+
       <p>Ahora, la flota. En el pico hay 6&#8239;000 conversaciones generando a la vez. A 64 por réplica hacen falta 94 réplicas, y con un objetivo de uso del 75&#8239;% para absorber ráfagas, 125. Son 500 H100: a 4 dólares por GPU y hora, 1.46 millones de dólares por mes. Con números así, cada punto porcentual de eficiencia vale unos 15&#8239;000 dólares por mes, y el router y el autoscaler son las dos piezas que más la mueven.</p>
 
       
@@ -580,6 +594,58 @@ def match(index, hashes, replicas):
         hits[r] = n
     return hits</code></pre>
 
+      <p><b>Cómo leer este código.</b> <code>block_hashes</code> corta el prompt en bloques de 16 tokens y le pone a cada bloque una "huella" (un hash). La clave está en que cada huella se calcula con el bloque <i>y</i> con la huella anterior, así que la huella del bloque 3 resume los bloques 1, 2 y 3 juntos. Los tokens que no completan un bloque se quedan sin huella. <code>match</code> recorre, para cada réplica, las huellas en orden y cuenta cuántas seguidas tiene en su caché; se detiene en la primera que falta.</p>
+
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Es como el hash de un commit de git: incluye el hash de su commit padre. Dos ramas tienen el mismo hash en un commit solo si toda la historia hasta ahí es idéntica. Aquí pasa lo mismo con los bloques de un prompt: basta con comparar una huella para saber que todo lo anterior coincide.</p>
+      </aside>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 256" role="img" aria-labelledby="fjr19at fjr19ad">
+<title id="fjr19at">Huellas encadenadas de dos prompts</title>
+<desc id="fjr19ad">Dos prompts cortados en bloques de 16 tokens. El prompt A tiene los bloques B1 y B2 con el prompt de sistema, el bloque B3 con su historial y 9 tokens sueltos que no forman bloque y no llevan huella. Las huellas son h1 igual a H de B1, h2 igual a H de h1 más B2, h3 igual a H de h2 más B3. El prompt B comparte B1 y B2, así que comparte h1 y h2, pero su tercer bloque es otro historial y su huella h3 prima es distinta. Abajo, el índice: la réplica R2 guardó h1, h2 y h3, así que para el prompt A coinciden 3 bloques, 48 tokens, y para el prompt B solo 2, 32 tokens.</desc>
+<text class="dg-label" x="20" y="56">Prompt A</text>
+<text class="dg-tiny" x="20" y="74">57 tokens</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="110" y="34" width="136" height="48" rx="8"/>
+<text class="dg-small" x="178" y="54" text-anchor="middle">B1</text>
+<text class="dg-tiny" x="178" y="72" text-anchor="middle">sistema, 1 a 16</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="260" y="34" width="136" height="48" rx="8"/>
+<text class="dg-small" x="328" y="54" text-anchor="middle">B2</text>
+<text class="dg-tiny" x="328" y="72" text-anchor="middle">sistema, 17 a 32</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="410" y="34" width="136" height="48" rx="8"/>
+<text class="dg-small" x="478" y="54" text-anchor="middle">B3</text>
+<text class="dg-tiny" x="478" y="72" text-anchor="middle">historial de A</text>
+<rect class="dg-box" style="stroke-dasharray:6 4" x="560" y="34" width="190" height="48" rx="8"/>
+<text class="dg-small" x="655" y="54" text-anchor="middle">9 tokens sueltos</text>
+<text class="dg-tiny" x="655" y="72" text-anchor="middle">no llenan un bloque: sin huella</text>
+<text class="dg-tiny dg-mono" x="178" y="100" text-anchor="middle">h1 = H(B1)</text>
+<text class="dg-tiny dg-mono" x="328" y="100" text-anchor="middle">h2 = H(h1+B2)</text>
+<text class="dg-tiny dg-mono" x="478" y="100" text-anchor="middle">h3 = H(h2+B3)</text>
+<text class="dg-label" x="20" y="146">Prompt B</text>
+<text class="dg-tiny" x="20" y="164">otra conversación</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="110" y="124" width="136" height="48" rx="8"/>
+<text class="dg-small" x="178" y="144" text-anchor="middle">B1</text>
+<text class="dg-tiny" x="178" y="162" text-anchor="middle">igual que en A</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="260" y="124" width="136" height="48" rx="8"/>
+<text class="dg-small" x="328" y="144" text-anchor="middle">B2</text>
+<text class="dg-tiny" x="328" y="162" text-anchor="middle">igual que en A</text>
+<rect class="dg-box" x="410" y="124" width="136" height="48" rx="8"/>
+<text class="dg-small" x="478" y="144" text-anchor="middle">B3'</text>
+<text class="dg-tiny" x="478" y="162" text-anchor="middle">historial de B</text>
+<text class="dg-tiny" x="560" y="144">Desde aquí todo cambia: cualquier</text>
+<text class="dg-tiny" x="560" y="162">bloque siguiente arrastra h3'.</text>
+<text class="dg-tiny dg-mono" x="178" y="190" text-anchor="middle">h1 (igual)</text>
+<text class="dg-tiny dg-mono" x="328" y="190" text-anchor="middle">h2 (igual)</text>
+<text class="dg-tiny dg-mono" x="478" y="190" text-anchor="middle">h3' (distinta)</text>
+<rect class="dg-box dg-box--em" x="110" y="206" width="640" height="38" rx="8"/>
+<text class="dg-small" x="430" y="230" text-anchor="middle">Índice: R2 guardó h1, h2 y h3. match(A) = 3 bloques (48 tokens); match(B) = 2 bloques (32)</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 19.6.a.</b> Cada huella resume su bloque y todos los anteriores. Por eso alcanza con contar huellas seguidas: en cuanto una no coincide, las siguientes tampoco pueden coincidir.</figcaption>
+      </figure>
+
       
       <figure class="figure">
         <div class="figure-frame">
@@ -710,6 +776,15 @@ def match(index, hashes, replicas):
         <figcaption><b>Figura 19.8.</b> La regla del router de este módulo: primero el techo de carga, después el prefijo más largo. La réplica que tiene todo el prefijo pierde si ya está sobrecargada.</figcaption>
       </figure>
 
+      <p><b>La regla, paso a paso, con números de ejemplo.</b> Ocho réplicas tienen ahora 40, 44, 56, 38, 42, 46, 30 y 24 streams activos, y llega una request cuyo prefijo ocupa 530 bloques:</p>
+      <ol class="steps">
+        <li><span class="step-title">Promedio</span>(40 + 44 + 56 + 38 + 42 + 46 + 30 + 24) ÷ 8 = 320 ÷ 8 = 40 streams.</li>
+        <li><span class="step-title">Techo</span>Con ε = 0.25, el techo es 1.25 × 40 = 50 streams. La réplica 3, con 56, queda fuera aunque tenga los 530 bloques en su caché.</li>
+        <li><span class="step-title">Prefijo más largo</span>Entre las siete que quedan, el índice dice cuántos bloques seguidos tiene cada una. Si la réplica 6 (46 streams) tiene 410 y ninguna otra tiene más, gana la 6: solo calcula los 120 bloques que le faltan.</li>
+        <li><span class="step-title">Empate o nada en caché</span>Si ninguna tiene el prefijo, la regla se reduce a elegir una réplica poco cargada, como en la sección 19.5.</li>
+      </ol>
+      <p>El ε es la perilla entre los dos extremos: con ε muy grande es afinidad pura (nadie queda fuera del techo); con ε cercano a cero es balanceo puro (casi cualquier diferencia de carga rompe la afinidad).</p>
+
       <p>Compara las políticas con las mismas conversaciones: ocho réplicas, cuatro apps con prompts de sistema de distinto largo y conversaciones de varios turnos.</p>
 
       <div data-sim="router"></div>
@@ -763,6 +838,15 @@ def match(index, hashes, replicas):
       </ul>
 
       <p>El Horizontal Pod Autoscaler de Kubernetes calcula <code>deseadas = ceil(actuales × métrica / objetivo)</code>, ignora las diferencias menores al 10&#8239;% y, para bajar, toma la recomendación más alta de los últimos 300 segundos. <span class="badge badge--doc">Documentado</span> Con 100 réplicas, un uso de KV cache del 92&#8239;% y un objetivo del 75&#8239;%: ceil(100 × 0.92 / 0.75) = 123 réplicas.</p>
+
+      <p><b>La fórmula, paso a paso.</b></p>
+      <ol class="steps">
+        <li><span class="step-title">Cuánto se pasa del objetivo</span>0.92 ÷ 0.75 ≈ 1.227: la flota está un 22.7&#8239;% por encima de donde se la quiere.</li>
+        <li><span class="step-title">¿Vale la pena moverse?</span>La diferencia supera el 10&#8239;% de tolerancia, así que el HPA actúa. Con un uso del 80&#8239;%, en cambio, 0.80 ÷ 0.75 ≈ 1.067: menos del 10&#8239;%, y no cambia nada. La tolerancia evita que la flota suba y baje por ruido.</li>
+        <li><span class="step-title">Cuántas réplicas</span>100 × 1.227 ≈ 122.7, y se redondea hacia arriba (<code>ceil</code>): 123. Hacia arriba porque media réplica no existe y quedarse corto es peor que sobrar una.</li>
+        <li><span class="step-title">Para bajar, espera</span>Si dentro de los últimos 300 segundos alguna lectura pidió 123 réplicas, el HPA no baja de 123 aunque la lectura de ahora pida 100. Bajar es lento a propósito.</li>
+      </ol>
+
 
       
       <figure class="figure">
@@ -966,6 +1050,15 @@ def match(index, hashes, replicas):
 
       <p>Con 100 réplicas en el pico y un crecimiento del 3&#8239;% por minuto: un nodo nuevo tarda 8.7 minutos y necesita 30 réplicas de colchón, 350&#8239;400 dólares por mes; con los pesos en NVMe, 84 s y 5 réplicas, 58&#8239;400 dólares; con un pool precalentado, 27 s y 2 réplicas, 23&#8239;360 dólares. Acortar el arranque se paga solo, y lo que más pesa es no depender de conseguir un nodo en el momento del pico.</p>
 
+      <p><b>De dónde salen esos colchones.</b> Un crecimiento del 3&#8239;% por minuto se compone, como un interés: después de <i>m</i> minutos la demanda vale 1.03<sup><i>m</i></sup> veces la de ahora. El colchón tiene que cubrir lo que crece mientras arranca la réplica nueva:</p>
+      <ol class="steps">
+        <li><span class="step-title">Nodo nuevo, 8.7 min</span>1.03<sup>8.7</sup> ≈ 1.293: la demanda crece un 29.3&#8239;%. Sobre 100 réplicas son 29.3, y redondeando hacia arriba, 30. Cuestan 30 × 4 GPUs × 4 USD × 730 h = 350&#8239;400 USD por mes.</li>
+        <li><span class="step-title">Pesos en NVMe, 84 s</span>84 s son 1.4 min: 1.03<sup>1.4</sup> ≈ 1.042, unas 4.2 réplicas, es decir 5. Son 5 × 16 × 730 = 58&#8239;400 USD.</li>
+        <li><span class="step-title">Pool precalentado, 27 s</span>27 s son 0.45 min: 1.03<sup>0.45</sup> ≈ 1.013, unas 1.3 réplicas, es decir 2. Son 2 × 16 × 730 = 23&#8239;360 USD (más lo que cueste el propio pool).</li>
+      </ol>
+      <p>La regla que queda: el colchón es proporcional a cuánto tarda el arranque. Cada minuto que le quitas al cold start son réplicas que no tienes que pagar mientras esperan.</p>
+
+
       <h2 id="spot"><span class="sec-num">19.9</span>Preemption, spot y drenaje</h2>
 
       <aside class="callout callout--simple">
@@ -1051,6 +1144,12 @@ def match(index, hashes, replicas):
 
       <p>El router reenvía cada token al cliente, así que conoce el prompt y todo lo que ya se generó. Para continuar, manda a otra réplica el prompt más los tokens generados como comienzo de la respuesta, con <code>max_tokens</code> reducido en lo que ya salió. La réplica nueva hace el prefill de todo, unos 0.6 s para 8&#8239;700 tokens, y sigue generando en el mismo stream. El cliente ve una pausa, no un error. El mismo mecanismo salva una réplica que muere sin aviso: el escenario "Muere una réplica a mitad del decode" del mapa.</p>
 
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Es como un dictado a dos manos. Si la persona que escribe tiene que irse a mitad de una carta, la siguiente no empieza de cero: lee todo lo que ya está escrito (eso es el prefill de la réplica nueva) y continúa desde la última palabra. Quien recibe la carta solo nota una pausa. Lo que no garantiza es que la carta termine con las mismas palabras que habría elegido la primera persona.</p>
+      </aside>
+
+
       
       <figure class="figure">
         <div class="figure-frame">
@@ -1134,6 +1233,48 @@ def match(index, hashes, replicas):
       <h3 id="fallback-regiones">Cuánto sobra para perder una región</h3>
 
       <p>Con R regiones, cada una al uso u, la caída de una deja a las demás en u × R / (R − 1). Para absorberla sin recortar, u ≤ (R − 1) / R: el 50&#8239;% con dos regiones, el 67&#8239;% con tres, el 75&#8239;% con cuatro. Con GPUs eso es caro: con tres regiones, un tercio de la flota está parada en un día normal. Muchos equipos eligen otra cosa: trabajan más cargados y deciden de antemano a quién recortan.</p>
+
+      <p><b>La fórmula, paso a paso, con tres regiones al 70&#8239;%.</b></p>
+      <ol class="steps">
+        <li><span class="step-title">Trabajo total</span>Cada región hace el 70&#8239;% de lo que puede: entre las tres, 3 × 0.70 = 2.1 "regiones llenas" de trabajo.</li>
+        <li><span class="step-title">Cae una</span>Ese mismo trabajo se reparte entre 2: 2.1 ÷ 2 = 1.05. Cada sobreviviente tendría que trabajar al 105&#8239;%, y no puede.</li>
+        <li><span class="step-title">El límite</span>Para que las que quedan lleguen justo al 100&#8239;%: u × 3 ÷ 2 ≤ 1, o sea u ≤ 2/3 ≈ 67&#8239;%. En general, u ≤ (R − 1) / R.</li>
+      </ol>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="fjr19bt fjr19bd">
+<title id="fjr19bt">Cuánto se puede usar cada región según cuántas haya</title>
+<desc id="fjr19bd">Tres barras de 0 a 100 por ciento. Con 2 regiones, cada una puede usarse hasta el 50 por ciento y deja 50 libre. Con 3, hasta el 67 y deja 33. Con 4, hasta el 75 y deja 25. En los tres casos, si cae una región, las que quedan llegan exactamente al 100 por ciento. Más regiones significan menos reserva en cada una, porque la carga de la que cae se reparte entre más.</desc>
+<text class="dg-tiny" x="200" y="26" text-anchor="middle">0 %</text>
+<text class="dg-tiny" x="600" y="26" text-anchor="middle">100 %</text>
+<text class="dg-label" x="20" y="58">2 regiones</text>
+<text class="dg-tiny" x="20" y="76">quedaría 1</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="200" y="40" width="200" height="40" rx="6"/>
+<text class="dg-small" x="300" y="65" text-anchor="middle">uso hasta 50 %</text>
+<rect class="dg-box" style="stroke-dasharray:6 4" x="400" y="40" width="200" height="40" rx="6"/>
+<text class="dg-tiny" x="500" y="65" text-anchor="middle">libre: 50 %</text>
+<text class="dg-tiny dg-mono" x="616" y="65">0.50 × 2 ÷ 1 = 100 %</text>
+<text class="dg-label" x="20" y="118">3 regiones</text>
+<text class="dg-tiny" x="20" y="136">quedarían 2</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="200" y="100" width="267" height="40" rx="6"/>
+<text class="dg-small" x="333" y="125" text-anchor="middle">uso hasta 67 %</text>
+<rect class="dg-box" style="stroke-dasharray:6 4" x="467" y="100" width="133" height="40" rx="6"/>
+<text class="dg-tiny" x="533" y="125" text-anchor="middle">libre: 33 %</text>
+<text class="dg-tiny dg-mono" x="616" y="125">2/3 × 3 ÷ 2 = 100 %</text>
+<text class="dg-label" x="20" y="178">4 regiones</text>
+<text class="dg-tiny" x="20" y="196">quedarían 3</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="200" y="160" width="300" height="40" rx="6"/>
+<text class="dg-small" x="350" y="185" text-anchor="middle">uso hasta 75 %</text>
+<rect class="dg-box" style="stroke-dasharray:6 4" x="500" y="160" width="100" height="40" rx="6"/>
+<text class="dg-tiny" x="550" y="185" text-anchor="middle">libre: 25 %</text>
+<text class="dg-tiny dg-mono" x="616" y="185">0.75 × 4 ÷ 3 = 100 %</text>
+<text class="dg-small" x="20" y="228">Más regiones, menos reserva en cada una: la carga de la que cae se reparte entre más.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 19.13.a.</b> El uso máximo de cada región para sobrevivir a la caída de una, sin recortar a nadie. Con tres regiones al 70&#8239;% ya te pasaste del 67&#8239;%: por eso la figura siguiente tiene que recortar.</figcaption>
+      </figure>
+
 
       <figure class="figure">
         <div class="figure-frame">

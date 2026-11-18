@@ -63,6 +63,13 @@
 
 <h2 id="modelo"><span class="sec-num">37.1</span>El modelo: responsabilidad compartida y mínimo privilegio</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>En la nube hay dos responsables: el proveedor cuida las máquinas, los edificios y la red física; tú cuidas lo que configuras encima. Casi todos los problemas vienen de tu parte: un permiso de más o un archivo público. La regla que guía todo el módulo es que cada uno tenga solo los permisos que necesita.</p>
+  <p class="jr-like"><b>Es como</b> alquilar un departamento: el dueño cuida la estructura, el ascensor y la portería, pero si dejas tu puerta abierta o le das copia de tu llave a cualquiera, eso es asunto tuyo.</p>
+  <dl class="jr-words"><dt>Responsabilidad compartida</dt><dd>el reparto de qué asegura el proveedor (de la nube) y qué aseguras tú (en la nube).</dd><dt>Mínimo privilegio</dt><dd>cada persona o servicio recibe solo los permisos que su tarea exige.</dd><dt>Superficie de ataque</dt><dd>la suma de todo lo que un atacante podría usar; menos permisos, menos superficie.</dd></dl>
+</aside>
+
 <p>El primer malentendido que hay que deshacer: la nube no te hace seguro, ni inseguro. Reparte la responsabilidad. El proveedor asegura la seguridad <b>de</b> la nube —el hardware, el hipervisor, la red física, los centros de datos—; tú aseguras lo que pones <b>en</b> la nube —la configuración, los permisos, los datos, el código—. <span class="badge badge--doc">Documentado</span> AWS, Azure y Google Cloud publican este modelo de responsabilidad compartida, y la gran mayoría de las brechas en la nube no son fallos del proveedor, sino configuraciones propias: un bucket abierto, un rol con permisos de más, un secreto en un repositorio.</p>
 
 <figure class="figure">
@@ -130,9 +137,21 @@
 
 <h2 id="iam"><span class="sec-num">37.2</span>IAM: identidades y permisos</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>IAM es el sistema que decide quién puede hacer qué en tu cuenta de la nube. Escribes reglas en JSON que dicen "este rol puede leer este bucket" y la nube las aplica en cada llamada. Lo importante: usar roles con credenciales que vencen solas, no llaves fijas, y nunca dar permiso a todo con <code>*</code>.</p>
+  <p class="jr-like"><b>Es como</b> las tarjetas de un hotel: cada una abre solo ciertas puertas y deja de funcionar el día del checkout; perder una no te deja entrar a todo el edificio.</p>
+  <dl class="jr-words"><dt>Rol</dt><dd>una identidad que asume un servicio o una máquina y que entrega credenciales temporales.</dd><dt>Política</dt><dd>documento JSON que permite o niega acciones sobre recursos.</dd><dt>Principal</dt><dd>quien hace la petición: un usuario, un rol o un servicio.</dd><dt>ARN</dt><dd>el nombre único de un recurso en AWS, como <code>arn:aws:s3:::facturas-acme</code>.</dd><dt>Deny explícito</dt><dd>una regla que niega; gana siempre sobre cualquier permiso.</dd></dl>
+</aside>
+
 <p>El <dfn data-term="iam">IAM</dfn> (gestión de identidades y accesos) es el plano de control de quién puede hacer qué en toda la cuenta de la nube. Tiene tres piezas: <b>identidades</b> (usuarios y, sobre todo, <b>roles</b>), <b>políticas</b> (reglas en JSON que permiten o niegan acciones sobre recursos) y <b>condiciones</b> (restricciones extra: desde qué IP, con qué etiqueta, a qué hora). Es RBAC y ABAC (los <a href="m35-seguridad-bd.html#rbac">modelos que viste en M35</a>) aplicados a la infraestructura entera.</p>
 
 <p>La primera regla es <b>roles, no llaves largas</b>. Una llave de acceso permanente incrustada en un servidor es una contraseña eterna esperando a filtrarse. En su lugar, cada carga de trabajo asume un <b>rol</b>: la máquina o el contenedor reciben credenciales <b>temporales</b> que rotan solas cada pocas horas, sin que nadie las copie a ningún lado.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una llave de acceso permanente es como hacer una copia de la llave de tu casa y pegarla debajo del felpudo: funciona para siempre y cualquiera que la encuentre entra. Un rol es como la tarjeta de un hotel: el sistema te la entrega al llegar, abre solo tu habitación y deja de funcionar sola a las pocas horas. Si alguien la roba, el daño tiene fecha de vencimiento.</p>
+</aside>
 
 <pre data-lang="json"><code>{
   "Version": "2012-10-17",
@@ -143,6 +162,15 @@
     "Condition": { "StringEquals": { "aws:PrincipalTag/tenant": "acme" } }
   }]
 }</code></pre>
+
+<p><b>Cómo leer esta política, línea por línea.</b> Se lee como una oración: "<i>permite</i> estas <i>acciones</i> sobre este <i>recurso</i>, <i>siempre que</i> se cumpla esta condición".</p>
+<ol class="steps">
+  <li><span class="step-title">Version</span>La versión del lenguaje de políticas, no la fecha de hoy. <code>2012-10-17</code> es la vigente y se copia tal cual.</li>
+  <li><span class="step-title">Effect</span><code>Allow</code> permite y <code>Deny</code> niega. Lo que ninguna regla permite queda negado por defecto.</li>
+  <li><span class="step-title">Action</span>Las operaciones exactas, con el formato <code>servicio:Operación</code>. Aquí, leer (<code>GetObject</code>) y escribir (<code>PutObject</code>) objetos; borrar, listar o cambiar permisos no están, así que quedan negados.</li>
+  <li><span class="step-title">Resource</span>Sobre qué se aplica, con su ARN. <code>facturas-acme/*</code> significa "cualquier objeto dentro del bucket <code>facturas-acme</code>", y ningún otro bucket.</li>
+  <li><span class="step-title">Condition</span>Un filtro extra: solo vale si el principal que llama tiene la etiqueta <code>tenant</code> igual a <code>acme</code>. Un servicio de otro tenant con la misma política no pasa.</li>
+</ol>
 
 <p>Esa política dice exactamente lo que el servicio necesita: leer y escribir objetos, solo en <b>un</b> bucket, solo si el principal pertenece al tenant correcto. Compárala con el antipatrón que causa la mitad de los incidentes:</p>
 
@@ -158,15 +186,73 @@
 
 <h2 id="red"><span class="sec-num">37.3</span>La red: VPC, subredes y salida</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Tu sistema vive en una red privada dentro de la nube. Una parte da a internet (donde entra el tráfico de los usuarios) y otra parte no tiene salida directa (donde están los servicios y la base). Además controlas hacia dónde puede salir cada servicio, no solo quién entra.</p>
+  <p class="jr-like"><b>Es como</b> un edificio de oficinas: la recepción da a la calle, pero las oficinas y el archivo no tienen puerta a la calle; para llegar a ellos hay que pasar por adentro.</p>
+  <dl class="jr-words"><dt>VPC</dt><dd>tu red privada y aislada dentro de la nube.</dd><dt>Subred pública</dt><dd>la parte de la VPC que puede recibir tráfico de internet.</dd><dt>Subred privada</dt><dd>la parte sin ruta directa a internet; ahí van los servicios y la base.</dd><dt>Endpoint privado</dt><dd>un acceso a un servicio de la nube que no pasa por internet.</dd><dt>Egress</dt><dd>el tráfico de salida; controlarlo contiene a un servicio comprometido.</dd></dl>
+</aside>
+
 <p>La <dfn data-term="vpc">VPC</dfn> (red privada virtual) es tu propia red aislada dentro de la nube. Se divide en subredes: la <b>pública</b>, que puede recibir tráfico de internet (ahí viven el balanceador y la WAF), y la <b>privada</b>, sin ruta directa a internet, donde van los servicios y la base. La base de datos nunca tiene IP pública; se llega a ella solo desde dentro de la VPC.</p>
 
 <p>Los <dfn data-term="private-endpoint">endpoints privados</dfn> cierran una fuga sutil: por defecto, un servicio que llama a otro servicio de la nube (el almacén de objetos, el gestor de secretos) sale a internet y vuelve a entrar. Un endpoint privado lo mantiene dentro de la red del proveedor, sin pasar por la internet pública. Menos superficie, y el tráfico no se puede interceptar fuera.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 236" role="img" aria-labelledby="fjr37at fjr37ad">
+<title id="fjr37at">Sin y con endpoint privado</title>
+<desc id="fjr37ad">Arriba, sin endpoint privado: un servicio de la subred privada que pide un secreto sale a la internet pública y vuelve a entrar al gestor de secretos. Abajo, con endpoint privado: el mismo pedido va por un endpoint dentro de la red del proveedor y nunca toca internet.</desc>
+<defs><marker id="fjr37aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="28" text-anchor="start">Sin endpoint privado: sale a internet y vuelve</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="42" width="170" height="48" rx="8"/>
+<text class="dg-small" x="105" y="62" text-anchor="middle">Servicio</text>
+<text class="dg-tiny" x="105" y="78" text-anchor="middle">en la subred privada</text>
+<rect class="dg-warnbox" x="300" y="42" width="170" height="48" rx="8"/>
+<text class="dg-small" x="385" y="62" text-anchor="middle">Internet pública</text>
+<text class="dg-tiny" x="385" y="78" text-anchor="middle">más camino expuesto</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="580" y="42" width="170" height="48" rx="8"/>
+<text class="dg-small" x="665" y="62" text-anchor="middle">Gestor de secretos</text>
+<text class="dg-tiny" x="665" y="78" text-anchor="middle">servicio de la nube</text>
+<path class="dg-edge" d="M190 66 L298 66" marker-end="url(#fjr37aa)"/>
+<path class="dg-edge" d="M470 66 L578 66" marker-end="url(#fjr37aa)"/>
+<text class="dg-group" x="20" y="128" text-anchor="start">Con endpoint privado: no sale de la red del proveedor</text>
+<path class="dg-frame" d="M10 136 H760 V212 H10 Z"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="148" width="170" height="48" rx="8"/>
+<text class="dg-small" x="105" y="168" text-anchor="middle">Servicio</text>
+<text class="dg-tiny" x="105" y="184" text-anchor="middle">en la subred privada</text>
+<rect class="dg-ok" x="300" y="148" width="170" height="48" rx="8"/>
+<text class="dg-small" x="385" y="168" text-anchor="middle">Endpoint privado</text>
+<text class="dg-tiny" x="385" y="184" text-anchor="middle">una puerta dentro de la VPC</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="580" y="148" width="170" height="48" rx="8"/>
+<text class="dg-small" x="665" y="168" text-anchor="middle">Gestor de secretos</text>
+<text class="dg-tiny" x="665" y="184" text-anchor="middle">mismo servicio</text>
+<path class="dg-edge" d="M190 172 L298 172" marker-end="url(#fjr37aa)"/>
+<path class="dg-edge" d="M470 172 L578 172" marker-end="url(#fjr37aa)"/>
+<text class="dg-tiny" x="385" y="228" text-anchor="middle">el recuadro es la red del proveedor: el pedido nunca cruza la internet pública</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 37.3.</b> El mismo pedido de un secreto, sin y con endpoint privado. Sin él, el tráfico sale a internet y vuelve a entrar; con él, se queda dentro de la red del proveedor. La flecha es la misma: lo que cambia es por dónde pasa.</figcaption>
+</figure>
+
+<p class="jr-like"><b>Cómo leer la figura.</b> Mira la caja del medio de cada fila: es por dónde pasa el pedido. Arriba es la internet pública (marcada como advertencia); abajo es una puerta dentro de tu propia red. El servicio y el gestor de secretos no cambian: cambia el camino, y con él cuánto queda expuesto.</p>
 
 <p>El cortafuegos de la VPC ya lo conoces: los <a href="m32-firewalls.html#nube">grupos de seguridad y las NACL de M32</a> deciden qué entra y sale de cada subred. Dos cosas que M32 dejó señaladas y aquí se confirman: la <a href="m32-firewalls.html#entrada-salida">salida controlada</a> (egress) es tan importante como la entrada —un servicio comprometido que no puede llamar a su centro de control es un servicio contenido—, y la <a href="m28-cloudflare.html#ddos">WAF en el borde</a>, como viste en M28, filtra la capa 7 antes de que el tráfico toque tu red. La WAF va delante de todo, en la subred pública o en el borde del proveedor.</p>
 
 <h2 id="mtls"><span class="sec-num">37.4</span>mTLS: identidad entre servicios</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Que una petición venga de una IP interna no prueba quién la manda. Con mTLS, cada servicio muestra un certificado que dice quién es y revisa el del otro antes de hablar. Los certificados duran minutos y se renuevan solos, así que nadie los copia a mano.</p>
+  <p class="jr-like"><b>Es como</b> dos guardias que se encuentran en un pasillo y, antes de pasarse un paquete, cada uno le muestra al otro su credencial con foto, emitida por la misma oficina.</p>
+  <dl class="jr-words"><dt>TLS</dt><dd>el cifrado de HTTPS; normalmente solo el cliente verifica al servidor.</dd><dt>mTLS</dt><dd>TLS mutuo: los dos lados verifican el certificado del otro.</dd><dt>Certificado</dt><dd>documento firmado que liga una identidad con una clave pública.</dd><dt>SPIFFE y SPIRE</dt><dd>un estándar de identidad para servicios y el programa que la emite.</dd><dt>SVID</dt><dd>el certificado de identidad de corta vida que recibe cada servicio.</dd></dl>
+</aside>
+
 <p>Una vez dentro de la VPC, ¿un servicio puede confiar en otro solo porque le llega desde una IP interna? No. Una IP no prueba identidad: si un atacante llega a un pod, hereda su IP y su posición en la red. La respuesta es <dfn data-term="mtls">mTLS</dfn> (TLS mutuo): no solo el cliente verifica al servidor (como en el TLS de siempre), también el servidor verifica al cliente. Cada servicio presenta un certificado que prueba quién es, y verifica el del otro antes de hablar.</p>
+
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>El TLS de siempre es como entrar a la web de tu banco: tú compruebas que el sitio es el banco (el candado), pero el banco no te pide credencial en ese paso; eso lo hace después con tu contraseña. En mTLS, los dos se muestran la credencial al mismo tiempo, como dos guardias que antes de pasarse un paquete revisan uno la placa del otro. Y la placa de cada guardia vence en minutos: si alguien la roba, casi no le dura.</p>
+</aside>
 
 <p>El problema práctico es de dónde salen esos certificados y cómo se renuevan sin que nadie los copie a mano. Ahí entra <dfn data-term="spiffe">SPIFFE</dfn> (un estándar de identidad para cargas de trabajo) y su implementación SPIRE: le dan a cada servicio un SVID, un certificado de identidad de corta vida que caduca en minutos y se renueva solo. Esto retoma la <a href="m10-seguridad.html#servicios">autenticación entre servicios de M10</a> y la <a href="m03-balanceo-gateways.html#mesh-identidad">malla de servicios de M03</a>, donde el service mesh suele ser quien pone el mTLS sin tocar el código de cada servicio. El certificado en sí es el <a href="m36-criptografia.html#certificados">X.509 de M36</a>.</p>
 
@@ -210,7 +296,53 @@
 
 <h2 id="kms"><span class="sec-num">37.5</span>Claves y secretos: KMS y el gestor de secretos</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Las claves que cifran tus datos y las contraseñas de tu sistema no se guardan en el código. Las claves maestras viven en un servicio especial (KMS) del que nunca salen, y las contraseñas en un gestor de secretos que las entrega solo a quien tiene permiso y las cambia solo.</p>
+  <p class="jr-like"><b>Es como</b> la caja de seguridad de un banco: no te llevas la llave maestra a casa; vas, pides que abran tu cajita, y el banco anota cada visita.</p>
+  <dl class="jr-words"><dt>KMS</dt><dd>servicio que guarda las claves maestras y cifra o descifra con ellas por ti.</dd><dt>HSM</dt><dd>hardware que custodia claves sin dejarlas salir nunca.</dd><dt>Envelope encryption</dt><dd>una clave de datos cifra el dato y la clave maestra cifra la clave de datos.</dd><dt>Gestor de secretos</dt><dd>servicio que guarda contraseñas y tokens, los entrega por rol y los rota.</dd><dt>Rotar</dt><dd>reemplazar un secreto por uno nuevo cada cierto tiempo o tras una sospecha.</dd></dl>
+</aside>
+
 <p>En <a href="m10-seguridad.html#cifrado">M10</a> viste el <b>envelope encryption</b>: una clave de datos cifra el dato, y una clave raíz cifra la clave de datos. El <dfn data-term="kms">KMS</dfn> (servicio de gestión de claves) es quien guarda esa clave raíz, y lo hace en un <dfn data-term="hsm">HSM</dfn> (módulo de hardware para claves): un dispositivo que custodia la clave de modo que <b>nunca sale en claro</b>, ni siquiera para ti. Pides al KMS "descifra esta clave de datos" y te devuelve el resultado; la clave raíz jamás abandona el hardware. Así, si roban tu base y tus backups, sin el KMS no pueden descifrar nada (es la base del <a href="m10-seguridad.html#cifrado">borrado criptográfico</a>).</p>
+
+<p><b>Paso a paso: cómo se cifra un archivo con envelope encryption.</b> El truco es que lo grande (el archivo) se cifra en tu servicio, y al KMS solo viaja algo chico: la clave de datos, de 256 bits, es decir 32 bytes (256 / 8 = 32). Un archivo de 1&nbsp;GB no viaja nunca al KMS.</p>
+<ol class="steps">
+  <li><span class="step-title">Pedir</span>El servicio le pide al KMS una clave de datos nueva.</li>
+  <li><span class="step-title">Recibir dos copias</span>El KMS genera la clave y devuelve dos copias: una en claro y otra cifrada con la clave raíz, que nunca sale del HSM.</li>
+  <li><span class="step-title">Cifrar y olvidar</span>El servicio cifra el archivo con la copia en claro y la borra de su memoria.</li>
+  <li><span class="step-title">Guardar juntos</span>En la base o en el almacén quedan el archivo cifrado y, a su lado, la clave de datos cifrada. Ninguna de las dos sirve sola.</li>
+  <li><span class="step-title">Leer</span>Para descifrar, el servicio manda la clave cifrada al KMS; si su rol tiene permiso, el KMS devuelve la copia en claro y el servicio descifra el archivo. Cada pedido queda registrado.</li>
+</ol>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 316" role="img" aria-labelledby="fjr37bt fjr37bd">
+<title id="fjr37bt">Envelope encryption con KMS</title>
+<desc id="fjr37bd">El servicio pide una clave de datos al KMS, que vive en un HSM y guarda la clave raíz sin dejarla salir. El KMS devuelve la clave de datos en claro y cifrada. El servicio cifra el dato con la copia en claro, la borra, y guarda en la base el dato cifrado junto a la clave de datos cifrada. Para leer, hay que volver a pedir permiso al KMS.</desc>
+<defs><marker id="fjr37ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="120" width="170" height="60" rx="8"/>
+<text class="dg-small" x="105" y="146" text-anchor="middle">Servicio</text>
+<text class="dg-tiny" x="105" y="164" text-anchor="middle">con su rol de IAM</text>
+<text class="dg-tiny" x="105" y="200" text-anchor="middle">la clave en claro solo</text>
+<text class="dg-tiny" x="105" y="215" text-anchor="middle">vive un momento en memoria</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="300" y="24" width="190" height="72" rx="8"/>
+<text class="dg-small" x="395" y="50" text-anchor="middle">KMS (en un HSM)</text>
+<text class="dg-tiny" x="395" y="70" text-anchor="middle">clave raíz: nunca sale</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="580" y="196" width="170" height="68" rx="8"/>
+<text class="dg-small" x="665" y="218" text-anchor="middle">Base de datos</text>
+<text class="dg-tiny" x="665" y="236" text-anchor="middle">dato cifrado</text>
+<text class="dg-tiny" x="665" y="252" text-anchor="middle">+ clave de datos cifrada</text>
+<path class="dg-edge" d="M190 128 L298 66" marker-end="url(#fjr37ba)"/>
+<text class="dg-tiny" x="40" y="104" text-anchor="start">1. pide una clave de datos</text>
+<path class="dg-edge" d="M298 86 L196 142" marker-end="url(#fjr37ba)" style="stroke-dasharray:5 3"/>
+<text class="dg-tiny" x="262" y="140" text-anchor="start">2. en claro + cifrada</text>
+<path class="dg-edge" d="M190 168 L578 224" marker-end="url(#fjr37ba)"/>
+<text class="dg-tiny" x="200" y="234" text-anchor="start">3. cifra, borra la copia en claro y guarda</text>
+<text class="dg-tiny" x="385" y="290" text-anchor="middle">Si roban la base, se llevan dos cosas cifradas: sin permiso en el KMS no se descifra nada.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 37.5.</b> Envelope encryption en tres flechas. El KMS entrega una clave de datos en dos copias; el servicio usa la copia en claro y la borra; en la base solo quedan cosas cifradas. Leer exige volver al KMS, con permiso y con registro.</figcaption>
+</figure>
 
 <p>Las contraseñas y los tokens —la credencial de la base de <a href="m35-seguridad-bd.html#credenciales">M35</a>, una llave de API de un tercero— van en un <dfn data-term="secrets-manager">gestor de secretos</dfn>, no en el código ni en una variable de entorno versionada. El gestor los cifra con el KMS, los entrega solo a los roles autorizados, los <b>rota</b> de forma automática y registra cada acceso. El servicio los pide al arrancar; nunca viajan en el repositorio.</p>
 
@@ -228,6 +360,13 @@ conectar(usuario="app_rw", password=secreto["password"])</code></pre>
 </aside>
 
 <h2 id="zero-trust"><span class="sec-num">37.6</span>Zero trust: nunca confíes, siempre verifica</h2>
+
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>El modelo viejo confiaba en todo lo que estaba "adentro" de la red. Zero trust dice: no hay adentro de confianza; cada petición prueba quién es y qué puede hacer, en cada salto. No es un producto nuevo, sino la suma de lo que ya viste: mTLS, IAM y reglas de red finas.</p>
+  <p class="jr-like"><b>Es como</b> un hospital donde cada puerta (quirófano, farmacia, archivo) pide tu credencial, en lugar de un edificio con un solo guardia en la entrada y todas las puertas abiertas adentro.</p>
+  <dl class="jr-words"><dt>Perímetro</dt><dd>la muralla única que separa afuera de adentro.</dd><dt>Zero trust</dt><dd>"nunca confíes, siempre verifica": cada petición se autentica y se autoriza.</dd><dt>Microsegmentación</dt><dd>reglas de red que dejan a cada servicio hablar solo con quien debe.</dd><dt>Movimiento lateral</dt><dd>saltar de un equipo comprometido a otros dentro de la red.</dd></dl>
+</aside>
 
 <p>Todo lo anterior apunta a un cambio de modelo. El modelo viejo es el del <b>perímetro</b>: una muralla (el firewall) separa el "afuera peligroso" del "adentro de confianza", y una vez dentro, todo confía en todo. Falla por una razón simple: cuando alguien cruza la muralla —un phishing, un servidor comprometido, un empleado interno—, llega a todo sin volver a probar quién es.</p>
 
@@ -288,6 +427,13 @@ conectar(usuario="app_rw", password=secreto["password"])</code></pre>
 
 <h2 id="auditoria"><span class="sec-num">37.7</span>Auditoría y guardarraíles</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Hay que poder responder "quién hizo qué y cuándo" en tu cuenta de la nube: para eso está el registro de auditoría, guardado donde nadie pueda borrarlo. Y hay reglas por encima de todos, que ni un administrador puede saltar, como "nadie apaga el registro".</p>
+  <p class="jr-like"><b>Es como</b> las cámaras de un edificio grabando a un servidor externo (cámaras de seguridad), más el reglamento del consorcio que ni el gerente puede ignorar.</p>
+  <dl class="jr-words"><dt>Plano de control</dt><dd>la API con la que se crean y cambian recursos de la nube.</dd><dt>CloudTrail</dt><dd>el registro de cada llamada a la API de AWS.</dd><dt>Append-only</dt><dd>solo se agregan entradas; nada se modifica ni se borra.</dd><dt>SCP</dt><dd>Service Control Policy: un límite de organización que ninguna cuenta puede exceder.</dd></dl>
+</aside>
+
 <p>No puedes defender lo que no ves. En la nube, la bitácora del plano de control es <b>CloudTrail</b> (o su equivalente): registra cada llamada a la API de la nube —quién creó un recurso, quién cambió un permiso, quién leyó un secreto—, con identidad, hora y origen. Es el <a href="m10-seguridad.html#audit-log">audit log</a> de M10, pero de la infraestructura entera. La regla de oro: que escriba en una cuenta aparte, de solo-adición, para que ni un atacante con permisos pueda borrar su propio rastro.</p>
 
 <p>Por encima de los permisos de cada cuenta van los <dfn data-term="scp-guardrail">guardarraíles</dfn> (en AWS, las SCP de Organizations): límites que ninguna identidad de la cuenta puede exceder, ni siquiera un administrador. Son el <b>deny explícito</b> a escala de organización: "en estas cuentas, nadie puede desactivar CloudTrail, ni usar regiones no aprobadas, ni hacer públicos los buckets". Mientras IAM dice lo que cada rol <i>puede</i> hacer, el guardarraíl fija lo que <i>nadie</i> puede hacer.</p>
@@ -303,7 +449,16 @@ conectar(usuario="app_rw", password=secreto["password"])</code></pre>
   </table>
 </div>
 
+<p class="jr-like"><b>Cómo leer esta tabla.</b> Son tres capas que se complementan, de lo más fino a lo más amplio. La política de IAM abre puertas para un rol concreto; el guardarraíl cierra puertas para todos, y gana aunque una política de IAM diga lo contrario (es un deny por encima); CloudTrail no abre ni cierra nada: mira y anota. Un ejemplo: si un desarrollador se da a sí mismo permiso para apagar CloudTrail, la política de IAM lo permitiría, el guardarraíl lo bloquea, y CloudTrail deja anotado el intento.</p>
+
 <h2 id="incidentes"><span class="sec-num">37.8</span>Cuando algo sale mal: respuesta a incidentes</h2>
+
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Algo va a salir mal tarde o temprano, así que se ensaya la respuesta: notar el problema, aislarlo, quitar la causa, volver a funcionar y aprender. El caso de Capital One muestra cómo varias capas pequeñas, si fallan juntas, terminan en una gran fuga.</p>
+  <p class="jr-like"><b>Es como</b> un simulacro de incendio: no se improvisa el día del fuego; cada uno sabe qué hacer, y después se revisa qué salió mal para mejorar el plan.</p>
+  <dl class="jr-words"><dt>Contener</dt><dd>aislar lo afectado para que el daño no se extienda.</dd><dt>Erradicar</dt><dd>quitar la causa y rotar toda credencial que pudo verse.</dd><dt>Postmortem</dt><dd>el análisis después del incidente, sin buscar culpables.</dd><dt>SSRF</dt><dd>el atacante logra que tu servidor haga una petición a donde él quiere.</dd><dt>Metadatos de la instancia (IMDS)</dt><dd>una dirección interna de la máquina que entrega datos de ella, incluidas las credenciales de su rol.</dd></dl>
+</aside>
 
 <p>Ninguna arquitectura es perfecta, así que hay que ensayar la respuesta antes de necesitarla. La <dfn data-term="incident-response">respuesta a incidentes</dfn> sigue cinco pasos en ciclo: <b>detectar</b> (una alerta, una señal rara en CloudTrail), <b>contener</b> (aislar lo afectado, cortar el acceso), <b>erradicar</b> (quitar la causa, rotar toda credencial que pudo verse), <b>recuperar</b> (restaurar desde algo limpio) y <b>aprender</b> (el <a href="m11-observabilidad.html#despliegues">postmortem sin culpables de M11</a>, que alimenta la detección de la próxima vez).</p>
 

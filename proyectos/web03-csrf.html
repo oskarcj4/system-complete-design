@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WEB03. CSRF</title>
+<meta name="description" content="Sec-Fetch-Site y Origin contra una lista exacta antes de la sesión y del token, el login protegido contra login CSRF, el Content-Type comparado entero, y una matriz de curl con dos sitios atacantes.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="web03" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>CSRF</h1>
+        <p class="lead">La cookie SameSite y el token ya están. Falta la capa que mira de dónde viene la request, y cerrar un Content-Type que deja pasar JSON como texto plano.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>WEB03</dd></div>
+          <div><dt>Plan</dt><dd>Seguridad web</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>3 a 4 h</dd></div>
+          <div><dt>Módulos</dt><dd>M74, M76</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="web03">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Ubicar las cuatro capas contra CSRF del sistema (SameSite, Fetch Metadata, Origin y el token) y decir qué frena cada una y qué deja pasar.</li>
+<li>Agregar una comprobación de <code>Sec-Fetch-Site</code> y <code>Origin</code> contra una lista exacta de orígenes, antes de la sesión y del token.</li>
+<li>Cerrar el hueco del <code>Content-Type</code>: <code>text/plain; application/json</code> pasa hoy la validación y no dispara un preflight.</li>
+<li>Probar cada capa por separado con una matriz de <code>curl</code> y desde dos sitios atacantes: uno de otro sitio y uno del mismo sitio.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>El sistema ya tiene dos defensas contra <dfn data-term="csrf">CSRF</dfn>: la cookie sale con <code>SameSite=Strict</code> y toda escritura exige el <code>X-CSRF-Token</code>, que es el HMAC de la cookie. Las dos funcionan. El problema es que cada una tiene un hueco conocido y hoy no hay nada detrás de ellas.</p>
+<ul>
+<li><b><code>SameSite</code> mira el sitio, no el origen.</b> Una página en <code>http://localhost:8081</code>, o en cualquier subdominio del mismo dominio registrable, es del mismo sitio que la API: la cookie viaja. Lo explica <a href="../modules/m76-csrf.html#samesite">M76</a>.</li>
+<li><b>El token depende de que nadie lo lea.</b> Un XSS en el frontend lo lee de la memoria de <code>apiFetch</code>. Contra eso no hay defensa de CSRF que alcance (es WEB05), pero sí conviene que el token no sea lo único.</li>
+<li><b>La validación del JSON es un <code>stripos</code>.</b> <code>readJsonInput</code> acepta cualquier <code>Content-Type</code> que <em>contenga</em> <code>application/json</code>, y <code>text/plain; application/json</code> lo contiene. Para el navegador ese tipo es <code>text/plain</code> con un parámetro raro: no pide preflight.</li>
+</ul>
+<p>Esta guía agrega la capa que falta (de dónde viene la request, dicho por el propio navegador) y cierra el <code>Content-Type</code>. Es el hallazgo H de la re-auditoría.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="fw3at fw3ad">
+<title id="fw3at">Cuatro capas, en orden</title>
+<desc id="fw3ad">Una request que escribe pasa por cuatro capas antes del endpoint. Primero, el navegador decide si manda la cookie según SameSite. Después, en PHP, Sec-Fetch-Site y Origin dicen de dónde viene; luego se lee la sesión; al final, el token CSRF. Debajo de cada caja, lo que esa capa no frena.</desc>
+<defs><marker id="fw3aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw3af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker></defs>
+<path class="dg-edge" d="M180 83 L205 83" marker-end="url(#fw3aa)"/>
+<path class="dg-edge" d="M375 83 L400 83" marker-end="url(#fw3aa)"/>
+<path class="dg-edge" d="M560 83 L585 83" marker-end="url(#fw3aa)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M95 116 L95 170" marker-end="url(#fw3aa)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M290 116 L290 170" marker-end="url(#fw3aa)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M670 116 L670 170" marker-end="url(#fw3aa)"/>
+<rect class="dg-layer" style="--c: var(--l-client)" x="10" y="50" width="170" height="66" rx="8"/>
+<text class="dg-label" x="95.0" y="81.0" text-anchor="middle">SameSite=Strict</text>
+<text class="dg-tiny" x="95.0" y="96.0" text-anchor="middle">en el navegador</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="205" y="50" width="170" height="66" rx="8"/>
+<text class="dg-label" x="290.0" y="81.0" text-anchor="middle">Sec-Fetch-Site + Origin</text>
+<text class="dg-tiny" x="290.0" y="96.0" text-anchor="middle">origen.php (nuevo)</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="400" y="50" width="160" height="66" rx="8"/>
+<text class="dg-label" x="480.0" y="81.0" text-anchor="middle">La sesión</text>
+<text class="dg-tiny" x="480.0" y="96.0" text-anchor="middle">checkAuth</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="585" y="50" width="170" height="66" rx="8"/>
+<text class="dg-label" x="670.0" y="81.0" text-anchor="middle">X-CSRF-Token</text>
+<text class="dg-tiny" x="670.0" y="96.0" text-anchor="middle">csrf.php</text>
+<rect class="dg-box" x="10" y="170" width="170" height="50" rx="8"/>
+<text class="dg-label" x="95.0" y="193.0" text-anchor="middle">no frena</text>
+<text class="dg-tiny" x="95.0" y="208.0" text-anchor="middle">el mismo sitio</text>
+<rect class="dg-box" x="205" y="170" width="170" height="50" rx="8"/>
+<text class="dg-label" x="290.0" y="193.0" text-anchor="middle">no frena</text>
+<text class="dg-tiny" x="290.0" y="208.0" text-anchor="middle">clientes sin Origin</text>
+<rect class="dg-box" x="585" y="170" width="170" height="50" rx="8"/>
+<text class="dg-label" x="670.0" y="193.0" text-anchor="middle">no frena</text>
+<text class="dg-tiny" x="670.0" y="208.0" text-anchor="middle">un XSS propio</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB03.1.</b> Cada capa tapa el hueco de la anterior. La nueva va antes de leer la sesión porque es la más barata y no necesita la base; un cliente sin <code>Origin</code> (<code>curl</code>, una app) no es un navegador al que se pueda engañar, y para él decide el token.</figcaption>
+</figure>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="fw3bt fw3bd">
+<title id="fw3bt">Tres páginas que escriben en la API</title>
+<desc id="fw3bd">Una rejilla de tres filas y cuatro columnas. Fila del frontend en localhost:5173: la cookie viaja, Origin es http://localhost:5173, Sec-Fetch-Site es same-origin a través del proxy, y pasa. Fila de atacante.test: la cookie no viaja, Origin es http://atacante.test, Sec-Fetch-Site es cross-site, y se rechaza. Fila de localhost:8081: la cookie sí viaja, Origin es http://localhost:8081, Sec-Fetch-Site es same-site, y la rechaza la capa nueva.</desc>
+<g class="dg-small">
+<text x="20" y="34">Página</text><text x="215" y="34">¿Viaja la cookie?</text><text x="370" y="34">Origin</text><text x="555" y="34">Sec-Fetch-Site</text><text x="690" y="34">Capa nueva</text>
+</g>
+<path class="dg-frame" d="M14 46 H756"/>
+<rect x="14" y="56" width="742" height="54" rx="6" class="dg-layer" style="--c: var(--l-client)"/>
+<text class="dg-label" x="24" y="80">Frontend</text><text class="dg-tiny dg-mono" x="24" y="98">localhost:5173 (proxy)</text>
+<text class="dg-label" x="215" y="88">sí</text><text class="dg-tiny dg-mono" x="370" y="88">http://localhost:5173</text><text class="dg-tiny dg-mono" x="555" y="88">same-origin</text>
+<rect x="680" y="70" width="64" height="26" rx="5" class="dg-ok"/><text class="dg-tiny" x="712" y="88" text-anchor="middle">pasa</text>
+<rect x="14" y="120" width="742" height="54" rx="6" class="dg-layer" style="--c: var(--l-external)"/>
+<text class="dg-label" x="24" y="144">Otro sitio</text><text class="dg-tiny dg-mono" x="24" y="162">atacante.test</text>
+<text class="dg-label" x="215" y="152">no (Strict)</text><text class="dg-tiny dg-mono" x="370" y="152">http://atacante.test</text><text class="dg-tiny dg-mono" x="555" y="152">cross-site</text>
+<rect x="680" y="134" width="64" height="26" rx="5" class="dg-bad"/><text class="dg-tiny" x="712" y="152" text-anchor="middle">403</text>
+<rect x="14" y="184" width="742" height="54" rx="6" class="dg-layer" style="--c: var(--l-external)"/>
+<text class="dg-label" x="24" y="208">Mismo sitio</text><text class="dg-tiny dg-mono" x="24" y="226">localhost:8081</text>
+<text class="dg-label" x="215" y="216" style="fill:var(--fail)">sí</text><text class="dg-tiny dg-mono" x="370" y="216">http://localhost:8081</text><text class="dg-tiny dg-mono" x="555" y="216">same-site</text>
+<rect x="680" y="198" width="64" height="26" rx="5" class="dg-bad"/><text class="dg-tiny" x="712" y="216" text-anchor="middle">403</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB03.2.</b> Lo que el diseño espera de cada página. La tercera fila es la importante: para <code>SameSite</code>, <code>localhost:8081</code> es el mismo sitio que la API (el puerto no cuenta), así que la cookie viaja; solo el token y la capa nueva lo frenan. Las columnas de <code>Origin</code> y <code>Sec-Fetch-Site</code> las compruebas tú en DevTools.</figcaption>
+</figure>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 308" role="img" aria-labelledby="fw3st fw3sd">
+<title id="fw3st">Una request del vecino del mismo sitio</title>
+<desc id="fw3sd">Una página en localhost:8081 manda un formulario multipart a postulaciones.php. El navegador adjunta la cookie, porque es el mismo sitio, y las cabeceras Origin y Sec-Fetch-Site. PHP mira primero el origen, que no está en la lista, y responde 403 sin leer la sesión ni la base.</desc>
+<defs><marker id="fw3s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw3s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fw3s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fw3s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">localhost:8081</text>
+<path class="dg-frame" d="M70.0 40 V298"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador</text>
+<path class="dg-frame" d="M280.0 40 V298"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">PHP</text>
+<path class="dg-frame" d="M490.0 40 V298"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M700.0 40 V298"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#fw3s-a)"/>
+<rect x="126.1" y="55" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">form.submit()</text>
+<path class="dg-edge" d="M283.0 106 L485.0 106" marker-end="url(#fw3s-a)"/>
+<rect x="276.7" y="89" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">POST postulaciones.php + Cookie</text>
+<rect x="290.0" y="126" width="360" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="300.0" y="142">Origin: http://localhost:8081, Sec-Fetch-Site: same-site</text>
+<rect x="145.0" y="160" width="335" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="155.0" y="176">requireOrigenConfiable(): no está en la lista</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M487.0 208 L285.0 208" marker-end="url(#fw3s-f)"/>
+<rect x="303.1" y="191" width="163.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="202" text-anchor="middle">403 Origen no permitido</text>
+<path d="M20 240 H750" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="6 5"/>
+<rect x="235.0" y="229" width="300" height="22" rx="3" fill="var(--paper-sunk)"/>
+<text class="dg-small" x="385.0" y="244" text-anchor="middle" style="fill:var(--fail)">checkAuth, el token y la base no llegan a correr</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB03.3.</b> La capa nueva corta antes que el token. Sin ella, la misma request llegaría al token y moriría ahí con otro mensaje; con ella, el registro dice exactamente qué origen lo intentó.</figcaption>
+</figure>
+<h2 id="endpoints">Los endpoints</h2>
+<p>No cambia ninguna ruta. Cambia qué pasa con cualquier request que escribe (POST, PUT, QUERY, DELETE), incluido el login:</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Request que escribe</th><th>Antes</th><th>Después</th></tr></thead>
+<tbody>
+<tr><td>Sin <code>Origin</code> ni <code>Sec-Fetch-Site</code> (curl, scripts)</td><td>Decide el token</td><td>Decide el token</td></tr>
+<tr><td><code>Origin</code> en la lista</td><td>Decide el token</td><td>Decide el token</td></tr>
+<tr><td><code>Origin</code> fuera de la lista, o <code>null</code></td><td>Decide el token</td><td>403 <code>Origen no permitido</code></td></tr>
+<tr><td><code>Sec-Fetch-Site: cross-site</code></td><td>Decide el token</td><td>403</td></tr>
+<tr><td><code>POST login.php</code> desde otro origen</td><td>Se procesa</td><td>403 (login CSRF)</td></tr>
+<tr><td><code>Content-Type: text/plain; application/json</code></td><td>Se acepta como JSON</td><td>400</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="dependencias">Qué necesitas</h2>
+<p>El laboratorio de <a href="web00-laboratorio.html">WEB00</a>, con <code>atacante.test</code> andando. Esta guía suma un segundo sitio atacante en el puerto 8081. Si hiciste <a href="web01-lo-que-no-debe-verse.html">WEB01</a>, los rechazos salen con su código HTTP real; si no, salen con 200 y el script del final lo marca. No se instala nada.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<h3 id="infra-vecino">El vecino del mismo sitio</h3>
+<p>Un tercer host virtual, en otro puerto de <code>localhost</code>, que sirve la misma carpeta del atacante. Agrégalo al final de <code>httpd-vhosts.conf</code>, después de los dos de WEB00:</p>
+<pre data-lang="shell" data-file="C:/xampp/apache/conf/extra/httpd-vhosts.conf (al final)"><code>Listen 8081
+
+&lt;VirtualHost *:8081&gt;
+    ServerName localhost
+    DocumentRoot "C:/xampp/htdocs/atacante"
+    &lt;Directory "C:/xampp/htdocs/atacante"&gt;
+        Require local
+    &lt;/Directory&gt;
+&lt;/VirtualHost&gt;</code></pre>
+<p>Revisa la sintaxis con <code>C:\xampp\apache\bin\httpd.exe -t</code> (tiene que decir <code>Syntax OK</code>) y reinicia Apache desde el panel. <code>http://localhost:8081/</code> tiene que mostrar la página de WEB00.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un puerto distinto en el mismo host: es otro origen pero el mismo sitio, que es exactamente el caso que <code>SameSite</code> no cubre.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Un subdominio como <code>evil.localhost</code>: también es el mismo sitio en la mayoría de los navegadores, pero cómo se trata <code>localhost</code> como dominio registrable varía, y el puerto deja la prueba sin ambigüedad. En un sistema real, el vecino es <code>blog.tu-dominio.com</code> con un <span class="no-autolink">plugin</span> vulnerable.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que otro programa use el 8081 y Apache no arranque: <code>netstat -ano | findstr :8081</code> lo dice, y cualquier otro puerto libre sirve igual. <code>Require local</code> deja la página solo para tu máquina.</dd></div>
+</dl>
+<h3 id="infra-env">Los orígenes permitidos, en el <code>.env</code></h3>
+<pre data-lang="shell" data-file="C:/xampp/secretos/practicas.env (línea nueva)"><code># Orígenes que pueden escribir en la API (WEB03) y leerla desde otro origen (WEB04).
+# Exactos: esquema, host y puerto, sin barra al final, separados por coma.
+ORIGENES_PERMITIDOS=http://localhost:5173,http://localhost</code></pre>
+<p><code>http://localhost:5173</code> es el frontend en desarrollo: el proxy de Vite reescribe el <code>Host</code> (<code>changeOrigin: true</code>), pero no el <code>Origin</code>, que sigue siendo el de la página. <code>http://localhost</code> es el frontend compilado servido por Apache. Y en <code>configuration.php</code>, la variable se suma a la lista que no puede faltar:</p>
+<pre data-lang="php" data-file="api/core/configuration.php (la línea de exigir)"><code>Env::exigir(['COOKIE_NAME', 'COOKIE_KEY', 'DATABASE', 'HOST_DB', 'LOGIN_HASH_RELLENO', 'ORIGENES_PERMITIDOS']);</code></pre>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<h3 id="paso-origen">Paso 1. De dónde viene la request</h3>
+<p>Un archivo nuevo con dos partes: la lista de orígenes, que WEB04 también usa para CORS, y la comprobación para las requests que escriben.</p>
+<div class="pseudo"><ol>
+<li><code>origenesPermitidos</code> lee la lista del <code>.env</code> una vez por request.</li>
+<li><code>esOrigenPermitido</code> compara el origen <em>exacto</em> contra la lista: nada de prefijos, sufijos ni expresiones regulares.</li>
+<li><code>requireOrigenConfiable</code> rechaza si el navegador dice <code>cross-site</code>, si hay un <code>Origin</code> fuera de la lista, o si dice <code>same-site</code> sin un <code>Origin</code> permitido.</li>
+<li>Si no hay ninguna de las dos cabeceras, no es un navegador: deja la decisión al token.</li>
+</ol></div>
+<pre data-lang="php" data-file="api/core/origen.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/response.php';
+
+/** Los orígenes del .env, exactos. Los usan la defensa CSRF (WEB03) y CORS (WEB04). */
+function origenesPermitidos(): array
+{
+    static $lista = null;
+    if ($lista === null) {
+        $lista = array_values(array_filter(array_map('trim',
+            explode(',', (string)Env::get('ORIGENES_PERMITIDOS', '')))));
+    }
+    return $lista;
+}
+
+/** Igualdad exacta: "http://localhost:5173.atacante.test" no es "http://localhost:5173". */
+function esOrigenPermitido(string $origen, ?array $lista = null): bool
+{
+    return $origen !== 'null' &amp;&amp; in_array($origen, $lista ?? origenesPermitidos(), true);
+}
+
+/** Para las requests que escriben: corta lo que el navegador dice que viene de otro lado. */
+function requireOrigenConfiable(): void
+{
+    $sitio  = strtolower((string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? ''));
+    $origen = isset($_SERVER['HTTP_ORIGIN']) ? (string)$_SERVER['HTTP_ORIGIN'] : null;
+
+    if ($sitio === 'cross-site') {
+        rechazarOrigen('Sec-Fetch-Site: cross-site, Origin: ' . ($origen ?? '(sin Origin)'));
+    }
+    if ($origen !== null &amp;&amp; !esOrigenPermitido($origen)) {
+        rechazarOrigen("Origin no permitido: $origen");
+    }
+    if ($sitio === 'same-site' &amp;&amp; $origen === null) {
+        rechazarOrigen('Sec-Fetch-Site: same-site sin Origin');
+    }
+    # Sin Sec-Fetch-Site ni Origin: no es un navegador. Decide el token.
+}
+
+function rechazarOrigen(string $motivo): never
+{
+    error_log('[csrf] ' . $motivo . ' -&gt; ' . ($_SERVER['REQUEST_METHOD'] ?? '') . ' ' . ($_SERVER['REQUEST_URI'] ?? ''));
+    Response::json(-1, 'Origen no permitido', [], 403);
+}</code></pre>
+<aside class="callout callout--def">
+<p class="callout-label">PHP de por medio</p>
+<p><code>static $lista</code> dentro de una función guarda el valor entre llamadas de la misma request, así que el <code>.env</code> se parte una sola vez. El segundo parámetro de <code>esOrigenPermitido</code> existe para la prueba de WEB04, que le pasa una lista sin leer ningún <code>.env</code>. Las cabeceras de la request llegan en <code>$_SERVER</code> con el prefijo <code>HTTP_</code>, en mayúsculas y con guiones bajos: <code>Sec-Fetch-Site</code> es <code>HTTP_SEC_FETCH_SITE</code>.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd><dfn data-term="fetch-metadata">Fetch Metadata</dfn> y <code>Origin</code> juntos, con la lista exacta del <code>.env</code>: <code>Sec-Fetch-Site</code> corta todo lo de otro sitio sin necesitar la lista, y <code>Origin</code> distingue al vecino del mismo sitio, que <code>Sec-Fetch-Site</code> solo marca como <code>same-site</code>.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Mirar el <code>Referer</code>: es el respaldo cuando falta <code>Origin</code>, pero lo recortan las políticas de <code>Referrer-Policy</code> y algunos proxies, y los navegadores actuales mandan <code>Origin</code> en toda request que no es GET ni HEAD. Tampoco se rechazan las requests sin cabeceras: dejarías fuera a <code>curl</code>, a los scripts del laboratorio y a cualquier integración, que no son vulnerables a CSRF porque no tienen una cookie ajena.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Escribir el origen con barra al final en el <code>.env</code> (<code>http://localhost:5173/</code>): el navegador nunca la manda y el frontend recibe 403 en toda escritura. Y que el frontend compilado se sirva desde otro host o puerto que no está en la lista: el síntoma es el mismo y el registro dice <code>[csrf] Origin no permitido: …</code> con el origen real.</dd></div>
+</dl>
+<h3 id="paso-middleware">Paso 2. La capa, en el orden de M76</h3>
+<p>En <code>requireAuth</code>, la comprobación va antes de leer la sesión, para las mismas requests que ya exigen el token. Es el orden que propone <a href="../modules/m76-csrf.html#php">M76</a>: del control más barato al más caro.</p>
+<pre data-lang="php" data-file="api/core/auth-middleware.php (principio de requireAuth)"><code>require_once __DIR__ . "/origen.php";
+
+function requireAuth(int|array $roles = [])
+{
+    $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+    $escribe = !in_array($method, ['GET', 'HEAD', 'OPTIONS'], true);
+
+    # 1. De dónde viene: barato, sin estado y sin base
+    if ($escribe) {
+        requireOrigenConfiable();
+    }
+
+    # 2. La sesión
+    $data = checkAuth();
+    if ($data === null) {
+        Response::error("Usuario no autenticado", -2);
+    }
+    $data = refrescarAuthDesdeBD($data);
+    AuditLog::setUser($data);
+
+    # 3. El token, atado a esa sesión
+    if ($escribe) {
+        requireCsrfToken();
+    }
+
+    # ... la comprobación de roles sigue igual ...</code></pre>
+<p>Fíjate en un cambio de paso: <code>QUERY</code> ya no está en la lista de métodos que no escriben. Hoy <code>requireAuth</code> lo exime del token, pero ningún endpoint lo atiende (no hay un <code>case 'QUERY'</code>) y el frontend no lo manda. Una excepción que nadie usa es una puerta que alguien abre sin saberlo: si algún día un endpoint implementa <code>QUERY</code>, pasa por las dos capas como cualquier método que lleva cuerpo.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>La misma condición (<code>$escribe</code>) para el origen y para el token, en ese orden, en el único lugar por donde pasan todos los endpoints con sesión.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Poner la comprobación en el <code>.htaccess</code> con <code>RewriteCond %{HTTP:Origin}</code>: funciona para el caso simple, pero la lista viviría en dos lugares y Apache no sabe qué método escribe en tu API.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que algún endpoint que escribe no llame a <code>requireAuth</code>. En este repositorio el único es <code>POST login.php</code>, y por eso tiene su propio paso. Si sumas un endpoint público que escribe (un formulario de contacto), necesita su propia llamada a <code>requireOrigenConfiable</code>.</dd></div>
+</dl>
+<h3 id="paso-login">Paso 3. El login también</h3>
+<p>El login no pasa por <code>requireAuth</code>, porque todavía no hay sesión. Un <dfn data-term="login-csrf">login CSRF</dfn> no roba nada: mete a la víctima en una cuenta del atacante, y lo que ella escriba (su CV, sus datos) queda en esa cuenta. En <code>api/endpoints/login.php</code>, la comprobación va antes de leer el cuerpo:</p>
+<pre data-lang="php" data-file="api/endpoints/login.php (antes de readJsonInput)"><code>require_once __DIR__ . "/../core/origen.php";
+
+# ... los header() de CORS y el bloque de OPTIONS siguen igual (WEB04 los cambia) ...
+
+$connection = Connection::load();
+$response   = new Response();
+$method     = $_SERVER["REQUEST_METHOD"];
+
+# POST y DELETE escriben: primero de dónde vienen, después el cuerpo
+if ($method !== 'GET') {
+    requireOrigenConfiable();
+}
+$data = readJsonInput($method);</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>La misma función, antes de <code>readJsonInput</code>, para que una request de otro origen ni siquiera llegue a contar como intento fallido en el límite de WEB02.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Exigir un token CSRF en el login, que es la recomendación clásica: requiere un token previo a la sesión (en una cookie aparte o en un GET anterior), y con el <code>Origin</code> exacto y el <code>Content-Type</code> del paso 4, el login ya no se puede disparar desde otro sitio.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el frontend haga el login desde un origen que no está en la lista: nadie puede entrar, y el mensaje es <code>Origen no permitido</code>, no un error de contraseña. Si te pasa, mira el registro.</dd></div>
+</dl>
+<h3 id="paso-content-type">Paso 4. El <code>Content-Type</code>, entero</h3>
+<p>El navegador solo manda sin preflight tres tipos: <code>application/x-www-form-urlencoded</code>, <code>multipart/form-data</code> y <code>text/plain</code>. Para decidirlo lee el tipo <em>sin sus parámetros</em>, así que <code>text/plain; application/json</code> es <code>text/plain</code> y sale sin preguntar <span class="badge badge--doc">Documentado</span>. <code>readJsonInput</code> hace lo contrario: busca <code>application/json</code> en cualquier parte del texto. Reemplaza las dos líneas del principio:</p>
+<pre data-lang="php" data-file="api/core/request.php (dentro de readJsonInput)"><code>    # El tipo sin parámetros: "application/json; charset=utf-8" -&gt; "application/json"
+    $contentType = strtolower(trim(explode(';', (string)($_SERVER["CONTENT_TYPE"] ?? ''), 2)[0]));
+    if ($contentType !== 'application/json') {
+        Response::error("Petición inválida: se esperaba Content-Type application/json.", -1, httpCode: 415);
+    }</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Comparar el tipo base exacto, como lo hace el navegador, y responder 415 (<em>Unsupported Media Type</em>), que es el código para eso.</dd></div>
+<div><dt>Lo que descartas</dt><dd><code>str_starts_with($ct, 'application/json')</code>, que propone M76: cierra el truco de <code>text/plain</code>, pero acepta <code>application/jsonx</code>. Es inofensivo, porque ese tipo sí pide preflight, pero la comparación exacta no deja nada para pensar.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que algún cliente mande <code>application/json</code> con mayúsculas o espacios (<code>Application/JSON</code>): el <code>strtolower</code> y el <code>trim</code> lo cubren. Lo que deja de funcionar es lo que nunca debió: un cliente que mandaba JSON como <code>text/plain</code>. El frontend no lo hace: <code>apiFetch</code> pone <code>application/json</code>.</dd></div>
+</dl>
+<h3 id="paso-atacante">Paso 5. La página del atacante</h3>
+<p>Tres intentos, en la misma página, que se sirve desde los dos sitios atacantes. Ninguno lleva un payload: el primero es un formulario común, el segundo es el truco del <code>Content-Type</code> con una contraseña incorrecta, y el tercero es un formulario multipart a un endpoint con sesión.</p>
+<pre data-lang="html" data-file="C:/xampp/htdocs/atacante/web03.html"><code>&lt;!doctype html&gt;
+&lt;meta charset="utf-8"&gt;
+&lt;title&gt;WEB03: tres requests que el navegador manda solo&lt;/title&gt;
+&lt;h1&gt;WEB03: tres requests que el navegador manda solo&lt;/h1&gt;
+&lt;p&gt;Abre DevTools, pestaña Network, antes de cada botón. Anota el código, si viajó la cookie y las cabeceras Origin y Sec-Fetch-Site.&lt;/p&gt;
+
+&lt;form method="POST" action="http://localhost/SistemaControlPracticas/api/endpoints/login.php" target="r1"&gt;
+  &lt;input name="identificador" value="atacante"&gt;&lt;input name="contrasena" value="no-importa-1"&gt;
+  &lt;button&gt;1. Formulario al login&lt;/button&gt;
+&lt;/form&gt;
+&lt;iframe name="r1" style="width:100%;height:70px"&gt;&lt;/iframe&gt;
+
+&lt;button id="b2"&gt;2. fetch con text/plain; application/json&lt;/button&gt;
+&lt;pre id="r2"&gt;&lt;/pre&gt;
+
+&lt;form method="POST" enctype="multipart/form-data" action="http://localhost/SistemaControlPracticas/api/endpoints/postulaciones.php" target="r3"&gt;
+  &lt;input name="oportunidad_id" value="1"&gt;
+  &lt;button&gt;3. Formulario multipart a postulaciones&lt;/button&gt;
+&lt;/form&gt;
+&lt;iframe name="r3" style="width:100%;height:70px"&gt;&lt;/iframe&gt;
+
+&lt;script&gt;
+document.getElementById('b2').onclick = async () =&gt; {
+  await fetch('http://localhost/SistemaControlPracticas/api/endpoints/login.php', {
+    method: 'POST', mode: 'no-cors', credentials: 'include',
+    headers: { 'Content-Type': 'text/plain; application/json' },
+    body: JSON.stringify({ identificador: 'estudiante', contrasena: 'incorrecta-1' })
+  });
+  document.getElementById('r2').textContent = 'Enviada. La respuesta es opaca (no-cors): el código está en Network.';
+};
+&lt;/script&gt;</code></pre>
+<p>Antes de aplicar los pasos 1 a 4, entra al frontend como <code>estudiante</code> en otra pestaña y abre la página desde los dos sitios: <code>http://atacante.test/web03.html</code> y <code>http://localhost:8081/web03.html</code>. Después, aplica los pasos y repite. Anota todo en la tabla de <a href="#comprueba-navegador">el navegador</a>.</p>
+<aside class="callout callout--fail">
+<p class="callout-label">Errores típicos</p>
+<ul class="pj-errs">
+<li><b>El botón 2 no aparece en Network.</b> Algunas extensiones bloquean <code>fetch</code> en modo <code>no-cors</code>: prueba en una ventana sin extensiones.</li>
+<li><b>El iframe dice que la página rechazó la conexión.</b> Es el iframe, no la API: la respuesta JSON puede verse o no según el navegador. El dato que importa está en Network.</li>
+<li><b><code>localhost:8081</code> no responde.</b> Falta el <code>Listen 8081</code> o Apache no se reinició; <code>httpd.exe -t</code> y el panel de XAMPP lo dicen.</li>
+</ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una sola página con los tres casos, servida desde un sitio distinto y desde el mismo sitio, para que la diferencia la ponga solo <code>SameSite</code>.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Un ataque que cambie algo de verdad (una postulación con datos): no hace falta, porque lo que se prueba es si la request llega al código, y un payload mínimo responde eso sin dejar basura en la base. Tampoco se intenta saltar ninguna defensa: cada intento es el que el diseño de M76 ya describe.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Leer el resultado del iframe como si fuera la verdad: el formulario 1 desde <code>atacante.test</code> puede mostrar el JSON del error, y eso no significa que el atacante lo pueda leer desde su JavaScript (no puede: el iframe es de otro origen). El dato confiable es el código HTTP en Network.</dd></div>
+</dl>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="web03-csrf"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-matriz">La matriz con curl</h3>
+<p><code>curl</code> no hace cumplir nada del navegador, pero sí manda las cabeceras que le pidas. Eso sirve para probar el servidor capa por capa: cada fila cambia una sola cabecera. El script usa <code>DELETE login.php</code>, que pasa por <code>requireAuth</code> y no cambia nada en la base (borra la cookie solo en la respuesta, y el script no la guarda).</p>
+<pre data-lang="shell" data-file="lab/web03.ps1"><code>param([string]$Base = "http://localhost/SistemaControlPracticas/api/endpoints", [string]$Jar = "lab\jar.txt")
+
+# Sesión nueva y su token. lab\login.json es el cuerpo del paso 7 de WEB00 (estudiante).
+&amp; curl.exe -s -o NUL -c $Jar -H "Content-Type: application/json" --data-binary "@lab\login.json" "$Base/login.php"
+$token = (&amp; curl.exe -s -b $Jar "$Base/login.php" | ConvertFrom-Json).data.csrfToken
+
+function Fila($nombre, $esperado, [string[]]$cabeceras, [switch]$SinToken) {
+  $h = @(); foreach ($c in $cabeceras) { $h += @("-H", $c) }
+  if (-not $SinToken) { $h += @("-H", "X-CSRF-Token: $token") }
+  $codigo = &amp; curl.exe -s -o NUL -w "%{http_code}" -X DELETE -b $Jar @h "$Base/login.php"
+  "{0} {1,-46} -&gt; {2}" -f $(if ([int]$codigo -eq $esperado) { 'ok     ' } else { 'REVISAR' }), $nombre, $codigo
+}
+
+Fila "sin Origin ni Sec-Fetch-Site"            200 @()
+Fila "Origin del frontend"                     200 @("Origin: http://localhost:5173", "Sec-Fetch-Site: same-origin")
+Fila "Origin de otro sitio"                    403 @("Origin: http://atacante.test")
+Fila "Sec-Fetch-Site: cross-site"              403 @("Sec-Fetch-Site: cross-site")
+Fila "Origin: null"                            403 @("Origin: null")
+Fila "Origin con el permitido como prefijo"    403 @("Origin: http://localhost:5173.atacante.test")
+Fila "vecino del mismo sitio"                  403 @("Origin: http://localhost:8081", "Sec-Fetch-Site: same-site")
+Fila "same-site sin Origin"                    403 @("Sec-Fetch-Site: same-site")
+Fila "Origin del frontend, sin token"          403 @("Origin: http://localhost:5173") -SinToken
+
+""
+"Content-Type text/plain; application/json en el login (esperado 415):"
+&amp; curl.exe -s -o NUL -w "   -&gt; %{http_code}`n" -H "Content-Type: text/plain; application/json" --data-binary "@lab\login.json" "$Base/login.php"</code></pre>
+<p>Con las cuatro capas, las nueve filas tienen que decir <code>ok</code> y la última línea, 415. Corre el script también <em>antes</em> de aplicar la guía y guarda la salida: las filas 3 a 8 dan 200 (el token es válido y nada mira el origen) y el login con <code>text/plain</code> da 200, porque el JSON se acepta y la contraseña es la correcta. Esa salida es la prueba de que el hueco existía en tu código.</p>
+<h3 id="comprueba-navegador">Lo que decide el navegador</h3>
+<p>Las dos columnas de la izquierda dependen de tu navegador y de su versión; la guía no las da por sabidas. Anota lo que ves en Network con la sesión de <code>estudiante</code> abierta en otra pestaña:</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Desde</th><th>Botón</th><th>¿Viajó la cookie?</th><th>Sec-Fetch-Site</th><th>Código antes</th><th>Código después</th></tr></thead>
+<tbody>
+<tr><td>atacante.test</td><td>1. Formulario al login</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>atacante.test</td><td>2. text/plain</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>atacante.test</td><td>3. Multipart</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>localhost:8081</td><td>1. Formulario al login</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>localhost:8081</td><td>2. text/plain</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>localhost:8081</td><td>3. Multipart</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<p>Lo que el diseño anticipa, para que compares: desde <code>atacante.test</code> la cookie no viaja (<code>Strict</code>) y desde <code>localhost:8081</code> sí. Después de la guía, las seis filas terminan en 403 por el origen; antes, el botón 2 de los dos sitios llegaba al login y se contaba como un intento fallido (lo ves en <code>intentos_login</code>), y el botón 3 de <code>localhost:8081</code> llegaba al token.</p>
+<h3 id="comprueba-fallas">Fallas provocadas</h3>
+<p><b>Falla 1. Solo el token.</b> Comenta la llamada a <code>requireOrigenConfiable()</code> en <code>requireAuth</code> y corre <code>web03.ps1</code>. Las filas 3 a 8 vuelven a dar 200: con un token válido, nada distingue de dónde viene la request. Es la situación de un XSS que robó el token. Descomenta.</p>
+<p><b>Falla 2. Solo el origen.</b> Ahora comenta <code>requireCsrfToken()</code>. La última fila (sin token, con el <code>Origin</code> del frontend) da 200. Las demás siguen en 403. Lo que muestra: el origen solo no alcanza, porque <code>curl</code> puede escribir cualquier <code>Origin</code>; el token es lo que un tercero no puede fabricar. Descomenta.</p>
+<p><b>Falla 3. Una lista mal escrita.</b> Pon <code>ORIGENES_PERMITIDOS=http://localhost:5173/</code> (con barra) y haz cualquier cambio desde el frontend. Tiene que fallar con <code>Origen no permitido</code>, y el registro tiene que decir <code>[csrf] Origin no permitido: http://localhost:5173</code>. Quita la barra.</p>
+<h2 id="limites">Limitaciones</h2>
+<ul>
+<li><b>Un XSS gana igual.</b> Una página tuya con un script inyectado manda requests desde tu propio origen, con la cookie y con el token. Ninguna capa de esta guía lo frena; lo frenan el escape y la CSP (WEB05 y WEB09).</li>
+<li><b>Navegadores viejos.</b> <code>Sec-Fetch-Site</code> llegó a Safari recién en 2023 <span class="badge badge--doc">Documentado</span>. Sin esa cabecera, la capa depende de <code>Origin</code>, que todos los navegadores actuales mandan en las requests que escriben.</li>
+<li><b>El token vale lo que vale la cookie.</b> Es el HMAC de la cookie, así que dura lo mismo que ella; con <a href="web02-sesion.html">WEB02</a> cambia cada vez que la cookie se reemite (un login, un cambio de contraseña), pero no rota por request. Un token por request agrega estado en el servidor y no frena nada que estas capas dejen pasar.</li>
+<li><b>La lista es estática.</b> Un frontend nuevo (otro puerto, un dominio de producción) hay que agregarlo al <code>.env</code>, y se olvida. El síntoma es claro: 403 y una línea en el registro.</li>
+<li><b>Nada se ejecutó al escribir esta guía.</b> Las columnas del navegador son tuyas; los códigos de la matriz salen de leer el código.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="web03">
+<p class="pj-repo-head">Trabaja en la rama <code>web03-csrf</code>. La carpeta <code>C:\xampp\htdocs\atacante</code> no es parte del repositorio.</p>
+<ul class="pj-checks">
+<li data-check="vecino"><code>http://localhost:8081/</code> sirve la página del atacante.</li>
+<li data-check="origen"><code>core/origen.php</code> pasa <code>php -l</code> y está en <code>requireAuth</code> y en <code>login.php</code>.</li>
+<li data-check="ct"><code>readJsonInput</code> compara el tipo exacto y responde 415.</li>
+<li data-check="matriz"><code>web03.ps1</code> da nueve <code>ok</code> y 415, y guardaste la salida de antes.</li>
+<li data-check="navegador">Llenaste la tabla del navegador desde los dos sitios, antes y después.</li>
+<li data-check="fallas">Provocaste las tres fallas.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<p>Esta guía funciona sola. Si quieres juntarla con otras:</p>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con WEB00, el laboratorio</p>
+<p><code>atacante.test</code> es el atacante de otro sitio; esta guía suma el del mismo sitio. Las dos páginas viven en la misma carpeta.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB02, la sesión</p>
+<p>La capa nueva corre antes que el límite de intentos: un login desde otro origen no cuenta como fallo. Y el token que reemite el cambio de contraseña es el mismo que exige el paso 2.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M76, CSRF</p>
+<p>Las cuatro capas y su orden son las de <a href="../modules/m76-csrf.html#capas">76.8</a>; el truco del <code>Content-Type</code> está en <a href="../modules/m76-csrf.html#json">JSON y el Content-Type</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M74, origen y sitio</p>
+<p>Por qué <code>localhost:8081</code> es el mismo sitio y otro origen está en <a href="../modules/m74-origen-cookies.html">M74</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/web03.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

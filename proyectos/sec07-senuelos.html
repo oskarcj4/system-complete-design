@@ -1,0 +1,1285 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEC07. Señuelos</title>
+<meta name="description" content="Cuatro señuelos en Tienda Norte (una cuenta, un token en el repositorio, una vista de PostgreSQL y un archivo del servidor), cada uno con su alerta de nivel 12 en Wazuh, su regla Sigma, su emulación, su tasa de falsos positivos y su lugar en un inventario.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="sec07" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Señuelos</h1>
+        <p class="lead">Lo que nadie legítimo usa no necesita umbral: el primer uso es el ataque.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>SEC07</dd></div>
+          <div><dt>Plan</dt><dd>Blue Team y DevSecOps</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>1 h 50 min</dd></div>
+          <div><dt>Módulos</dt><dd>M59, M38</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="sec07">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Explicar por qué un señuelo da una alerta casi sin falsos positivos y qué lo hace creíble.</li>
+<li>Plantar cuatro señuelos en Tienda Norte: una cuenta, un token en el repositorio, una tabla y un archivo del servidor.</li>
+<li>Detectar cada uno en Wazuh, con su regla Sigma, sus casos y su emulación del camino de SEC05.</li>
+<li>Medir los falsos positivos de cada señuelo y llevar un inventario que los mantenga vivos.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>Las reglas de SEC00 a SEC06 buscan ataques que ya conoces: una fuerza bruta, un escaneo, una shell. Quien ya entró con una clave robada no hace nada de eso: mira tablas, lee archivos de configuración y prueba lo que encuentra. Para eso no hay umbral que valga.</p>
+<p>Un señuelo invierte el problema. Es algo que nadie legítimo usa, así que cualquier uso es un ataque, como la cuenta señuelo de <a href="../modules/m38-active-directory.html#detectar">M38</a> o los señuelos que propone <a href="../modules/m59-deteccion.html#hunting">M59</a> para Tienda Norte: una llave falsa en la configuración y una fila trampa en la tabla de clientes. Esta guía planta cuatro, cada uno con su alerta, su prueba y su emulación.</p>
+<figure class="figure" data-arch>
+<div class="figure-frame">
+<svg viewBox="0 0 770 400" role="img" aria-labelledby="fs07t fs07d">
+<title id="fs07t">La arquitectura de SEC07</title>
+<desc id="fs07d">Cuatro señuelos: la cuenta admin_respaldo en la tabla de usuarios, el token en config/respaldo.env del repositorio, la vista clientes_tarjetas en PostgreSQL y el archivo credenciales-aws en el servidor. Quien los toca deja una línea en el log de la API, en el log JSON de PostgreSQL o en audit.log, y Wazuh la convierte en una alerta de nivel 12. Seis flechas numeradas.</desc>
+<defs><marker id="fs07a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="20" y="20" width="420" height="360" rx="10"/>
+<text class="dg-group" x="32" y="40" text-anchor="start">los señuelos y quién los registra</text>
+<path class="dg-edge" d="M210 82 L268 82" marker-end="url(#fs07a)"/>
+<path class="dg-edge" d="M210 162 L268 98" marker-end="url(#fs07a)"/>
+<path class="dg-edge" d="M210 242 L268 242" marker-end="url(#fs07a)"/>
+<path class="dg-edge" d="M210 322 L268 322" marker-end="url(#fs07a)"/>
+<path class="dg-edge" d="M420 90 C470 90 490 160 538 176" marker-end="url(#fs07a)"/>
+<path class="dg-edge" d="M420 242 L538 200" marker-end="url(#fs07a)"/>
+<path class="dg-edge" d="M420 322 C470 322 500 240 538 216" marker-end="url(#fs07a)"/>
+<g data-part="cuenta"><rect class="dg-layer" x="40" y="56" width="170" height="52" rx="8" style="--c: var(--l-db)"/><text class="dg-label" x="125" y="78" text-anchor="middle">admin_respaldo</text><text class="dg-tiny dg-mono" x="125" y="94" text-anchor="middle">cuenta señuelo</text></g>
+<g data-part="token"><rect class="dg-layer" x="40" y="136" width="170" height="52" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="125" y="158" text-anchor="middle">config/respaldo.env</text><text class="dg-tiny dg-mono" x="125" y="174" text-anchor="middle">token señuelo</text></g>
+<g data-part="tabla"><rect class="dg-layer" x="40" y="216" width="170" height="52" rx="8" style="--c: var(--l-db)"/><text class="dg-label" x="125" y="238" text-anchor="middle">clientes_tarjetas</text><text class="dg-tiny dg-mono" x="125" y="254" text-anchor="middle">vista señuelo</text></g>
+<g data-part="archivo"><rect class="dg-layer" x="40" y="296" width="170" height="52" rx="8" style="--c: var(--l-edge)"/><text class="dg-label" x="125" y="318" text-anchor="middle">credenciales-aws</text><text class="dg-tiny dg-mono" x="125" y="334" text-anchor="middle">archivo señuelo</text></g>
+<g data-part="api"><rect class="dg-layer" x="270" y="56" width="150" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="345" y="80" text-anchor="middle">API de la tienda</text><text class="dg-tiny dg-mono" x="345" y="96" text-anchor="middle">api.log</text></g>
+<g data-part="postgres"><rect class="dg-layer" x="270" y="216" width="150" height="52" rx="8" style="--c: var(--l-db)"/><text class="dg-label" x="345" y="238" text-anchor="middle">PostgreSQL</text><text class="dg-tiny dg-mono" x="345" y="254" text-anchor="middle">postgresql.json</text></g>
+<g data-part="auditd"><rect class="dg-layer" x="270" y="296" width="150" height="52" rx="8" style="--c: var(--l-edge)"/><text class="dg-label" x="345" y="318" text-anchor="middle">auditd</text><text class="dg-tiny dg-mono" x="345" y="334" text-anchor="middle">audit.log</text></g>
+<g data-part="wazuh"><rect class="dg-layer" x="540" y="160" width="200" height="64" rx="8" style="--c: var(--l-queue)"/><text class="dg-label" x="640" y="188" text-anchor="middle">Wazuh</text><text class="dg-tiny dg-mono" x="640" y="204" text-anchor="middle">100150 a 100153, nivel 12</text></g>
+<g class="pl-pin"><circle cx="239" cy="68" r="10"/><text x="239" y="72" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="239" cy="138" r="10"/><text x="239" y="142" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="239" cy="228" r="10"/><text x="239" y="232" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="239" cy="308" r="10"/><text x="239" y="312" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="486" cy="112" r="10"/><text x="486" y="116" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="486" cy="236" r="10"/><text x="486" y="240" text-anchor="middle">6</text></g>
+</svg>
+</div>
+<figcaption><b>Figura SEC07.1.</b> Cuatro señuelos a la izquierda, tres fuentes en el medio y una sola clase de alerta a la derecha. La cuenta y el token pasan por la API (1 y 2); la tabla, por el log de PostgreSQL (3); el archivo, por auditd (4).</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>#</th><th>De → a</th><th>Protocolo y formato</th><th>Ejemplo</th><th>Con qué permiso</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Quien prueba la cuenta → API</td><td>HTTP, <code>POST /api/login</code></td><td><code>{"usuario":"admin_respaldo",…}</code></td><td>Ninguno: es el login público</td></tr>
+<tr><td>2</td><td>Quien usa el token → API</td><td>HTTP, <code>Authorization: Bearer</code></td><td><code>tns_…</code></td><td>Ninguno</td></tr>
+<tr><td>3</td><td>Quien lee la vista → PostgreSQL</td><td>SQL</td><td><code>SELECT * FROM clientes_tarjetas</code></td><td>La clave de la base</td></tr>
+<tr><td>4</td><td>Quien lee el archivo → kernel</td><td>Una llamada <code>open</code> para leer</td><td><code>cat credenciales-aws</code></td><td>Root en el servidor</td></tr>
+<tr><td>5</td><td>API → Wazuh</td><td>JSON por volumen <code>:ro</code></td><td><code>"evento":"senuelo_token"</code></td><td>El montaje de SEC00</td></tr>
+<tr><td>6</td><td>PostgreSQL y auditd → Wazuh</td><td>JSON y <code>log_format audit</code>, por volumen <code>:ro</code></td><td><code>"message":"SENUELO tocado: …"</code></td><td>Lectura del volumen y de <code>/var/log/audit</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><b>Las fronteras.</b> Nada sale de tu máquina. Los señuelos no tienen valor real: el token no abre nada, la cuenta no tiene clave que funcione, las tarjetas son números de prueba conocidos y las llaves de AWS son texto al azar. Las emulaciones solo apuntan a 127.0.0.1 y a tu servidor.</p>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 274" role="img" aria-labelledby="fs07vt fs07vd">
+<title id="fs07vt">Alguien lee la tabla señuelo</title>
+<desc id="fs07vd">Quien tiene la clave de la base lee la vista. PostgreSQL le devuelve tres filas y, sin que lo vea, escribe una línea LOG en su archivo JSON. Wazuh la lee y alerta con la 100152.</desc>
+<defs><marker id="fs07v-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs07v-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs07v-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs07v-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Quien entró</text>
+<path class="dg-frame" d="M70.0 40 V264"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">PostgreSQL</text>
+<path class="dg-frame" d="M385.0 40 V264"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Wazuh</text>
+<path class="dg-frame" d="M700.0 40 V264"/>
+<path class="dg-edge" d="M73.0 72 L380.0 72" marker-end="url(#fs07v-a)"/>
+<rect x="119.2" y="55" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="66" text-anchor="middle">SELECT * FROM clientes_tarjetas</text>
+<rect x="395.0" y="92" width="188" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="405.0" y="108">RAISE LOG SENUELO tocado</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 140 L75.0 140" marker-end="url(#fs07v-r)"/>
+<rect x="152.2" y="123" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="134" text-anchor="middle">tres filas, sin aviso</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M388.0 174 L695.0 174" marker-end="url(#fs07v-q)"/>
+<rect x="487.0" y="157" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="168" text-anchor="middle">postgresql.json</text>
+<rect x="565.0" y="194" width="125" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="575.0" y="210">100152 nivel 12</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC07.2.</b> La versión corta. La completa está en <a href="#viaje">El viaje de un dato</a>.</figcaption>
+</figure>
+<h2 id="antes">Antes de empezar</h2>
+<h3 id="ae-repaso">Lo que viene de SEC00, SEC01, SEC05 y SEC06</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="fs07rt fs07rd">
+<title id="fs07rt">Lo que viene de las guías anteriores</title>
+<desc id="fs07rd">La tienda de SEC00, gitleaks de SEC01, el camino de reglas de SEC05 y auditd de SEC06.</desc>
+<defs><marker id="fs07ra" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="16" width="232.667" height="164" rx="8"/>
+<text class="dg-group" x="32.0" y="40" text-anchor="start">La tienda</text>
+<text class="dg-tiny" x="32.0" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="32.0" y="80" text-anchor="start">SEC00: &lt;code&gt;app.py&lt;/code&gt;,</text><text class="dg-tiny" x="32.0" y="95" text-anchor="start">&lt;code&gt;init.sql&lt;/code&gt; y el compose.</text>
+<text class="dg-tiny" x="32.0" y="122" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="32.0" y="140" text-anchor="start">La API y la base suman un señuelo</text><text class="dg-tiny" x="32.0" y="155" text-anchor="start">cada una.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="16" width="232.667" height="164" rx="8"/>
+<text class="dg-group" x="280.66666666666663" y="40" text-anchor="start">gitleaks</text>
+<text class="dg-tiny" x="280.66666666666663" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="280.66666666666663" y="80" text-anchor="start">SEC01: &lt;code&gt;seguridad/gitleaks.tom</text><text class="dg-tiny" x="280.66666666666663" y="95" text-anchor="start">l&lt;/code&gt;.</text>
+<text class="dg-tiny" x="280.66666666666663" y="122" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="280.66666666666663" y="140" text-anchor="start">Tiene que dejar pasar el token</text><text class="dg-tiny" x="280.66666666666663" y="155" text-anchor="start">señuelo, y solo ese.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="16" width="232.667" height="164" rx="8"/>
+<text class="dg-group" x="529.3333333333333" y="40" text-anchor="start">Reglas como código</text>
+<text class="dg-tiny" x="529.3333333333333" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="529.3333333333333" y="80" text-anchor="start">SEC05: Sigma, casos, pares y</text><text class="dg-tiny" x="529.3333333333333" y="95" text-anchor="start">&lt;code&gt;emular.py&lt;/code&gt;.</text>
+<text class="dg-tiny" x="529.3333333333333" y="122" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="529.3333333333333" y="140" text-anchor="start">Cuatro reglas más, con sus casos y</text><text class="dg-tiny" x="529.3333333333333" y="155" text-anchor="start">sus emulaciones.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="196" width="232.667" height="164" rx="8"/>
+<text class="dg-group" x="32.0" y="220" text-anchor="start">auditd</text>
+<text class="dg-tiny" x="32.0" y="242" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="32.0" y="260" text-anchor="start">SEC06:</text><text class="dg-tiny" x="32.0" y="275" text-anchor="start">&lt;code&gt;servidor/tienda.rules&lt;/code&gt;</text><text class="dg-tiny" x="32.0" y="290" text-anchor="start">y la regla 80700.</text>
+<text class="dg-tiny" x="32.0" y="317" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="32.0" y="335" text-anchor="start">Una vigilancia más, de lectura.</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC07.3.</b> Cuatro cosas que vuelven.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Dónde se vio</th></tr></thead>
+<tbody>
+<tr><td><code>api/app.py</code> y su función <code>sesion()</code></td><td><a href="sec00-laboratorio.html#paso-api">SEC00, paso 3</a></td></tr>
+<tr><td><code>db/init.sql</code> y <code>compose.yaml</code></td><td><a href="sec00-laboratorio.html#paso-base">SEC00, paso 1</a></td></tr>
+<tr><td>El override del manager con los volúmenes de logs</td><td><a href="sec00-laboratorio.html#paso-leer">SEC00, paso 6</a></td></tr>
+<tr><td><code>seguridad/gitleaks.toml</code> y el job <code>secretos</code></td><td><a href="sec01-pipeline.html#paso-secretos">SEC01, paso 3</a></td></tr>
+<tr><td>Reglas Sigma, casos, pares y emulaciones</td><td><a href="sec05-deteccion.html#paso-sigma">SEC05, pasos 2 a 8</a></td></tr>
+<tr><td>auditd y la regla 80700 de Wazuh</td><td><a href="sec06-incidente.html#paso-auditd">SEC06, pasos 1 y 3</a></td></tr>
+</tbody>
+</table>
+</div>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 168" role="img" aria-labelledby="fs07pt fs07pd">
+<title id="fs07pt">Lámina SEC07.A: un señuelo</title>
+<desc id="fs07pd">Seis piezas: el señuelo, lo que lo hace creíble, la fuente que lo registra, la regla, la tasa de falsos positivos y el inventario.</desc>
+<defs><marker id="fs07pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="136.33333333333331" y="42" text-anchor="middle">Señuelo</text>
+<text class="dg-tiny dg-mono" x="136.33333333333331" y="60" text-anchor="middle">nadie legítimo lo usa</text>
+<g class="pl-pin"><circle cx="36" cy="32" r="10"/><text x="36" y="36" text-anchor="middle">1</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="384.99999999999994" y="42" text-anchor="middle">Creíble</text>
+<text class="dg-tiny dg-mono" x="384.99999999999994" y="60" text-anchor="middle">parece valioso</text>
+<g class="pl-pin"><circle cx="284.667" cy="32" r="10"/><text x="284.667" y="36" text-anchor="middle">2</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="633.6666666666666" y="42" text-anchor="middle">Fuente</text>
+<text class="dg-tiny dg-mono" x="633.6666666666666" y="60" text-anchor="middle">el log que lo ve</text>
+<g class="pl-pin"><circle cx="533.333" cy="32" r="10"/><text x="533.333" y="36" text-anchor="middle">3</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="136.33333333333331" y="118" text-anchor="middle">Regla</text>
+<text class="dg-tiny dg-mono" x="136.33333333333331" y="136" text-anchor="middle">nivel 12, sin umbral</text>
+<g class="pl-pin"><circle cx="36" cy="108" r="10"/><text x="36" y="112" text-anchor="middle">4</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="384.99999999999994" y="118" text-anchor="middle">Falsos positivos</text>
+<text class="dg-tiny dg-mono" x="384.99999999999994" y="136" text-anchor="middle">quién más lo toca</text>
+<g class="pl-pin"><circle cx="284.667" cy="108" r="10"/><text x="284.667" y="112" text-anchor="middle">5</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="633.6666666666666" y="118" text-anchor="middle">Inventario</text>
+<text class="dg-tiny dg-mono" x="633.6666666666666" y="136" text-anchor="middle">dónde y quién sabe</text>
+<g class="pl-pin"><circle cx="533.333" cy="108" r="10"/><text x="533.333" y="112" text-anchor="middle">6</text></g>
+</svg>
+</div>
+<figcaption><b>Lámina SEC07.A.</b> Las piezas, en el orden en que aparecen.</figcaption>
+</figure>
+<ol class="plate-key">
+  <li><b>Señuelo</b><span>Una cuenta, un token, una fila o un archivo que nadie legítimo usa. Cualquier uso es un ataque. <a href="#ae-senuelo">Qué es un señuelo</a></span></li>
+  <li><b>Creíble</b><span>Está donde un atacante buscaría y se parece a lo real, sin nada que lo delate. <a href="#paso-token">Paso 2</a></span></li>
+  <li><b>Fuente</b><span>El log que ve el uso: la API, PostgreSQL o auditd. <a href="#paso-tabla">Paso 3</a></span></li>
+  <li><b>Regla</b><span>Una regla sin umbral ni ventana: un solo uso alcanza. <a href="#paso-reglas">Paso 5</a></span></li>
+  <li><b>Falsos positivos</b><span>Lo que toca el señuelo sin ser un ataque: tu propio grep, un respaldo, un compañero curioso. <a href="#paso-ruido">Paso 7</a></span></li>
+  <li><b>Inventario</b><span>La lista de señuelos con dónde están, su regla, quién los conoce y cómo se rotan. <a href="#paso-inventario">Paso 8</a></span></li>
+</ol>
+<h3 id="antes-instalar">Qué tienes que tener</h3>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Para qué</th><th>Cómo compruebas que está</th></tr></thead>
+<tbody>
+<tr><td>El laboratorio de SEC00 corriendo</td><td>La API, la base y Wazuh</td><td><code>docker compose ps</code> en la tienda y en <code>single-node</code></td></tr>
+<tr><td>La carpeta <code>deteccion/</code> de SEC05</td><td>Las reglas Sigma, sus casos y <code>emular.py</code></td><td><code>.venv/bin/python -m pytest -q deteccion</code></td></tr>
+<tr><td>auditd de SEC06 en el servidor</td><td>El archivo señuelo</td><td><code>sudo auditctl -l</code> lista las reglas de <code>tienda.rules</code></td></tr>
+<tr><td>El workflow de SEC01</td><td>Comprobar la excepción de gitleaks</td><td>El job <code>secretos</code> en verde</td></tr>
+</tbody>
+</table>
+</div>
+<p>Si no hiciste SEC05, los pasos 1 a 4 funcionan igual; las reglas Sigma y las emulaciones de los pasos 5 y 6 se saltan. Si no hiciste SEC06, el paso 4 instala auditd con las dos órdenes de su paso 1.</p>
+<h3 id="ae-senuelo">Qué es un señuelo</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un billete marcado en la caja de un banco. Ningún cajero lo entrega, así que si aparece afuera, alguien lo sacó. No hace falta vigilar cada billete: alcanza con saber cuáles son los marcados.</p>
+</aside>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="fs07at fs07ad">
+<title id="fs07at">Por qué un señuelo da una alerta limpia</title>
+<desc id="fs07ad">Una regla común compara el tráfico con un umbral y se equivoca para los dos lados. Un señuelo no tiene tráfico legítimo, así que el umbral es uno: el primer uso.</desc>
+<defs><marker id="fs07aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="96.25" y="46" text-anchor="middle">Regla común</text>
+<text class="dg-tiny" x="96.25" y="66" text-anchor="middle">umbral sobre tráfico</text>
+<text class="dg-tiny" x="96.25" y="81" text-anchor="middle">real</text>
+<path class="dg-edge" d="M174.5 55 H208.5" marker-end="url(#fs07aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="212.5" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="288.75" y="46" text-anchor="middle">Se equivoca</text>
+<text class="dg-tiny" x="288.75" y="66" text-anchor="middle">falsos de los dos lados</text>
+<path class="dg-edge" d="M367 55 H401" marker-end="url(#fs07aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="405" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="481.25" y="46" text-anchor="middle">Señuelo</text>
+<text class="dg-tiny" x="481.25" y="66" text-anchor="middle">tráfico legítimo: cero</text>
+<path class="dg-edge" d="M559.5 55 H593.5" marker-end="url(#fs07aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="597.5" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="673.75" y="46" text-anchor="middle">Umbral</text>
+<text class="dg-tiny" x="673.75" y="66" text-anchor="middle">el primer uso</text>
+<path class="dg-edge" d="M673.75 92 V120 H96.25 V128" marker-end="url(#fs07aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="130" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="96.25" y="156" text-anchor="middle">Alerta</text>
+<text class="dg-tiny" x="96.25" y="176" text-anchor="middle">nivel 12, sin ventana</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC07.4.</b> La fuerza bruta de SEC00 necesita 8 intentos para no confundirse con alguien que olvidó su clave. Un señuelo no necesita ventana.</figcaption>
+</figure>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 358" role="img" aria-labelledby="fs07f1t fs07f1d">
+<title id="fs07f1t">Ficha: un señuelo</title>
+<desc id="fs07f1d">Ficha de un señuelo. Qué entra: Un lugar donde un atacante buscaría y una fuente que registra el uso. Qué hace: Deja algo creíble que nadie legítimo usa, y una regla que alerta con el primer uso. Qué sale: Una alerta de nivel 12 con quién y desde dónde. Ejemplo: usuario: admin_respaldo hash:    al azar, sin clave regla:   100150 umbral:  1 Qué falla sin él: Un atacante que ya entró y mira sin hacer ruido no dispara ninguna regla. Dónde vive: Pasos 1 a 4; reglas en el paso 5.</desc>
+<defs><marker id="fs07f1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Un lugar donde un atacante</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">buscaría y una fuente que</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">registra el uso.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Deja algo creíble que nadie</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">legítimo usa, y una regla que</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">alerta con el primer uso.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Una alerta de nivel 12 con</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">quién y desde dónde.</text>
+<path class="dg-edge" d="M234 67 H275" marker-end="url(#fs07f1a)"/>
+<path class="dg-edge" d="M493 67 H534" marker-end="url(#fs07f1a)"/>
+<rect class="dg-box" x="20" y="132" width="730" height="110" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="152" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="172" style="white-space:pre">usuario: admin_respaldo</text>
+<text class="dg-tiny dg-mono" x="32" y="188" style="white-space:pre">hash:    al azar, sin clave</text>
+<text class="dg-tiny dg-mono" x="32" y="204" style="white-space:pre">regla:   100150</text>
+<text class="dg-tiny dg-mono" x="32" y="220" style="white-space:pre">umbral:  1</text>
+<rect class="dg-warnbox" x="20" y="256" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="276" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="296" text-anchor="start">Un atacante que ya entró y mira sin hacer ruido no</text>
+<text class="dg-tiny" x="32" y="312" text-anchor="start">dispara ninguna regla.</text>
+<rect class="dg-box" x="393" y="256" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="276" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="296" text-anchor="start">Pasos 1 a 4; reglas en el paso 5.</text>
+</svg>
+</div>
+<figcaption><b>Ficha SEC07.F1.</b> Un señuelo.</figcaption>
+</figure>
+<p>Dos cosas lo arruinan: que se note (un nombre como <code>trampa</code>, una respuesta distinta, un comentario) y que lo toque alguien del equipo sin saberlo. La primera se cuida al plantarlo; la segunda, con el inventario del paso 7.</p>
+<h2 id="endpoints">Los endpoints</h2>
+<p>Los de <a href="sec00-laboratorio.html#endpoints">SEC00</a>. Cambia uno por dentro, sin cambiar lo que responde:</p>
+<div class="endpoint">
+  <div class="ep-head">
+    <span class="ep-method" data-m="GET">GET</span>
+    <code class="ep-path">/api/pedidos/{id}</code>
+  </div>
+  <p class="ep-desc">Con el token señuelo en <code>Authorization</code>, escribe el evento <code>senuelo_token</code> y responde igual que con cualquier token desconocido.</p>
+  <div class="ep-body">
+    <p class="ep-sec">Códigos de respuesta</p>
+    <ul class="ep-responses">
+      <li><span class="st st--2xx">200</span><span>Un pedido propio, con un token de sesión válido.</span></li>
+      <li><span class="st st--4xx">401</span><span><code>Token desconocido</code>: un token que no existe, o el señuelo.</span></li>
+      <li><span class="st st--4xx">404</span><span><code>No existe</code>: un pedido ajeno o inexistente.</span></li>
+    </ul>
+  </div>
+</div>
+<h2 id="dependencias">Dependencias</h2>
+<p>Ninguna nueva. La API sigue con las de <a href="sec00-laboratorio.html#dependencias">SEC00</a>, PostgreSQL 18 escribe su log en JSON con <code>log_destination = jsonlog</code> <span class="badge badge--doc">Documentado</span>, auditd es el de SEC06 y las pruebas, las de SEC05.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<pre data-lang="text"><code>tienda-norte/
+├── api/app.py                  # sesion() reconoce el token señuelo (paso 2)
+├── compose.yaml                # el log de la base en JSON y la variable del señuelo
+├── .env                        # TIENDA_SENUELO_TOKEN (no se sube)
+├── config/respaldo.env         # el token señuelo, en el repositorio (paso 2)
+├── db/senuelos.sql             # la cuenta y la vista (pasos 1 y 3)
+├── seguridad/gitleaks.toml     # la excepción del señuelo (paso 2)
+├── servidor/tienda.rules       # la vigilancia del archivo (paso 4)
+├── wazuh/tienda_rules.xml      # 100150 a 100153 (paso 5)
+├── deteccion/reglas/senuelo_*.yml, casos/senuelo_*/  # paso 5
+├── deteccion/emulaciones.yaml  # cuatro emulaciones más (paso 6)
+└── senuelos.md                 # el inventario (paso 7)</code></pre>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<aside class="hito" id="hito-1" data-toc="skip" aria-labelledby="hito-1-t">
+  <p class="hito-num">Hito 1 de 3, unos 45 min</p>
+  <p class="hito-title" id="hito-1-t">Tres señuelos en la tienda</p>
+  <p>Una cuenta en la base, un token en el repositorio y una tabla que avisa cuando alguien la lee.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-cuenta">La cuenta</a></li>
+    <li><a href="#paso-token">El token</a></li>
+    <li><a href="#paso-tabla">La tabla</a></li>
+  </ol>
+</aside>
+<h3 id="paso-cuenta">Paso 1. La cuenta</h3>
+<div class="step-map" data-where="cuenta api">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La tabla <code>usuarios</code> de SEC00.</dd></div>
+    <div><dt>Sale</dt><dd>Una fila más, sin clave que funcione.</dd></div>
+    <div><dt>Cambia</dt><dd><code>db/senuelos.sql</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-senuelo">Qué es un señuelo</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<p>Quien vuelca la tabla <code>usuarios</code> ve tres cuentas, y una se llama como algo que vale la pena probar. Cualquier intento de entrar con ella es un ataque: no existe la clave.</p>
+<pre data-lang="sql" data-file="db/senuelos.sql"><code>-- Señuelos de SEC07. Corre una vez sobre la base que ya existe; en una base nueva entra como 02-senuelos.sql.
+INSERT INTO usuarios (usuario, sal, hash)
+VALUES ('admin_respaldo', md5(random()::text), encode(sha256(random()::text::bytea), 'hex'))
+ON CONFLICT (usuario) DO NOTHING;</code></pre>
+<ol class="code-key"><li>La sal y el hash son al azar: <code>md5</code> de un número aleatorio da 32 caracteres hexadecimales, como una sal real, y <code>sha256</code> da 64, como un hash de scrypt. Ninguna clave da ese hash, así que la cuenta nunca entra. <code>ON CONFLICT</code> deja correr el archivo dos veces sin error.</li></ol>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker compose exec -T db psql -U tienda -d tienda &lt; db/senuelos.sql
+docker compose exec -T db psql -U tienda -d tienda -c "SELECT id, usuario, length(hash) FROM usuarios"</code></pre>
+  <p><code>INSERT 0 1</code> la primera vez y <code>INSERT 0 0</code> si lo repites. La consulta muestra ana, beto y <code>admin_respaldo</code>, las tres con hash de 64. Por fuera no se distingue de las otras.</p>
+</aside>
+<p>Para que entre también en una base nueva, monta el archivo en el servicio <code>db</code> de <code>compose.yaml</code>, debajo de <code>init.sql</code>:</p>
+<pre data-lang="yaml"><code>      - ./db/senuelos.sql:/docker-entrypoint-initdb.d/02-senuelos.sql:ro</code></pre>
+<p>La API ya registra el intento: <code>login_fallido</code> con <code>usuario: admin_respaldo</code>. La regla viene en el paso 5.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un nombre que tienta (<code>admin_respaldo</code>) y un hash con la misma forma que los reales.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Una cuenta llamada <code>trampa</code> o <code>honeypot</code>, o con el hash vacío.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Si un día alguien crea de verdad un usuario <code>admin_respaldo</code> para otra cosa, el señuelo se vuelve real. Por eso va al inventario del paso 7.</dd></div>
+</dl>
+<h3 id="paso-token">Paso 2. El token</h3>
+<div class="step-map" data-where="token api">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La API de SEC00 y el repositorio.</dd></div>
+    <div><dt>Sale</dt><dd>Un token en el repositorio que solo sirve para alertar.</dd></div>
+    <div><dt>Cambia</dt><dd><code>api/app.py</code>, <code>config/respaldo.env</code>, <code>compose.yaml</code>, <code>seguridad/gitleaks.toml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m59-deteccion.html#hunting">59.9</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<p>Un token en un archivo de configuración es justo lo que busca quien clona un repositorio robado. Este no abre nada: la API lo reconoce, lo anota y responde como si no existiera. Primero, el valor:</p>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>python3 -c "import secrets; print('tns_' + secrets.token_urlsafe(24))"</code></pre>
+  <p>Una línea como <code>tns_</code> seguida de 32 caracteres al azar. Cópiala: va en dos lugares.</p>
+</aside>
+<div class="file-card" data-where="token">
+  <h4 class="file-card-path" id="archivo-config-respaldo-env">config/respaldo.env<span class="file-card-size">3 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Parece la configuración de un panel de soporte, con un token de respaldo.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Nadie: es el señuelo.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Un token que, si alguien lo usa, dispara la 100151.</dd></div>
+  </dl>
+</div>
+<pre data-lang="bash" data-file="config/respaldo.env"><code># Panel de soporte: acceso de respaldo para la API. Rotar en marzo.
+TIENDA_API_URL=http://127.0.0.1:8088
+TIENDA_TOKEN_SOPORTE=tns_pega-aqui-el-token-generado</code></pre>
+<p>Reemplaza el valor de <code>TIENDA_TOKEN_SOPORTE</code> por el que generaste. El mismo valor va en el <code>.env</code>, que no se sube, para que la API lo reconozca:</p>
+<pre data-lang="bash" data-file=".env (una línea más)"><code>TIENDA_SENUELO_TOKEN=tns_el-mismo-valor</code></pre>
+<p>Y en <code>compose.yaml</code>, en el <code>environment</code> del servicio <code>api</code>:</p>
+<pre data-lang="yaml"><code>      TIENDA_SENUELO_TOKEN: ${TIENDA_SENUELO_TOKEN:?Define TIENDA_SENUELO_TOKEN en el archivo .env}</code></pre>
+<div class="file-card" data-where="token api">
+  <h4 class="file-card-path" id="archivo-api-app-py">api/app.py<span class="file-card-size">79 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>La API de SEC00, con el token señuelo reconocido dentro de <code>sesion()</code>.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Uvicorn, en el contenedor <code>api</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Las requests de Nginx y la variable <code>TIENDA_SENUELO_TOKEN</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Las mismas respuestas que en SEC00, y el evento <code>senuelo_token</code> cuando alguien usa el señuelo.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Lo mismo que SEC00, más el token señuelo leído del entorno.</li>
+    <li>El login, sin cambios.</li>
+    <li>sesion() recibe la IP; si llega el señuelo, escribe el evento y responde 401 como siempre.</li>
+    <li>pedido() le pasa la IP a sesion().</li>
+  </ol>
+</div>
+<pre data-lang="python"><code>"""Tienda Norte mínima: la víctima del laboratorio de la serie SEC."""
+import hashlib
+import hmac
+import os
+import secrets
+
+import psycopg
+from fastapi import FastAPI, Header, HTTPException, Request
+from pydantic import BaseModel
+
+from registro import evento
+
+DSN = os.environ["TIENDA_DSN"]
+SESIONES: dict[str, tuple[int, str]] = {}
+# (1)
+SENUELO = os.environ.get("TIENDA_SENUELO_TOKEN", "").encode()
+
+app = FastAPI(title="Tienda Norte", docs_url=None, redoc_url=None, openapi_url=None)
+
+
+def conectar():
+    return psycopg.connect(DSN, autocommit=True)
+
+
+def ip_de(request: Request) -&gt; str:
+    return request.headers.get("x-real-ip", "desconocida")</code></pre>
+<ol class="code-key">
+  <li>La única línea nueva de este bloque. Sin la variable, <code>SENUELO</code> queda vacío y la API funciona igual que en SEC00.</li>
+</ol>
+<pre data-lang="python"><code># (2)
+class Credenciales(BaseModel):
+    usuario: str
+    clave: str
+
+
+def clave_correcta(clave: str, sal: str, esperado: str) -&gt; bool:
+    calculado = hashlib.scrypt(clave.encode(), salt=bytes.fromhex(sal), n=2**14, r=8, p=1, dklen=32)
+    return hmac.compare_digest(calculado.hex(), esperado)
+
+
+@app.post("/api/login")
+def login(datos: Credenciales, request: Request):
+    with conectar() as db:
+        fila = db.execute("SELECT id, sal, hash FROM usuarios WHERE usuario = %s", (datos.usuario,)).fetchone()
+    if fila is None or not clave_correcta(datos.clave, fila[1], fila[2]):
+        evento("login_fallido", usuario=datos.usuario, ip=ip_de(request))
+        raise HTTPException(401, "Usuario o clave incorrectos")
+    token = secrets.token_urlsafe(32)
+    SESIONES[token] = (fila[0], datos.usuario)
+    evento("login_ok", usuario=datos.usuario, ip=ip_de(request))
+    return {"token": token}</code></pre>
+<ol class="code-key" style="counter-reset: ck 1">
+  <li>Igual que en SEC00. Un intento con <code>admin_respaldo</code> termina en <code>login_fallido</code>, porque ninguna clave da su hash: la cuenta del paso 1 no necesita código.</li>
+</ol>
+<pre data-lang="python"><code>def sesion(authorization: str | None, ip: str) -&gt; tuple[int, str]:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Falta el token")
+    token = authorization.removeprefix("Bearer ")
+# (3)
+    if SENUELO and hmac.compare_digest(token.encode(), SENUELO):
+        evento("senuelo_token", ip=ip)
+        raise HTTPException(401, "Token desconocido")
+    quien = SESIONES.get(token)
+    if quien is None:
+        raise HTTPException(401, "Token desconocido")
+    return quien
+
+
+@app.get("/api/salud")
+def salud():
+    return {"ok": True}
+
+
+@app.get("/api/productos")
+def productos():
+    with conectar() as db:
+        filas = db.execute("SELECT id, nombre, precio FROM productos ORDER BY id").fetchall()
+    return [{"id": i, "nombre": n, "precio": float(p)} for i, n, p in filas]</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li><code>compare_digest</code> compara en tiempo constante, como la clave del login. Se comparan bytes porque con texto que no es ASCII lanza <code>TypeError</code>, y el texto lo manda cualquiera. La respuesta es la misma que la de un token desconocido: el atacante no aprende nada.</li>
+</ol>
+<pre data-lang="python"><code>@app.get("/api/pedidos/{pedido_id}")
+def pedido(pedido_id: int, request: Request, authorization: str | None = Header(None)):
+# (4)
+    uid, usuario = sesion(authorization, ip_de(request))
+    with conectar() as db:
+        fila = db.execute("SELECT id, usuario_id, total, creado FROM pedidos WHERE id = %s", (pedido_id,)).fetchone()
+    if fila is None or fila[1] != uid:
+        if fila is not None:
+            evento("pedido_ajeno", usuario=usuario, pedido=pedido_id, ip=ip_de(request))
+        raise HTTPException(404, "No existe")
+    return {"id": fila[0], "total": float(fila[2]), "creado": fila[3].isoformat()}</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li>El único cambio fuera de <code>sesion()</code>: ahora recibe la IP, para que el evento diga desde dónde se usó el señuelo.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver api/app.py completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="python" data-file="api/app.py"><code>"""Tienda Norte mínima: la víctima del laboratorio de la serie SEC."""
+import hashlib
+import hmac
+import os
+import secrets
+
+import psycopg
+from fastapi import FastAPI, Header, HTTPException, Request
+from pydantic import BaseModel
+
+from registro import evento
+
+DSN = os.environ["TIENDA_DSN"]
+SESIONES: dict[str, tuple[int, str]] = {}
+SENUELO = os.environ.get("TIENDA_SENUELO_TOKEN", "").encode()
+
+app = FastAPI(title="Tienda Norte", docs_url=None, redoc_url=None, openapi_url=None)
+
+
+def conectar():
+    return psycopg.connect(DSN, autocommit=True)
+
+
+def ip_de(request: Request) -&gt; str:
+    return request.headers.get("x-real-ip", "desconocida")
+class Credenciales(BaseModel):
+    usuario: str
+    clave: str
+
+
+def clave_correcta(clave: str, sal: str, esperado: str) -&gt; bool:
+    calculado = hashlib.scrypt(clave.encode(), salt=bytes.fromhex(sal), n=2**14, r=8, p=1, dklen=32)
+    return hmac.compare_digest(calculado.hex(), esperado)
+
+
+@app.post("/api/login")
+def login(datos: Credenciales, request: Request):
+    with conectar() as db:
+        fila = db.execute("SELECT id, sal, hash FROM usuarios WHERE usuario = %s", (datos.usuario,)).fetchone()
+    if fila is None or not clave_correcta(datos.clave, fila[1], fila[2]):
+        evento("login_fallido", usuario=datos.usuario, ip=ip_de(request))
+        raise HTTPException(401, "Usuario o clave incorrectos")
+    token = secrets.token_urlsafe(32)
+    SESIONES[token] = (fila[0], datos.usuario)
+    evento("login_ok", usuario=datos.usuario, ip=ip_de(request))
+    return {"token": token}
+def sesion(authorization: str | None, ip: str) -&gt; tuple[int, str]:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Falta el token")
+    token = authorization.removeprefix("Bearer ")
+    if SENUELO and hmac.compare_digest(token.encode(), SENUELO):
+        evento("senuelo_token", ip=ip)
+        raise HTTPException(401, "Token desconocido")
+    quien = SESIONES.get(token)
+    if quien is None:
+        raise HTTPException(401, "Token desconocido")
+    return quien
+
+
+@app.get("/api/salud")
+def salud():
+    return {"ok": True}
+
+
+@app.get("/api/productos")
+def productos():
+    with conectar() as db:
+        filas = db.execute("SELECT id, nombre, precio FROM productos ORDER BY id").fetchall()
+    return [{"id": i, "nombre": n, "precio": float(p)} for i, n, p in filas]
+@app.get("/api/pedidos/{pedido_id}")
+def pedido(pedido_id: int, request: Request, authorization: str | None = Header(None)):
+    uid, usuario = sesion(authorization, ip_de(request))
+    with conectar() as db:
+        fila = db.execute("SELECT id, usuario_id, total, creado FROM pedidos WHERE id = %s", (pedido_id,)).fetchone()
+    if fila is None or fila[1] != uid:
+        if fila is not None:
+            evento("pedido_ajeno", usuario=usuario, pedido=pedido_id, ip=ip_de(request))
+        raise HTTPException(404, "No existe")
+    return {"id": fila[0], "total": float(fila[2]), "creado": fila[3].isoformat()}</code></pre>
+  </div>
+</details>
+<div data-exercise="sec07-p-token"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker compose up -d --build api
+. ./config/respaldo.env
+curl -s -w " %{http_code}\n" -H "Authorization: Bearer $TIENDA_TOKEN_SOPORTE" http://127.0.0.1:8088/api/pedidos/1
+curl -s -w " %{http_code}\n" -H "Authorization: Bearer cualquier-cosa" http://127.0.0.1:8088/api/pedidos/1
+docker compose exec -T api tail -n 1 /var/log/tienda/api.log</code></pre>
+  <p>Las dos respuestas son idénticas: <code>{"detail":"Token desconocido"} 401</code>. La última línea del log es <code>{"app":"tienda",…,"evento":"senuelo_token","ip":"…"}</code>, y la del token cualquiera no dejó ninguna.</p>
+</aside>
+<p>El job <code>secretos</code> de SEC01 corre gitleaks con sus reglas por defecto, y una línea <code>TOKEN=</code> con un valor al azar es lo que buscan. Una excepción por ruta lo deja pasar, solo en ese archivo. Al final de <code>seguridad/gitleaks.toml</code>:</p>
+<pre data-lang="toml"><code>[[allowlists]]
+description = "Configuración de respaldo del panel de soporte"
+paths = ['''^config/respaldo\.env$''']</code></pre>
+<p><code>[[allowlists]]</code> es la forma de las excepciones desde gitleaks 8.25.0 <span class="badge badge--doc">Documentado</span>, y SEC01 usa la 8.30.1. Si quieres ver qué regla lo marca, sube primero el archivo sin la excepción y anota el <code>RuleID</code> del hallazgo.</p>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>El contenedor api no arranca: required variable TIENDA_SENUELO_TOKEN is missing a value</code>: Falta la línea en <code>.env</code>. Es a propósito: sin ella, el señuelo no funcionaría y nadie se daría cuenta.</li>
+    <li><code>Las dos respuestas son 401 pero el log no tiene senuelo_token</code>: El valor de <code>.env</code> y el de <code>config/respaldo.env</code> no son idénticos. Compara con <code>grep tns_ .env config/respaldo.env</code>.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un token creíble en un archivo de configuración, la misma respuesta que un token desconocido y una excepción por ruta.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Un comentario <code># gitleaks:allow</code> en la misma línea, que también funciona.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>El comentario queda al lado del token: quien lo lea sabe que es una trampa. La excepción vive en otro archivo, pero quien lea <code>gitleaks.toml</code> también lo sabe; está en <a href="#limitaciones">Limitaciones</a>.</dd></div>
+</dl>
+<h3 id="paso-tabla">Paso 3. La tabla</h3>
+<div class="step-map" data-where="tabla postgres">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La base de SEC00.</dd></div>
+    <div><dt>Sale</dt><dd>Una vista que, al leerse, deja una línea en un log JSON que Wazuh lee.</dd></div>
+    <div><dt>Cambia</dt><dd><code>db/senuelos.sql</code>, <code>compose.yaml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m59-deteccion.html#hunting">59.9</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<p>PostgreSQL no tiene triggers para <code>SELECT</code>, y el usuario <code>tienda</code> es superusuario (lo crea así la imagen con <code>POSTGRES_USER</code>), así que se salta cualquier política de RLS. Lo que sí corre para cualquiera es una función dentro de una consulta. Agrega esto al final de <code>db/senuelos.sql</code>:</p>
+<div class="file-card" data-where="tabla postgres">
+  <h4 class="file-card-path" id="archivo-db-senuelos-sql">db/senuelos.sql<span class="file-card-size">16 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>La segunda mitad del archivo del paso 1: una vista que parece tarjetas de clientes y avisa cuando alguien la lee.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>PostgreSQL, al crear la base o cuando lo corres a mano.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>La función <code>registrar_acceso_pci</code> y la vista <code>clientes_tarjetas</code>.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Una función con nombre aburrido que escribe una línea LOG con quién la llamó.</li>
+    <li>Una vista con tres filas fijas, sin tabla debajo.</li>
+    <li>Cada fila que la vista revisa pasa por la función.</li>
+  </ol>
+</div>
+<pre data-lang="sql"><code>-- (1)
+CREATE OR REPLACE FUNCTION registrar_acceso_pci(objeto text) RETURNS boolean
+LANGUAGE plpgsql VOLATILE AS $$
+BEGIN
+  RAISE LOG 'SENUELO tocado: % por % desde % (%)',
+    objeto, session_user, coalesce(inet_client_addr()::text, 'local'), current_setting('application_name');
+  RETURN true;
+END
+$$;
+
+-- (2)
+CREATE OR REPLACE VIEW clientes_tarjetas AS
+SELECT * FROM (VALUES
+    (1, 'Marta Ríos', '4111 1111 1111 1111', '09/27'),
+    (2, 'Jorge Paz',  '5500 0000 0000 0004', '03/28'),
+    (3, 'Lucía Vera', '3400 000000 00009',   '11/26')
+) AS t (id, titular, tarjeta, vence)
+-- (3)
+WHERE registrar_acceso_pci('clientes_tarjetas');</code></pre>
+<ol class="code-key">
+  <li><code>RAISE LOG</code> escribe en el log del servidor con nivel <code>LOG</code>, que el servidor guarda con la configuración por defecto y que no se le manda al cliente <span class="badge badge--doc">Documentado</span>. <code>VOLATILE</code> obliga a PostgreSQL a llamarla de nuevo para cada fila. El nombre parece de cumplimiento normativo, no de trampa.</li>
+  <li>Las filas son valores fijos, no una tabla: no hay una tabla debajo que alguien pueda leer sin pasar por la vista, ni siquiera un superusuario. Los números son tarjetas de prueba conocidas, que no cobran nada.</li>
+  <li>La condición llama a la función, que devuelve <code>true</code>: las tres filas salen, y el log queda escrito.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver db/senuelos.sql completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="sql" data-file="db/senuelos.sql"><code>CREATE OR REPLACE FUNCTION registrar_acceso_pci(objeto text) RETURNS boolean
+LANGUAGE plpgsql VOLATILE AS $$
+BEGIN
+  RAISE LOG 'SENUELO tocado: % por % desde % (%)',
+    objeto, session_user, coalesce(inet_client_addr()::text, 'local'), current_setting('application_name');
+  RETURN true;
+END
+$$;
+
+CREATE OR REPLACE VIEW clientes_tarjetas AS
+SELECT * FROM (VALUES
+    (1, 'Marta Ríos', '4111 1111 1111 1111', '09/27'),
+    (2, 'Jorge Paz',  '5500 0000 0000 0004', '03/28'),
+    (3, 'Lucía Vera', '3400 000000 00009',   '11/26')
+) AS t (id, titular, tarjeta, vence)
+WHERE registrar_acceso_pci('clientes_tarjetas');</code></pre>
+  </div>
+</details>
+<p>El log de PostgreSQL va hoy a la salida del contenedor. Para que Wazuh lo lea, PostgreSQL lo escribe en JSON en un volumen. En el servicio <code>db</code> de <code>compose.yaml</code>:</p>
+<pre data-lang="yaml"><code>    command:
+      - postgres
+      - -c
+      - logging_collector=on
+      - -c
+      - log_destination=jsonlog
+      - -c
+      - log_directory=/var/log/postgresql
+      - -c
+      - log_filename=postgresql.log
+      - -c
+      - log_file_mode=0644</code></pre>
+<p>Con <code>log_filename=postgresql.log</code>, el archivo JSON se llama <code>postgresql.json</code> <span class="badge badge--doc">Documentado</span>. En los <code>volumes</code> del servicio, <code>- logs-db:/var/log/postgresql</code>, y abajo, junto a los otros volúmenes con nombre:</p>
+<pre data-lang="yaml"><code>  logs-db:
+    name: tienda-logs-db</code></pre>
+<div data-exercise="sec07-p-cliente"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker compose up -d db
+docker compose exec -T db psql -U tienda -d tienda &lt; db/senuelos.sql
+docker compose exec -T db psql -U tienda -d tienda -c "SELECT * FROM clientes_tarjetas"
+docker compose exec -T db tail -n 3 /var/log/postgresql/postgresql.json</code></pre>
+  <p><code>psql</code> muestra las tres filas sin ningún aviso. El log tiene líneas JSON con <code>"error_severity":"LOG"</code> y <code>"message":"SENUELO tocado: clientes_tarjetas por tienda desde local (psql)"</code>, una por cada vez que corrió la función. Anota cuántas fueron.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>could not open log file "/var/log/postgresql/postgresql.json": Permission denied</code>: La carpeta del volumen no es del usuario <code>postgres</code>. <code>docker compose run --rm --user root --entrypoint chown db postgres:postgres /var/log/postgresql</code> y vuelve a levantar.</li>
+    <li><code>ERROR: function sha256(bytea) does not exist</code>: La base es anterior a PostgreSQL 11. La de SEC00 es la 18; revisa la imagen de <code>compose.yaml</code>.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una vista sobre valores fijos con una función que escribe <code>RAISE LOG</code>.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Una tabla real con un trigger, que no existe para SELECT, o <code>log_statement = all</code>, que escribe cada consulta de la tienda en el log.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Quien mira la definición de la vista (<code>\d+ clientes_tarjetas</code>) ve la función. Un nombre aburrido ayuda, no lo esconde.</dd></div>
+</dl>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Una cuenta que nadie puede usar.</li>
+    <li>Un token en el repositorio que la API reconoce sin delatarse.</li>
+    <li>Una vista que avisa cuando alguien la lee.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>docker compose exec -T api grep -c senuelo_token /var/log/tienda/api.log</code></pre>
+  <p>Un número mayor que cero: tu prueba del paso 2.</p>
+</aside>
+<aside class="hito" id="hito-2" data-toc="skip" aria-labelledby="hito-2-t">
+  <p class="hito-num">Hito 2 de 3, unos 35 min</p>
+  <p class="hito-title" id="hito-2-t">El cuarto señuelo y las alertas</p>
+  <p>Un archivo en el servidor, y las cuatro reglas en Wazuh y en Sigma.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-archivo">El archivo</a></li>
+    <li><a href="#paso-reglas">Las reglas</a></li>
+  </ol>
+</aside>
+<h3 id="paso-archivo">Paso 4. El archivo</h3>
+<div class="step-map" data-where="archivo auditd">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>El servidor con auditd de SEC06.</dd></div>
+    <div><dt>Sale</dt><dd>Un archivo de llaves falsas vigilado en lectura.</dd></div>
+    <div><dt>Cambia</dt><dd><code>servidor/tienda.rules</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="sec06-incidente.html#paso-auditd">SEC06, paso 1</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<p>Quien consigue root en un servidor busca llaves de la nube. Este archivo tiene la forma de las credenciales de AWS y un contenido al azar: no es una llave, y nadie la creó en AWS.</p>
+<pre data-lang="bash"><code>sudo mkdir -p /srv/tienda/respaldo
+python3 -c "import secrets, string; a = string.ascii_uppercase + string.digits; print('[default]\naws_access_key_id = AKIA' + ''.join(secrets.choice(a) for _ in range(16)) + '\naws_secret_access_key = ' + secrets.token_urlsafe(30))" | sudo tee /srv/tienda/respaldo/credenciales-aws &gt; /dev/null
+sudo chmod 600 /srv/tienda/respaldo/credenciales-aws</code></pre>
+<p>Al final de <code>servidor/tienda.rules</code>, una vigilancia de lectura. Con <code>-p r</code>, auditd anota cada vez que alguien abre el archivo para leerlo:</p>
+<pre data-lang="bash"><code>-w /srv/tienda/respaldo/credenciales-aws -p r -k senuelo_archivo</code></pre>
+<div data-exercise="sec07-p-ls"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>sudo cp servidor/tienda.rules /etc/audit/rules.d/tienda.rules
+sudo augenrules --load
+sudo ls -l /srv/tienda/respaldo/
+sudo ausearch -k senuelo_archivo -i 2&gt;&amp;1 | tail -n 1
+sudo head -c 10 /srv/tienda/respaldo/credenciales-aws &gt; /dev/null
+sudo ausearch -k senuelo_archivo -i | grep -o "exe=[^ ]*" | tail -n 1</code></pre>
+  <p>Después del <code>ls</code>, <code>ausearch</code> dice <code>&lt;no matches&gt;</code>. Después del <code>head</code>, aparece <code>exe=/usr/bin/head</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Error sending add rule data request (No such file or directory)</code>: El archivo no existe todavía: créalo antes de cargar las reglas.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un archivo con la forma de credenciales de AWS y una vigilancia de lectura.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Una llave real de AWS sin permisos, que avisa desde AWS cuando alguien la usa.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Una llave real manda el aviso fuera de tu máquina y depende de un servicio externo; en producción vale la pena, y está en <a href="#limitaciones-produccion">Qué cambia en producción</a>. Aquí el aviso es la lectura, no el uso.</dd></div>
+</dl>
+<h3 id="paso-reglas">Paso 5. Las reglas</h3>
+<div class="step-map" data-where="wazuh">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Las cuatro fuentes con sus señuelos.</dd></div>
+    <div><dt>Sale</dt><dd>Cuatro reglas de nivel 12 en Wazuh y su versión en Sigma, con casos.</dd></div>
+    <div><dt>Cambia</dt><dd><code>wazuh/tienda_rules.xml</code>, <code>deteccion/</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="sec05-deteccion.html#ae-sigma">SEC05: Sigma</a></dd></div>
+    <div><dt>Tiempo</dt><dd>25 min</dd></div>
+  </dl>
+</div>
+<p>Ninguna lleva <code>frequency</code> ni <code>timeframe</code>: un solo uso alcanza. Primero, que Wazuh lea el log de PostgreSQL. En el override del manager:</p>
+<pre data-lang="yaml"><code>      - tienda-logs-db:/var/log/tienda/db:ro
+# y abajo, en volumes:
+  tienda-logs-db:
+    external: true</code></pre>
+<p>En <code>wazuh_manager.conf</code>:</p>
+<pre data-lang="xml"><code>&lt;localfile&gt;
+  &lt;log_format&gt;json&lt;/log_format&gt;
+  &lt;location&gt;/var/log/tienda/db/postgresql.json&lt;/location&gt;
+&lt;/localfile&gt;</code></pre>
+<p>Al final de <code>wazuh/tienda_rules.xml</code>, las cuatro reglas. La 100150 cuelga de la 100101 (login fallido) y la 100151 de la 100100 (evento de la tienda), las dos de SEC00; la 100153, de la 80700 de auditd, como en SEC06:</p>
+<pre data-lang="xml"><code>&lt;group name="tienda,senuelo,"&gt;
+  &lt;rule id="100150" level="12"&gt;
+    &lt;if_sid&gt;100101&lt;/if_sid&gt;
+    &lt;field name="usuario"&gt;^admin_respaldo$&lt;/field&gt;
+    &lt;description&gt;Señuelo: alguien probó la cuenta admin_respaldo desde $(ip)&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1078&lt;/id&gt;&lt;/mitre&gt;
+  &lt;/rule&gt;
+  &lt;rule id="100151" level="12"&gt;
+    &lt;if_sid&gt;100100&lt;/if_sid&gt;
+    &lt;field name="evento"&gt;^senuelo_token$&lt;/field&gt;
+    &lt;description&gt;Señuelo: alguien usó el token de respaldo desde $(ip)&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1550.001&lt;/id&gt;&lt;/mitre&gt;
+  &lt;/rule&gt;
+  &lt;rule id="100152" level="12"&gt;
+    &lt;decoded_as&gt;json&lt;/decoded_as&gt;
+    &lt;field name="error_severity"&gt;^LOG$&lt;/field&gt;
+    &lt;field name="message"&gt;^SENUELO tocado: &lt;/field&gt;
+    &lt;description&gt;Señuelo: $(message)&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1005&lt;/id&gt;&lt;/mitre&gt;
+  &lt;/rule&gt;
+  &lt;rule id="100153" level="12"&gt;
+    &lt;if_sid&gt;80700&lt;/if_sid&gt;
+    &lt;field name="audit.key"&gt;^senuelo_archivo$&lt;/field&gt;
+    &lt;description&gt;Señuelo: $(audit.exe) leyó credenciales-aws (auid $(audit.auid))&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1552.001&lt;/id&gt;&lt;/mitre&gt;
+  &lt;/rule&gt;
+&lt;/group&gt;</code></pre>
+<p>En Sigma, con el formato de SEC05. Son reglas simples, sin correlación, así que no necesitan <code>name</code>. Cada una lleva su <code>wazuh</code> y su técnica para la prueba de pares:</p>
+<pre data-lang="yaml" data-file="deteccion/reglas/senuelo_cuenta.yml"><code>title: Alguien prueba la cuenta señuelo admin_respaldo
+id: d8f4b0a2-6c1e-4f57-9b3a-2e7c5d9a1f60
+status: test
+wazuh: 100150
+tags:
+  - attack.initial-access
+  - attack.t1078
+logsource:
+  product: tienda
+  service: api
+detection:
+  seleccion:
+    app: tienda
+    evento: login_fallido
+    usuario: admin_respaldo
+  condition: seleccion
+level: critical</code></pre>
+<pre data-lang="yaml" data-file="deteccion/reglas/senuelo_token.yml"><code>title: Alguien usa el token señuelo de soporte
+id: 4b2e9c71-0d3a-4e8f-a6b5-7c1d2e3f4a5b
+status: test
+wazuh: 100151
+tags:
+  - attack.defense-evasion
+  - attack.t1550.001
+logsource:
+  product: tienda
+  service: api
+detection:
+  seleccion:
+    app: tienda
+    evento: senuelo_token
+  condition: seleccion
+level: critical</code></pre>
+<pre data-lang="yaml" data-file="deteccion/reglas/senuelo_tabla.yml"><code>title: Alguien lee la vista señuelo de tarjetas
+id: 9e1f3a5c-7b2d-4c6e-8f0a-1b3c5d7e9f2a
+status: test
+wazuh: 100152
+tags:
+  - attack.collection
+  - attack.t1005
+logsource:
+  product: postgresql
+detection:
+  seleccion:
+    error_severity: LOG
+    message|startswith: 'SENUELO tocado: '
+  condition: seleccion
+level: critical</code></pre>
+<pre data-lang="yaml" data-file="deteccion/reglas/senuelo_archivo.yml"><code>title: Alguien lee el archivo señuelo de credenciales
+id: 2c4e6a8b-0d1f-4a3c-9e5b-7d9f1b3d5e7a
+status: test
+wazuh: 100153
+tags:
+  - attack.credential-access
+  - attack.t1552.001
+logsource:
+  product: linux
+  service: auditd
+detection:
+  seleccion:
+    type: SYSCALL
+    key: senuelo_archivo
+  condition: seleccion
+level: critical</code></pre>
+<p><code>message|startswith</code> es un modificador de Sigma: el campo empieza con ese texto. Los casos se escriben a mano, como en SEC05. Los de auditd tienen la forma de los campos que usan las reglas Sigma de Linux (<code>type</code>, <code>key</code>, <code>exe</code>), no la línea cruda de <code>audit.log</code>. Cada negativo roza la regla: un nombre parecido, un LOG que no es del señuelo, un registro <code>PATH</code> del mismo evento.</p>
+<pre data-lang="json" data-file="deteccion/casos/senuelo_cuenta/si.jsonl"><code>{"app": "tienda", "ts": "2026-11-18T15:00:00.000+00:00", "evento": "login_fallido", "usuario": "admin_respaldo", "ip": "172.18.0.1"}</code></pre>
+<pre data-lang="json" data-file="deteccion/casos/senuelo_cuenta/no.jsonl"><code>{"app": "tienda", "ts": "2026-11-18T15:00:00.000+00:00", "evento": "login_fallido", "usuario": "ana", "ip": "172.18.0.1"}
+{"app": "tienda", "ts": "2026-11-18T15:01:00.000+00:00", "evento": "login_fallido", "usuario": "admin_respaldo2", "ip": "172.18.0.1"}</code></pre>
+<pre data-lang="json" data-file="deteccion/casos/senuelo_token/si.jsonl"><code>{"app": "tienda", "ts": "2026-11-18T15:00:00.000+00:00", "evento": "senuelo_token", "ip": "172.18.0.1"}</code></pre>
+<pre data-lang="json" data-file="deteccion/casos/senuelo_token/no.jsonl"><code>{"app": "tienda", "ts": "2026-11-18T15:00:00.000+00:00", "evento": "login_ok", "usuario": "ana", "ip": "172.18.0.1"}</code></pre>
+<pre data-lang="json" data-file="deteccion/casos/senuelo_tabla/si.jsonl"><code>{"timestamp": "2026-11-18 15:00:00.000 UTC", "user": "tienda", "dbname": "tienda", "error_severity": "LOG", "message": "SENUELO tocado: clientes_tarjetas por tienda desde local (psql)"}</code></pre>
+<pre data-lang="json" data-file="deteccion/casos/senuelo_tabla/no.jsonl"><code>{"timestamp": "2026-11-18 15:00:00.000 UTC", "user": "tienda", "dbname": "tienda", "error_severity": "LOG", "message": "checkpoint starting: time"}
+{"timestamp": "2026-11-18 15:01:00.000 UTC", "user": "tienda", "dbname": "tienda", "error_severity": "ERROR", "message": "relation \"senuelo\" does not exist"}</code></pre>
+<pre data-lang="json" data-file="deteccion/casos/senuelo_archivo/si.jsonl"><code>{"type": "SYSCALL", "key": "senuelo_archivo", "exe": "/usr/bin/cat", "auid": "1000"}</code></pre>
+<pre data-lang="json" data-file="deteccion/casos/senuelo_archivo/no.jsonl"><code>{"type": "SYSCALL", "key": "identidad", "exe": "/usr/sbin/useradd", "auid": "1000"}
+{"type": "PATH", "key": "senuelo_archivo", "exe": "/usr/bin/cat", "auid": "1000"}</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker compose up -d   # en wazuh-docker/single-node
+.venv/bin/python -m pytest -q deteccion</code></pre>
+  <p>En la tienda, pytest da <code>24 passed</code>: las ocho reglas contra sus casos (16) y sus ocho pares (8). Si una regla de Wazuh no tiene par, falla <code>test_tiene_par</code> con el id que falta.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>test_tiene_par[senuelo_token]: Sigma dice {'T1550.001'} y Wazuh dice set()</code>: Falta el <code>&lt;mitre&gt;</code> en la 100151, o el id de la regla está mal escrito.</li>
+    <li><code>El manager no arranca: volume tienda-logs-db declared as external, but could not be found</code>: Levanta primero la tienda con el volumen nuevo (<code>docker compose up -d db</code> del paso 3); Compose lo crea al levantarla.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Reglas de nivel 12 sin umbral, cada una con su par en Sigma.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Una sola regla genérica que busque la palabra "señuelo" en cualquier log.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Una regla genérica no dice qué señuelo saltó ni desde dónde, y depende de que la palabra aparezca en el log: la cuenta y el archivo no la escriben.</dd></div>
+</dl>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Cuatro señuelos, cada uno con su fuente.</li>
+    <li>Cuatro reglas en Wazuh de nivel 12 y sus pares en Sigma, con casos.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>.venv/bin/python -m pytest -q deteccion</code></pre>
+  <p><code>24 passed</code>.</p>
+</aside>
+<aside class="hito" id="hito-3" data-toc="skip" aria-labelledby="hito-3-t">
+  <p class="hito-num">Hito 3 de 3, unos 30 min</p>
+  <p class="hito-title" id="hito-3-t">Probarlos y medirlos</p>
+  <p>Una emulación por señuelo, los falsos positivos de una semana y el inventario.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-emular">Emular</a></li>
+    <li><a href="#paso-ruido">Los falsos positivos</a></li>
+    <li><a href="#paso-inventario">El inventario</a></li>
+  </ol>
+</aside>
+<h3 id="paso-emular">Paso 6. Emular</h3>
+<div class="step-map" data-where="cuenta token tabla archivo wazuh">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Los señuelos y sus reglas.</dd></div>
+    <div><dt>Sale</dt><dd>Cuatro líneas VISTA.</dd></div>
+    <div><dt>Cambia</dt><dd><code>deteccion/emulaciones.yaml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="sec05-deteccion.html#paso-emular">SEC05, paso 8</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<p>Igual que en SEC05: cada señuelo se toca de verdad y se busca su alerta. Agrega estas cuatro al final de <code>deteccion/emulaciones.yaml</code>, que ya tiene las de SEC05:</p>
+<pre data-lang="yaml"><code>- tecnica: T1078
+  nombre: Probar la cuenta admin_respaldo
+  ejecutar: [curl, -s, -o, /dev/null, -X, POST, -H, "Content-Type: application/json", -d, '{"usuario":"admin_respaldo","clave":"x"}', "http://127.0.0.1:8088/api/login"]
+  limpiar: []
+  espera: 100150
+- tecnica: T1550.001
+  nombre: Usar el token de config/respaldo.env
+  ejecutar: [sh, -c, '. ./config/respaldo.env &amp;&amp; curl -s -o /dev/null -H "Authorization: Bearer $TIENDA_TOKEN_SOPORTE" http://127.0.0.1:8088/api/pedidos/1']
+  limpiar: []
+  espera: 100151
+- tecnica: T1005
+  nombre: Leer la vista clientes_tarjetas
+  ejecutar: [docker, compose, exec, -T, db, psql, -U, tienda, -d, tienda, -c, "SELECT count(*) FROM clientes_tarjetas"]
+  limpiar: []
+  espera: 100152
+- tecnica: T1552.001
+  nombre: Leer credenciales-aws en el servidor
+  ejecutar: [sudo, sh, -c, "cat /srv/tienda/respaldo/credenciales-aws &gt; /dev/null"]
+  limpiar: []
+  espera: 100153</code></pre>
+<div data-exercise="sec07-p-dump"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>.venv/bin/python deteccion/emular.py T1078 T1550.001 T1005 T1552.001</code></pre>
+  <p>Cuatro líneas con <code>VISTA</code> y salida 0. <code>sudo</code> te pide la clave en la última. La de T1078 dispara también la 100101 de SEC00, como cualquier login fallido.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>T1005 … NO LLEGÓ</code>: Mira primero que el log exista: <code>docker compose exec -T db ls -l /var/log/postgresql</code>. Después, <code>wazuh-logtest</code> con una línea de <code>postgresql.json</code>.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una emulación por señuelo, como cualquier otra regla.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Dar por buenos los señuelos porque se plantaron bien.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Un señuelo que no alerta es peor que ninguno: da una tranquilidad que no existe. Córrelas después de cualquier cambio en la tienda o en Wazuh.</dd></div>
+</dl>
+<h3 id="paso-ruido">Paso 7. Los falsos positivos</h3>
+<div class="step-map" data-where="archivo auditd wazuh">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Los señuelos funcionando.</dd></div>
+    <div><dt>Sale</dt><dd>Una cuenta de alertas por señuelo y su causa.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m59-deteccion.html#calidad">59.8</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min, y una semana de espera</dd></div>
+  </dl>
+</div>
+<p>Un señuelo no tiene tráfico legítimo, pero sí cosas legítimas que lo tocan. Provoca la más común:</p>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>sudo grep -rl aws_secret /srv</code></pre>
+  <p>Imprime <code>/srv/tienda/respaldo/credenciales-aws</code>. En Wazuh aparece la 100153 con <code>/usr/bin/grep</code> y tu <code>auid</code>. No es un ataque: eres tú buscando.</p>
+</aside>
+<p>La regla se queda como está. Lo que cambia es la respuesta: la primera pregunta del triaje de un señuelo es "¿quién es este <code>auid</code>?", y si es alguien del equipo, se le pregunta. Un respaldo que copia <code>/srv</code> haría lo mismo todas las noches, con el <code>auid</code> del servicio; ese caso se resuelve sacando el señuelo de la ruta del respaldo, no apagando la regla.</p>
+<p>Deja pasar una semana de uso normal del laboratorio y cuenta:</p>
+<pre data-lang="bash"><code>cd ../wazuh-docker/single-node
+for r in 100150 100151 100152 100153; do
+  printf '%s ' "$r"
+  docker compose exec -T wazuh.manager grep -c "\"id\":\"$r\"" /var/ossec/logs/alerts/alerts.json
+done</code></pre>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Regla</th><th>Lo que el diseño espera</th><th>Alertas en 7 días</th><th>Cuántas legítimas</th><th>Causa</th></tr></thead>
+<tbody>
+<tr><td>100150 cuenta</td><td>Solo tus emulaciones</td><td></td><td></td><td></td></tr>
+<tr><td>100151 token</td><td>Solo tus emulaciones</td><td></td><td></td><td></td></tr>
+<tr><td>100152 tabla</td><td>Solo tus emulaciones</td><td></td><td></td><td></td></tr>
+<tr><td>100153 archivo</td><td>Tus emulaciones y tu <code>grep</code></td><td></td><td></td><td></td></tr>
+</tbody>
+</table>
+</div>
+<p>Las alertas legítimas divididas por el total son la tasa de falsos positivos de cada señuelo. La que no sea casi cero tiene un problema de lugar, no de regla.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>La regla no cambia; el triaje pregunta por el <code>auid</code> y el falso positivo se anota.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Bajar el nivel o excluir <code>grep</code>, que también usa un atacante.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Si el equipo aprende que "el señuelo salta siempre", deja de mirarlo: es la <a href="../modules/m59-deteccion.html#calidad">fatiga de alertas</a> con un solo detector.</dd></div>
+</dl>
+<h3 id="paso-inventario">Paso 8. El inventario</h3>
+<div class="step-map" data-where="cuenta token tabla archivo">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Los cuatro señuelos medidos.</dd></div>
+    <div><dt>Sale</dt><dd>Una tabla con cada señuelo, su regla y qué hacer.</dd></div>
+    <div><dt>Cambia</dt><dd><code>senuelos.md</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-senuelo">Qué es un señuelo</a></dd></div>
+    <div><dt>Tiempo</dt><dd>5 min</dd></div>
+  </dl>
+</div>
+<p>Un señuelo que nadie recuerda termina borrado en una limpieza, o lo dispara un compañero nuevo y se pierde una tarde. La lista vive fuera del repositorio de la tienda, donde la ven solo quienes responden a sus alertas:</p>
+<div class="file-card" data-where="cuenta token tabla archivo">
+  <h4 class="file-card-path" id="archivo-senuelos-md">senuelos.md<span class="file-card-size">10 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>La lista de señuelos con lo necesario para mantenerlos y responder.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Quien está de guardia.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Qué hacer cuando salta cada uno.</dd></div>
+  </dl>
+</div>
+<pre data-lang="markdown" data-file="senuelos.md"><code># Señuelos de Tienda Norte
+
+Quién lo sabe: las dos personas de seguridad. Nadie más tiene que saber dónde están.
+
+| Señuelo | Dónde | Regla | Qué hacer si salta | Cómo se rota | Revisado |
+|---|---|---|---|---|---|
+| Cuenta `admin_respaldo` | tabla `usuarios` | 100150 | Ver la IP; buscar quién tuvo la tabla | Cambiar el nombre si se filtra el inventario | |
+| Token de soporte | `config/respaldo.env` | 100151 | El repositorio se filtró: revisar accesos y clonaciones | Generar otro y cambiar `.env` y el archivo | |
+| Vista `clientes_tarjetas` | base `tienda` | 100152 | Alguien tiene la clave de la base: rotarla (SEC06) | Cambiar el nombre de la vista | |
+| `credenciales-aws` | `/srv/tienda/respaldo/` en el servidor | 100153 | Ver el `auid`; si no es del equipo, es un incidente | Regenerar el contenido | |</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un inventario corto, fuera del repositorio, con la respuesta de cada señuelo.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Guardarlo en el mismo repositorio, donde lo lee quien lo robe.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Si el inventario se filtra, los señuelos dejan de servir todos juntos. Por eso cada fila dice cómo se rota.</dd></div>
+</dl>
+<h2 id="viaje">El viaje de un dato</h2>
+<p>El caso principal: el token del repositorio, desde que alguien lo copia hasta la alerta.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="fs07st fs07sd">
+<title id="fs07st">El token señuelo, del repositorio a la alerta</title>
+<desc id="fs07sd">Quien clonó el repositorio lee config/respaldo.env y usa el token contra la API. Nginx lo pasa a la API. sesion() lo compara con el señuelo, escribe senuelo_token en api.log y responde 401 Token desconocido, igual que con cualquier token. Wazuh lee la línea y escribe la alerta 100151.</desc>
+<defs><marker id="fs07s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs07s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs07s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs07s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Quien clonó</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Nginx</text>
+<path class="dg-frame" d="M280.0 40 V366"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">API</text>
+<path class="dg-frame" d="M490.0 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Wazuh</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<rect x="80.0" y="58" width="181" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="90.0" y="74">lee config/respaldo.env</text>
+<path class="dg-edge" d="M73.0 106 L275.0 106" marker-end="url(#fs07s-a)"/>
+<rect x="63.400000000000006" y="89" width="223.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="100" text-anchor="middle">GET /api/pedidos/1, Bearer tns_…</text>
+<path class="dg-edge" d="M283.0 140 L485.0 140" marker-end="url(#fs07s-a)"/>
+<rect x="336.1" y="123" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="134" text-anchor="middle">con X-Real-IP</text>
+<rect x="500.0" y="160" width="223" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="510.0" y="176">compare_digest: es el señuelo</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M493.0 208 L695.0 208" marker-end="url(#fs07s-q)"/>
+<rect x="509.8" y="191" width="170.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="202" text-anchor="middle">senuelo_token en api.log</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M487.0 242 L285.0 242" marker-end="url(#fs07s-f)"/>
+<rect x="309.7" y="225" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="236" text-anchor="middle">401 Token desconocido</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M277.0 276 L75.0 276" marker-end="url(#fs07s-f)"/>
+<rect x="86.5" y="259" width="177.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="270" text-anchor="middle">401, como cualquier token</text>
+<rect x="565.0" y="296" width="125" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="575.0" y="312">100151 nivel 12</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC07.5.</b> El viaje completo. El atacante recibe lo mismo que con un token inventado; la alerta sale igual.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Paso</th><th>De → a</th><th>Qué viaja</th><th>Dónde queda</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Repositorio → quien clonó</td><td>El token</td><td>Su máquina</td></tr>
+<tr><td>2</td><td>Quien clonó → Nginx → API</td><td>La request con el token</td><td>El log de Nginx: un 401</td></tr>
+<tr><td>3</td><td>API → api.log</td><td><code>senuelo_token</code> con la IP</td><td>El volumen <code>tienda-logs-api</code></td></tr>
+<tr><td>4</td><td>api.log → Wazuh</td><td>La línea JSON</td><td><code>alerts.json</code>: 100151</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="sec07-senuelos"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-verde">El punto de partida</h3>
+<div class="step-map" data-where="cuenta token tabla archivo wazuh">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Todo lo de los pasos 1 a 8.</dd></div>
+    <div><dt>Sale</dt><dd>Una tabla con lo que viste.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-senuelo">Qué es un señuelo</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Lo que el diseño espera</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td><code>pytest -q deteccion</code></td><td><code>24 passed</code></td><td></td></tr>
+<tr><td><code>emular.py</code> con las cuatro técnicas</td><td>Cuatro <code>VISTA</code></td><td></td></tr>
+<tr><td>El job <code>secretos</code> con <code>config/respaldo.env</code></td><td>Verde</td><td></td></tr>
+<tr><td>Las dos respuestas del paso 2</td><td>Idénticas</td><td></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-fallas">Las fallas, a propósito</h3>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 1: un señuelo que se delata</p>
+<p><b>Provócala.</b> En <code>app.py</code>, cambia la respuesta del señuelo a <code>HTTPException(403, "Acceso revocado")</code>, reconstruye la API y repite los dos <code>curl</code> del paso 2.</p><p><b>Qué tiene que pasar.</b> El token señuelo da <code>403</code> y el inventado, <code>401</code>. La alerta sale igual. <b>Por qué importa.</b> Quien prueba los tokens que robó aprende cuál era la trampa y sigue con los demás sin hacer ruido. La alerta sale una vez y nunca más. <b>Deshazla</b> volviendo a <code>HTTPException(401, "Token desconocido")</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 2: un señuelo que el escáner borra</p>
+<p><b>Provócala.</b> En <code>seguridad/gitleaks.toml</code>, comenta las tres líneas de <code>[[allowlists]]</code> y sube la rama.</p><p><b>Qué tiene que pasar.</b> El job <code>secretos</code> falla con un hallazgo en <code>config/respaldo.env</code>. Anota qué <code>RuleID</code> lo marcó. <b>Por qué importa.</b> Sin la excepción, alguien del equipo "arregla" el pipeline borrando el archivo, y el señuelo desaparece sin que nadie lo decida. <b>Deshazla</b> devolviendo la excepción.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 3: el volcado que no avisa</p>
+<p><b>Provócala.</b> Con la clave de la base, <code>docker compose exec -T db pg_dump -U tienda tienda &gt; /tmp/volcado.sql</code>, y después cuenta las 100152 como en el paso 7.</p><p><b>Qué tiene que pasar.</b> La cuenta de la 100152 no cambia. En <code>/tmp/volcado.sql</code> está la definición de la vista, con la función, y la fila de <code>admin_respaldo</code>. <b>Por qué importa.</b> El volcado entero es la forma más común de llevarse una base, y la vista no lo ve. La cuenta sí viaja en el volcado: es el señuelo que salta cuando alguien la prueba más tarde. Por eso hay más de uno. <b>Deshazla</b> borrando el volcado: <code>rm /tmp/volcado.sql</code>.</p>
+</aside>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Qué la ve</th><th>¿Pasó?</th><th>Lo que decía</th></tr></thead>
+<tbody>
+<tr><td>1. Respuesta distinta</td><td>Nadie: la alerta sale igual</td><td></td><td></td></tr>
+<tr><td>2. Sin excepción</td><td>El job <code>secretos</code></td><td></td><td></td></tr>
+<tr><td>3. Volcado entero</td><td>Nadie, hasta que prueben la cuenta</td><td></td><td></td></tr>
+</tbody>
+</table>
+</div>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Cuatro señuelos creíbles, cada uno con su fuente y su regla de nivel 12.</li>
+    <li>Las pruebas y las emulaciones de SEC05, con los señuelos incluidos.</li>
+    <li>Una tasa de falsos positivos medida y un inventario fuera del repositorio.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>.venv/bin/python -m pytest -q deteccion &amp;&amp; .venv/bin/python deteccion/emular.py T1078 T1550.001 T1005 T1552.001</code></pre>
+  <p><code>24 passed</code> y cuatro <code>VISTA</code>.</p>
+</aside>
+<h2 id="limitaciones">Limitaciones</h2>
+<ul>
+<li><b>Quien lee la configuración lo sabe.</b> La excepción de <code>gitleaks.toml</code> nombra el archivo, la definición de la vista muestra la función y <code>.env</code> tiene el token. Un atacante cuidadoso que lea todo puede esquivar los señuelos.</li>
+<li><b>El volcado no avisa.</b> <code>pg_dump</code> no consulta la vista (falla 3). La cuenta señuelo cubre ese caso solo si alguien la prueba después.</li>
+<li><b>El token solo avisa donde se usa.</b> En el laboratorio la API escucha en 127.0.0.1: solo tú puedes usarlo. Si el repositorio es público (SEC02 lo pide), el token está a la vista de cualquiera, pero no abre nada.</li>
+<li><b>El archivo avisa con root.</b> Quien tiene root puede borrar la regla de auditd antes de leer. La vigilancia de <code>/etc/audit/</code> de SEC06 lo anota, pero no lo impide.</li>
+<li><b>Las cuatro reglas no dicen quién.</b> Dicen desde qué IP o con qué <code>auid</code>. Llegar a una persona es trabajo del incidente, como en SEC06.</li>
+</ul>
+<h3 id="limitaciones-costo">Costo y tiempo, con la cuenta a mano</h3>
+<p>No hay costo nuevo. El log JSON de PostgreSQL crece con cada mensaje del servidor; supuesto: con los <code>checkpoint</code> y arranques de un laboratorio, unas decenas de líneas por día. El costo real es de personas: cada alerta de un señuelo pide una respuesta, y la tabla del paso 7 dice cuántas fueron de verdad. Si en una semana fueron cero de verdad y una tuya, el costo es una pregunta al equipo.</p>
+<h3 id="limitaciones-produccion">Qué cambia en producción</h3>
+<ul>
+<li>Llaves de nube reales sin permisos, que avisan desde el proveedor cuando alguien las usa (servicios como Canarytokens las ofrecen para AWS <span class="badge badge--doc">Documentado</span>).</li>
+<li>Señuelos en el directorio de la empresa, como la cuenta con SPN de <a href="../modules/m38-active-directory.html#detectar">M38</a>.</li>
+<li>El inventario en el gestor de secretos del equipo de seguridad, con dueños y fechas de rotación.</li>
+<li>Un playbook por señuelo, con la contención que le toca, y el triaje que en SEC08 hace un agente.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="sec07">
+<p class="pj-repo-head">El mismo repositorio de la tienda, con <code>config/respaldo.env</code> y las reglas nuevas. El inventario no se sube. Marca cada comprobación cuando la veas.</p>
+<ul class="pj-checks">
+<li data-check="cuenta">Un login con <code>admin_respaldo</code> dio la 100150.</li>
+<li data-check="token">El token señuelo da la misma respuesta que uno inventado, y la 100151.</li>
+<li data-check="tabla">Leer <code>clientes_tarjetas</code> no muestra nada raro y da la 100152.</li>
+<li data-check="archivo">Leer <code>credenciales-aws</code> da la 100153 y <code>ls</code> no.</li>
+<li data-check="pipeline"><code>pytest -q deteccion</code> da <code>24 passed</code> y el job <code>secretos</code> está verde.</li>
+<li data-check="ruido">Anotaste los falsos positivos de una semana.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con SEC00, SEC01, SEC05 y SEC06</p>
+<p>La API y la base son de <a href="sec00-laboratorio.html">SEC00</a>; la excepción de gitleaks, de <a href="sec01-pipeline.html">SEC01</a>; las reglas Sigma, los pares y las emulaciones siguen <a href="sec05-deteccion.html">SEC05</a>, y auditd viene de <a href="sec06-incidente.html">SEC06</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con la Parte VII y M38</p>
+<p>Los señuelos como caza barata en <a href="../modules/m59-deteccion.html#hunting">59.9</a>, la calidad de las alertas en <a href="../modules/m59-deteccion.html#calidad">59.8</a> y la cuenta señuelo del directorio en <a href="../modules/m38-active-directory.html#detectar">M38</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con el glosario</p>
+<p><a href="../glosario.html#t-honeytoken">cuenta señuelo</a>, <a href="../glosario.html#t-siem">SIEM</a>, <a href="../glosario.html#t-fatiga-alertas">fatiga de alertas</a> y <a href="../glosario.html#t-mitre-attack">MITRE ATT&amp;CK</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/sec07.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

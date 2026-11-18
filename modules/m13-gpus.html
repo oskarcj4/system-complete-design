@@ -234,6 +234,16 @@
       </div>
       <p class="muted">Especificaciones del fabricante. El ancho de banda entre GPUs suma ambos sentidos. La B200 agrega FP4 a unos 9000 TFLOPS densos. <span class="badge badge--doc">Documentado</span></p>
 
+      <p><b>Cómo leer esta tabla.</b> Cada columna responde una pregunta distinta, y conviene leerla en este orden:</p>
+      <ol class="steps">
+        <li><span class="step-title">Memoria</span>¿Cabe el modelo con su KV cache? Si no cabe, el resto da igual: hay que repartirlo entre varias GPUs (13.4).</li>
+        <li><span class="step-title">Ancho de banda</span>¿A qué velocidad sale cada token del decode? Más TB/s, más tokens por segundo por usuario (13.3).</li>
+        <li><span class="step-title">BF16 o FP8 denso</span>¿A qué velocidad se procesa el prompt (el prefill)? Mira la columna de la precisión en la que vas a servir.</li>
+        <li><span class="step-title">Entre GPUs</span>¿Se puede partir bien el modelo entre varias placas? Importa solo si el paso 1 dijo que no cabe en una.</li>
+        <li><span class="step-title">Consumo</span>¿Cuánta energía y refrigeración pide? Es el límite físico de 13.6.</li>
+      </ol>
+      <p>Un ejemplo con dos filas: la H200 contra la H100 da 141 ÷ 80 ≈ 1.76 en memoria (76&#8239;% más) y 4.8 ÷ 3.35 ≈ 1.43 en ancho de banda (43&#8239;% más), pero 989 ÷ 989 = 1 en cómputo. Son las mismas cuentas del párrafo que cierra esta sección.</p>
+
       <figure class="figure">
         <div class="figure-frame">
 <svg viewBox="0 0 770 262" role="img" aria-labelledby="f13n2t f13n2d">
@@ -315,6 +325,54 @@
         <li><b>Decode con 64 usuarios y 4000 tokens de contexto cada uno:</b> los pesos se comparten, pero cada usuario suma su KV cache a los bytes leídos. La intensidad sube a unas 58 operaciones por byte: todavía diez veces por debajo del quiebre.</li>
       </ul>
 
+      <p><b>Paso a paso: de dónde salen esos números.</b> La intensidad parece una fórmula abstracta, pero es contar cuántas veces se aprovecha cada byte que llega de la memoria:</p>
+      <ol class="steps">
+        <li><span class="step-title">Un peso, dos operaciones</span>En FP8 cada parámetro ocupa 1 byte. Para procesar un token, ese peso se multiplica por un número de la entrada y el resultado se suma al acumulado: una multiplicación y una suma, 2 operaciones.</li>
+        <li><span class="step-title">Decode con 1 usuario</span>Cada paso produce un solo token, así que cada byte leído se usa una sola vez: 2 operaciones por byte.</li>
+        <li><span class="step-title">Velocidad alcanzable</span>Es el menor de los dos techos: mínimo(1979, 2 × 3.35) = 6.7 TFLOPS. Y 6.7 ÷ 1979 ≈ 0.0034, el 0.3&#8239;% del pico.</li>
+        <li><span class="step-title">Prefill de 2000 tokens</span>El mismo byte, una vez leído, sirve para los 2000 tokens del prompt: 2 × 2000 = 4000 operaciones por byte. El techo de memoria daría 4000 × 3.35 = 13 400 TFLOPS, más que las 1979 que puede hacer el chip, así que manda el cómputo.</li>
+        <li><span class="step-title">La regla</span>Compara la intensidad con el quiebre de 590: por debajo, te limita la memoria; por encima, el cómputo.</li>
+      </ol>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="fjr13at fjr13ad">
+<title id="fjr13at">Un byte leído y cuántas veces se usa</title>
+<desc id="fjr13ad">Dos filas. Arriba, el decode con un usuario: un byte de peso sale de la HBM y se usa para un solo token, 2 operaciones por byte. Abajo, el prefill de 2000 tokens: el mismo byte se lee una vez y se usa para los 2000 tokens del prompt, 4000 operaciones por byte.</desc>
+<defs><marker id="fjr13aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="28" text-anchor="start">Decode, 1 usuario</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="20" y="44" width="170" height="56" rx="8"/>
+<text class="dg-label" x="105" y="68" text-anchor="middle">1 byte de peso</text>
+<text class="dg-tiny" x="105" y="86" text-anchor="middle">leído de la HBM</text>
+<path class="dg-edge" d="M190 72 H262" marker-end="url(#fjr13aa)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="270" y="44" width="170" height="56" rx="8"/>
+<text class="dg-label" x="355" y="68" text-anchor="middle">token 1</text>
+<text class="dg-tiny" x="355" y="86" text-anchor="middle">2 operaciones</text>
+<rect class="dg-box" x="500" y="44" width="250" height="56" rx="8"/>
+<text class="dg-label" x="625" y="68" text-anchor="middle">2 × 1 = 2 op/B</text>
+<text class="dg-tiny" x="625" y="86" text-anchor="middle">la GPU espera a la memoria</text>
+<text class="dg-group" x="20" y="146" text-anchor="start">Prefill de 2000 tokens</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="20" y="186" width="170" height="56" rx="8"/>
+<text class="dg-label" x="105" y="210" text-anchor="middle">1 byte de peso</text>
+<text class="dg-tiny" x="105" y="228" text-anchor="middle">leído una sola vez</text>
+<path class="dg-edge" d="M190 214 L262 182" marker-end="url(#fjr13aa)"/>
+<path class="dg-edge" d="M190 214 L262 214" marker-end="url(#fjr13aa)"/>
+<path class="dg-edge" d="M190 214 L262 246" marker-end="url(#fjr13aa)"/>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="270" y="162" width="170" height="36" rx="8"/>
+<text class="dg-small" x="355" y="185" text-anchor="middle">token 1: 2 op</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="270" y="204" width="170" height="20" rx="6"/>
+<text class="dg-tiny" x="355" y="218" text-anchor="middle">…</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="270" y="230" width="170" height="36" rx="8"/>
+<text class="dg-small" x="355" y="253" text-anchor="middle">token 2000: 2 op</text>
+<rect class="dg-box dg-box--em" x="500" y="186" width="250" height="56" rx="8"/>
+<text class="dg-label" x="625" y="210" text-anchor="middle">2 × 2000 = 4000 op/B</text>
+<text class="dg-tiny" x="625" y="228" text-anchor="middle">la memoria espera al cómputo</text>
+<text class="dg-tiny" x="20" y="290" text-anchor="start">Misma GPU, mismos pesos: lo único que cambia es cuántos tokens aprovechan cada byte leído.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 13.3b.</b> La intensidad aritmética es cuántas veces se reutiliza cada byte. El decode lee todos los pesos para un solo token; el prefill los lee una vez para todo el prompt.</figcaption>
+      </figure>
+
       
       <figure class="figure">
         <div class="figure-frame">
@@ -364,6 +422,8 @@
         </div>
         <figcaption><b>Figura 13.4.</b> Los tres casos de la lista sobre el roofline de la H100 en FP8. Los dos decodes quedan sobre la rampa de la memoria: juntar usuarios los sube, pero el KV cache de cada uno los deja lejos del quiebre.</figcaption>
       </figure>
+
+      <p><b>Cómo leer esta figura.</b> Los dos ejes van en escala logarítmica: cada raya multiplica por 10. Ubica primero la intensidad de tu carga en el eje horizontal, sube en vertical hasta tocar la línea gruesa, y lee a la izquierda cuántos TFLOPS puedes alcanzar como máximo. Si tocas la parte en diagonal (zona izquierda), te limita la memoria y ganar velocidad pasa por leer menos bytes o tener más ancho de banda; si tocas la parte plana (zona derecha), te limita el cómputo y no hay ancho de banda que ayude.</p>
 
       <p>Esa última cuenta es la conclusión del módulo: con contextos largos, el decode de un modelo denso queda limitado por memoria aunque juntes cientos de usuarios, porque el KV cache crece con ellos. Por eso la memoria y su ancho de banda, y no los FLOPS, deciden la velocidad y el costo del serving. Prueba con otras GPUs y contextos:</p>
 
@@ -597,6 +657,11 @@
         <figcaption><b>Figura 13.6.</b> Las matrices se cortan para que cada GPU trabaje sola hasta el final de la atención y hasta el final del MLP. En esos dos puntos cada una tiene una suma parcial, y el all-reduce las junta.</figcaption>
       </figure>
 
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Cuatro cajeros cierran la caja de un supermercado: cada uno cuenta su cajón (su parte de la capa) y al final tienen que sumar sus subtotales para conocer el total, y los cuatro necesitan ese total para seguir. Esa suma compartida es el all-reduce. Si los cuatro están en la misma oficina (NVLink), se dicen los subtotales en voz alta y siguen al instante; si cada uno está en otro edificio (InfiniBand), cada suma espera una llamada. En el 70B hay que hacer esa suma 2 veces por capa × 80 capas = 160 veces por cada token generado, y por eso la distancia entre las GPUs pesa tanto.</p>
+      </aside>
+
       <aside class="callout callout--prod">
         <p class="callout-label">En producción real</p>
         <p>Una GPU de consumo o una tarjeta PCIe sin NVLink puede tener la memoria justa para un modelo, y aun así servirlo mal repartido entre varias: por PCIe 5 se mueven unos 64 GB/s por sentido, siete veces menos que por NVLink. Al alquilar GPUs para servir un modelo que no entra en una sola, la pregunta no es solo cuánta memoria, sino si vienen en un servidor con NVLink.</p>
@@ -635,6 +700,17 @@
           </tbody>
         </table>
       </div>
+
+      <p><b>Paso a paso: la fila del 70B en FP8 sobre H100.</b> Así se llega a "4 GPUs, 11.7 ms" con los cinco pasos de arriba. El TPOT (time per output token) es cuánto tarda en salir cada token nuevo para un usuario.</p>
+      <ol class="steps">
+        <li><span class="step-title">Pesos</span>70 600 millones de parámetros × 1 byte (FP8) = 70.6 GB.</li>
+        <li><span class="step-title">KV cache</span>El 70B guarda 327 680 bytes por token (<a href="m12-llm-por-dentro.html#kv-cache">12.4</a>). 32 usuarios × 8192 tokens = 262 144 tokens; × 327 680 bytes ≈ 85.9 GB, los 86 GB de la lista.</li>
+        <li><span class="step-title">Total a guardar</span>70.6 + 85.9 ≈ 156.5 GB.</li>
+        <li><span class="step-title">Probar con 2 H100</span>2 × 80 = 160 GB, menos 5 GB de reserva por GPU: 150 GB. No alcanza para 156.5.</li>
+        <li><span class="step-title">Probar con 4 H100</span>4 × 80 − 4 × 5 = 300 GB. Cabe, con casi la mitad libre.</li>
+        <li><span class="step-title">Velocidad</span>En cada paso del decode hay que leer todos los pesos y el KV de los 32 usuarios: 156.5 GB. Las 4 GPUs leen en paralelo, 4 × 3.35 = 13.4 TB/s. TPOT ≈ 156.5 ÷ 13 400 GB/s ≈ 0.0117 s = 11.7 ms, o sea 1000 ÷ 11.7 ≈ 86 tokens por segundo por usuario.</li>
+      </ol>
+      <p>Con una sola B200 la cuenta cambia en el último paso: entra (180 − 5 = 175 GB), pero lee los mismos 156.5 GB a 8 TB/s: 156.5 ÷ 8000 ≈ 19.6 ms, unos 51 tokens por segundo. Es lo que compara el párrafo de abajo.</p>
 
       
       <figure class="figure">
@@ -711,7 +787,7 @@
       <p>Tres límites físicos que el diseño tiene que asumir:</p>
       <ul>
         <li><b>Energía.</b> Un servidor de 8 H100 consume hasta unos 10 kW; uno de 8 B200, unos 14 kW; un rack GB200 NVL72, del orden de 120 kW, con refrigeración líquida. En muchos datacenters el límite no es el dinero para GPUs sino la potencia eléctrica disponible, y eso decide en qué región hay capacidad.</li>
-        <li><b>Fallas.</b> Las GPUs fallan bastante más que las CPUs: errores de memoria HBM, errores de NVLink, GPUs que caen del bus. En el entrenamiento de Llama 3 sobre 16 384 H100 hubo 419 interrupciones inesperadas en 54 días, una cada 3 horas, y cerca del 78&#8239;% fueron de hardware, con las GPUs y su HBM a la cabeza. <span class="badge badge--doc">Documentado</span> En serving, una GPU que falla se lleva a toda su réplica de tensor parallelism: se detecta con los health checks de GPU (DCGM, errores Xid), se drena la réplica y se reemplaza el servidor (M19).</li>
+        <li><b>Fallas.</b> Las GPUs fallan bastante más que las CPUs: errores de memoria HBM, errores de NVLink, GPUs que caen del bus. En el entrenamiento de Llama 3 sobre 16 384 H100 hubo 419 interrupciones inesperadas en 54 días, una cada 3 horas, y cerca del 78&#8239;% fueron de hardware, con las GPUs y su HBM a la cabeza. <span class="badge badge--doc">Documentado</span> Para hacerte una idea: 54 días × 24 horas = 1296 horas, y 1296 ÷ 419 ≈ 3.1 horas entre interrupciones. En serving, una GPU que falla se lleva a toda su réplica de tensor parallelism: se detecta con los health checks de GPU (DCGM, errores Xid), se drena la réplica y se reemplaza el servidor (M19).</li>
         <li><b>Disponibilidad.</b> No siempre hay GPUs para alquilar en la región que quieres, y las de última generación se reservan con meses de anticipación. Los diseños serios admiten varios tipos de GPU y varias regiones, con el modelo cuantizado para cada una.</li>
       </ul>
 

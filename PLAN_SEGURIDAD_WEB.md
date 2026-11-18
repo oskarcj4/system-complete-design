@@ -45,6 +45,32 @@ Lo que hay que arreglar, con la guía que lo cierra:
 
 La auditoría la confirma el lector en WEB00 con los comandos de la guía; las cifras y salidas no se inventan.
 
+### Re-auditoría (2026-11-09, sobre el repo en `642aa1a` más dos cambios sin commit; leída sin ejecutar)
+
+El repo avanzó después de la auditoría del 26 de octubre. Decisión del usuario (2026-11-09): las guías WEB parten del repo actual, no de un commit viejo. PHP pasa de 8.2 a **8.3** (XAMPP trae 8.3.36). La tabla de arriba queda como historia; manda esta.
+
+Ya cerrado (se explica como acierto en las guías):
+
+- 1 y 2: el `.htaccess` raíz niega `.sql`, `.env`, `.log`, `.lock` y `.git` y redirige `core/` y `models/`; `uploads/.htaccess` apaga PHP y deja solo pdf, jpg y png.
+- 6 y 7: todos los endpoints llaman a `requireAuth` con roles; `core/permisos.php` comprueba el dueño del recurso; `creado_por` sale de la sesión; `refrescarAuthDesdeBD` relee roles y `estado_cuenta` en cada request.
+- 8 y 9 (arranque): `login.php` compila, usa `asignaciones_roles` y emite la cookie `b64|firma` que valida `checkAuth`; el CSRF solo se exige fuera de GET, HEAD, OPTIONS y QUERY.
+- 4: `debugError` está comentado en todos los llamadores. 5: cada endpoint envía `Content-Type: application/json`.
+
+Sigue abierto, con la guía que lo cierra:
+
+| # | Hallazgo | Dónde | Guía |
+|---|---|---|---|
+| A | `Response::json` no fija `Content-Type`: depende de que cada endpoint se acuerde; `debugError` sigue existiendo y devuelve `getMessage()`; los errores salen con HTTP 200 (`error`, `invalidAccess`, `invalidMethod`, `invalidParams`) | `core/response.php` | WEB01 |
+| B | `.env.example` trae `COOKIE_SECURE=false`, `COOKIE_KEY=clave_secreta_cambiar` y `PASSWORD_DB` vacío; nada impide arrancar con la clave de ejemplo | `api/core/.env.example`, `env.php` | WEB01 |
+| C | `session_start()` en cada request con `cookie_secure=1` sobre HTTP: una sesión de PHP que no se usa (ahora con `session_name('sid')`, cambio sin commit) | `core/configuration.php` | WEB02 |
+| D | La sesión no se revoca antes de `exp`: no hay lista ni versión de sesión; el cambio de contraseña no invalida las cookies viejas | `core/auth.php`, `models/usuarios.php` | WEB02 |
+| E | El login no limita intentos; `password_verify` solo corre si el usuario existe (enumeración por tiempos); el chequeo de IP compara por prefijo con `strpos` (`10.0.0.1` acepta `10.0.0.12`) | `models/login.php`, `core/auth.php` | WEB02 |
+| F | Las cabeceras CORS están copiadas en 14 endpoints con el origen fijo `http://localhost:5173`; falta `Vary: Origin`; solo `login.php` responde el preflight; `cambio_contrasena.php` escribe `Access-Control-Alow-Methods` (una `l`) | `endpoints/*.php` | WEB04 |
+| G | Ninguna cabecera de seguridad (CSP, HSTS, `nosniff`, `frame-ancestors`, `Referrer-Policy`) en la API ni en el frontend servido | todo | WEB09 |
+| H | CSRF: el token es `HMAC(cookie)`; vale lo mismo toda la vida de la cookie, y `GET login.php` lo entrega a quien tenga la cookie; no hay comprobación de `Origin` ni de `Sec-Fetch-Site` | `core/csrf.php` | WEB03 |
+
+Pendientes de leer antes de su guía: `models/usuarios.php` (cambio de contraseña, WEB02), `core/upload.php` y `storage.php` (subidas y `cv_url`, WEB08), `models/postulaciones.php` (carreras de negocio, WEB10) y el frontend (`Feed.jsx`, `OportunidadCard.jsx`: uso de `dangerouslySetInnerHTML` o enlaces con `href` de datos, WEB05).
+
 ## Módulos
 
 Cada módulo: objetivos, secciones numeradas, figuras primero (cada ataque con su diagrama de secuencia: víctima, navegador, sitio atacante, servidor), un widget cuando el mecanismo se entiende mejor jugando, quiz de 9 a 11, ejercicio guiado y checkpoint. Código de ejemplo en PHP (servidor) y JavaScript (navegador); M84 en TypeScript con Next.js.

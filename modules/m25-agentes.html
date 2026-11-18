@@ -197,6 +197,17 @@
 
       <p>Los precios son los de Sonnet 5.5: 2 dólares por millón de tokens de entrada, 2.50 por escribir en el caché de 5 minutos, 0.20 por leer del caché y 10 por la salida. <span class="badge badge--doc">Documentado</span> El <a href="m16-context-windows.html#prompt-caching">prompt caching</a> del M16 no es una optimización opcional en un agente: baja la tarea de 1.29 a 0.29 dólares, 4.5 veces menos, porque casi toda la entrada de cada paso es la entrada del paso anterior. Y aun con caché, la tarea cuesta unas 20 veces lo que cuesta una sola llamada; sin caché, 92 veces.</p>
 
+      <p><b>Paso a paso, con una tarea de juguete de 3 pasos.</b> Las cuentas de la tabla salen de la misma idea, que se ve mejor en chico. Usa el mismo prefijo de 5&#8239;500 tokens y 1&#8239;000 tokens nuevos por paso:</p>
+
+      <ol class="steps">
+        <li><span class="step-title">Paso 1: lee 5&#8239;500</span>Todo es nuevo. Se mandan los 5&#8239;500 tokens del prefijo y se escriben en el caché.</li>
+        <li><span class="step-title">Paso 2: lee 6&#8239;500</span>Los 5&#8239;500 del paso 1 ya estaban: se leen del caché. Solo los 1&#8239;000 del resultado anterior son nuevos y se escriben.</li>
+        <li><span class="step-title">Paso 3: lee 7&#8239;500</span>Los 6&#8239;500 del paso 2 se leen del caché; se escriben 1&#8239;000 más.</li>
+        <li><span class="step-title">Suma</span>Entrada total: 5&#8239;500 + 6&#8239;500 + 7&#8239;500 = 19&#8239;500. Leído del caché: 5&#8239;500 + 6&#8239;500 = 12&#8239;000 (la entrada de los pasos anteriores). Escrito: 5&#8239;500 + 1&#8239;000 + 1&#8239;000 = 7&#8239;500. Y 12&#8239;000 + 7&#8239;500 = 19&#8239;500: cada token de entrada se paga una vez como escritura y, después, como lectura barata.</li>
+      </ol>
+
+      <p>Con 30 pasos es lo mismo, más largo: lo leído del caché es la entrada de los pasos 1 a 29 (600&#8239;000 − 34&#8239;500 = 565&#8239;500) y lo escrito es el prefijo más 29 bloques nuevos (34&#8239;500). Por eso el caché ahorra tanto: la lectura cuesta 0.20 por millón contra 2 de la entrada normal, 10 veces menos, y es el 94&#8239;% de los tokens de entrada (565&#8239;500 ÷ 600&#8239;000).</p>
+
       <p>Anthropic midió algo parecido en su sistema de investigación: un agente usa unas 4 veces más tokens que una conversación de chat, y un sistema con varios agentes, unas 15 veces más. <span class="badge badge--doc">Documentado</span> Su comparación es contra una conversación de varios turnos; la nuestra, contra una llamada suelta. Las dos dicen lo mismo: un agente se paga en pasos, y cada paso es más caro que el anterior.</p>
 
       <h3 id="numeros-flota">El servicio de referencia</h3>
@@ -894,6 +905,11 @@
         <figcaption><b>Figura 25.5.</b> Un host con un cliente de MCP por servidor. El local habla por stdio; los remotos, por Streamable HTTP con OAuth.</figcaption>
       </figure>
 
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Piensa en una oficina. El <b>host</b> es la oficina entera; el modelo es el jefe que decide, pero no levanta el teléfono. Por cada proveedor hay una <b>línea dedicada</b> (un cliente de MCP), y del otro lado atiende el proveedor (el <b>servidor</b>). Algunos proveedores trabajan en la misma oficina y se les habla por la ventanilla interna (stdio, un subproceso en tu máquina); otros están lejos y se les llama por teléfono con una credencial (Streamable HTTP con OAuth). Todos llenan el mismo formulario, con qué pides, con qué datos y un número de pedido (JSON-RPC: <code>method</code>, <code>params</code> e <code>id</code>), así que la oficina no necesita aprender el idioma de cada proveedor.</p>
+      </aside>
+
       <ul>
         <li><b>Tres roles.</b> El <b>host</b> es la aplicación con el modelo, como Claude Code o tu agente. Adentro, un <b>cliente</b> de MCP por cada <b>servidor</b>. El modelo nunca habla con el servidor: le pide la herramienta al host, y el host decide.</li>
         <li><b>Qué ofrece un servidor.</b> Herramientas (<code>tools</code>), que el modelo llama; recursos (<code>resources</code>), datos que la aplicación lee y pone en el contexto; y prompts, plantillas que elige el usuario. El cliente, a su vez, puede ofrecer <i>elicitation</i>: que el servidor le pida un dato al usuario a mitad de una operación.</li>
@@ -1019,6 +1035,16 @@ Autorización</h3>
       <p>Prueba el bucle sin ningún tope: el modelo repite la misma búsqueda hasta que el contexto ya no entra en los 200&#8239;000 tokens de la ventana. Son 195 llamadas, casi 20 millones de tokens de entrada y 5.04 dólares con caché (40.56 sin caché), durante 13 minutos, y la tarea termina en un error, sin respuesta. Con los topes encendidos, el orquestador ve la misma llamada con los mismos argumentos por tercera vez, no la ejecuta y pide el resumen: 8 llamadas y 0.07 dólares.</p>
 
       <p>Mira también la tarea normal con el caché apagado: el tope de 1 dólar la corta después del paso 24. Los topes se calibran con el caché encendido, así que un caché que deja de funcionar, por ejemplo porque alguien cambió el orden de las herramientas, se nota primero como tareas cortadas. Vale una alerta sobre la proporción de tokens leídos del caché.</p>
+
+      <p><b>Paso a paso: por qué el tope corta después del paso 24.</b> Sin caché, el paso n cuesta 0.014 + 0.002 × (n − 1) dólares: cada paso relee 1&#8239;000 tokens más, y 1&#8239;000 × 2 por millón son 0.002. La regla de arriba se aplica antes de cada llamada, estimando la llamada de resumen del mismo tamaño que el paso siguiente:</p>
+
+      <ol class="steps">
+        <li><span class="step-title">Antes del paso 24</span>Gastado en los pasos 1 a 23: 23 × 0.014 + 0.002 × (0 + 1 + … + 22) = 0.322 + 0.506 = 0.828. El paso 24 costaría 0.060 y el resumen, otro tanto: 0.828 + 0.060 + 0.060 = 0.948, por debajo de 1. Se llama.</li>
+        <li><span class="step-title">Antes del paso 25</span>Gastado: 0.828 + 0.060 = 0.888. El paso 25 costaría 0.062, y el resumen, otro tanto: 0.888 + 0.062 + 0.062 = 1.012, más que 1. No se llama al paso 25.</li>
+        <li><span class="step-title">En su lugar, el resumen</span>Se hace la llamada final con "se acabó el presupuesto, resume lo que sabes y lo que falta". La tarea termina por debajo de 1 dólar y con una respuesta parcial, no con un corte en seco.</li>
+      </ol>
+
+      <p>Fíjate en la reserva para el resumen: sin ella, el orquestador llamaría al paso 25, quedaría en 0.950 y ya no tendría con qué pagar el resumen sin pasarse del tope.</p>
 
       <h3 id="presupuestos-bucles">Detectar bucles</h3>
 
@@ -1256,6 +1282,54 @@ Autorización</h3>
         <li><b>Los efectos se repiten.</b> Lo único que se reejecuta es el paso a medias, y con él sus llamadas. Por eso cada llamada con efectos lleva una <a href="m27-pagos-stripe.html#idempotencia">idempotency key</a> que sale del id de la tarea y del id de la llamada, que está guardado en el checkpoint. Es la misma regla del <a href="m17-api-streaming.html#herramientas">M17</a>, y aquí se ve por qué.</li>
         <li><b>Los deploys esperan.</b> Anthropic cuenta que su sistema de investigación usa ejecución durable para retomar desde donde falló, y despliegues "rainbow", que pasan el tráfico nuevo a la versión nueva sin cortar a los agentes que siguen corriendo en la vieja. <span class="badge badge--doc">Documentado</span></li>
       </ul>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 302" role="img" aria-labelledby="fjr25at fjr25ad">
+<title id="fjr25at">El paso a medias y la idempotency key</title>
+<desc id="fjr25ad">Arriba, el worker A guarda el checkpoint con la llamada pendiente reembolsar(8812, 120), llama a pagos con la clave t_91:call_7, pagos hace el reembolso re_1, y el worker muere antes de guardar el resultado. Al vencer el lease, el worker B carga el checkpoint, ve que call_7 sigue sin resultado y llama a pagos otra vez con la misma clave. Pagos ya conoce esa clave y devuelve re_1 sin reembolsar de nuevo. Abajo, la comparación: sin clave serían dos reembolsos, 240 USD; con la clave, uno solo de 120 USD.</desc>
+<defs><marker id="fjr25aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="24" text-anchor="start">Worker A</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="34" width="220" height="56" rx="8"/>
+<text class="dg-label" x="130" y="57" text-anchor="middle">1. Guarda el checkpoint</text>
+<text class="dg-tiny dg-mono" x="130" y="76" text-anchor="middle">reembolsar(8812, 120)</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="275" y="34" width="220" height="56" rx="8"/>
+<text class="dg-label" x="385" y="57" text-anchor="middle">2. Llama a pagos</text>
+<text class="dg-tiny dg-mono" x="385" y="76" text-anchor="middle">clave t_91:call_7 → re_1</text>
+<rect class="dg-bad" x="530" y="34" width="220" height="56" rx="8"/>
+<text class="dg-label" x="640" y="57" text-anchor="middle">3. El worker muere</text>
+<text class="dg-tiny" x="640" y="76" text-anchor="middle">antes de guardar el resultado</text>
+<path class="dg-edge" d="M240 62 H273" marker-end="url(#fjr25aa)"/>
+<path class="dg-edge" d="M495 62 H528" marker-end="url(#fjr25aa)"/>
+<path class="dg-feedback" d="M640 90 V112 H130 V142" marker-end="url(#fjr25aa)"/>
+<text class="dg-tiny" x="385" y="128" text-anchor="middle">el lease vence: otro worker reanuda</text>
+<text class="dg-group" x="20" y="138" text-anchor="start">Worker B</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="144" width="220" height="56" rx="8"/>
+<text class="dg-label" x="130" y="167" text-anchor="middle">4. Carga el checkpoint</text>
+<text class="dg-tiny" x="130" y="186" text-anchor="middle">call_7 sigue sin resultado</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="275" y="144" width="220" height="56" rx="8"/>
+<text class="dg-label" x="385" y="167" text-anchor="middle">5. Llama a pagos otra vez</text>
+<text class="dg-tiny dg-mono" x="385" y="186" text-anchor="middle">misma clave t_91:call_7</text>
+<rect class="dg-ok" x="530" y="144" width="220" height="56" rx="8"/>
+<text class="dg-label" x="640" y="167" text-anchor="middle">6. Pagos ya la conoce</text>
+<text class="dg-tiny" x="640" y="186" text-anchor="middle">devuelve re_1, no cobra de nuevo</text>
+<path class="dg-edge" d="M240 172 H273" marker-end="url(#fjr25aa)"/>
+<path class="dg-edge" d="M495 172 H528" marker-end="url(#fjr25aa)"/>
+<rect class="dg-bad" x="20" y="228" width="355" height="60" rx="8"/>
+<text class="dg-label" x="197" y="253" text-anchor="middle">Sin clave: el paso 5 es otro reembolso</text>
+<text class="dg-tiny" x="197" y="273" text-anchor="middle">2 reembolsos, 240 USD devueltos por un cobro de 120</text>
+<rect class="dg-ok" x="395" y="228" width="355" height="60" rx="8"/>
+<text class="dg-label" x="572" y="253" text-anchor="middle">Con clave: el paso 5 es una consulta</text>
+<text class="dg-tiny" x="572" y="273" text-anchor="middle">1 reembolso, 120 USD, aunque la llamada se repita</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 25.8.A.</b> El peor momento para morir: después del efecto y antes de guardar su resultado. La clave sale del id de la tarea y del id de la llamada, que ya estaban en el checkpoint, así que el worker B manda exactamente la misma.</figcaption>
+      </figure>
+
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Es como pedir una transferencia por teléfono y que se corte la llamada justo cuando el banco iba a confirmar. Si vuelves a llamar y dices "transfiere 120", puedes pagar dos veces. Si dices "¿qué pasó con mi pedido número t_91:call_7?", el banco busca ese número: si ya lo hizo, te da el comprobante; si no, lo hace ahora. La idempotency key es ese número de pedido.</p>
+      </aside>
 
       <h3 id="durable-motores">Los motores</h3>
 
@@ -1539,6 +1613,49 @@ grafo.invoke(Command(resume={"aprobado": True, "comentario": ""}),
 
       <figure class="figure">
         <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="fjr25bt fjr25bd">
+<title id="fjr25bt">Las cuatro combinaciones de la regla de dos</title>
+<desc id="fjr25bd">Cuatro columnas. A más B: un agente que lee tickets y pedidos pero no escribe ni manda nada; puede ser autónomo. A más C: lee correos de afuera y responde, sin datos privados; puede ser autónomo. B más C: usa datos internos y reembolsa, pero no lee texto de desconocidos; puede ser autónomo. A más B más C: el agente de soporte de 25.1, que lee el ticket, ve los pagos y reembolsa; necesita que una persona apruebe las acciones.</desc>
+<text class="dg-group" x="20" y="24" text-anchor="start">A = lee texto no confiable · B = toca datos sensibles · C = actúa o manda hacia afuera</text>
+<rect class="dg-box" x="20" y="40" width="173" height="110" rx="8"/>
+<text class="dg-label" x="106" y="64" text-anchor="middle">A + B</text>
+<text class="dg-tiny" x="106" y="88" text-anchor="middle">Lee tickets y pedidos,</text>
+<text class="dg-tiny" x="106" y="104" text-anchor="middle">pero no escribe</text>
+<text class="dg-tiny" x="106" y="120" text-anchor="middle">ni manda nada</text>
+<rect class="dg-box" x="205" y="40" width="173" height="110" rx="8"/>
+<text class="dg-label" x="291" y="64" text-anchor="middle">A + C</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="middle">Lee correos de afuera</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="middle">y responde, sin</text>
+<text class="dg-tiny" x="291" y="120" text-anchor="middle">datos privados</text>
+<rect class="dg-box" x="390" y="40" width="173" height="110" rx="8"/>
+<text class="dg-label" x="476" y="64" text-anchor="middle">B + C</text>
+<text class="dg-tiny" x="476" y="88" text-anchor="middle">Usa datos internos</text>
+<text class="dg-tiny" x="476" y="104" text-anchor="middle">y reembolsa, sin leer</text>
+<text class="dg-tiny" x="476" y="120" text-anchor="middle">texto de desconocidos</text>
+<rect class="dg-box dg-box--em" x="575" y="40" width="175" height="110" rx="8"/>
+<text class="dg-label" x="662" y="64" text-anchor="middle">A + B + C</text>
+<text class="dg-tiny" x="662" y="88" text-anchor="middle">El agente de 25.1:</text>
+<text class="dg-tiny" x="662" y="104" text-anchor="middle">lee el ticket, ve los</text>
+<text class="dg-tiny" x="662" y="120" text-anchor="middle">pagos y reembolsa</text>
+<rect class="dg-ok" x="20" y="166" width="173" height="56" rx="8"/>
+<text class="dg-label" x="106" y="190" text-anchor="middle">Puede ir solo</text>
+<text class="dg-tiny" x="106" y="208" text-anchor="middle">dos patas de tres</text>
+<rect class="dg-ok" x="205" y="166" width="173" height="56" rx="8"/>
+<text class="dg-label" x="291" y="190" text-anchor="middle">Puede ir solo</text>
+<text class="dg-tiny" x="291" y="208" text-anchor="middle">dos patas de tres</text>
+<rect class="dg-ok" x="390" y="166" width="173" height="56" rx="8"/>
+<text class="dg-label" x="476" y="190" text-anchor="middle">Puede ir solo</text>
+<text class="dg-tiny" x="476" y="208" text-anchor="middle">dos patas de tres</text>
+<rect class="dg-bad" x="575" y="166" width="175" height="56" rx="8"/>
+<text class="dg-label" x="662" y="190" text-anchor="middle">Necesita una persona</text>
+<text class="dg-tiny" x="662" y="208" text-anchor="middle">aprueba cada acción (25.9)</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 25.11.A.</b> La regla aplicada a ejemplos concretos. El agente de soporte del módulo tiene las tres patas, y por eso sus reembolsos grandes esperan a una persona.</figcaption>
+      </figure>
+
+      <figure class="figure">
+        <div class="figure-frame">
 <svg viewBox="0 0 770 300" role="img" aria-labelledby="f25rt f25rd">
 <title id="f25rt">La regla de dos y la separación entre quien lee y quien actúa</title>
 <desc id="f25rd">A la izquierda, las tres propiedades de la regla de dos de Meta: procesar entradas no confiables, acceder a datos privados o sistemas sensibles, y cambiar estado o comunicarse hacia afuera. Una sesión puede tener dos, no las tres. A la derecha, una forma de cumplirla: un modelo planificador, con herramientas, que nunca lee el contenido no confiable; y un modelo lector, sin herramientas, que lee el correo y devuelve solo datos con un esquema, que el planificador usa como variables. Antes de cada acción, una política revisa que los datos de origen no confiable no lleguen a un destino que no corresponde.</desc>
@@ -1596,6 +1713,16 @@ grafo.invoke(Command(resume={"aprobado": True, "comentario": ""}),
       <h3 id="injection-defensas">Las defensas que no dependen del modelo</h3>
 
       <p>Todas las defensas del M22 que viven en el prompt o en un clasificador (spotlighting, delimitadores, detectores de injection) bajan la tasa de éxito, pero no la llevan a cero. Con 1&#8239;000 contenidos envenenados por día y un 2&#8239;% de éxito por intento, son 20 ataques que funcionan cada día; una tarea que lee 5 contenidos envenenados tiene un 9.6&#8239;% de chances de caer en al menos uno. <span class="badge badge--ref">Diseño de referencia</span> Por eso las defensas que importan son de arquitectura:</p>
+
+      <p><b>Paso a paso: de dónde sale el 9.6&#8239;%.</b> Es más fácil contar lo contrario, que la tarea no caiga en ninguno:</p>
+
+      <ol class="steps">
+        <li><span class="step-title">Un contenido</span>Si el ataque funciona el 2&#8239;% de las veces, falla el 98&#8239;%: la tarea sale ilesa con probabilidad 0.98.</li>
+        <li><span class="step-title">Cinco contenidos</span>Para salir ilesa tiene que resistir los cinco: 0.98 × 0.98 × 0.98 × 0.98 × 0.98 = 0.98<sup>5</sup> ≈ 0.904.</li>
+        <li><span class="step-title">Lo contrario</span>Caer en al menos uno es 1 − 0.904 = 0.096, el 9.6&#8239;%: casi 5 veces el 2&#8239;% de un solo intento.</li>
+      </ol>
+
+      <p>La lección para un agente: cuanto más lee, más chances le das al atacante. Un filtro que "casi siempre" funciona falla seguido cuando se le pide muchas veces, y por eso la defensa tiene que estar en lo que el agente <b>puede hacer</b>, no solo en lo que lee.</p>
 
       <div class="table-wrap">
         <table class="t">

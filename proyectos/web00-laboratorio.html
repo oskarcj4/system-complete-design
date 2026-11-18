@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WEB00. El laboratorio: tu sistema de prácticas y un sitio atacante</title>
+<meta name="description" content="Levantar el sistema de control de prácticas con XAMPP, MariaDB y Vite, sumar un sitio atacante en otro host y revisar con un script qué expone Apache.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="web00" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>El laboratorio: tu sistema de prácticas y un sitio atacante</h1>
+        <p class="lead">Antes de atacar, un laboratorio: el sistema de prácticas andando, un segundo sitio en otro host para las pruebas entre orígenes y un script que mira tu servidor desde afuera.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>WEB00</dd></div>
+          <div><dt>Plan</dt><dd>Seguridad web</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>3 a 4 h</dd></div>
+          <div><dt>Módulos</dt><dd>M73, M74, M80</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="web00">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Levantar el sistema de control de prácticas completo en tu máquina: Apache y PHP 8.3 de XAMPP, MariaDB, el frontend de Vite y un segundo sitio, <code>atacante.test</code>, para las pruebas entre orígenes.</li>
+<li>Explicar qué ya está bien en el repositorio y qué sigue abierto, con la lista de hallazgos del 9 de noviembre y la guía que cierra cada uno.</li>
+<li>Correr un script que revisa desde afuera qué expone Apache (archivos, carpetas, cabeceras) y anotar tú mismo lo que responde.</li>
+<li>Provocar a propósito dos fallas del entorno (el <code>.htaccess</code> que no se aplica y la base en otro puerto) y reconocerlas por su síntoma.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>Tu sistema de control de prácticas ya funciona: un feed de oportunidades, postulaciones, tres roles y una API en PHP sin framework. Esta serie (WEB00 a WEB10) no lo reescribe. Lo ataca, en tu propia máquina, con payloads mínimos, y cierra cada hueco con un cambio pequeño y una prueba que demuestra que quedó cerrado. Antes de atacar nada necesitas un laboratorio donde equivocarse sin consecuencias, y eso es WEB00.</p>
+<p>El laboratorio tiene tres orígenes, y la diferencia entre ellos es lo que explican los módulos de la Parte IX (<a href="../modules/m74-origen-cookies.html">M74</a>): el frontend en <code>http://localhost:5173</code>, la API en <code>http://localhost</code> y un sitio atacante en <code>http://atacante.test</code>. El primero y el segundo comparten sitio pero no origen; el tercero no comparte ni lo uno ni lo otro. Por eso el atacante lleva otro nombre de host y no otro puerto: con otro puerto seguiría siendo el mismo sitio y las cookies <code>SameSite</code> no lo distinguirían.</p>
+<aside class="callout callout--fail">
+<p class="callout-label">Regla del laboratorio</p>
+<p>Todo se prueba contra <code>localhost</code> y <code>atacante.test</code>, que tú levantas y que solo responde en tu máquina. Ningún ejemplo de la serie apunta a un sitio ajeno. Los payloads son los mínimos que prueban el hueco (un <code>curl</code>, un formulario, un <code>console.log</code>) y cada ataque termina en la defensa que lo cierra. No se enseña a esquivar un WAF ni una detección.</p>
+</aside>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 280" role="img" aria-labelledby="fw0at fw0ad">
+<title id="fw0at">El laboratorio de la serie WEB</title>
+<desc id="fw0ad">El navegador abre el frontend de Vite en el puerto 5173, que reenvía las llamadas a la API al Apache de XAMPP en el puerto 80. Apache ejecuta PHP 8.3 y habla con MariaDB en el puerto 3308. Un segundo host virtual de Apache, atacante.test, sirve las páginas del atacante.</desc>
+<defs><marker id="fw0aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw0af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker></defs>
+<path class="dg-edge" d="M170 140 L225 70" marker-end="url(#fw0aa)"/>
+<rect x="148" y="87" width="99" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="198" y="99" text-anchor="middle">localhost:5173</text>
+<path class="dg-edge" d="M375 70 L430 140" marker-end="url(#fw0aa)"/>
+<rect x="366" y="87" width="74" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="402" y="99" text-anchor="middle">proxy /api</text>
+<path class="dg-edge" d="M580 140 L630 140" marker-end="url(#fw0aa)"/>
+<rect x="590" y="122" width="31" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="605" y="134" text-anchor="middle">PDO</text>
+<path class="dg-edge" stroke-dasharray="6 4" d="M170 140 L225 220" marker-end="url(#fw0aa)"/>
+<rect x="160" y="162" width="74" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="198" y="174" text-anchor="middle">otro sitio</text>
+<path class="dg-edge" stroke-dasharray="6 4" style="stroke:var(--fail)" d="M375 220 L430 140" marker-end="url(#fw0af)"/>
+<rect x="350" y="162" width="105" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="402" y="174" text-anchor="middle">request cruzada</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="30" y="110" width="140" height="60" rx="8"/>
+<text class="dg-label" x="100.0" y="138.0" text-anchor="middle">Navegador</text>
+<text class="dg-tiny" x="100.0" y="153.0" text-anchor="middle">tú, con DevTools</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="225" y="40" width="150" height="60" rx="8"/>
+<text class="dg-label" x="300.0" y="68.0" text-anchor="middle">Vite :5173</text>
+<text class="dg-tiny" x="300.0" y="83.0" text-anchor="middle">frontend + proxy</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="430" y="110" width="150" height="60" rx="8"/>
+<text class="dg-label" x="505.0" y="138.0" text-anchor="middle">Apache :80</text>
+<text class="dg-tiny" x="505.0" y="153.0" text-anchor="middle">PHP 8.3 + .htaccess</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="630" y="110" width="120" height="60" rx="8"/>
+<text class="dg-label" x="690.0" y="138.0" text-anchor="middle">MariaDB</text>
+<text class="dg-tiny" x="690.0" y="153.0" text-anchor="middle">puerto 3308</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="225" y="190" width="150" height="60" rx="8"/>
+<text class="dg-label" x="300.0" y="218.0" text-anchor="middle">atacante.test</text>
+<text class="dg-tiny" x="300.0" y="233.0" text-anchor="middle">VirtualHost :80</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB00.1.</b> Las cinco piezas. La flecha roja es la que intentan usar los ataques de WEB03 y WEB04: una página de otro sitio que hace que el navegador llame a tu API.</figcaption>
+</figure>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 180" role="img" aria-labelledby="fw0bt fw0bd">
+<title id="fw0bt">Tres orígenes, dos sitios</title>
+<desc id="fw0bd">Tres cajas: http://localhost:5173 el frontend, http://localhost la API y http://atacante.test el sitio atacante. El frontend y la API son del mismo sitio pero de distinto origen porque cambia el puerto. El atacante es de otro sitio.</desc>
+<defs><marker id="fw0ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw0bf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker></defs>
+<path class="dg-edge" stroke-dasharray="6 4" d="M240 105 L290 105" marker-end="url(#fw0ba)"/>
+<rect x="185" y="87" width="161" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="265" y="99" text-anchor="middle">mismo sitio, otro origen</text>
+<path class="dg-edge" stroke-dasharray="6 4" style="stroke:var(--fail)" d="M490 105 L540 105" marker-end="url(#fw0bf)"/>
+<rect x="478" y="87" width="74" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="515" y="99" text-anchor="middle">otro sitio</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="40" y="70" width="200" height="70" rx="8"/>
+<text class="dg-label" x="140.0" y="103.0" text-anchor="middle">http://localhost:5173</text>
+<text class="dg-tiny" x="140.0" y="118.0" text-anchor="middle">origen del frontend</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="290" y="70" width="200" height="70" rx="8"/>
+<text class="dg-label" x="390.0" y="103.0" text-anchor="middle">http://localhost</text>
+<text class="dg-tiny" x="390.0" y="118.0" text-anchor="middle">origen de la API</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="540" y="70" width="200" height="70" rx="8"/>
+<text class="dg-label" x="640.0" y="103.0" text-anchor="middle">http://atacante.test</text>
+<text class="dg-tiny" x="640.0" y="118.0" text-anchor="middle">otro sitio</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB00.2.</b> Lo que distingue un origen de un sitio, en tu laboratorio. La cookie de sesión se emite para <code>localhost</code>; el navegador decide con <code>SameSite</code> si la manda cuando la request sale de <code>atacante.test</code>.</figcaption>
+</figure>
+<h3 id="excusa-estado">Lo que ya está bien y lo que no</h3>
+<p>La serie nació de una auditoría del 26 de octubre. Tu repositorio avanzó desde entonces, así que el 9 de noviembre se leyó otra vez (sin ejecutarlo). Lo cerrado se cuenta como acierto, porque cada uno es una decisión que conviene entender; lo abierto es el trabajo de las guías que siguen.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Tema</th><th>Estado</th><th>Dónde está o qué falta</th><th>Guía</th></tr></thead>
+<tbody>
+<tr><td>Autenticación en endpoints</td><td>Cerrado</td><td>Los 14 archivos de <code>api/endpoints/</code> llaman a <code>requireAuth()</code> con roles; solo <code>login.php</code> deja entrar sin sesión en POST.</td><td>—</td></tr>
+<tr><td>Dueño del recurso</td><td>Cerrado</td><td><code>core/permisos.php</code> busca el dueño antes de modificar; <code>creado_por</code> sale de la sesión, no del body.</td><td>WEB06 lo repasa</td></tr>
+<tr><td>Roles al día</td><td>Cerrado</td><td><code>refrescarAuthDesdeBD()</code> relee roles y <code>estado_cuenta</code> en cada request: suspender a alguien surte efecto de inmediato.</td><td>—</td></tr>
+<tr><td>CSRF por token</td><td>Cerrado, con mejoras</td><td><code>X-CSRF-Token</code> en todo método que no sea GET, HEAD, OPTIONS o QUERY.</td><td>WEB03</td></tr>
+<tr><td>Archivos subidos</td><td>Cerrado</td><td><code>uploads/.htaccess</code> apaga PHP y deja solo pdf, jpg y png.</td><td>WEB08</td></tr>
+<tr><td><code>.env</code> servido como texto</td><td>Cerrado</td><td>El <code>.htaccess</code> raíz devuelve 403 a lo que termina en <code>.env</code>, <code>.sql</code>, <code>.log</code>, <code>.lock</code> o <code>.git</code>.</td><td>WEB01 lo verifica</td></tr>
+<tr><td><code>.git/</code> descargable</td><td>Por confirmar</td><td>La regla solo mira cómo <em>termina</em> la URL: <code>/.git</code> cae, <code>/.git/config</code> no. Lo confirmas con el script de este paso.</td><td>WEB01</td></tr>
+<tr><td>Errores y tipos de respuesta</td><td>Abierto</td><td><code>Response::json</code> no fija <code>Content-Type</code>; <code>debugError</code> sigue existiendo; los errores salen con HTTP 200.</td><td>WEB01</td></tr>
+<tr><td>Sesión</td><td>Abierto</td><td>No se revoca antes de <code>exp</code>; el login no limita intentos; la IP se compara con <code>strpos</code>; <code>session_start()</code> corre sin usarse.</td><td>WEB02</td></tr>
+<tr><td>CORS</td><td>Abierto</td><td>Las cabeceras están copiadas en 14 endpoints, con el origen fijo y un typo (<code>Alow</code>) en uno.</td><td>WEB04</td></tr>
+<tr><td>Cabeceras de seguridad</td><td>Abierto</td><td>Ni CSP, ni HSTS, ni <code>nosniff</code>, ni <code>frame-ancestors</code>.</td><td>WEB09</td></tr>
+</tbody>
+</table>
+</div>
+<p class="pj-sub">Fuente: lectura del repositorio en el commit <code>642aa1a</code> más dos cambios sin confirmar. La tabla completa está en <code>PLAN_SEGURIDAD_WEB.md</code>. Los estados "por confirmar" y "abierto" se comprueban con los comandos de esta guía; nada de lo que sigue es una salida inventada.</p>
+<h2 id="endpoints">Los endpoints</h2>
+<p>La API vive en <code>/SistemaControlPracticas/api/endpoints/</code>. Cada archivo es un endpoint, el método HTTP elige la acción, y todos responden JSON con la forma <code>{"code", "message", "data"}</code>: <code>code = 1</code> es éxito y un número negativo es un error. Esta tabla sale de leer qué rol exige cada archivo; no la cambia ninguna guía de la serie salvo para corregir un hueco que se nombre.</p>
+<div class="table-wrap">
+<table class="t pj-ep">
+<thead><tr><th>Método y ruta</th><th>Qué hace</th><th>Respuestas</th></tr></thead>
+<tbody>
+<tr><td><span class="ep-method" data-m="POST">POST</span><code>login.php</code></td><td>Inicia sesión con email o username y emite la cookie firmada junto con el token CSRF.</td><td>200, 400, 401</td></tr>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>login.php</code></td><td>Restaura la sesión al recargar la página: devuelve el usuario, sus roles y un token CSRF nuevo.</td><td>200, 401</td></tr>
+<tr><td><span class="ep-method" data-m="DELETE">DELETE</span><code>login.php</code></td><td>Cierra sesión: borra la cookie.</td><td>200</td></tr>
+<tr><td><span class="ep-method" data-m="PUT">PUT</span><code>cambio_contrasena.php</code></td><td>Cambia la contraseña de quien tiene la sesión (el id sale de la cookie).</td><td>200, 400</td></tr>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>oportunidades.php</code></td><td>El feed con cursor y filtros, una oferta por <code>id</code>, las de un creador o todas.</td><td>200</td></tr>
+<tr><td><span class="ep-method" data-m="POST">POST</span><code>oportunidades.php</code></td><td>Publica una oferta; rol 1, 2 o 3. La institución sale del perfil salvo para el administrador.</td><td>200, 400, 403</td></tr>
+<tr><td><span class="ep-method" data-m="PUT">PUT</span><code>oportunidades.php</code></td><td>Edita una oferta: solo su creador o un administrador.</td><td>200, 403</td></tr>
+<tr><td><span class="ep-method" data-m="DELETE">DELETE</span><code>oportunidades.php</code></td><td>Borra (de forma lógica) una oferta, con la misma regla de dueño.</td><td>200, 403</td></tr>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>postulaciones.php</code></td><td>Postulaciones de un estudiante o de una oferta; el dueño lo decide <code>permisos.php</code>.</td><td>200, 403</td></tr>
+<tr><td><span class="ep-method" data-m="POST">POST</span><code>postulaciones.php</code></td><td>Postularse, con CV y constancia en un <code>multipart</code> (<code>core/upload.php</code>).</td><td>200, 400</td></tr>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>usuarios.php</code></td><td>Lista y búsqueda de usuarios; la escritura la limita el rol.</td><td>200, 403</td></tr>
+<tr><td><span class="ep-method" data-m="PUT">PUT</span><code>usuarios.php</code></td><td>Cambia datos y estado de la cuenta (suspender, reactivar).</td><td>200, 403</td></tr>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>bitacora.php</code></td><td>Bitácora de auditoría, solo administrador.</td><td>200, 403</td></tr>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>estadisticas.php</code></td><td>Cifras del panel, solo administrador.</td><td>200, 403</td></tr>
+</tbody>
+</table>
+</div>
+<p>Los otros siete archivos (<code>asignaciones_roles</code>, <code>carreras</code>, <code>historial_estado_postulacion</code>, <code>instituciones</code>, <code>notificaciones</code>, <code>roles</code> y <code>solicitudes_publicacion</code>) siguen el mismo patrón: <code>requireAuth()</code> arriba, lectura para cualquier sesión y escritura para el administrador o el dueño. Cuando una guía necesite el detalle de uno, lo muestra completo.</p>
+<h2 id="dependencias">Qué necesitas instalado</h2>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Pieza</th><th>Versión</th><th>Para qué</th><th>Cómo comprobarla</th></tr></thead>
+<tbody>
+<tr><td>XAMPP</td><td>con PHP 8.3 (el de este repo da 8.3.36)</td><td>Apache, PHP y MariaDB. La serie usa PHP 8.3; el plan original decía 8.2.</td><td><code>C:\xampp\php\php.exe -v</code></td></tr>
+<tr><td><code>mod_rewrite</code> y <code>mod_headers</code></td><td>los trae XAMPP</td><td>El <code>.htaccess</code> raíz usa el primero; WEB09 usa el segundo.</td><td><code>Select-String -Path C:\xampp\apache\conf\httpd.conf -Pattern 'rewrite_module|headers_module'</code></td></tr>
+<tr><td>MariaDB</td><td>la de XAMPP</td><td>La base <code>control_practicas_db</code>. El <code>.env.example</code> la espera en el puerto 3308.</td><td><code>C:\xampp\mysql\bin\mysql.exe --version</code></td></tr>
+<tr><td>Node.js y pnpm (o npm)</td><td>Node 22 o superior</td><td>El frontend de Vite.</td><td><code>node -v</code> y <code>pnpm -v</code></td></tr>
+<tr><td>curl.exe</td><td>el de Windows 10 y 11</td><td>Las pruebas de la serie van con <code>curl.exe</code>, que se ve igual en todos los sistemas.</td><td><code>curl.exe --version</code></td></tr>
+<tr><td>PowerShell 7</td><td>7 o superior</td><td>El script de verificación de este paso.</td><td><code>$PSVersionTable.PSVersion</code></td></tr>
+</tbody>
+</table>
+</div>
+<aside class="callout callout--def">
+<p class="callout-label">Sin dependencias</p>
+<p>En esta serie no hay Composer ni dependencias de PHP: el proyecto no las usa y las guías tampoco las agregan. Todo lo que se escribe es PHP plano que corre en el Apache de XAMPP. La única herramienta de línea de comandos que se instala aparte es <code>curl.exe</code>, que ya viene con Windows.</p>
+</aside>
+<h2 id="infraestructura">La infraestructura</h2>
+<p>Son cuatro archivos de configuración: las variables del backend, el host virtual del atacante, la línea del archivo <code>hosts</code> y la página del atacante. Los demás archivos de la serie los crea cada guía.</p>
+<h3 id="infra-env"><code>api/core/.env</code></h3>
+<p>El backend lee su configuración de este archivo, que <code>.gitignore</code> ya excluye. Parte del <code>.env.example</code> y cambia dos cosas: la clave, que firma la cookie, y la ruta de las subidas, que debe ser la de tu máquina.</p>
+<pre data-lang="shell" data-file="api/core/.env"><code>COOKIE_NAME=session_control_practicas
+COOKIE_KEY=PEGA_AQUI_64_CARACTERES_HEX
+COOKIE_LIFETIME=3600
+COOKIE_DOMAIN=localhost
+COOKIE_SECURE=false
+COOKIE_HTTPONLY=true
+COOKIE_SAMESITE=Strict
+
+HOST_DB=127.0.0.1;port=3308
+USER_DB=root
+PASSWORD_DB=
+DATABASE=control_practicas_db
+CHARSET=utf8mb4
+
+STORAGE_DRIVER=local
+STORAGE_PUBLIC_URL=http://localhost/SistemaControlPracticas/uploads
+STORAGE_LOCAL_PATH=C:/xampp/htdocs/SistemaControlPracticas/uploads
+UPLOAD_MAX_MB=5</code></pre>
+<p>Para generar la clave, que en cualquier sistema salen 32 bytes aleatorios en hexadecimal:</p>
+<pre data-lang="shell"><code>C:\xampp\php\php.exe -r "echo bin2hex(random_bytes(32)), PHP_EOL;"</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd><code>COOKIE_KEY</code> aleatoria y de 64 caracteres hexadecimales, distinta en cada máquina. <code>COOKIE_SECURE=false</code> solo porque el laboratorio va por HTTP; en producción va en <code>true</code> y la guía WEB02 lo exige.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Dejar el valor del ejemplo (<code>clave_secreta_cambiar</code>): quien lea el repositorio puede fabricar una cookie válida para cualquier usuario, porque la firma HMAC es tan fuerte como su clave. Tampoco sirve una clave corta que puedas recordar.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que <code>PASSWORD_DB</code> vacía funcione en XAMPP y se copie a otro lado: el usuario <code>root</code> sin clave es de laboratorio. WEB01 agrega una comprobación que impide arrancar con la clave del ejemplo.</dd></div>
+</dl>
+<h3 id="infra-vhost">El sitio del atacante: un host virtual</h3>
+<p>Un host virtual de Apache sirve otro sitio en la misma máquina y el mismo puerto, según el nombre que pida el navegador. Abre <code>C:\xampp\apache\conf\extra\httpd-vhosts.conf</code> y deja solo estos dos bloques (el primero evita que <code>localhost</code> pase a servir el sitio del atacante, porque el primer host virtual es el que responde cuando el nombre no coincide con ninguno):</p>
+<pre data-lang="shell" data-file="C:/xampp/apache/conf/extra/httpd-vhosts.conf"><code>&lt;VirtualHost *:80&gt;
+    ServerName localhost
+    DocumentRoot "C:/xampp/htdocs"
+&lt;/VirtualHost&gt;
+
+&lt;VirtualHost *:80&gt;
+    ServerName atacante.test
+    DocumentRoot "C:/xampp/htdocs/atacante"
+    &lt;Directory "C:/xampp/htdocs/atacante"&gt;
+        Require all granted
+    &lt;/Directory&gt;
+&lt;/VirtualHost&gt;</code></pre>
+<p>Luego, en <code>C:\xampp\apache\conf\httpd.conf</code>, comprueba que esta línea no esté comentada (sin <code>#</code> al principio): <code>Include conf/extra/httpd-vhosts.conf</code>. Y, como administrador, agrega el nombre al archivo <code>C:\Windows\System32\drivers\etc\hosts</code>:</p>
+<pre data-lang="shell" data-file="C:/Windows/System32/drivers/etc/hosts"><code>127.0.0.1    atacante.test</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un nombre propio, <code>atacante.test</code>. El sufijo <code>.test</code> está reservado para pruebas (RFC 6761) y nunca se resuelve en internet. <span class="badge badge--doc">Documentado</span></dd></div>
+<div><dt>Lo que descartas</dt><dd>Usar <code>127.0.0.1:8081</code> como atacante: es el mismo host y por tanto el mismo sitio, así que <code>SameSite</code> no lo trata como externo. Tampoco sirve un dominio real, porque la regla del laboratorio es no tocar sitios ajenos.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el navegador use DNS seguro y no lea el archivo <code>hosts</code>: en Chrome y Edge, <code>.test</code> se resuelve localmente igual, pero si falla desactiva el DNS seguro mientras trabajes. Y que Apache no arranque por un error de sintaxis: <code>C:\xampp\apache\bin\httpd.exe -t</code> lo dice antes de reiniciar.</dd></div>
+</dl>
+<h3 id="infra-atk">La página del atacante</h3>
+<p>Es una sola página con un botón que intenta llamar a tu API desde otro sitio y muestra lo que el navegador deja pasar. La reutilizan WEB03 y WEB04, así que se crea ahora, fuera del repositorio, en <code>C:\xampp\htdocs\atacante\index.html</code>.</p>
+<pre data-lang="html" data-file="C:/xampp/htdocs/atacante/index.html"><code>&lt;!doctype html&gt;
+&lt;html lang="es"&gt;
+&lt;head&gt;&lt;meta charset="utf-8"&gt;&lt;title&gt;Sitio atacante (laboratorio)&lt;/title&gt;&lt;/head&gt;
+&lt;body&gt;
+  &lt;h1&gt;Sitio atacante del laboratorio&lt;/h1&gt;
+  &lt;p&gt;Mi origen es: &lt;code id="origen"&gt;&lt;/code&gt;&lt;/p&gt;
+  &lt;button id="leer"&gt;GET a la API con cookies&lt;/button&gt;
+  &lt;pre id="salida"&gt;(sin probar)&lt;/pre&gt;
+  &lt;script&gt;
+    document.getElementById('origen').textContent = location.origin;
+    const API = 'http://localhost/SistemaControlPracticas/api/endpoints/';
+    document.getElementById('leer').addEventListener('click', async () =&gt; {
+      const salida = document.getElementById('salida');
+      try {
+        const r = await fetch(API + 'login.php', { credentials: 'include' });
+        salida.textContent = 'HTTP ' + r.status + '\n' + (await r.text());
+      } catch (e) {
+        salida.textContent = 'El navegador bloqueó la lectura: ' + e.name;
+      }
+    });
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una página de 20 líneas, sin librerías, que usa el mismo <code>fetch</code> que usa tu frontend. Lo que cambia es el origen desde el que se ejecuta.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Un proxy de pruebas o una extensión del navegador que fabrique la request: no demuestran lo que decide el navegador, y eso es lo que importa. Tampoco un script en Node, que no respeta <code>SameSite</code> ni CORS.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el error aparezca igual si la API está caída. La consola de DevTools (pestaña Red) distingue una request bloqueada por CORS de una que nunca llegó: míralas ahí antes de interpretar el texto.</dd></div>
+</dl>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<h3 id="paso-base">Paso 1. La base de datos</h3>
+<p>El esquema crea la base desde cero y el seed deja tres usuarios (<code>admin</code>, <code>reclutador</code> y <code>estudiante</code>) con la misma contraseña de desarrollo, <code>Password123</code>, que el propio <code>seed.sql</code> dice cambiar fuera de desarrollo. Arranca MariaDB desde el panel de XAMPP y corre desde la carpeta del proyecto:</p>
+<pre data-lang="shell"><code>cd C:\xampp\htdocs\SistemaControlPracticas
+cmd /c "C:\xampp\mysql\bin\mysql.exe -u root -h 127.0.0.1 -P 3308 &lt; database\schema.sql"
+cmd /c "C:\xampp\mysql\bin\mysql.exe -u root -h 127.0.0.1 -P 3308 &lt; database\seed.sql"
+C:\xampp\mysql\bin\mysql.exe -u root -h 127.0.0.1 -P 3308 -e "SELECT id, username, estado_cuenta FROM control_practicas_db.usuarios;"</code></pre>
+<p>Tienen que aparecer tres filas: <code>admin</code>, <code>reclutador</code> y <code>estudiante</code>, las tres con <code>activo</code>. Si no corres con el puerto 3308 (el predeterminado de MariaDB es 3306), cambia el <code>-P</code> y también <code>HOST_DB</code> del <code>.env</code>.</p>
+<aside class="callout callout--fail">
+<p class="callout-label">Cuidado: schema.sql borra</p>
+<p><code>schema.sql</code> empieza con <code>DROP DATABASE IF EXISTS control_practicas_db</code>. Si ya tienes datos que quieres conservar, haz primero <code>mysqldump</code>. Las dos primeras líneas van con <code>cmd /c</code> porque PowerShell no tiene el operador <code>&lt;</code> para leer un archivo. Los archivos de <code>database/migrations/</code> no hacen falta: el esquema ya incluye esas columnas y las migraciones son para bases creadas antes.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Recrear la base completa con el esquema y el seed del repositorio, y mirar los usuarios para confirmar que cargó.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Importar con phpMyAdmin: sirve, pero no queda como comando que otra persona repita ni que una guía pueda citar. Tampoco conviene crear usuarios a mano, porque los hashes del seed son lo que prueban las guías de sesión.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el cliente <code>mysql</code> hable con otro servidor que el que usa PHP. Si <code>mysql.exe</code> conecta pero el login del sistema responde <code>Ocurrio un error</code>, revisa que <code>HOST_DB</code> lleve el mismo puerto que usaste aquí.</dd></div>
+</dl>
+<h3 id="paso-env">Paso 2. Las variables de entorno</h3>
+<p>Copia <code>api/core/.env.example</code> como <code>api/core/.env</code>, pega la clave del comando de arriba y revisa que la ruta de <code>STORAGE_LOCAL_PATH</code> sea la de tu máquina. Después comprueba la sintaxis de todos los PHP del backend con el intérprete, que no ejecuta nada:</p>
+<pre data-lang="shell"><code>Get-ChildItem C:\xampp\htdocs\SistemaControlPracticas\api -Recurse -Filter *.php |
+  ForEach-Object { C:\xampp\php\php.exe -l $_.FullName } |
+  Where-Object { $_ -notmatch '^No syntax errors' }</code></pre>
+<p>No debe imprimir nada: <code>php -l</code> dice <code>No syntax errors detected</code> por cada archivo y el filtro descarta esas líneas. Cualquier línea que aparezca es un archivo con un error de sintaxis.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una clave propia en el <code>.env</code> y una comprobación de sintaxis de todo el backend antes de abrir el navegador.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Compartir un <code>.env</code> entre integrantes del equipo: cada máquina debe tener su clave, porque una cookie firmada con la clave de otro es una cookie válida.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el <code>.env</code> quede con codificación o saltos de línea raros: <code>env.php</code> lee línea por línea y cada <code>NOMBRE=valor</code> debe estar solo en su línea, sin comillas de más ni espacios dentro del valor.</dd></div>
+</dl>
+<h3 id="paso-apache">Paso 3. Apache y los módulos</h3>
+<p>El <code>.htaccess</code> de la raíz del proyecto solo funciona si Apache lo lee, y eso depende de dos cosas de <code>httpd.conf</code>: que <code>mod_rewrite</code> esté cargado y que el directorio de <code>htdocs</code> tenga <code>AllowOverride All</code>. Compruébalo:</p>
+<pre data-lang="shell"><code>Select-String -Path C:\xampp\apache\conf\httpd.conf -Pattern 'LoadModule (rewrite|headers)_module|AllowOverride'
+C:\xampp\apache\bin\httpd.exe -t</code></pre>
+<p>Tienen que salir las dos líneas <code>LoadModule</code> sin <code>#</code> y, entre los <code>AllowOverride</code>, uno con <code>All</code> dentro del bloque de <code>htdocs</code>. El comando <code>httpd -t</code> debe responder <code>Syntax OK</code>. Reinicia Apache desde el panel de XAMPP después de editar el archivo de hosts virtuales.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Verificar el entorno de Apache antes de confiar en el <code>.htaccess</code>: un archivo de reglas que Apache ignora no protege nada y no avisa.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Mover las reglas de seguridad al <code>httpd.conf</code>: es más rápido y no depende de <code>AllowOverride</code>, pero el repositorio ya trae su <code>.htaccess</code> y la serie lo aprovecha. Lo que sí hace WEB01 es proponer qué mover si despliegas en un servidor propio.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el panel de XAMPP muestre Apache en verde pero no haya recargado la configuración. Si algo no cambia, detén y vuelve a iniciar el servicio en vez de usar solo "Reload".</dd></div>
+</dl>
+<h3 id="paso-front">Paso 4. El frontend</h3>
+<pre data-lang="shell"><code>cd C:\xampp\htdocs\SistemaControlPracticas\frontend
+pnpm install
+pnpm dev</code></pre>
+<p>Vite imprime la dirección <code>http://localhost:5173</code>. Ábrela. El archivo <code>vite.config.js</code> reenvía todo lo que empiece con <code>/SistemaControlPracticas/api</code> a <code>http://localhost:80</code>, y por eso el navegador cree que habla con un solo origen. Inicia sesión con <code>estudiante</code> y la contraseña del seed, y abre DevTools, pestaña Aplicación, Cookies: debe haber una cookie llamada <code>session_control_practicas</code> (el valor de <code>COOKIE_NAME</code>) con <code>HttpOnly</code> marcado.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Trabajar con el frontend de desarrollo y su proxy. Es la forma en que tu equipo ya lo usa, y evita configurar CORS para el caso diario.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Compilar el frontend y servirlo desde Apache (<code>frontend/dist</code>): sirve para producción, pero cada cambio exige recompilar y esconde el comportamiento del proxy que las guías de CORS necesitan mostrar.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el puerto 5173 esté ocupado y Vite elija otro (5174): el <code>Access-Control-Allow-Origin</code> fijo de los endpoints dejaría de coincidir. Es un buen adelanto de WEB04.</dd></div>
+</dl>
+<h3 id="paso-atacante">Paso 5. El sitio atacante</h3>
+<p>Con el host virtual, la línea de <code>hosts</code> y la página de arriba, abre <code>http://atacante.test/</code>. La página tiene que mostrar <code>Mi origen es: http://atacante.test</code>. Con la sesión del paso anterior abierta en otra pestaña, pulsa el botón. Lo que ves en el cuadro de texto, y lo que dice la pestaña Red de DevTools, lo anotas tú en la tabla de la sección de comprobación: depende del navegador y de la versión, y esta guía no lo da por sabido.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una página que se ejecuta en otro sitio y llama a tu API con <code>credentials: 'include'</code>, la forma exacta en que un atacante usaría el navegador de una víctima.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Probar con <code>curl</code> y declarar que "no hay CORS": <code>curl</code> no aplica ninguna política del navegador, así que no dice nada sobre lo que un navegador permite.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que la sesión no se vea porque la cookie es <code>SameSite=Strict</code>: es exactamente lo que se quiere observar. WEB03 explica qué defiende esa cookie y qué no.</dd></div>
+</dl>
+<h3 id="paso-verificar">Paso 6. El script que mira desde afuera</h3>
+<p>Un solo script que pide, sin credenciales, lo que no debería verse y lo que tiene que decir cada respuesta. Va fuera del repositorio, en la carpeta <code>lab/</code> que crea esta serie, para no mezclar herramientas del laboratorio con el código del sistema.</p>
+<div class="pseudo"><ol>
+<li>Recibir la dirección base del sistema.</li>
+<li>Por cada ruta de la lista: pedirla con <code>curl.exe</code> y guardar solo el código HTTP.</li>
+<li>Compararlo con los códigos que el diseño espera y marcar <code>ok</code> o <code>REVISAR</code>.</li>
+<li>Pedir la API sin sesión y mostrar las cabeceras de la respuesta.</li>
+</ol></div>
+<pre data-lang="shell" data-file="lab/verificar.ps1"><code>param([string]$Base = "http://localhost/SistemaControlPracticas")
+
+# ruta, códigos que esperamos si la protección funciona
+$rutas = @(
+  @("/api/core/.env",              @(403, 404)),
+  @("/database/schema.sql",        @(403, 404)),
+  @("/.git",                       @(403, 404)),
+  @("/.git/config",                @(403, 404)),
+  @("/env.md",                     @(403, 404)),
+  @("/api/core/auth.php",          @(302, 403, 404)),
+  @("/uploads/",                   @(403, 404)),
+  @("/frontend/node_modules/",     @(403, 404))
+)
+
+foreach ($r in $rutas) {
+  $codigo = [int](&amp; curl.exe -s -o NUL -w "%{http_code}" "$Base$($r[0])")
+  $estado = if ($r[1] -contains $codigo) { "ok     " } else { "REVISAR" }
+  "{0} {1,-30} -&gt; {2}" -f $estado, $r[0], $codigo
+}
+
+""
+"Cabeceras de la API sin sesion:"
+&amp; curl.exe -s -D - -o NUL "$Base/api/endpoints/login.php"</code></pre>
+<p>Córrelo con <code>pwsh .\lab\verificar.ps1</code>. Por cómo está escrita la regla del <code>.htaccess</code> (<code>\.(sql|env|log|lock|git)$</code>, que mira solo el final de la URL), el diseño anticipa que <code>/.git</code> y <code>/api/core/.env</code> den 403, y que <code>/.git/config</code>, <code>/env.md</code> y <code>/api/core/auth.php</code> sean los candidatos a salir como <code>REVISAR</code>. Esa es una lectura del código, no una salida: lo que el script imprima en tu máquina manda, y es lo que WEB01 cierra. Guarda el resultado completo.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Medir desde afuera con una lista corta de rutas y un código esperado por ruta: el resultado queda escrito y se compara después de cada guía.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Revisar los archivos a mano abriendo el navegador: es lento, no deja evidencia y se olvida de las rutas poco evidentes. Tampoco un escáner automático completo, que hace cientos de requests y no explica ninguna.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que un código 404 se lea como "está protegido": 404 también significa que el archivo no existe en esa ruta. Por eso la lista acepta 403 y 404 para lo que no debe verse, y WEB01 distingue los dos casos.</dd></div>
+</dl>
+<h3 id="paso-login">Paso 7. Una sesión de punta a punta, con curl</h3>
+<p>Antes de tocar nada conviene saber cómo se ve una sesión que funciona, porque casi todas las guías de la serie la usan. El POST necesita un cuerpo JSON y <code>Content-Type: application/json</code>; en PowerShell lo más simple es guardar el cuerpo en un archivo.</p>
+<pre data-lang="json" data-file="lab/login.json"><code>{"identificador": "estudiante", "contrasena": "Password123"}</code></pre>
+<pre data-lang="shell"><code>$base = "http://localhost/SistemaControlPracticas/api/endpoints"
+curl.exe -s -i -c lab\jar.txt -H "Content-Type: application/json" --data-binary "@lab\login.json" "$base/login.php"
+curl.exe -s -b lab\jar.txt "$base/login.php"</code></pre>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="fw0st fw0sd">
+<title id="fw0st">Un inicio de sesión con curl</title>
+<desc id="fw0sd">El cliente envía el POST con el JSON a login.php. PHP consulta la base, verifica la contraseña, firma la cookie y responde con Set-Cookie y un token CSRF. En el segundo GET, el cliente reenvía la cookie y PHP vuelve a leer los roles de la base.</desc>
+<defs><marker id="fw0s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw0s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fw0s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fw0s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">curl</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Apache + PHP</text>
+<path class="dg-frame" d="M385.0 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<path class="dg-edge" d="M73.0 72 L380.0 72" marker-end="url(#fw0s-a)"/>
+<rect x="175.3" y="55" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="66" text-anchor="middle">POST login.php</text>
+<path class="dg-edge" d="M388.0 106 L695.0 106" marker-end="url(#fw0s-a)"/>
+<rect x="463.9" y="89" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="100" text-anchor="middle">SELECT usuario y roles</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 140 L390.0 140" marker-end="url(#fw0s-r)"/>
+<rect x="500.2" y="123" width="84.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="134" text-anchor="middle">fila + hash</text>
+<rect x="395.0" y="160" width="216" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="405.0" y="176">password_verify + firma HMAC</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 208 L75.0 208" marker-end="url(#fw0s-r)"/>
+<rect x="129.10000000000002" y="191" width="196.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="202" text-anchor="middle">200 + Set-Cookie + csrfToken</text>
+<path class="dg-edge" d="M73.0 242 L380.0 242" marker-end="url(#fw0s-a)"/>
+<rect x="148.9" y="225" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="236" text-anchor="middle">GET login.php + Cookie</text>
+<path class="dg-edge" d="M388.0 276 L695.0 276" marker-end="url(#fw0s-a)"/>
+<rect x="444.1" y="259" width="196.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="270" text-anchor="middle">SELECT roles y estado_cuenta</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 310 L75.0 310" marker-end="url(#fw0s-r)"/>
+<rect x="119.2" y="293" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="304" text-anchor="middle">200 + usuario + csrfToken nuevo</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB00.3.</b> El inicio de sesión visto desde <code>curl</code>. La cookie no guarda una sesión en el servidor: es el propio estado firmado, y por eso cada request vuelve a la base por los roles.</figcaption>
+</figure>
+<p>La primera respuesta tiene que traer una cabecera <code>Set-Cookie</code> con el nombre de <code>COOKIE_NAME</code>, y el cuerpo, <code>"code": 1</code> y un <code>csrfToken</code>. La segunda, con la cookie, devuelve los datos del usuario. Sin <code>-b</code>, el mismo GET responde <code>Usuario no autenticado</code>. Fíjate también en el código HTTP de ese error: es el primer síntoma de lo que WEB01 corrige.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Usar <code>curl.exe</code> con un archivo de cookies como "navegador mínimo" para ver el protocolo sin la interfaz.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Probar solo desde el frontend: funciona, pero esconde las cabeceras y los códigos de estado, que son justo lo que se revisa en la serie.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que PowerShell cambie las comillas del JSON si lo pasas en la línea: por eso va en un archivo y con <code>--data-binary</code>, no con <code>-d</code>, que recorta saltos de línea.</dd></div>
+</dl>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="web00-laboratorio"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<p>No hay pruebas automáticas todavía: en esta guía la prueba es que el entorno responde lo que dice la tabla de abajo. Cada fila tiene una columna en blanco para que anotes tu resultado real.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Comprobación</th><th>Cómo</th><th>Qué debe pasar</th><th>Tu resultado</th></tr></thead>
+<tbody>
+<tr><td>Sintaxis del backend</td><td><code>php -l</code> sobre <code>api/</code> (paso 2)</td><td>No imprime nada.</td><td>&nbsp;</td></tr>
+<tr><td>Base cargada</td><td><code>SELECT</code> del paso 1</td><td>Tres usuarios activos.</td><td>&nbsp;</td></tr>
+<tr><td>Apache lee el <code>.htaccess</code></td><td><code>verificar.ps1</code></td><td><code>/api/core/.env</code> da 403.</td><td>&nbsp;</td></tr>
+<tr><td>Sesión con curl</td><td>Paso 7</td><td>El primer POST trae <code>Set-Cookie</code> y <code>csrfToken</code>.</td><td>&nbsp;</td></tr>
+<tr><td>Tres orígenes</td><td>Abrir <code>:5173</code>, <code>localhost</code> y <code>atacante.test</code></td><td>La página del atacante muestra su origen.</td><td>&nbsp;</td></tr>
+<tr><td>Rutas por revisar</td><td>Las filas <code>REVISAR</code> de <code>verificar.ps1</code></td><td>Lista escrita; la usa WEB01.</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-fallas">Fallas provocadas</h3>
+<p>Dos fallas del entorno que conviene haber visto una vez, porque en un servidor real se ven igual y cuesta reconocerlas.</p>
+<p><b>Falla 1. El <code>.htaccess</code> que Apache no lee.</b> Con el sistema andando, renombra el archivo y repite el script:</p>
+<pre data-lang="shell"><code>Rename-Item C:\xampp\htdocs\SistemaControlPracticas\.htaccess .htaccess.off
+pwsh .\lab\verificar.ps1
+Rename-Item C:\xampp\htdocs\SistemaControlPracticas\.htaccess.off .htaccess</code></pre>
+<p>Mientras el archivo está renombrado, <code>/api/core/.env</code> deja de dar 403: el script lo marca <code>REVISAR</code> porque Apache ya no aplica la regla y entrega el archivo tal cual. Es el mismo síntoma que verías en un servidor donde <code>AllowOverride</code> está en <code>None</code>. Importa porque la protección del <code>.env</code> vivía en un archivo que nadie vigilaba; por eso WEB01 propone una segunda barrera dentro de PHP. Devuelve el nombre al archivo en cuanto termines.</p>
+<p><b>Falla 2. La base en otro puerto.</b> Cambia <code>HOST_DB</code> a <code>127.0.0.1;port=3307</code>, guarda y repite el POST del paso 7. El código no explota: <code>Connection</code> atrapa la excepción y responde <code>Ocurrio un error</code>, y el mensaje no dice qué falló. Eso es lo correcto hacia afuera (no filtrar), pero deja al desarrollador a ciegas; en WEB01 aprendes a registrar el detalle en un archivo del servidor sin mostrarlo al cliente. Restaura el puerto 3308.</p>
+<h2 id="limites">Limitaciones</h2>
+<ul>
+<li><b>Nada se ejecutó al escribir esta guía.</b> Las rutas esperadas del script salen de leer el <code>.htaccess</code>, no de correrlo. Si tu salida difiere, tu salida manda.</li>
+<li><b>HTTP, no HTTPS.</b> El laboratorio va por HTTP en <code>localhost</code>, así que no se prueba <code>Secure</code>, HSTS ni las cookies con prefijo <code>__Host-</code>. WEB02 y WEB09 dicen qué cambia en producción.</li>
+<li><b>Windows y XAMPP.</b> Los comandos son de PowerShell 7 y rutas de XAMPP. En Linux o macOS cambian las rutas y la forma de editar <code>hosts</code>, no las ideas.</li>
+<li><b>Una sola máquina.</b> No hay balanceador, proxy inverso ni CDN; los ataques que dependen de ellos (<a href="../modules/m83-otros-ataques.html#cache">caché</a> y <a href="../modules/m83-otros-ataques.html#smuggling">smuggling</a>) se explican en teoría, no se reproducen aquí.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="web00">
+<p class="pj-repo-head">Esta serie trabaja sobre tu propio repositorio. Haz una rama por guía (<code>web00-laboratorio</code>, <code>web01-lo-que-no-debe-verse</code>…) y no subas <code>api/core/.env</code> ni la carpeta <code>lab/</code> con las cookies de prueba (<code>lab/jar.txt</code>).</p>
+<ul class="pj-checks">
+<li data-check="db">Cargaste <code>schema.sql</code> y <code>seed.sql</code> y viste los tres usuarios.</li>
+<li data-check="env">Creaste el <code>.env</code> con una <code>COOKIE_KEY</code> propia y <code>php -l</code> no imprimió nada.</li>
+<li data-check="apache"><code>httpd -t</code> dio <code>Syntax OK</code> y <code>mod_rewrite</code> está cargado.</li>
+<li data-check="tres">Abriste <code>localhost:5173</code>, <code>localhost</code> y <code>atacante.test</code>.</li>
+<li data-check="script">Corriste <code>verificar.ps1</code> y guardaste las filas <code>REVISAR</code>.</li>
+<li data-check="curl">Hiciste el inicio de sesión con curl y viste el <code>Set-Cookie</code> y el <code>csrfToken</code>.</li>
+<li data-check="fallas">Provocaste las dos fallas y devolviste todo a su estado.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<p>Esta guía funciona sola. Si quieres juntarla con otra cosa del curso:</p>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con M73 y M74, el navegador y los orígenes</p>
+<p>La figura WEB00.2 es la tabla de M74 aplicada a tu laboratorio: <a href="../modules/m74-origen-cookies.html">origen y sitio</a>. Vuelve a ella antes de WEB03 y WEB04.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M80, control de acceso</p>
+<p>La tabla de endpoints de arriba es la entrada de la <a href="../modules/m80-control-acceso.html#auditoria">rejilla de M80</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con A29, el servidor seguro</p>
+<p>A29 pone las defensas delante de una API en Java. Aquí las defensas viven dentro de PHP y de Apache; el borde con WAF y límites de A29 se puede poner después, sin cambiar nada de esta serie.</p>
+</li>
+<li>
+<p class="pj-connect-title">En el glosario</p>
+<p><a href="../glosario.html#t-same-origin-policy">same-origin policy</a> y <a href="../glosario.html#t-csp">CSP</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/web00.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>
