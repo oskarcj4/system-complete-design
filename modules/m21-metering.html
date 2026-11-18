@@ -146,6 +146,18 @@
 
       <h2 id="arquitectura"><span class="sec-num">21.2</span>La arquitectura por planos</h2>
 
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El metering no es un programa, es una cadena de etapas. El gateway anota cuánto usó cada request; Kafka guarda esas notas en orden y las reparte; un procesador las suma por cliente y por hora; otra etapa les pone precio; y al final se descuenta el saldo y se arma la factura. Cada etapa le pasa a la siguiente un registro que ya no se modifica: si algo estuvo mal, se agrega una corrección.</p>
+        <p class="jr-like"><b>Es como</b> una línea de montaje: cada puesto hace una sola tarea, a su ritmo, y deja la pieza en la cinta para el puesto siguiente.</p>
+        <dl class="jr-words">
+          <dt>Plano</dt><dd>una etapa de la cadena con una sola tarea: medir, transportar, sumar, tarifar o cobrar.</dd>
+          <dt>Evento de uso</dt><dd>el registro de lo que consumió una request: quién, qué modelo, cuántos tokens de cada tipo.</dd>
+          <dt>Agregado</dt><dd>la suma de muchos eventos, por ejemplo todo lo que usó un cliente entre las 14:00 y las 15:00.</dd>
+          <dt>Registro inmutable</dt><dd>se escribe una vez y no se edita; los errores se arreglan con otro registro.</dd>
+        </dl>
+      </aside>
+
       <p>El metering se entiende mejor como una cadena de etapas, que aquí llamamos <b>planos</b>. Cada plano hace una sola cosa: medir, transportar, contar, ponerle precio, cobrar. Y cada uno tiene su propio ritmo: medir tarda milisegundos y facturar, un mes. Lo que pasa de un plano al siguiente es siempre un registro que nadie modifica después: un evento, una fila por hora, un asiento contable, una factura.</p>
 
       <aside class="callout callout--analogy">
@@ -932,6 +944,21 @@ def process(ev, dedupe, hourly, now):
         <figcaption><b>Figura 21.7.</b> Los eventos normales caen casi verticales: llegan segundos después de ocurrir. El evento rojo ocurrió a las 14:05 y llegó a las 16:10, cuando su ventana ya había cerrado.</figcaption>
       </figure>
 
+      <p><b>Paso a paso, con los números de la figura.</b> La marca de agua no es un reloj: se calcula con los eventos que van llegando. Así decide el procesador qué ventanas cierra:</p>
+
+      <ol class="steps">
+        <li><span class="step-title">Mira el evento más nuevo</span>El evento con la hora más alta que vio hasta ahora ocurrió a las 16:10.</li>
+        <li><span class="step-title">Resta el desorden tolerado</span>16:10 − 5 minutos = 16:05. Esa es la marca de agua: "ya no espero eventos anteriores a las 16:05".</li>
+        <li><span class="step-title">Compara con el fin de cada ventana</span>La ventana de 15:00 termina a las 16:00, y 16:05 ya pasó ese fin: se emite su primer total. La de 16:00 termina a las 17:00: todavía no se emite.</li>
+        <li><span class="step-title">Suma la tolerancia para cerrar del todo</span>Con 1 hora de tolerancia, una ventana se cierra definitivamente cuando la marca pasa su fin más una hora. La de 14:00: 15:00 + 1 h = 16:00, y 16:05 ya lo pasó, así que está cerrada. La de 15:00: 16:00 + 1 h = 17:00, todavía abierta: si llega un rezagado suyo, se vuelve a emitir con el total nuevo.</li>
+        <li><span class="step-title">Clasifica al rezagado</span>El evento de las 14:05 llega a las 16:10. Su ventana, la de 14:00, ya se cerró del todo, así que no entra en ella: va a la salida de tardíos y se convierte en una fila de corrección. No se pierde.</li>
+      </ol>
+
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Un profesor que recibe exámenes por correo. No sabe si falta alguno, así que se fija en el matasellos más reciente que le llegó (el evento más nuevo) y supone que lo que tenga un matasellos de más de cinco días antes ya llegó todo (la marca de agua). Entonces publica las notas de esa fecha, y durante una semana más acepta exámenes atrasados y corrige la lista (la tolerancia). Lo que llega después de esa semana no se tira: va como nota corregida en el acta siguiente (la salida de tardíos).</p>
+      </aside>
+
       <p>En Apache Flink, una ventana se dispara cuando la marca de agua pasa su fin, y los elementos que llegan después se descartan, porque la tolerancia (<i>allowed lateness</i>) vale 0 por defecto. Con una tolerancia mayor, cada evento tardío vuelve a disparar la ventana con el resultado actualizado; lo que llega después de la tolerancia se puede mandar a una salida aparte con <code>sideOutputLateData</code>. <span class="badge badge--doc">Documentado</span></p>
 
       <p>Descartar es la opción por defecto y es inaceptable para facturar: un evento tardío es dinero. El diseño tiene tres plazos:</p>
@@ -1160,6 +1187,15 @@ def rate_line(quantity: int, nanousd_per_unit: int, multipliers=(1,)) -&gt; int:
 # 1 200 millones de tokens de salida a 10 USD por millón: 12 000 USD
 assert rate_line(1_200_000_000, 10_000) == 1_200_000</code></pre>
 
+      <p><b>Paso a paso: la request de 21.2 en nanodólares.</b> Un nanodólar es una milmillonésima de dólar (1 USD = 1&#8239;000&#8239;000&#8239;000 nanodólares) y un centavo son 10&#8239;000&#8239;000. Con enteros de ese tamaño, ninguna cuenta intermedia pierde decimales:</p>
+
+      <ol class="steps">
+        <li><span class="step-title">Precio por token, en enteros</span>2 USD por millón de tokens son 2&#8239;000 nanodólares por token; 0.20 USD por millón, 200; 10 USD por millón, 10&#8239;000.</li>
+        <li><span class="step-title">Cantidad × precio, línea por línea</span>Entrada: 1&#8239;200 × 2&#8239;000 = 2&#8239;400&#8239;000. Lectura de caché: 8&#8239;000 × 200 = 1&#8239;600&#8239;000. Salida: 400 × 10&#8239;000 = 4&#8239;000&#8239;000.</li>
+        <li><span class="step-title">Se suma, sin redondear</span>2&#8239;400&#8239;000 + 1&#8239;600&#8239;000 + 4&#8239;000&#8239;000 = 8&#8239;000&#8239;000 nanodólares, que son los 0.008 USD de la tabla: 0.8 centavos. El saldo prepagado descuenta exactamente eso.</li>
+        <li><span class="step-title">El redondeo espera al fin del ciclo</span>Si se redondeara aquí, 0.8 centavos pasarían a 1 y cada request pagaría un 25&#8239;% de más. En la factura, en cambio, se suma el ciclo: 3 millones de requests × 8&#8239;000&#8239;000 = 24 billones de nanodólares (24 × 10<sup>12</sup>), que divididos por 10&#8239;000&#8239;000 dan 2&#8239;400&#8239;000 centavos: 24&#8239;000 USD, con un solo redondeo.</li>
+      </ol>
+
       <p>Prueba la calculadora con la request del ejemplo, y cambia los tokens leídos del caché a 0 o el modo a batch:</p>
 
       <div data-calc="pricing"></div>
@@ -1250,6 +1286,11 @@ assert rate_line(1_200_000_000, 10_000) == 1_200_000</code></pre>
         <li><b>Reservar por tramos.</b> Cada request reserva un tramo chico y pide otro cuando lo gasta: los préstamos del <a href="m18-cuotas-tokens.html#tres-formas">escrow del M18</a> aplicados a dinero. Si no queda saldo para el tramo siguiente, el stream se corta con un evento de error y el uso hasta ahí se cobra.</li>
       </ul>
 
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Cargar gasolina con tarjeta en un surtidor de autoservicio. <b>Cobrar al terminar</b> es como un surtidor que deja cargar sin mirar el saldo y cobra al colgar la manguera: si la tarjeta no alcanzaba, la estación ya perdió el combustible. <b>Reservar el máximo</b> es la preautorización: el surtidor bloquea 100 USD en tu tarjeta aunque cargues 30, y hasta que los libera no puedes usar ese dinero en otra cosa. <b>Reservar por tramos</b> es un parquímetro de monedas: pagas 15 minutos, cuando se acaban pones otra moneda y, si no te queda ninguna, el tiempo termina ahí y pagas solo lo que usaste.</p>
+      </aside>
+
       <p>Con el saldo inicial en 20 USD, 20 streams a la vez y un máximo de 0.50 USD por request, el simulador muestra el costo de cada una: cobrar al terminar deja el saldo en −1.51 USD; reservar el máximo empieza a rechazar requests con 9.94 USD todavía en la cuenta, porque 20 reservas de 0.50 bloquean 10 USD; reservar por tramos nunca baja de cero, rechaza menos y corta 14 streams a la mitad.</p>
 
       <div data-sim="credits"></div>
@@ -1336,6 +1377,16 @@ assert rate_line(1_200_000_000, 10_000) == 1_200_000</code></pre>
         </div>
         <figcaption><b>Figura 21.12.</b> Las dos fuentes del exceso, apiladas. Los streams en vuelo son un monto fijo; el retraso crece con el lag de Kafka y por eso es el que hay que vigilar. <span class="badge badge--ref">Diseño de referencia</span></figcaption>
       </figure>
+
+      <p><b>Cómo leer esta tabla.</b> Imagina el momento exacto en que el cliente cruza el tope y pregúntate qué gasto todavía no se ve. Son dos cosas distintas, y por eso se suman:</p>
+
+      <ol class="steps">
+        <li><span class="step-title">Lo que ya pasó pero todavía no se contó</span>El servicio de topes ve el gasto unos 2 segundos tarde. Si el cliente gasta 2 USD por segundo (un supuesto del ejemplo), en esos 2 segundos se gastan 2 × 2 = 4 USD que el servicio todavía no conoce.</li>
+        <li><span class="step-title">Lo que ya empezó y no se va a frenar</span>Los 50 streams abiertos no se cortan cuando aparece la marca: el bloqueo solo frena las requests nuevas. Lo peor que puede costar cada uno: 200&#8239;000 tokens de entrada × 2 USD por millón = 0.40 USD, más 8&#8239;000 de salida × 10 USD por millón = 0.08 USD, en total 0.48. Por 50 streams, 24 USD.</li>
+        <li><span class="step-title">El total es la suma</span>4 + 24 = 28 USD por encima del tope en el peor caso normal. Si Kafka se atrasa 60 segundos, solo cambia el primer término: 2 × 60 = 120, y 120 + 24 = 144 USD.</li>
+      </ol>
+
+      <p>La lectura práctica: el segundo término no depende de cuánto tarde el sistema, y el primero sí. Por eso lo que se vigila con una alerta es el lag, no la cantidad de streams.</p>
 
       <p>El primer término crece con el lag, y por eso el lag del consumidor de topes es una alerta de prioridad alta (<a href="m11-observabilidad.html#alertas">M11</a>). Para que un Kafka atrasado no deje pasar gasto sin límite, el limitador del gateway lleva además un contador aproximado del gasto del mes en Redis, que se corrige con el valor exacto en cada conciliación: si el metering se atrasa, el contador aproximado frena al cliente cerca del tope igual. El segundo término se acota con las reservas de 21.8: un tope estricto reserva contra el margen que queda hasta el tope, como contra un saldo.</p>
 
@@ -1506,6 +1557,42 @@ event_name=output_tokens_modelo_m
     redis.hset(key + ":fix", conciliated_hour, delta)    # auditoría de cada corrección</code></pre>
 
       <p>La dirección importa. Si el limitador corrigiera al metering, un failover de Redis podría borrar uso de una factura. Al revés, lo peor que pasa es que un cliente reciba un 429 un poco antes o un poco después.</p>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 250" role="img" aria-labelledby="fjr21at fjr21ad">
+<title id="fjr21at">Quién corrige a quién</title>
+<desc id="fjr21ad">Dos paneles. A la izquierda, la dirección correcta: el metering, exacto y guardado en el log y los agregados, le pasa el valor exacto al contador aproximado del limitador en Redis, que reemplaza la parte ya conciliada. Lo peor que puede pasar es que el cliente reciba un 429 un poco antes o un poco después. A la derecha, la dirección prohibida: un Redis que perdió escrituras en un failover le pasa su número al metering, y ese uso desaparece de la factura.</desc>
+<defs><marker id="fjr21aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="26" text-anchor="start">Bien: lo exacto corrige a lo aproximado</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="20" y="48" width="150" height="64" rx="8"/>
+<text class="dg-label" x="95" y="74" text-anchor="middle">Metering</text>
+<text class="dg-tiny" x="95" y="94" text-anchor="middle">exacto, fuente de verdad</text>
+<path class="dg-edge" d="M172 80 H222" marker-end="url(#fjr21aa)"/>
+<text class="dg-tiny" x="197" y="68" text-anchor="middle">valor</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="226" y="48" width="150" height="64" rx="8"/>
+<text class="dg-label" x="301" y="74" text-anchor="middle">Limitador</text>
+<text class="dg-tiny" x="301" y="94" text-anchor="middle">Redis, aproximado</text>
+<rect class="dg-ok" x="20" y="136" width="356" height="56" rx="6"/>
+<text class="dg-small" x="198" y="160" text-anchor="middle">Peor caso: un 429 un poco antes</text>
+<text class="dg-small" x="198" y="178" text-anchor="middle">o un poco después</text>
+<text class="dg-group" x="400" y="26" text-anchor="start">Mal: lo aproximado corrige a lo exacto</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="400" y="48" width="150" height="64" rx="8"/>
+<text class="dg-label" x="475" y="74" text-anchor="middle">Limitador</text>
+<text class="dg-tiny" x="475" y="94" text-anchor="middle">perdió escrituras</text>
+<path class="dg-edge" d="M552 80 H602" marker-end="url(#fjr21aa)"/>
+<text class="dg-tiny" x="577" y="68" text-anchor="middle">valor</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="606" y="48" width="150" height="64" rx="8"/>
+<text class="dg-label" x="681" y="74" text-anchor="middle">Metering</text>
+<text class="dg-tiny" x="681" y="94" text-anchor="middle">pisado</text>
+<rect class="dg-bad" x="400" y="136" width="356" height="56" rx="6"/>
+<text class="dg-small dg-fail-text" x="578" y="160" text-anchor="middle">Uso real que desaparece</text>
+<text class="dg-small dg-fail-text" x="578" y="178" text-anchor="middle">de la factura</text>
+<text class="dg-tiny" x="385" y="230" text-anchor="middle">La flecha siempre sale de la fuente de verdad. El contador rápido se puede equivocar porque alguien lo corrige.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 21.13b.</b> Las dos direcciones posibles de la corrección. Solo la de la izquierda es segura: un error del limitador cuesta un rechazo mal calculado, nunca dinero de la factura.</figcaption>
+      </figure>
 
       <h2 id="correcciones"><span class="sec-num">21.12</span>Correcciones y reprocesos</h2>
 

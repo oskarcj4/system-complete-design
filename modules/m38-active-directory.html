@@ -68,6 +68,13 @@
 
 <h2 id="que-es"><span class="sec-num">38.1</span>Qué es Active Directory</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Active Directory es la libreta central donde una empresa con Windows anota a cada persona y a cada computadora, y qué puede hacer cada una. El servidor que guarda esa libreta, el controlador de dominio, decide quién entra a todo lo demás. Por eso quien lo controla, controla la empresa entera.</p>
+  <p class="jr-like"><b>Es como</b> la recepción de un edificio de oficinas: tiene la lista de empleados, sabe en qué piso trabaja cada uno y guarda el tablero con todas las llaves.</p>
+  <dl class="jr-words"><dt>Dominio</dt><dd>el grupo de usuarios y equipos que comparten una misma libreta, con un nombre como <code>corp.example.com</code>.</dd><dt>Bosque</dt><dd>el contenedor de uno o más dominios que confían entre sí por completo; es la frontera real de seguridad.</dd><dt>OU</dt><dd>una carpeta dentro del dominio para ordenar objetos (los servidores aquí, los usuarios allá).</dd><dt>GPO</dt><dd>una configuración que el dominio empuja a todas las máquinas de una OU.</dd><dt>Controlador de dominio (DC)</dt><dd>el servidor que guarda la libreta, revisa contraseñas y copia los cambios a los otros DC.</dd></dl>
+</aside>
+
 <p><dfn data-term="active-directory">Active Directory</dfn> es el directorio de identidades de una red Windows: guarda quién es cada usuario y cada máquina, a qué grupos pertenece y qué puede hacer. Las aplicaciones y los servidores confían en él para autenticar y autorizar. Su unidad mayor es el <b>bosque</b> (forest), que es el límite de seguridad real: dentro de un bosque, la confianza es total entre sus dominios. Un <b>dominio</b> agrupa objetos bajo un nombre (<code>corp.example.com</code>), y las <b>unidades organizativas</b> (OU) los ordenan en ramas para administrarlos.</p>
 
 <figure class="figure">
@@ -126,6 +133,13 @@
 
 <h2 id="kerberos"><span class="sec-num">38.2</span>Kerberos y NTLM por dentro</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Para no mandar tu contraseña a cada servidor, Kerberos te da un pase general cuando inicias sesión, y con ese pase pides una entrada para cada servicio que quieras usar. Los servicios aceptan la entrada porque viene sellada con una clave que solo conocen ellos y el controlador de dominio. NTLM es el método viejo, que todavía convive y es más fácil de abusar.</p>
+  <p class="jr-like"><b>Es como</b> la pulsera de un parque de diversiones: muestras tu identificación una sola vez en la puerta, te ponen la pulsera, y con ella sacas un boleto para cada juego sin volver a mostrar el documento.</p>
+  <dl class="jr-words"><dt>KDC</dt><dd>la parte del controlador de dominio que entrega los pases y los boletos.</dd><dt>TGT</dt><dd>el pase general (la pulsera) que recibes al iniciar sesión.</dd><dt>Ticket de servicio</dt><dd>el boleto para un servicio concreto, sellado con la clave de ese servicio.</dd><dt><code>krbtgt</code></dt><dd>la cuenta cuya clave sella todos los pases generales del dominio.</dd><dt>NTLM</dt><dd>el protocolo de autenticación anterior, por desafío y respuesta con el hash de la contraseña.</dd></dl>
+</aside>
+
 <p><dfn data-term="kerberos">Kerberos</dfn> es el protocolo de autenticación de AD. Su idea: en vez de mandar la contraseña a cada servicio, el usuario obtiene <b>tickets</b> firmados por una autoridad central (el KDC, que vive en el DC) y los presenta. Usa las primitivas de <a href="m36-criptografia.html#simetrico">M36</a>: claves simétricas y marcas de tiempo cifradas. Tres intercambios, resumidos en la lámina.</p>
 
 <figure class="figure plate">
@@ -177,11 +191,75 @@
   <li><b>AP-REQ: el servicio valida solo</b><span>El usuario presenta el ticket al servicio, que lo verifica sin volver a llamar al DC. El inicio de sesión queda en el evento 4624. <a href="#detectar">38.6</a></span></li>
 </ol>
 
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Piensa en un parque de diversiones. En la puerta (el AS) muestras tu identificación y te ponen una pulsera (el TGT) que solo la boletería sabe leer, porque lleva un sello secreto (la clave de <code>krbtgt</code>). En la boletería (el TGS) enseñas la pulsera y pides un boleto para la montaña rusa (el ticket de servicio). El operador de la montaña rusa revisa el sello del boleto, que solo él y la boletería conocen, y te deja subir sin llamar a nadie. Si alguien roba el sello de las pulseras, puede fabricarse pulseras falsas que la boletería acepta: eso es un Golden Ticket.</p>
+</aside>
+
+<p><b>Paso a paso, con un ejemplo.</b> Ana enciende su portátil a las 9:00 y abre la carpeta compartida <code>\\archivos\ventas</code>. Esto es lo que pasa por debajo, en el orden de la lámina:</p>
+<ol class="steps">
+  <li><span class="step-title">Prueba quién es</span>Ana escribe su contraseña. Su portátil no la envía: deriva de ella una clave y con esa clave cifra la hora actual (AS-REQ). El DC tiene su propia copia de la clave de Ana, descifra la hora y comprueba que esté cerca de la suya; Kerberos tolera por defecto 5 minutos de diferencia entre relojes.</li>
+  <li><span class="step-title">Recibe el pase general</span>Si la hora cuadra, el DC le entrega un TGT (AS-REP) cifrado con la clave de <code>krbtgt</code>. Ana no puede leerlo ni cambiarlo; solo guardarlo. Por defecto dura 10 horas, así que le alcanza para la jornada sin volver a escribir la contraseña. Queda un 4768.</li>
+  <li><span class="step-title">Pide un boleto</span>Al abrir la carpeta, su portátil presenta el TGT y pide un ticket para el servicio de archivos (TGS-REQ).</li>
+  <li><span class="step-title">Recibe el boleto</span>El DC devuelve un ticket de servicio cifrado con la clave de la cuenta que ejecuta el servidor de archivos (TGS-REP). Queda un 4769, con el tipo de cifrado usado.</li>
+  <li><span class="step-title">Entra</span>El portátil entrega el ticket al servidor de archivos (AP-REQ). El servidor lo descifra con su propia clave: si puede, sabe que lo emitió el DC y deja pasar a Ana sin consultarlo. Queda un 4624 en el servidor.</li>
+</ol>
+<p>Fíjate en los dos secretos que sostienen todo: la clave de <code>krbtgt</code> (paso 2) y la clave de cada servicio (paso 4). Casi todos los ataques de 38.3 apuntan a uno de los dos.</p>
+
 <p>La cuenta <dfn data-term="krbtgt"><code>krbtgt</code></dfn> merece su propia línea: es una cuenta de servicio del dominio cuya clave firma cada TGT. Nadie inicia sesión con ella, pero si su clave se filtra, el atacante fabrica tickets indistinguibles de los legítimos. De ahí dos consecuencias que verás abajo: el DC es tier&nbsp;0, y tras un compromiso se rota <code>krbtgt</code> <b>dos veces</b>.</p>
 
 <p>Junto a Kerberos sobrevive <dfn data-term="ntlm">NTLM</dfn>, el protocolo heredado. Funciona por desafío-respuesta con el hash de la contraseña, y tiene dos problemas de diseño: el hash vale tanto como la contraseña (si lo robas, te autenticas sin conocerla) y <b>no autentica al servidor</b>, solo al cliente. <span class="badge badge--doc">Documentado</span> Microsoft está retirando NTLM: eliminó NTLMv1 en Windows&nbsp;11 24H2 y Windows Server&nbsp;2025, añadió una opción para bloquear NTLM en conexiones SMB salientes y anunció que lo desactivará por defecto en una versión futura. Mientras tanto convive, y es la base de dos ataques de abajo (robo de hash y relay).</p>
 
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 316" role="img" aria-labelledby="fjr38at fjr38ad">
+<title id="fjr38at">NTLM: por qué basta el hash y qué es un relay</title>
+<desc id="fjr38ad">Arriba, el uso normal de NTLM: el cliente pide entrar, el servidor manda un desafío al azar y el cliente responde con el desafío cifrado usando el hash de su contraseña; quien tenga el hash puede calcular la misma respuesta. Abajo, un relay: un intermediario recibe la autenticación del cliente y la reenvía tal cual a otro servidor. Sin firma, el servidor B acepta y cree que habla con el cliente; con firma SMB o LDAP, el mensaje reenviado no lleva la firma correcta y B lo rechaza.</desc>
+<defs><marker id="fjr38aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="40" y="30" text-anchor="start">Uso normal</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="40" y="46" width="160" height="96" rx="8"/>
+<text class="dg-label" x="120" y="90" text-anchor="middle">Cliente</text>
+<text class="dg-tiny" x="120" y="108" text-anchor="middle">tiene el hash</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="570" y="46" width="160" height="96" rx="8"/>
+<text class="dg-label" x="650" y="90" text-anchor="middle">Servidor A</text>
+<text class="dg-tiny" x="650" y="108" text-anchor="middle">o el DC, que lo verifica</text>
+<path class="dg-edge" d="M200 70 H570" marker-end="url(#fjr38aa)"/>
+<text class="dg-tiny" x="385" y="63" text-anchor="middle">1. quiero entrar como ana</text>
+<path class="dg-edge" d="M570 100 H200" marker-end="url(#fjr38aa)"/>
+<text class="dg-tiny" x="385" y="93" text-anchor="middle">2. desafío: un número al azar</text>
+<path class="dg-edge" d="M200 130 H570" marker-end="url(#fjr38aa)"/>
+<text class="dg-tiny" x="385" y="123" text-anchor="middle">3. respuesta = desafío cifrado con el hash</text>
+<text class="dg-tiny" x="385" y="166" text-anchor="middle">La contraseña nunca viaja, pero el hash basta para calcular la respuesta: robar el hash es robar la cuenta.</text>
+<text class="dg-group" x="40" y="196" text-anchor="start">Relay: alguien se pone en medio</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="40" y="210" width="160" height="56" rx="8"/>
+<text class="dg-label" x="120" y="236" text-anchor="middle">Cliente</text>
+<text class="dg-tiny" x="120" y="253" text-anchor="middle">cree hablar con X</text>
+<rect class="dg-warnbox" x="305" y="210" width="160" height="56" rx="8"/>
+<text class="dg-label" x="385" y="236" text-anchor="middle">Intermediario</text>
+<text class="dg-tiny" x="385" y="253" text-anchor="middle">no conoce el hash</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="570" y="210" width="160" height="56" rx="8"/>
+<text class="dg-label" x="650" y="236" text-anchor="middle">Servidor B</text>
+<text class="dg-tiny" x="650" y="253" text-anchor="middle">el objetivo real</text>
+<path class="dg-edge" d="M200 238 H305" marker-end="url(#fjr38aa)"/>
+<text class="dg-tiny" x="252" y="230" text-anchor="middle">se autentica</text>
+<path class="dg-edge" d="M465 238 H570" marker-end="url(#fjr38aa)"/>
+<text class="dg-tiny" x="517" y="230" text-anchor="middle">reenvía</text>
+<text class="dg-tiny" x="517" y="252" text-anchor="middle">lo mismo</text>
+<text class="dg-tiny" x="40" y="290" text-anchor="start">Sin firma: B acepta y cree que habla con el cliente.</text>
+<text class="dg-tiny" x="40" y="306" text-anchor="start">Con firma SMB o LDAP: el mensaje reenviado no lleva la firma correcta y B lo rechaza.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 38.2b.</b> Los dos problemas de diseño de NTLM. Arriba, el hash hace de contraseña. Abajo, como el cliente no comprueba con quién habla, un intermediario puede reenviar su autenticación a otro servidor; la firma de los mensajes es lo que lo corta (38.5).</figcaption>
+</figure>
+
 <h2 id="ataques"><span class="sec-num">38.3</span>Cómo atacan: concepto, rastro y defensa</h2>
+
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Los atacantes casi nunca rompen la criptografía: aprovechan configuraciones flojas, contraseñas débiles y credenciales que quedaron donde no debían. Cada técnica deja huellas en los registros del controlador de dominio, y cada una tiene un control que la corta. La tabla te da las tres cosas por fila.</p>
+  <p class="jr-like"><b>Es como</b> un ladrón en un edificio que no fuerza la bóveda: busca una llave olvidada en un escritorio, con ella abre una oficina donde hay otra llave, y así hasta llegar a la maestra.</p>
+  <dl class="jr-words"><dt>Fuera de línea</dt><dd>probar contraseñas en la máquina del atacante, sin hablar con el DC, así que nada se bloquea ni se registra.</dd><dt>Hash</dt><dd>la huella de la contraseña que guarda Windows; en NTLM sirve para entrar como si fuera la contraseña.</dd><dt>Relay</dt><dd>reenviar a otro servidor la autenticación que alguien hizo, para entrar en su nombre.</dd><dt>ACL</dt><dd>la lista de quién puede hacer qué sobre un objeto (un usuario, un grupo, una GPO).</dd><dt>Ruta de ataque</dt><dd>una cadena de esos permisos que lleva de una cuenta cualquiera hasta el control del dominio.</dd></dl>
+</aside>
 
 <p>Aquí está el corazón defensivo del módulo. Cada fila nombra una técnica conocida, dice <b>qué debilidad abusa</b> (el concepto, no el procedimiento), <b>qué rastro deja</b> en los logs y <b>qué la corta</b>. Los números de evento son los de Windows; los verás en 38.6.</p>
 
@@ -203,6 +281,18 @@
     </tbody>
   </table>
 </div>
+
+<aside class="callout callout--def">
+  <p class="callout-label">Cómo leer esta tabla</p>
+  <p>Lee cada fila de izquierda a derecha como una pequeña historia: <b>qué hace el atacante</b> (segunda columna), <b>qué ves tú</b> en los logs (tercera) y <b>qué ajuste lo impide</b> (cuarta). No hace falta memorizarla: fíjate en que los controles se repiten. MFA, gMSA y AES, LAPS y Protected Users, la firma de mensajes y el tiering aparecen en varias filas a la vez; por eso son la base de la lista de 38.5. Y los números de evento (4625, 4769, 4662…) se explican uno por uno en la tabla de 38.6.</p>
+</aside>
+
+<p><b>Por qué "fuera de línea" es tan grave, con una cuenta.</b> En el Kerberoasting el atacante se lleva el ticket a su propia máquina y prueba contraseñas ahí, sin que el DC se entere ni bloquee nada. Supón (es un supuesto; depende del hardware) que prueba 1&#8239;000 millones de contraseñas por segundo:</p>
+<ol class="steps">
+  <li><span class="step-title">Contraseña humana débil</span>8 letras minúsculas: 26<sup>8</sup> = 208&#8239;827&#8239;064&#8239;576 combinaciones. Entre 10<sup>9</sup> por segundo da unos 209 segundos: menos de 4 minutos para probarlas todas.</li>
+  <li><span class="step-title">Contraseña larga y aleatoria</span>20 caracteres elegidos al azar entre 62 (letras y dígitos): 62<sup>20</sup> ≈ 7.0 × 10<sup>35</sup> combinaciones. Al mismo ritmo, unos 2.2 × 10<sup>19</sup> años.</li>
+  <li><span class="step-title">La conclusión</span>El ataque es idéntico; lo que cambia es la contraseña del servicio. Por eso la defensa de esa fila es una gMSA (AD elige una contraseña larga y aleatoria) y no "vigilar mejor".</li>
+</ol>
 
 <p>Varias de esas filas terminan en el mismo sitio: una <b>ruta de ataque</b>. Una ruta no es una hazaña técnica, sino una cadena de relaciones de confianza —esta cuenta puede sobre esta otra, que administra este servidor, donde entró un admin— que lleva de un usuario cualquiera a Domain Admins. La defensa es verla antes que nadie y cortar cualquier eslabón.</p>
 
@@ -256,6 +346,13 @@
 
 <h2 id="tiering"><span class="sec-num">38.4</span>El modelo de niveles (tiering)</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Divides las máquinas en tres niveles según cuánto poder dan si alguien las toma. La regla es una sola: una cuenta poderosa nunca inicia sesión en una máquina menos protegida, porque ahí puede quedar su credencial y alguien puede robarla.</p>
+  <p class="jr-like"><b>Es como</b> el gerente de un banco que nunca deja la llave de la bóveda en la caja de un cajero, aunque sea solo un momento para ayudarlo.</p>
+  <dl class="jr-words"><dt>Tier 0</dt><dd>lo que controla la identidad de todos: los DC y lo que los administra.</dd><dt>Tier 1</dt><dd>los servidores y las aplicaciones del negocio.</dd><dt>Tier 2</dt><dd>las computadoras de los usuarios.</dd><dt>PAW</dt><dd>una computadora dedicada y endurecida que solo se usa para administrar, sin correo ni navegador.</dd></dl>
+</aside>
+
 <p>La defensa de fondo contra las rutas de ataque es estructural: <dfn data-term="tiering">tiering</dfn>, el modelo de niveles del Enterprise Access Model de Microsoft. Se clasifican los activos por lo que controlan y se impone una regla simple: <b>una credencial de un nivel alto nunca se expone en un nivel más bajo</b>.</p>
 
 <figure class="figure">
@@ -296,6 +393,13 @@
 
 <h2 id="endurecer"><span class="sec-num">38.5</span>Endurecer el dominio</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Es la lista de ajustes que cierran las puertas que usan los ataques de 38.3. Cada uno quita una debilidad concreta: contraseñas locales repetidas, contraseñas débiles en los servicios, cifrado viejo, protocolos que no comprueban quién está del otro lado y secretos que quedan a la vista en la memoria.</p>
+  <p class="jr-like"><b>Es como</b> cambiar las cerraduras de un edificio: una llave distinta por puerta, cerraduras que nadie puede copiar y una caja fuerte para las llaves del jefe.</p>
+  <dl class="jr-words"><dt>LAPS</dt><dd>una contraseña de administrador local distinta en cada computadora, que se cambia sola.</dd><dt>gMSA</dt><dd>una cuenta para servicios cuya contraseña larga y aleatoria la elige y la cambia AD.</dd><dt>Protected Users</dt><dd>un grupo cuyos miembros reciben protecciones extra: sin NTLM, sin cifrado débil, pases cortos.</dd><dt>Firma SMB</dt><dd>cada mensaje lleva una firma que prueba de quién viene, así que no se puede reenviar.</dd><dt>Credential Guard</dt><dd>guarda los secretos de la memoria en un compartimento aislado que los programas no leen.</dd></dl>
+</aside>
+
 <p>Los controles concretos, como checklist. Cada uno con su "si no lo haces" y el comando o la GPO <b>de administración</b> para verificarlo.</p>
 
 <ul>
@@ -311,6 +415,13 @@
 </ul>
 
 <h2 id="detectar"><span class="sec-num">38.6</span>Qué vigilar: los eventos</h2>
+
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Windows anota cada inicio de sesión, cada ticket y cada cambio en un registro, y a cada tipo de anotación le pone un número de evento. Si activas la auditoría correcta, esos números cuentan la historia de un ataque. La idea es alertar solo por los patrones que importan, no por cada línea.</p>
+  <p class="jr-like"><b>Es como</b> las cámaras de un edificio: no sirve mirar todas las grabaciones, sino tener una alarma para lo raro, como alguien que prueba cien puertas en un minuto.</p>
+  <dl class="jr-words"><dt>Evento</dt><dd>una línea del registro de Windows con un número que dice qué pasó (4624 es un inicio de sesión correcto).</dd><dt>Auditoría avanzada</dt><dd>la configuración que decide qué eventos se registran; sin ella, muchos no existen.</dd><dt>Tipo de inicio de sesión</dt><dd>un número dentro del 4624 que dice cómo entró la persona (con teclado, por red, por escritorio remoto).</dd><dt>Honeytoken</dt><dd>una cuenta trampa que nadie legítimo usa; si alguien la toca, es un ataque.</dd></dl>
+</aside>
 
 <p>No puedes detectar lo que no registras. La <a href="m33-hardening-linux.html#auditoria">auditoría de M33</a> tiene su equivalente en Windows: la política de auditoría avanzada, que hay que activar para que estos eventos existan. Luego se vigilan los que delatan las técnicas de 38.3.</p>
 
@@ -367,15 +478,96 @@
   </table>
 </div>
 
+<aside class="callout callout--def">
+  <p class="callout-label">Cómo leer un 4624: el tipo de inicio de sesión</p>
+  <p class="def-one">Un 4624 solo dice "alguien entró". El campo <b>Logon Type</b> dice <b>cómo</b>, y eso cambia mucho la lectura:</p>
+  <dl class="def-rows">
+    <dt>Tipo 2</dt><dd>Interactivo: alguien escribió la contraseña frente al teclado de esa máquina.</dd>
+    <dt>Tipo 3</dt><dd>En red: alguien abrió una carpeta compartida o un servicio de esa máquina desde otra. Es el más común, y el que aparece en el robo de credenciales repetido en muchos equipos.</dd>
+    <dt>Tipo 9</dt><dd>Con otras credenciales: un proceso usa una credencial distinta para conectarse hacia afuera. Raro en el día a día de un usuario.</dd>
+    <dt>Tipo 10</dt><dd>Escritorio remoto (RDP). Una cuenta de tier&nbsp;0 con tipo 10 en una estación de tier&nbsp;2 rompe la regla de 38.4.</dd>
+  </dl>
+  <p>Regla práctica para empezar: junta el 4624 con <b>quién</b> (la cuenta), <b>dónde</b> (la máquina) y <b>cómo</b> (el tipo). Una cuenta de admin que entra en red a veinte estaciones en diez minutos es una señal; la misma cuenta entrando desde su PAW es lo esperado.</p>
+</aside>
+
 <p>Dos ideas que vienen de <a href="m11-observabilidad.html#incidentes">M11</a>: se alerta por <b>síntoma</b> (una ráfaga de 4769 RC4, un alta inesperada en Domain Admins), no por cada línea de log; y se prepara el <a href="m34-sysadmin.html#runbooks">runbook</a> antes de necesitarlo. Una técnica barata y potente son las cuentas <dfn data-term="honeytoken">señuelo</dfn> (honeytokens): una cuenta que parece jugosa (un falso admin con un SPN) pero que nadie usa; cualquier intento de pedir su ticket es, por definición, malicioso y dispara una alerta limpia. Para dominios grandes, Microsoft Defender for Identity ofrece esta detección gestionada.</p>
 
 <h2 id="hibrido"><span class="sec-num">38.7</span>AD híbrido con Entra ID</h2>
+
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Muchas empresas copian sus usuarios de AD a la nube de Microsoft, Entra ID, para entrar al correo y a las aplicaciones web con la misma cuenta. El servidor que hace esa copia tiene llaves de los dos lados, así que vale tanto como un controlador de dominio.</p>
+  <p class="jr-like"><b>Es como</b> el mensajero que tiene llave de la oficina y de la bodega: si alguien lo engaña, entra a las dos.</p>
+  <dl class="jr-words"><dt>Entra ID</dt><dd>el directorio de identidades de Microsoft en la nube.</dd><dt>Entra Connect</dt><dd>el servidor que sincroniza los usuarios del AD local con Entra ID.</dd><dt>Acceso condicional</dt><dd>reglas que deciden si dejar entrar según quién eres, desde dónde y con qué dispositivo.</dd></dl>
+</aside>
 
 <p>Casi nadie tiene hoy un AD aislado: lo sincroniza con <b>Entra ID</b> (el directorio en la nube de Microsoft) para dar acceso a servicios web. El puente es <b>Entra Connect</b>, y aquí está la trampa: ese servidor de sincronización tiene credenciales potentes en los dos mundos, así que <b>es tier&nbsp;0</b>, aunque no lo parezca. Un compromiso de un lado puede alcanzar el otro. Las defensas combinan lo de M38 con lo de <a href="m37-nube.html#iam">M37</a>: acceso condicional, MFA obligatoria para lo privilegiado, y tratar Entra Connect con el mismo celo que un DC.</p>
 
 <h2 id="recuperar"><span class="sec-num">38.8</span>Cuando el dominio cae: recuperación</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Si el atacante llegó al controlador de dominio, no basta con echarlo: hay que invalidar todo lo que pudo fabricar y buscar las puertas traseras que dejó. Y para reconstruir hace falta una copia del dominio que el atacante no haya podido tocar.</p>
+  <p class="jr-like"><b>Es como</b> cuando te roban la llave maestra: cambias todas las cerraduras, revisas que nadie haya dejado una ventana abierta y te alegras de tener una copia de los planos guardada fuera del edificio.</p>
+  <dl class="jr-words"><dt>Rotar <code>krbtgt</code></dt><dd>cambiar la clave que sella los pases, para que los pases falsos dejen de servir.</dd><dt>Persistencia</dt><dd>lo que deja el atacante para volver a entrar (una tarea programada, una GPO, una cuenta).</dd><dt>Backup fuera de línea</dt><dd>una copia desconectada de la red, que un atacante dentro no puede borrar ni cifrar.</dd></dl>
+</aside>
+
 <p>Si el dominio se compromete de verdad, la <a href="m37-nube.html#incidentes">respuesta a incidentes de M37</a> tiene pasos propios de AD: aislar, <b>rotar <code>krbtgt</code> dos veces</b> (esperando la replicación entre una rotación y la otra, para invalidar los Golden Tickets sin romper el dominio), restablecer las cuentas privilegiadas, y revisar GPO y tareas programadas en busca de persistencia. Lo que hace posible rehacer el dominio son los <b>backups de estado del sistema fuera de línea</b>: copias que un atacante dentro de la red no puede borrar, y la guía de recuperación del bosque de Microsoft.</p>
+
+<p><b>¿Por qué rotar <code>krbtgt</code> dos veces y no una?</b> Porque AD guarda dos claves de <code>krbtgt</code>: la <b>actual</b> y la <b>anterior</b>, y acepta los TGT cifrados con cualquiera de las dos. Así, cuando la clave cambia, los pases que la gente recibió hace un rato siguen sirviendo y nadie se queda sin sesión. Esa misma comodidad es la que obliga a hacerlo dos veces:</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 256" role="img" aria-labelledby="fjr38bt fjr38bd">
+<title id="fjr38bt">Por qué krbtgt se rota dos veces</title>
+<desc id="fjr38bd">Cuatro momentos. Antes: la clave actual es K1, que el atacante robó, y la anterior es K0; un Golden Ticket hecho con K1 es válido. Tras la primera rotación: la actual es K2 y la anterior K1, así que el ticket falso todavía vale. Luego se espera a que el cambio llegue a todos los controladores de dominio y venzan los TGT legítimos. Tras la segunda rotación: la actual es K3 y la anterior K2; K1 ya no está en ningún lado y el ticket falso se rechaza.</desc>
+<defs><marker id="fjr38ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-small" x="107" y="34" text-anchor="middle">Antes</text>
+<text class="dg-small" x="292" y="34" text-anchor="middle">Rotación 1</text>
+<text class="dg-small" x="477" y="34" text-anchor="middle">Esperar</text>
+<text class="dg-small" x="662" y="34" text-anchor="middle">Rotación 2</text>
+<rect class="dg-warnbox" x="30" y="50" width="155" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="107" y="77" text-anchor="middle">actual: K1 (robada)</text>
+<rect class="dg-box" x="30" y="106" width="155" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="107" y="133" text-anchor="middle">anterior: K0</text>
+<rect class="dg-box" x="215" y="50" width="155" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="292" y="77" text-anchor="middle">actual: K2</text>
+<rect class="dg-warnbox" x="215" y="106" width="155" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="292" y="133" text-anchor="middle">anterior: K1</text>
+<rect class="dg-box" x="400" y="50" width="155" height="100" rx="8"/>
+<text class="dg-tiny" x="477" y="80" text-anchor="middle">el cambio se replica</text>
+<text class="dg-tiny" x="477" y="96" text-anchor="middle">a todos los DC</text>
+<text class="dg-tiny" x="477" y="120" text-anchor="middle">vencen los TGT</text>
+<text class="dg-tiny" x="477" y="136" text-anchor="middle">legítimos (10 h)</text>
+<rect class="dg-box" x="585" y="50" width="155" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="662" y="77" text-anchor="middle">actual: K3</text>
+<rect class="dg-box" x="585" y="106" width="155" height="44" rx="8"/>
+<text class="dg-small dg-mono" x="662" y="133" text-anchor="middle">anterior: K2</text>
+<path class="dg-edge" d="M185 100 H215" marker-end="url(#fjr38ba)"/>
+<path class="dg-edge" d="M370 100 H400" marker-end="url(#fjr38ba)"/>
+<path class="dg-edge" d="M555 100 H585" marker-end="url(#fjr38ba)"/>
+<rect class="dg-bad" x="30" y="178" width="155" height="56" rx="8"/>
+<text class="dg-tiny" x="107" y="201" text-anchor="middle">ticket falso con K1</text>
+<text class="dg-tiny" x="107" y="217" text-anchor="middle">válido</text>
+<rect class="dg-bad" x="215" y="178" width="155" height="56" rx="8"/>
+<text class="dg-tiny" x="292" y="201" text-anchor="middle">todavía válido:</text>
+<text class="dg-tiny" x="292" y="217" text-anchor="middle">K1 es la anterior</text>
+<rect class="dg-box" x="400" y="178" width="155" height="56" rx="8"/>
+<text class="dg-tiny" x="477" y="201" text-anchor="middle">si rotas ya, los</text>
+<text class="dg-tiny" x="477" y="217" text-anchor="middle">pases legítimos fallan</text>
+<rect class="dg-ok" x="585" y="178" width="155" height="56" rx="8"/>
+<text class="dg-tiny" x="662" y="201" text-anchor="middle">rechazado:</text>
+<text class="dg-tiny" x="662" y="217" text-anchor="middle">K1 ya no está</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 38.8.</b> AD acepta la clave actual y la anterior de <code>krbtgt</code>. Una sola rotación deja la clave robada como "anterior", y el ticket falso sigue sirviendo. La segunda rotación la saca del todo; la espera entre las dos evita romper las sesiones legítimas.</figcaption>
+</figure>
+
+<ol class="steps">
+  <li><span class="step-title">Primera rotación</span>La clave robada (K1) pasa a ser la "anterior". Los pases legítimos siguen funcionando, pero el Golden Ticket hecho con K1 también.</li>
+  <li><span class="step-title">Esperar</span>Que el cambio llegue a todos los DC y que venzan los TGT emitidos con K1 (10 horas por defecto). Si rotas antes, la gente con pases legítimos hechos con K1 empieza a fallar.</li>
+  <li><span class="step-title">Segunda rotación</span>K1 desaparece: ni actual ni anterior. Cualquier ticket fabricado con ella se rechaza, y el atacante tendría que volver a robar la clave nueva.</li>
+</ol>
 
 <aside class="callout callout--prod">
   <p class="callout-label">En producción real</p>

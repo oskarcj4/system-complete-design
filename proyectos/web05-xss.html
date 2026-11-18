@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WEB05. XSS en el feed de oportunidades</title>
+<meta name="description" content="Un payload mínimo en una oferta propia comprueba que React y la API no interpretan HTML; las URL de la base pasan por enlaceSeguro(), y dos reglas de oxlint cierran dangerouslySetInnerHTML y javascript:.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="web05" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>XSS en el feed de oportunidades</h1>
+        <p class="lead">Tu frontend escapa bien el texto. Lo que queda abierto son las URL que vienen de la base y una puerta, dangerouslySetInnerHTML, que nadie cerró con llave.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>WEB05</dd></div>
+          <div><dt>Plan</dt><dd>Seguridad web</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>2 a 3 h</dd></div>
+          <div><dt>Módulos</dt><dd>M77, M78</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="web05">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Ubicar, en tu frontend de React y en tu API, cada lugar donde un texto escrito por otra persona termina en pantalla, y decir qué lo neutraliza hoy.</li>
+<li>Probar con un payload mínimo que React escapa el texto y que la API, abierta como documento, ya no interpreta HTML (lo que cerró WEB01).</li>
+<li>Cerrar el sumidero que queda, las URL guardadas en la base que llegan a un <code>href</code> o un <code>src</code>, con una función de diez líneas probada con <code>node --test</code>.</li>
+<li>Dejar dos reglas de <code>oxlint</code> que rompen el lint si alguien vuelve a abrir la puerta, y saber qué se lleva un XSS aunque la cookie sea <code>HttpOnly</code>.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>El feed muestra textos que escribió otra persona: el título y la descripción de una oferta (los escribe un reclutador), el mensaje de presentación de una postulación (un estudiante), un aviso masivo (un administrador), y los enlaces a los documentos que cada uno subió. Si alguno de esos textos llega al navegador como código y no como texto, es un <dfn data-term="xss">XSS</dfn> almacenado: lo escribe una persona una vez y se ejecuta en el navegador de todas las que lo vean.</p>
+<p>Leído el código, tu sistema está mejor de lo que suele estar uno de este tamaño. Esta guía lo comprueba con tus propias manos, cierra lo que queda y deja una alarma para el día que alguien quiera "darle formato a la descripción". Hay cuatro caminos de un dato a la pantalla:</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="fw5at fw5ad">
+<title id="fw5at">Cuatro caminos de un dato a la pantalla</title>
+<desc id="fw5ad">Una rejilla de cuatro filas. Texto entre llaves en React: escapado por React, seguro hoy. Una URL de la base en href o src: React 19 bloquea javascript pero no data, y la API valida las nuevas; la guía agrega enlaceSeguro. HTML crudo con dangerouslySetInnerHTML: no se usa hoy; la guía agrega una regla de lint. La respuesta JSON abierta como documento: cerrada en WEB01 con Content-Type y nosniff.</desc>
+<g class="dg-small"><text x="20" y="30">Camino</text><text x="250" y="30">Hoy, leído del código</text><text x="530" y="30">Después de la guía</text></g>
+<path class="dg-frame" d="M14 42 H756"/>
+<text class="dg-label" x="20" y="74">Texto en JSX</text><text class="dg-tiny dg-mono" x="20" y="92">{oportunidad.titulo}</text>
+<rect x="245" y="54" width="265" height="50" rx="6" class="dg-ok"/><text class="dg-tiny" x="377" y="75" text-anchor="middle">React lo escapa: sale como texto</text><text class="dg-tiny" x="377" y="91" text-anchor="middle">lo pruebas en el paso 1</text>
+<rect x="525" y="54" width="230" height="50" rx="6" class="dg-ok"/><text class="dg-tiny" x="640" y="83" text-anchor="middle">igual</text>
+<text class="dg-label" x="20" y="136">URL de la base</text><text class="dg-tiny dg-mono" x="20" y="154">href={p.cv_url}</text>
+<rect x="245" y="116" width="265" height="50" rx="6" class="dg-warnbox"/><text class="dg-tiny" x="377" y="137" text-anchor="middle">la API valida las nuevas; React 19</text><text class="dg-tiny" x="377" y="153" text-anchor="middle">bloquea javascript:, no data:</text>
+<rect x="525" y="116" width="230" height="50" rx="6" class="dg-ok"/><text class="dg-tiny" x="640" y="137" text-anchor="middle">enlaceSeguro(): solo</text><text class="dg-tiny" x="640" y="153" text-anchor="middle">http y https (pasos 2 y 3)</text>
+<text class="dg-label" x="20" y="198">HTML crudo</text><text class="dg-tiny dg-mono" x="20" y="216">dangerouslySetInnerHTML</text>
+<rect x="245" y="178" width="265" height="50" rx="6" class="dg-warnbox"/><text class="dg-tiny" x="377" y="199" text-anchor="middle">no se usa en ningún archivo;</text><text class="dg-tiny" x="377" y="215" text-anchor="middle">nada impide que se use mañana</text>
+<rect x="525" y="178" width="230" height="50" rx="6" class="dg-ok"/><text class="dg-tiny" x="640" y="199" text-anchor="middle">oxlint lo rechaza</text><text class="dg-tiny" x="640" y="215" text-anchor="middle">(paso 4)</text>
+<text class="dg-label" x="20" y="260">La API como página</text><text class="dg-tiny dg-mono" x="20" y="278">GET oportunidades.php</text>
+<rect x="245" y="240" width="265" height="50" rx="6" class="dg-ok"/><text class="dg-tiny" x="377" y="261" text-anchor="middle">JSON y nosniff desde WEB01:</text><text class="dg-tiny" x="377" y="277" text-anchor="middle">el navegador no lo interpreta</text>
+<rect x="525" y="240" width="230" height="50" rx="6" class="dg-ok"/><text class="dg-tiny" x="640" y="269" text-anchor="middle">igual; la falla 3 lo prueba</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB05.1.</b> Las filas amarillas son lo que cierra esta guía. Ninguna es un XSS explotable hoy: una es una defensa que depende de que todas las rutas de escritura validen, y la otra es una puerta que nadie cerró con llave.</figcaption>
+</figure>
+<p>Lo que está en juego: un script que corre en el origen del frontend no necesita robar la cookie. La cookie es <code>HttpOnly</code> y no la puede leer, pero tampoco le hace falta: <code>apiFetch</code> ya la manda sola y agrega el token CSRF que tiene en memoria. Para tu API, ese script <em>es</em> la persona.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 290" role="img" aria-labelledby="fw5bt fw5bd">
+<title id="fw5bt">Lo que tiene un script en el origen del frontend</title>
+<desc id="fw5bd">Un script inyectado en el origen del frontend llama a apiFetch. apiFetch tiene el csrfToken en memoria y el navegador agrega la cookie HttpOnly. Pasa la comprobación de Origin de WEB03 porque sale del origen permitido, y la API lo atiende con los roles de la víctima. La cookie no se puede leer, pero no hace falta.</desc>
+<defs><marker id="fw5ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw5bf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker></defs>
+<path class="dg-edge" d="M160 141 L210 141" marker-end="url(#fw5ba)"/>
+<path class="dg-edge" d="M360 141 L410 141" marker-end="url(#fw5ba)"/>
+<path class="dg-edge" d="M560 141 L610 141" marker-end="url(#fw5ba)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M485 220 L485 172" marker-end="url(#fw5ba)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M685 72 L685 110" marker-end="url(#fw5ba)"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="10" y="110" width="150" height="62" rx="8"/>
+<text class="dg-label" x="85.0" y="139.0" text-anchor="middle">Script inyectado</text>
+<text class="dg-tiny" x="85.0" y="154.0" text-anchor="middle">en localhost:5173</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="210" y="110" width="150" height="62" rx="8"/>
+<text class="dg-label" x="285.0" y="139.0" text-anchor="middle">apiFetch()</text>
+<text class="dg-tiny" x="285.0" y="154.0" text-anchor="middle">csrfToken en memoria</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="410" y="110" width="150" height="62" rx="8"/>
+<text class="dg-label" x="485.0" y="139.0" text-anchor="middle">Navegador</text>
+<text class="dg-tiny" x="485.0" y="154.0" text-anchor="middle">agrega la cookie</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="610" y="110" width="150" height="62" rx="8"/>
+<text class="dg-label" x="685.0" y="139.0" text-anchor="middle">API</text>
+<text class="dg-tiny" x="685.0" y="154.0" text-anchor="middle">roles de la víctima</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="410" y="220" width="150" height="52" rx="8"/>
+<text class="dg-label" x="485.0" y="244.0" text-anchor="middle">Cookie HttpOnly</text>
+<text class="dg-tiny" x="485.0" y="259.0" text-anchor="middle">no se lee, se usa</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="610" y="20" width="150" height="52" rx="8"/>
+<text class="dg-label" x="685.0" y="44.0" text-anchor="middle">WEB03: Origin</text>
+<text class="dg-tiny" x="685.0" y="59.0" text-anchor="middle">permitido: pasa</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB05.2.</b> Por eso WEB03 y WEB04 dicen que un XSS en el frontend lo cambia todo: el origen permitido es de confianza total. El token en memoria (y no en <code>localStorage</code>) evita que el script se lo lleve para usarlo después, pero no que lo use mientras la pestaña está abierta.</figcaption>
+</figure>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 274" role="img" aria-labelledby="fw5st fw5sd">
+<title id="fw5st">Una oferta con HTML adentro</title>
+<desc id="fw5sd">El reclutador publica una oferta cuya descripción trae una etiqueta img con un onerror. La API la guarda tal cual en MariaDB. El estudiante abre el feed; la API devuelve el texto en JSON y React lo pone en la página como un nodo de texto, así que se ve la etiqueta escrita y no se ejecuta nada.</desc>
+<defs><marker id="fw5s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw5s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fw5s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fw5s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Reclutador</text>
+<path class="dg-frame" d="M70.0 40 V264"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">API (PHP)</text>
+<path class="dg-frame" d="M280.0 40 V264"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M490.0 40 V264"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Estudiante</text>
+<path class="dg-frame" d="M700.0 40 V264"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#fw5s-a)"/>
+<rect x="10.600000000000023" y="55" width="328.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">POST oportunidades.php (descripción con &lt;img …&gt;)</text>
+<path class="dg-edge" d="M283.0 106 L485.0 106" marker-end="url(#fw5s-a)"/>
+<rect x="253.60000000000002" y="89" width="262.79999999999995" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">INSERT con prepare: se guarda tal cual</text>
+<path class="dg-edge" d="M697.0 140 L285.0 140" marker-end="url(#fw5s-a)"/>
+<rect x="414.7" y="123" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="134" text-anchor="middle">GET oportunidades.php</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M283.0 174 L695.0 174" marker-end="url(#fw5s-r)"/>
+<rect x="381.7" y="157" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="168" text-anchor="middle">200 application/json: &quot;&lt;img …&gt;&quot;</text>
+<rect x="362.0" y="194" width="328" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="372.0" y="210">React crea un nodo de texto: se ve, no corre</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB05.3.</b> El dato llega intacto hasta el último paso, y está bien: se escapa al <em>pintarlo</em>, según el contexto donde cae (<dfn data-term="escape-contexto">escape por contexto</dfn>). Guardar el texto tal cual permite mostrarlo bien en un PDF, un correo o una app móvil, cada uno con su propio escape.</figcaption>
+</figure>
+<h2 id="endpoints">Los endpoints</h2>
+<p>No cambia ninguna ruta ni ninguna respuesta. Estos son los campos de texto libre que otra persona ve, con quién los escribe y dónde se pintan:</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Campo</th><th>Lo escribe</th><th>Endpoint</th><th>Se pinta en</th></tr></thead>
+<tbody>
+<tr><td><code>titulo</code>, <code>descripcion</code>, <code>requisitos</code></td><td>reclutador</td><td><code>POST/PUT oportunidades.php</code></td><td><code>OportunidadCard</code>, <code>DetalleOferta</code>, <code>OfertaPage</code></td></tr>
+<tr><td><code>mensaje_presentacion</code></td><td>estudiante</td><td><code>POST postulaciones.php</code></td><td><code>PostulantesVentana</code></td></tr>
+<tr><td><code>descripcion_actividades</code></td><td>quien pide publicar</td><td><code>POST solicitudes_publicacion.php</code></td><td><code>BuzonSolicitudes</code></td></tr>
+<tr><td><code>titulo</code>, <code>mensaje</code> de un aviso</td><td>administrador</td><td><code>POST notificaciones.php</code></td><td><code>BuzonNotificaciones</code>, <code>NotificacionesDropdown</code></td></tr>
+<tr><td><code>cv_url</code>, <code>constancia_estudios_url</code></td><td>la API, al subir</td><td><code>POST postulaciones.php</code></td><td><code>href</code> y <code>src</code> en cuatro componentes</td></tr>
+<tr><td><code>documento_respaldo_url</code></td><td>la API, al subir</td><td><code>POST solicitudes_publicacion.php</code></td><td><code>href</code> en dos componentes</td></tr>
+</tbody>
+</table>
+</div>
+<p>Las URL de documentos las arma <code>Storage::guardar()</code> y, cuando llegan de un formulario, <code>Storage::esUrlPermitida()</code> exige que sean del almacenamiento del sistema. Es una buena defensa en la entrada; esta guía suma la de la salida, porque una fila puede llegar a la base por otro camino (una migración, una importación, un <code>UPDATE</code> a mano, otro servicio el día de mañana).</p>
+<h2 id="dependencias">Qué necesitas</h2>
+<p>El laboratorio de <a href="web00-laboratorio.html">WEB00</a> con el frontend andando por el proxy de Vite, y WEB01 aplicada (la falla 3 la usa). No se instala nada: <code>oxlint</code> ya está en las <code>devDependencies</code> de <code>frontend/package.json</code>, y la prueba usa <code>node:test</code>, que viene con Node. Comprueba las dos cosas desde <code>frontend/</code>:</p>
+<pre data-lang="shell"><code>node --version                                   # v22 o más nuevo
+npx oxlint --rules | Select-String "no-danger|jsx-no-script-url"</code></pre>
+<p>La segunda línea tiene que listar <code>react/no-danger</code> y <code>react/jsx-no-script-url</code> <span class="badge badge--doc">Documentado</span>. Si no aparece alguna, actualiza <code>oxlint</code> (<code>npm install -D oxlint@latest</code>) antes del paso 4.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<h3 id="infra-datos">Dos sesiones y una oferta</h3>
+<p>La semilla no trae ofertas ni postulaciones, y esta guía necesita una de cada una. Las haces desde el frontend, que es como llegan los datos de verdad:</p>
+<ol class="steps">
+<li><span class="step-title">Una oferta</span>Entra como <code>reclutador</code> (contraseña <code>Password123</code>, la de la semilla) y publica una oferta normal desde "Nueva oferta". Es la que vas a editar en el paso 1.</li>
+<li><span class="step-title">Una postulación</span>En otra ventana privada, entra como <code>estudiante</code> y postúlate a esa oferta con un PDF cualquiera. Es la que usa la falla 2.</li>
+</ol>
+<p>Para el script del final, el cuerpo del login del reclutador, junto al de WEB00:</p>
+<pre data-lang="json" data-file="lab/reclutador.json"><code>{"identificador": "reclutador", "contrasena": "Password123"}</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Datos creados desde el frontend, por las rutas de siempre.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Agregarlos a <code>seed.sql</code>: la semilla es del repositorio y la usa todo el equipo; una oferta con HTML adentro en la semilla es una trampa para quien no leyó esta guía.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que la postulación falle porque la oferta está cerrada o es de otra carrera. Usa una fecha de cierre futura y la carrera del estudiante de la semilla (la 1).</dd></div>
+</dl>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<h3 id="paso-carga">Paso 1. El payload mínimo, antes de tocar nada</h3>
+<p>Primero se mira, después se cambia. Como reclutador, edita la oferta y pon esto en la descripción:</p>
+<pre data-lang="html"><code>Práctica de backend. &lt;img src=x onerror="console.log('xss', document.domain)"&gt;</code></pre>
+<p>Es el payload más chico que delata un XSS: una imagen que no carga y un <code>console.log</code>. No roba nada y no sale de tu máquina. Ahora, como estudiante, abre el feed y el detalle de la oferta con DevTools abierto en Console:</p>
+<ul>
+<li><b>Lo que espera el diseño:</b> la descripción se ve con la etiqueta escrita, <code>&lt;img src=x …&gt;</code>, como texto, y Console no muestra <code>xss</code>. En Elements, el <code>&lt;p&gt;</code> tiene un nodo de texto, no un <code>&lt;img&gt;</code>.</li>
+<li><b>Por qué:</b> <code>{oportunidad.descripcion}</code> en JSX termina en un nodo de texto (<code>textContent</code>, no <code>innerHTML</code>). Es el escape del contexto "texto de HTML", y React lo hace siempre <span class="badge badge--doc">Documentado</span>.</li>
+</ul>
+<p>Después, en la misma sesión, abre la API como si fuera una página: <code>http://localhost/SistemaControlPracticas/api/endpoints/oportunidades.php</code>. El navegador tiene que mostrar el JSON como texto, sin ejecutar nada. Antes de WEB01, PHP respondía <code>text/html</code>, el navegador armaba el <code>&lt;img&gt;</code> y el <code>console.log</code> corría en el origen de Apache: era el hallazgo 5 de la auditoría. Lo vuelves a provocar en la falla 3.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Probar con un payload que solo escribe en Console, sobre tu propia oferta, en tu laboratorio.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Payloads de listas públicas con evasión de filtros: no aportan nada contra React (que no filtra, escapa) y la regla de esta parte es payload mínimo y solo contra tu laboratorio.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Pegar el payload en un campo que el frontend recorta o valida (el título tiene largo máximo). Si el formulario lo rechaza, la prueba no dice nada de React: usa la descripción, que es texto largo.</dd></div>
+</dl>
+<h3 id="paso-enlaces">Paso 2. <code>enlaceSeguro()</code></h3>
+<p>El único sumidero que queda abierto es el de las URL: un <code>href</code> o un <code>src</code> con un valor que viene de la base. React 19 cambia un <code>javascript:</code> en esos atributos por una URL que lanza un error <span class="badge badge--doc">Documentado</span>, pero no hace nada con <code>data:</code>, y no protege los otros sumideros de URL (<code>window.open</code>, <code>location.href</code>). La regla que sirve en cualquier versión y en cualquier sumidero es una lista permitida de esquemas:</p>
+<div class="pseudo"><ol>
+<li>Si no es un texto con algo adentro, no hay enlace.</li>
+<li>Se interpreta con el mismo parser que usa el navegador, <code>new URL()</code>. Si no es una URL absoluta, no hay enlace.</li>
+<li>Si el esquema es <code>http:</code> o <code>https:</code>, se devuelve la URL ya <span class="no-autolink">normalizada</span>. Cualquier otro, no hay enlace.</li>
+</ol></div>
+<pre data-lang="javascript" data-file="frontend/src/helpers/enlaces.js"><code>// Una URL que viene de datos (la base, la API, la ruta) solo llega a un href o un src
+// si es absoluta y su esquema es http o https. Todo lo demás (javascript:, data:,
+// vbscript:, una ruta relativa, algo mal formado) devuelve null y el enlace queda sin destino.
+const ESQUEMAS_PERMITIDOS = new Set(["http:", "https:"]);
+
+export function enlaceSeguro(valor) {
+  if (typeof valor !== "string" || valor.trim() === "") return null;
+  let url;
+  try {
+    url = new URL(valor.trim());
+  } catch {
+    return null;
+  }
+  return ESQUEMAS_PERMITIDOS.has(url.protocol) ? url.href : null;
+}</code></pre>
+<p>Usar <code>new URL()</code> y no una expresión regular es la decisión importante. El navegador limpia la URL antes de decidir el esquema: quita espacios del principio, borra tabulaciones y saltos de línea de adentro, y pasa el esquema a minúsculas. Por eso <code>"java\tscript:…"</code> y <code>" JavaScript:…"</code> son un <code>javascript:</code> para el navegador, y una regex que busca <code>^javascript:</code> los deja pasar. Con <code>new URL()</code>, tu función ve exactamente lo que va a ver el navegador. La prueba del paso 5 trae esos casos.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una lista permitida de dos esquemas, comprobada con el parser del navegador, y <code>null</code> si no pasa.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Una lista prohibida (<code>javascript:</code>, <code>data:</code>): siempre falta uno. Y comparar el prefijo de la URL contra el almacenamiento, como hace <code>esUrlPermitida</code> en PHP: sería más estricto, pero obliga al frontend a conocer <code>STORAGE_PUBLIC_URL</code>, que cambia entre local y S3. La API ya hace esa comprobación al guardar; el frontend solo necesita que ninguna URL ejecute código.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Usarla en un enlace relativo de la propia app (<code>#/oferta/3</code>): devuelve <code>null</code> y el enlace muere. Es para URL que vienen de datos; las rutas internas usan <code>irA()</code>, que siempre arma un <code>#/…</code>.</dd></div>
+</dl>
+<h3 id="paso-sumideros">Paso 3. Los diez sumideros</h3>
+<p>Diez atributos en cinco componentes reciben una URL de la base. Todos siguen el mismo molde, <code>href={algo_url}</code> o <code>src={urlDocumento}</code>, así que un script los cambia con una expresión regular y se niega a escribir si el conteo de un archivo no es el esperado. Sin <code>-Aplicar</code> solo muestra lo que haría.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Componente</th><th>Atributos</th><th>Qué cambia</th></tr></thead>
+<tbody>
+<tr><td><code>PostulacionCard.jsx</code></td><td class="r">2</td><td><code>href</code> del CV y de la constancia</td></tr>
+<tr><td><code>TablaPostulantes.jsx</code></td><td class="r">2</td><td><code>href</code> del CV y de la constancia</td></tr>
+<tr><td><code>PostulantesVentana.jsx</code></td><td class="r">3</td><td><code>href={d.url}</code>, y el <code>src</code> del <code>iframe</code> y de la <code>img</code> de la vista previa</td></tr>
+<tr><td><code>BuzonSolicitudes.jsx</code></td><td class="r">1</td><td><code>href</code> del documento de respaldo</td></tr>
+<tr><td><code>SolicitudPublicacionForm.jsx</code></td><td class="r">2</td><td><code>href</code> del documento de respaldo, en el detalle y al editar</td></tr>
+</tbody>
+</table>
+</div>
+<pre data-lang="shell" data-file="lab/migrar-enlaces.ps1"><code>param([switch]$Aplicar, [string]$Src = "frontend\src")
+
+# Componente -&gt; cuántos href/src con una URL de datos tiene hoy (leído del código).
+$esperado = [ordered]@{
+    "components\PostulacionCard.jsx"          = 2
+    "components\TablaPostulantes.jsx"         = 2
+    "components\PostulantesVentana.jsx"       = 3
+    "components\BuzonSolicitudes.jsx"         = 1
+    "components\SolicitudPublicacionForm.jsx" = 2
+}
+# href={x.cv_url}, href={d.url}, src={urlDocumento}... que todavía no pasan por enlaceSeguro
+$patron = '(href|src)=\{(?!enlaceSeguro\()([A-Za-z_][\w.?]*(?:_url|\.url|urlDocumento))\}'
+$import = 'import { enlaceSeguro } from "../helpers/enlaces";'
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+
+foreach ($rel in $esperado.Keys) {
+    $ruta = Join-Path $Src $rel
+    $texto = [IO.File]::ReadAllText($ruta, $utf8)
+    $n = ([regex]::Matches($texto, $patron)).Count
+    if ($n -ne $esperado[$rel]) { Write-Host "$rel : $n atributos, se esperaban $($esperado[$rel]). No se toca."; continue }
+    $nuevo = [regex]::Replace($texto, $patron, '$1={enlaceSeguro($2)}')
+    if ($rel -eq "components\PostulantesVentana.jsx") {
+        $nuevo = $nuevo.Replace('.filter((d) =&gt; d.url)', '.filter((d) =&gt; enlaceSeguro(d.url))')
+    }
+    if (-not $nuevo.Contains($import)) { $nuevo = $import + "`n" + $nuevo }
+    if ($Aplicar) { [IO.File]::WriteAllText($ruta, $nuevo, $utf8); Write-Host "$rel : $n cambiados" }
+    else { Write-Host "$rel : cambiaría $n (corre con -Aplicar para escribir)" }
+}</code></pre>
+<p>Desde la raíz del repositorio:</p>
+<pre data-lang="shell"><code>powershell -ExecutionPolicy Bypass -File lab\migrar-enlaces.ps1             # muestra
+powershell -ExecutionPolicy Bypass -File lab\migrar-enlaces.ps1 -Aplicar    # escribe
+git diff --stat frontend/src</code></pre>
+<p>El resultado en un componente, para que sepas qué buscar en el <code>diff</code>:</p>
+<pre data-lang="javascript" data-file="frontend/src/components/PostulacionCard.jsx (fragmento)"><code>import { enlaceSeguro } from "../helpers/enlaces";
+// ...
+          {postulacion.cv_url &amp;&amp; (
+            &lt;a
+              href={enlaceSeguro(postulacion.cv_url)}
+              target="_blank"
+              rel="noreferrer"</code></pre>
+<p>En <code>PostulantesVentana.jsx</code> cambia también el filtro de la lista de documentos: un documento con una URL que no pasa ya no aparece como botón "Ver". En los demás, la condición <code>{x_url &amp;&amp; (…)}</code> queda igual: si la URL no pasa, el enlace se dibuja sin <code>href</code>, que el navegador muestra como texto y no navega a ningún lado. Es a propósito: deja ver que hay un documento con un problema, en lugar de esconderlo.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un script con conteo esperado por archivo, que no escribe si algo no coincide.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Editarlos a mano: son diez, y el undécimo que alguien agregue mañana nadie lo va a ver. El script del final de la guía usa el mismo patrón para contar los que quedan sin filtro, así que el día que aparezca uno nuevo, falla.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el patrón no reconozca un caso con otra forma, como <code>href={seleccionada?.cv_url}</code> o <code>href={url}</code>. El conteo da distinto y el script avisa; revisa ese archivo a mano.</dd></div>
+</dl>
+<h3 id="paso-lint">Paso 4. Dos reglas que rompen el lint</h3>
+<p>Hoy ningún archivo usa <code>dangerouslySetInnerHTML</code>. La regla <code>react/no-danger</code> hace que siga así sin depender de que alguien se acuerde: el día que alguien lo agregue, <code>npm run lint</code> falla. <code>react/jsx-no-script-url</code> rechaza un <code>javascript:</code> escrito a mano en un <code>href</code> del código.</p>
+<pre data-lang="json" data-file="frontend/.oxlintrc.json"><code>{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "oxc"],
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/only-export-components": ["warn", { "allowConstantExport": true }],
+    "react/no-danger": "error",
+    "react/jsx-no-script-url": "error"
+  }
+}</code></pre>
+<pre data-lang="shell"><code>cd frontend
+npm run lint          # sin errores; puede haber advertencias de antes</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Que la herramienta que ya corre en el proyecto diga que no.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Una nota en el README: nadie la lee antes de escribir el componente. Y prohibir <code>dangerouslySetInnerHTML</code> para siempre: si algún día hace falta HTML con formato, la regla se apaga en esa línea con un comentario <code>// oxlint-disable-next-line react/no-danger</code>, que queda en el código y en el <code>diff</code>, a la vista de quien revisa.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el lint no corra nunca. Hoy no hay CI que lo exija; el script del final lo corre, y la guía de cadena de suministro de la serie SEC lo lleva al pipeline.</dd></div>
+</dl>
+<h3 id="paso-prueba">Paso 5. La prueba de <code>enlaceSeguro()</code></h3>
+<p>Sin navegador y sin dependencias: <code>node:test</code> viene con Node, y <code>"type": "module"</code> en <code>package.json</code> deja importar el archivo tal cual. Los casos de en medio son los que una regex deja pasar.</p>
+<pre data-lang="javascript" data-file="frontend/src/helpers/enlaces.test.js"><code>import { test } from "node:test";
+import assert from "node:assert/strict";
+import { enlaceSeguro } from "./enlaces.js";
+
+const URL_CV = "http://localhost/SistemaControlPracticas/uploads/cv/ana.pdf";
+
+const casos = [
+  ["un archivo del almacenamiento local", URL_CV, URL_CV],
+  ["un archivo en S3", "https://bucket.s3.amazonaws.com/cv/ana.pdf", "https://bucket.s3.amazonaws.com/cv/ana.pdf"],
+  ["javascript:", "javascript:console.log(1)", null],
+  ["javascript: con mayúsculas", "JavaScript:console.log(1)", null],
+  ["javascript: con un espacio adelante", " javascript:console.log(1)", null],
+  ["javascript: con una tabulación adentro", "java\tscript:console.log(1)", null],
+  ["data:", "data:text/html,&lt;b&gt;hola&lt;/b&gt;", null],
+  ["vbscript:", "vbscript:msgbox(1)", null],
+  ["una ruta relativa", "/SistemaControlPracticas/uploads/cv/ana.pdf", null],
+  ["vacío", "", null],
+  ["null", null, null],
+  ["un número", 42, null],
+];
+
+for (const [nombre, entrada, esperado] of casos) {
+  test(nombre, () =&gt; assert.equal(enlaceSeguro(entrada), esperado));
+}</code></pre>
+<pre data-lang="shell"><code>cd frontend
+node --test src/helpers/enlaces.test.js</code></pre>
+<p>La salida termina con un resumen; tiene que decir <code>pass 12</code> y <code>fail 0</code>. El archivo de prueba vive en <code>src/</code> pero nada lo importa, así que Vite no lo mete en el bundle.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Doce casos fijos que se corren en un segundo.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Instalar Vitest o Jest para una función: <code>node:test</code> alcanza y no suma una dependencia que mantener.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que la prueba pase en Node y el navegador interprete distinto. Las dos implementan el mismo estándar de URL de WHATWG <span class="badge badge--doc">Documentado</span>; por eso la función usa <code>new URL()</code> y no su propio parser.</dd></div>
+</dl>
+<h3 id="paso-datos">Paso 6. Las URL que ya están en la base</h3>
+<p>La función protege la salida; esta consulta dice si ya hay algo raro guardado. Cuenta, por columna, las URL que no empiezan con <code>http://</code> o <code>https://</code>:</p>
+<pre data-lang="sql" data-file="lab/web05-urls.sql"><code>USE control_practicas_db;
+SELECT 'postulaciones.cv_url' AS columna, COUNT(*) AS raras
+  FROM postulaciones WHERE cv_url NOT REGEXP '^https?://'
+UNION ALL
+SELECT 'postulaciones.constancia_estudios_url', COUNT(*)
+  FROM postulaciones WHERE constancia_estudios_url IS NOT NULL AND constancia_estudios_url NOT REGEXP '^https?://'
+UNION ALL
+SELECT 'solicitudes_publicacion.documento_respaldo_url', COUNT(*)
+  FROM solicitudes_publicacion WHERE documento_respaldo_url IS NOT NULL AND documento_respaldo_url NOT REGEXP '^https?://'
+UNION ALL
+SELECT 'instituciones.sitio_web', COUNT(*)
+  FROM instituciones WHERE sitio_web IS NOT NULL AND sitio_web NOT REGEXP '^https?://';</code></pre>
+<pre data-lang="shell"><code>cmd /c "C:\xampp\mysql\bin\mysql.exe -u root -h 127.0.0.1 -P 3308 &lt; lab\web05-urls.sql"</code></pre>
+<p>Con la semilla y los datos de la infraestructura, el diseño espera cuatro filas con <code>0</code>. Si alguna da más, mira esas filas antes de seguir: no las borres, averigua por dónde entraron. <code>instituciones.sitio_web</code> no se pinta como enlace hoy (solo como texto, y <code>models/instituciones.php</code> ya exige <code>http</code> o <code>https</code>), pero entra en la consulta porque es la próxima URL que alguien va a querer hacer clicable.</p>
+<h3 id="paso-formato">Paso 7. Saltos de línea sin HTML</h3>
+<p>El pedido que suele abrir la puerta es "la descripción se ve toda pegada". <code>DetalleOferta</code> ya lo resuelve con CSS; la tarjeta del feed no. Una clase de Tailwind respeta los saltos de línea del texto sin interpretar nada:</p>
+<pre data-lang="javascript" data-file="frontend/src/components/OportunidadCard.jsx (fragmento)"><code>        {oportunidad.descripcion &amp;&amp; (
+          &lt;p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-600"&gt;
+            {oportunidad.descripcion}
+          &lt;/p&gt;
+        )}</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd><code>white-space: pre-line</code>: los saltos de línea que escribió el reclutador se ven, y el texto sigue siendo texto.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Markdown o HTML con formato. Si el producto lo pide de verdad, el camino es un sanitizador con lista permitida (DOMPurify, o la Sanitizer API cuando esté en todos los navegadores), en un único componente, con la excepción de lint en esa línea. Nunca una regex: <a href="../modules/m77-xss-dom.html">M77</a> muestra por qué el parser del navegador la gana (<dfn data-term="mutation-xss">mutation XSS</dfn>).</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Nada de seguridad; lo único es visual: un texto con muchas líneas en blanco ocupa más alto en la tarjeta.</dd></div>
+</dl>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="web05-xss"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-script">El script</h3>
+<p>Junta todo en una corrida: las cabeceras de la API, los sumideros que quedan en el código, el lint y la prueba. Desde la raíz del repositorio, con Apache y MariaDB arriba:</p>
+<pre data-lang="shell" data-file="lab/web05.ps1"><code>param([string]$Base = "http://localhost/SistemaControlPracticas/api/endpoints", [string]$Jar = "lab\jar.txt")
+
+function Fila([string]$Nombre, [string]$Esperado, [string]$Obtenido) {
+    $marca = if ($Obtenido -eq $Esperado) { "ok " } else { "MAL" }
+    "{0}  {1,-46} esperado: {2,-32} obtenido: {3}" -f $marca, $Nombre, $Esperado, $Obtenido
+}
+function Cabecera($lineas, [string]$nombre) {
+    $m = $lineas | Select-String -Pattern "^$([regex]::Escape($nombre)):\s*(.*)$" | Select-Object -First 1
+    if ($m) { $m.Matches[0].Groups[1].Value.Trim() } else { "(ninguna)" }
+}
+
+# 1. La API abierta como documento: JSON y nosniff (WEB01)
+&amp; curl.exe -s -o NUL -c $Jar -H "Content-Type: application/json" --data-binary "@lab\reclutador.json" "$Base/login.php"
+$h = &amp; curl.exe -s -D - -o NUL -b $Jar "$Base/oportunidades.php"
+Fila "Content-Type de oportunidades.php" "application/json; charset=utf-8" (Cabecera $h "Content-Type")
+Fila "X-Content-Type-Options" "nosniff" (Cabecera $h "X-Content-Type-Options")
+
+# 2. Los sumideros que quedan en el código
+$fuentes = Get-ChildItem "frontend\src" -Recurse -Include *.js, *.jsx | Where-Object { $_.Name -notlike "*.test.js" }
+$html = $fuentes | Select-String -Pattern 'dangerouslySetInnerHTML|\.innerHTML\s*=|\.outerHTML\s*=|insertAdjacentHTML|document\.write|\beval\(|new Function\('
+Fila "sumideros de HTML en frontend/src" "0" "$(@($html).Count)"
+$crudos = $fuentes | Select-String -Pattern '(href|src)=\{(?!enlaceSeguro\()[^}]*(_url|\.url|urlDocumento)\}'
+Fila "href o src con una URL de datos sin filtro" "0" "$(@($crudos).Count)"
+$crudos | ForEach-Object { "     " + $_.Filename + ":" + $_.LineNumber }
+
+# 3. El lint y la prueba
+Push-Location frontend
+&amp; npm run lint *&gt; $null
+Fila "npm run lint (código de salida)" "0" "$LASTEXITCODE"
+&amp; node --test src/helpers/enlaces.test.js *&gt; $null
+Fila "node --test enlaces.test.js (código de salida)" "0" "$LASTEXITCODE"
+Pop-Location</code></pre>
+<pre data-lang="shell"><code>powershell -ExecutionPolicy Bypass -File lab\web05.ps1</code></pre>
+<p>Con la guía aplicada, las seis filas dicen <code>ok</code>. Córrelo también antes del paso 2 y guarda la salida. Leyendo el código de hoy, el diseño espera esta diferencia, y ninguna otra:</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Fila</th><th>Antes (leído del código)</th><th>Por qué</th></tr></thead>
+<tbody>
+<tr><td>href o src con una URL de datos sin filtro</td><td>10, con su archivo y línea</td><td>Los diez atributos del paso 3</td></tr>
+<tr><td>npm run lint</td><td>0</td><td>Las reglas nuevas no encuentran nada, porque no hay nada: el lint cambia de valor el día que alguien abre la puerta (falla 1)</td></tr>
+<tr><td>node --test</td><td>distinto de 0</td><td>El archivo de la función todavía no existe</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-fallas">Fallas provocadas</h3>
+<p><b>Falla 1. "Que la descripción tenga formato".</b> En <code>OportunidadCard.jsx</code>, cambia el párrafo de la descripción por el arreglo que alguien va a proponer algún día:</p>
+<pre data-lang="javascript"><code>          &lt;p className="mt-2 text-sm leading-relaxed text-slate-600"
+             dangerouslySetInnerHTML={{ __html: oportunidad.descripcion }} /&gt;</code></pre>
+<p>Corre <code>npm run lint</code>: tiene que fallar con <code>react/no-danger</code> y el archivo y la línea. Ahora mira qué habría pasado sin la regla: con <code>npm run dev</code> corriendo (Vite no corre el lint), abre el feed como estudiante. El diseño espera que Console muestre <code>xss localhost</code>: el payload del paso 1 corrió en el origen del frontend, el mismo que tiene <code>apiFetch</code> y el token de la <a href="#excusa">figura WEB05.2</a>. Vuelve el párrafo a como estaba.</p>
+<p><b>Falla 2. Una URL que entró por otro camino.</b> Simula una fila que no pasó por <code>esUrlPermitida</code>. Primero anota la URL actual de la última postulación, y después cámbiala:</p>
+<pre data-lang="sql"><code>USE control_practicas_db;
+SELECT id, cv_url FROM postulaciones ORDER BY id DESC LIMIT 1;        -- anota el cv_url
+UPDATE postulaciones SET cv_url = 'javascript:console.log(document.domain)' ORDER BY id DESC LIMIT 1;</code></pre>
+<p>Como estudiante, abre "Mis postulaciones". Con la guía aplicada, el enlace "Ver CV" se ve pero no tiene destino: en Elements, el <code>&lt;a&gt;</code> no tiene <code>href</code>. Corre <code>lab\web05-urls.sql</code>: la primera fila da <code>1</code>. Ahora deshaz <code>enlaceSeguro</code> solo en <code>PostulacionCard.jsx</code> (vuelve a <code>href={postulacion.cv_url}</code>) y recarga. El diseño espera que React 19 reemplace el <code>href</code> por su URL de bloqueo, y que el clic deje en Console un error con el texto <code>React has blocked a javascript: URL as a security precaution.</code> en lugar de tu <code>console.log</code>. Es la red de React, y es buena; la guía no depende de ella porque no cubre <code>data:</code> ni a una versión de React distinta. Vuelve a poner <code>enlaceSeguro</code> y restaura la fila con el <code>cv_url</code> que anotaste:</p>
+<pre data-lang="sql"><code>UPDATE postulaciones SET cv_url = 'LA_URL_QUE_ANOTASTE' ORDER BY id DESC LIMIT 1;</code></pre>
+<p><b>Falla 3. La API sin su tipo.</b> En <code>core/response.php</code>, comenta la línea <code>header('Content-Type: application/json; charset=utf-8');</code>. Vuelve a poner el payload en la descripción de la oferta (si lo borraste) y abre <code>oportunidades.php</code> directo en el navegador con la sesión del estudiante. Sin la cabecera, PHP manda <code>text/html</code>; el diseño espera que el navegador arme la imagen y que Console muestre <code>xss localhost</code>, ahora en el origen de Apache. Es el hallazgo 5 de la auditoría de octubre. <code>nosniff</code> no ayuda aquí: le impide al navegador cambiar el tipo, y <code>text/html</code> ya es el tipo. La fila de <code>Content-Type</code> del script da <code>MAL</code>. Descomenta la línea.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Antes de la guía</th><th>Con la guía</th></tr></thead>
+<tbody>
+<tr><td>1. <code>dangerouslySetInnerHTML</code>: <code>npm run lint</code></td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>1. Console en el feed</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>2. El <code>&lt;a&gt;</code> de "Ver CV" en Elements</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>2. El clic, sin <code>enlaceSeguro</code></td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>3. Console con la API abierta como página</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="limites">Limitaciones</h2>
+<ul>
+<li><b>Esto es una capa.</b> Si a pesar de todo corre un script en el frontend, la segunda capa es la <dfn data-term="csp">CSP</dfn>, que le impide al navegador ejecutar lo que no viene de tu bundle. Es WEB09, y <a href="../modules/m78-csp-cabeceras.html">M78</a> la explica.</li>
+<li><b>Los PDF en el <code>iframe</code>.</b> La vista previa de <code>PostulantesVentana</code> carga el PDF del postulante. El visor de PDF del navegador corre aparte de la página, pero un PDF que no es PDF es otra historia: el tipo real del archivo se comprueba al subirlo, en WEB08.</li>
+<li><b>Las dependencias del frontend.</b> Un paquete de <code>node_modules</code> con código malicioso corre en el mismo origen y nada de esta guía lo frena. Eso es cadena de suministro.</li>
+<li><b>El patrón del script reconoce una forma.</b> Un sumidero escrito de otra manera (<code>window.open(p.cv_url)</code>, una variable con otro nombre) no lo cuenta. La regla es de equipo: toda URL que viene de datos pasa por <code>enlaceSeguro</code>.</li>
+<li><b>Sin costo medible.</b> Diez llamadas a <code>new URL()</code> por pantalla no se notan; no hay nada que medir.</li>
+<li><b>Nada se ejecutó al escribir esta guía.</b> Lo que espera Console y lo que muestra Elements sale de leer el código y la documentación de React; la tabla de las fallas es tuya.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="web05">
+<p class="pj-repo-head">Trabaja en la rama <code>web05-xss</code>. Los datos de prueba (la oferta con el payload) no van al repositorio: bórralos o déjalos solo en tu base local.</p>
+<ul class="pj-checks">
+<li data-check="carga">Probaste el payload del paso 1 en el feed y con la API abierta como página, y no corrió.</li>
+<li data-check="enlaces"><code>helpers/enlaces.js</code> existe y <code>node --test</code> da 12 de 12.</li>
+<li data-check="sumideros"><code>migrar-enlaces.ps1 -Aplicar</code> cambió los diez atributos.</li>
+<li data-check="lint"><code>.oxlintrc.json</code> tiene <code>react/no-danger</code> y <code>react/jsx-no-script-url</code> en <code>error</code>.</li>
+<li data-check="script"><code>web05.ps1</code> da seis <code>ok</code>, y guardaste la salida de antes.</li>
+<li data-check="fallas">Provocaste las tres fallas, llenaste la tabla y restauraste el <code>cv_url</code>.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<p>Esta guía funciona sola. Si quieres juntarla con otras:</p>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con WEB01, lo que no debe verse</p>
+<p>La falla 3 deshace un pedazo de WEB01 y muestra por qué el <code>Content-Type</code> va en <code>Response::json</code> y no en cada endpoint.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB03 y WEB04</p>
+<p>Las dos dejaron dicho que un XSS en un origen permitido lo cambia todo. La <a href="#excusa">figura WEB05.2</a> es esa frase dibujada: el script pasa el <code>Origin</code> de WEB03 y lee las respuestas que CORS de WEB04 le permite leer al frontend.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB02, la sesión</p>
+<p>La cookie <code>HttpOnly</code> de WEB02 es la razón por la que el script no se la lleva; la versión de sesión es lo que permite cortarlo después, cerrando todas las sesiones de la víctima.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M77, XSS y el DOM</p>
+<p>Los contextos de salida están en <a href="../modules/m77-xss-dom.html">M77</a>; esta guía usa dos, texto de HTML (lo hace React) y URL (lo hace <code>enlaceSeguro</code>), y deja el de HTML crudo cerrado con lint.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/web05.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

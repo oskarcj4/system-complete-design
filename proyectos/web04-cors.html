@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WEB04. CORS</title>
+<meta name="description" content="Las cabeceras copiadas en 14 endpoints pasan a un solo cors.php con la lista exacta del .env, Vary: Origin y el preflight antes de la sesión; con una prueba de PHP puro, una matriz de curl y el vecino del mismo sitio.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="web04" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>CORS</h1>
+        <p class="lead">Con el proxy de Vite, CORS no se usa. El día que el frontend llame a Apache directo, 13 endpoints rompen el preflight y el arreglo que aparece primero es reflejar el Origin.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>WEB04</dd></div>
+          <div><dt>Plan</dt><dd>Seguridad web</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>3 h</dd></div>
+          <div><dt>Módulos</dt><dd>M74, M75</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="web04">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Explicar por qué el sistema funciona hoy sin CORS (el proxy de Vite lo deja todo en el mismo origen) y qué se rompe el día que el frontend llama a Apache directo.</li>
+<li>Reemplazar las cabeceras copiadas en 14 endpoints por un solo <code>cors.php</code> con la lista exacta del <code>.env</code>, <code>Vary: Origin</code> y el preflight resuelto antes de la sesión.</li>
+<li>Probar la política sin servidor (una prueba de PHP puro) y contra Apache (una matriz de <code>curl</code> que lee las cabeceras).</li>
+<li>Ver desde el vecino del mismo sitio qué filtra el arreglo típico, reflejar el <code>Origin</code>, y qué capa de WEB03 lo frena igual.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>En desarrollo, el frontend corre en <code>http://localhost:5173</code> y llama a <code>/SistemaControlPracticas/api/...</code>, una ruta relativa. El proxy de Vite la manda a Apache. Para el navegador, la página y la API son el mismo origen, y <dfn data-term="same-origin-policy">la política del mismo origen</dfn> no tiene nada que frenar: las 14 cabeceras <code>Access-Control-*</code> de <dfn data-term="cors">CORS</dfn> de los endpoints no las lee nadie.</p>
+<p>Por eso nadie notó lo que pasa cuando el frontend llama a Apache directo (otro puerto, otro host, el frontend compilado en un CDN):</p>
+<ul>
+<li><b>Ninguna escritura funciona, salvo el login.</b> Toda escritura lleva <code>X-CSRF-Token</code>, una cabecera propia, y eso dispara un <dfn data-term="preflight">preflight</dfn>. El preflight es un <code>OPTIONS</code> sin cookie. Solo <code>login.php</code> lo responde; los otros 13 endpoints lo mandan a <code>requireAuth</code>, que responde 401, y el navegador cancela la request real.</li>
+<li><b>El origen está escrito 14 veces.</b> Sumar uno (producción, una vista previa) es editar 14 archivos, y <code>cambio_contrasena.php</code> ya tiene una copia rota: <code>Access-Control-Alow-Methods</code>, con una sola <code>l</code>.</li>
+<li><b>Falta <code>Vary: Origin</code>.</b> Con un único origen fijo no importa. El día que la respuesta dependa del <code>Origin</code>, un caché intermedio puede servirle a un origen la respuesta calculada para otro.</li>
+</ul>
+<p>Y el riesgo de verdad: cuando esto se rompa, el arreglo que aparece primero en cualquier buscador es devolver el <code>Origin</code> que llegue, o un <code>*</code>. Esta guía hace el arreglo correcto antes de que alguien haga el otro. Es el hallazgo F de la re-auditoría.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 220" role="img" aria-labelledby="fw4at fw4ad">
+<title id="fw4at">Una política en un solo lugar</title>
+<desc id="fw4ad">El archivo .env tiene la lista de orígenes. origen.php la lee y compara orígenes exactos. Dos funciones la usan: requireOrigenConfiable, de WEB03, para las escrituras, y cors.php, nuevo, para decidir quién lee. Los 14 endpoints llaman a aplicarCors con sus métodos en la primera línea.</desc>
+<defs><marker id="fw4aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw4af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker></defs>
+<path class="dg-edge" d="M175 71 L215 71" marker-end="url(#fw4aa)"/>
+<path class="dg-edge" d="M380 71 L420 71" marker-end="url(#fw4aa)"/>
+<path class="dg-edge" d="M298 102 L502 140" marker-end="url(#fw4aa)"/>
+<path class="dg-edge" d="M625 171 L585 171" marker-end="url(#fw4aa)"/>
+<rect class="dg-layer" style="--c: var(--l-db)" x="10" y="40" width="165" height="62" rx="8"/>
+<text class="dg-label" x="92.5" y="69.0" text-anchor="middle">.env</text>
+<text class="dg-tiny" x="92.5" y="84.0" text-anchor="middle">ORIGENES_PERMITIDOS</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="215" y="40" width="165" height="62" rx="8"/>
+<text class="dg-label" x="297.5" y="69.0" text-anchor="middle">origen.php</text>
+<text class="dg-tiny" x="297.5" y="84.0" text-anchor="middle">esOrigenPermitido()</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="420" y="40" width="165" height="62" rx="8"/>
+<text class="dg-label" x="502.5" y="69.0" text-anchor="middle">requireOrigenConfiable</text>
+<text class="dg-tiny" x="502.5" y="84.0" text-anchor="middle">quién escribe (WEB03)</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="420" y="140" width="165" height="62" rx="8"/>
+<text class="dg-label" x="502.5" y="169.0" text-anchor="middle">cors.php</text>
+<text class="dg-tiny" x="502.5" y="184.0" text-anchor="middle">quién lee (nuevo)</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="625" y="140" width="135" height="62" rx="8"/>
+<text class="dg-label" x="692.5" y="169.0" text-anchor="middle">14 endpoints</text>
+<text class="dg-tiny" x="692.5" y="184.0" text-anchor="middle">aplicarCors([...])</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB04.1.</b> La misma lista decide dos cosas distintas: quién puede <em>escribir</em> (WEB03, en el servidor) y quién puede <em>leer</em> la respuesta (CORS, en el navegador). Que sea la misma evita que un origen pueda leer pero no escribir, o al revés, sin que nadie lo haya decidido.</figcaption>
+</figure>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 262" role="img" aria-labelledby="fw4ct fw4cd">
+<title id="fw4ct">Quién lee la sesión según la política</title>
+<desc id="fw4cd">Una rejilla de tres páginas por tres políticas, para un fetch con credenciales a GET login.php, que devuelve el nombre y el csrfToken. El frontend sin proxy lee con las tres políticas, salvo que la de antes rompe sus escrituras. atacante.test no lee con la política de antes ni con la lista; con reflejar el Origin lee, pero la cookie Strict no viajó y la respuesta es un 401 sin datos. localhost:8081 no lee con la de antes ni con la lista; con reflejar lee la sesión y el token.</desc>
+<g class="dg-small">
+<text x="20" y="32">Página</text><text x="235" y="32">Antes (5173 fijo)</text><text x="415" y="32">Lista exacta</text><text x="595" y="32">Reflejar el Origin</text>
+</g>
+<path class="dg-frame" d="M14 44 H756"/>
+<text class="dg-label" x="20" y="78">Frontend</text><text class="dg-tiny dg-mono" x="20" y="96">localhost:5173</text>
+<rect x="230" y="58" width="160" height="50" rx="6" class="dg-warnbox"/><text class="dg-tiny" x="310" y="79" text-anchor="middle">lee; las escrituras</text><text class="dg-tiny" x="310" y="95" text-anchor="middle">mueren en el preflight</text>
+<rect x="410" y="58" width="160" height="50" rx="6" class="dg-ok"/><text class="dg-tiny" x="490" y="88" text-anchor="middle">lee y escribe</text>
+<rect x="590" y="58" width="160" height="50" rx="6" class="dg-ok"/><text class="dg-tiny" x="670" y="88" text-anchor="middle">lee y escribe</text>
+<text class="dg-label" x="20" y="146">Otro sitio</text><text class="dg-tiny dg-mono" x="20" y="164">atacante.test</text>
+<rect x="230" y="126" width="160" height="50" rx="6" class="dg-box"/><text class="dg-tiny" x="310" y="156" text-anchor="middle">no lee</text>
+<rect x="410" y="126" width="160" height="50" rx="6" class="dg-box"/><text class="dg-tiny" x="490" y="156" text-anchor="middle">no lee</text>
+<rect x="590" y="126" width="160" height="50" rx="6" class="dg-warnbox"/><text class="dg-tiny" x="670" y="147" text-anchor="middle">lee un 401: la cookie</text><text class="dg-tiny" x="670" y="163" text-anchor="middle">Strict no viajó</text>
+<text class="dg-label" x="20" y="214">Mismo sitio</text><text class="dg-tiny dg-mono" x="20" y="232">localhost:8081</text>
+<rect x="230" y="194" width="160" height="50" rx="6" class="dg-box"/><text class="dg-tiny" x="310" y="224" text-anchor="middle">no lee</text>
+<rect x="410" y="194" width="160" height="50" rx="6" class="dg-box"/><text class="dg-tiny" x="490" y="224" text-anchor="middle">no lee</text>
+<rect x="590" y="194" width="160" height="50" rx="6" class="dg-bad"/><text class="dg-tiny" x="670" y="215" text-anchor="middle">lee tu nombre</text><text class="dg-tiny" x="670" y="231" text-anchor="middle">y tu csrfToken</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB04.2.</b> Lo que el diseño espera para un <code>fetch</code> con <code>credentials: 'include'</code> a <code>GET login.php</code>. La celda roja es el motivo de la guía: reflejar el <code>Origin</code> no le sirve al atacante de otro sitio (<code>SameSite</code> lo frena), pero sí al vecino del mismo sitio, que recibe la cookie. Lo compruebas tú en el paso 4 y en la falla 1.</figcaption>
+</figure>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="fw4st fw4sd">
+<title id="fw4st">Una escritura del frontend sin proxy</title>
+<desc id="fw4sd">El frontend en localhost:5173 llama a Apache directo para postularse. El navegador manda primero un OPTIONS sin cookie; aplicarCors lo responde con 204 y las cabeceras permitidas, sin pasar por la sesión. Después sale el POST real con la cookie y el token; pasa por las capas de WEB03 y la respuesta lleva Access-Control-Allow-Origin, así que el JavaScript la lee.</desc>
+<defs><marker id="fw4s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw4s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fw4s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fw4s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Frontend :5173</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador</text>
+<path class="dg-frame" d="M385.0 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">PHP (Apache)</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<path class="dg-edge" d="M73.0 72 L380.0 72" marker-end="url(#fw4s-a)"/>
+<rect x="106.0" y="55" width="243.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="66" text-anchor="middle">apiFetch(&#x27;postulaciones.php&#x27;, POST)</text>
+<path class="dg-edge" d="M388.0 106 L695.0 106" marker-end="url(#fw4s-a)"/>
+<rect x="440.8" y="89" width="203.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="100" text-anchor="middle">OPTIONS (sin cookie) + Origin</text>
+<rect x="404.0" y="126" width="286" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="414.0" y="142">aplicarCors(): en la lista, 204 y exit</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 174 L390.0 174" marker-end="url(#fw4s-r)"/>
+<rect x="424.3" y="157" width="236.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="168" text-anchor="middle">204 + Allow-Methods, Allow-Headers</text>
+<path class="dg-edge" d="M388.0 208 L695.0 208" marker-end="url(#fw4s-a)"/>
+<rect x="444.1" y="191" width="196.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="202" text-anchor="middle">POST + Cookie + X-CSRF-Token</text>
+<rect x="460.0" y="228" width="230" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="470.0" y="244">origen, sesión y token (WEB03)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 276 L390.0 276" marker-end="url(#fw4s-r)"/>
+<rect x="401.20000000000005" y="259" width="282.59999999999997" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="270" text-anchor="middle">200 + Allow-Origin: http://localhost:5173</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 310 L75.0 310" marker-end="url(#fw4s-r)"/>
+<rect x="152.2" y="293" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="304" text-anchor="middle">la respuesta, legible</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB04.3.</b> Dos idas y vueltas por escritura. La primera no lleva cookie, y por eso no puede pasar por <code>requireAuth</code>: es lo que hoy rompe 13 endpoints. <code>Access-Control-Max-Age: 600</code> hace que el navegador reuse el permiso diez minutos para la misma URL.</figcaption>
+</figure>
+<h2 id="endpoints">Los endpoints</h2>
+<p>No cambia ninguna ruta. Cada endpoint declara, en su primera línea, los métodos que atiende de verdad. Salen de leer los <code>case</code> de cada archivo, no de la lista copiada (que dice <code>GET, POST, PUT, QUERY, DELETE</code> en casi todos, y ninguno atiende <code>QUERY</code>):</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Endpoint</th><th>Métodos que atiende</th><th>Hoy declara</th></tr></thead>
+<tbody>
+<tr><td><code>bitacora.php</code>, <code>estadisticas.php</code></td><td>GET</td><td>GET</td></tr>
+<tr><td><code>cambio_contrasena.php</code></td><td>PUT</td><td><code>Alow-Methods: PUT</code> (no cuenta)</td></tr>
+<tr><td><code>login.php</code></td><td>GET, POST, DELETE</td><td>GET, POST, PUT, QUERY, DELETE, OPTIONS</td></tr>
+<tr><td><code>asignaciones_roles.php</code></td><td>GET, POST, DELETE</td><td>GET, POST, PUT, QUERY, DELETE</td></tr>
+<tr><td>Los otros nueve</td><td>GET, POST, PUT, DELETE</td><td>GET, POST, PUT, QUERY, DELETE</td></tr>
+</tbody>
+</table>
+</div>
+<p>Los otros nueve son <code>carreras</code>, <code>historial_estado_postulacion</code>, <code>instituciones</code>, <code>notificaciones</code>, <code>oportunidades</code>, <code>postulaciones</code>, <code>roles</code>, <code>solicitudes_publicacion</code> y <code>usuarios</code>. <code>OPTIONS</code> no va en la lista: lo responde <code>aplicarCors</code> antes de cualquier otra cosa.</p>
+<h2 id="dependencias">Qué necesitas</h2>
+<p>El laboratorio de <a href="web00-laboratorio.html">WEB00</a> y el vecino del mismo sitio en <code>http://localhost:8081</code>, que se arma en <a href="web03-csrf.html#infra-vecino">WEB03</a> (son seis líneas de Apache; si no hiciste WEB03, cópialas de ahí). El archivo <code>core/origen.php</code> también es de WEB03; si no lo tienes, el paso 1 trae la parte que hace falta. No se instala nada.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<h3 id="infra-env">La lista de orígenes</h3>
+<p>La misma variable de WEB03. Si ya la tienes, no hay nada que hacer; si no, agrégala al <code>.env</code> y a la lista de <code>Env::exigir</code> en <code>configuration.php</code>:</p>
+<pre data-lang="shell" data-file="C:/xampp/secretos/practicas.env"><code># Orígenes que pueden escribir en la API (WEB03) y leerla desde otro origen (WEB04).
+# Exactos: esquema, host y puerto, sin barra al final, separados por coma.
+ORIGENES_PERMITIDOS=http://localhost:5173,http://localhost</code></pre>
+<h3 id="infra-frontend">El frontend, con o sin proxy</h3>
+<p>Para probar CORS de verdad hace falta un frontend que llame a Apache directo. Hoy <code>BASE_API</code> es una ruta relativa y no se puede cambiar sin editar el código. Una línea la vuelve configurable, y sin la variable todo queda como estaba:</p>
+<pre data-lang="javascript" data-file="frontend/src/api/generic-api.js (línea 1)"><code>// Sin VITE_API_BASE, ruta relativa: el proxy de Vite la manda a Apache (mismo origen, sin CORS).
+// Con VITE_API_BASE=http://localhost/..., el navegador llama a Apache directo (otro origen, con CORS).
+export const BASE_API = import.meta.env.VITE_API_BASE ?? "/SistemaControlPracticas/api/endpoints";</code></pre>
+<p>Para arrancarlo sin proxy, desde <code>frontend/</code>:</p>
+<pre data-lang="shell"><code>$env:VITE_API_BASE = "http://localhost/SistemaControlPracticas/api/endpoints"
+npm run dev
+# Al terminar, para volver al proxy en esta misma consola:
+Remove-Item Env:VITE_API_BASE</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una variable de Vite con la ruta relativa por defecto: el modo de siempre no cambia, y el modo sin proxy se prende para una prueba y se apaga.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Sacar el proxy de <code>vite.config.js</code>: obligaría a todo el equipo a tener CORS bien configurado para trabajar, y <a href="../modules/m75-cors.html#php">M75</a> recomienda justamente lo contrario para un sistema como este, el mismo origen. Esta guía deja CORS bien hecho para el día que haga falta, sin imponerlo.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Olvidar la variable puesta en la consola y creer que se está probando con el proxy. <code>Get-ChildItem Env:VITE_API_BASE</code> dice si sigue ahí. Vite lee la variable al arrancar: si la cambias, reinicia <code>npm run dev</code>.</dd></div>
+</dl>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<h3 id="paso-cors">Paso 1. <code>cors.php</code></h3>
+<p>Dos funciones: una que <em>calcula</em> las cabeceras sin enviarlas, para poder probarla sin servidor, y otra que las envía y termina el preflight.</p>
+<div class="pseudo"><ol>
+<li>Siempre: <code>Vary: Origin</code>, porque la respuesta cambia según quién pregunta.</li>
+<li>Si el <code>Origin</code> no está en la lista exacta, nada más: sin <code>Access-Control-Allow-Origin</code>, el navegador no deja leer.</li>
+<li>Si está: ese mismo origen (nunca <code>*</code>) y <code>Allow-Credentials</code>.</li>
+<li>Si es un preflight: los métodos del endpoint, las dos cabeceras que manda el frontend y diez minutos de caché. Responde 204 y termina, antes de la sesión.</li>
+</ol></div>
+<pre data-lang="php" data-file="api/core/cors.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/origen.php';
+
+/**
+ * Las cabeceras CORS de una respuesta, sin enviarlas (así se prueban sin servidor).
+ * $lista existe para la prueba; en el servidor sale del .env.
+ */
+function cabecerasCors(?string $origen, string $metodo, array $metodos, ?array $lista = null): array
+{
+    $h = ['Vary' =&gt; 'Origin'];
+    if ($origen === null || !esOrigenPermitido($origen, $lista)) {
+        return $h;
+    }
+    $h['Access-Control-Allow-Origin'] = $origen;   # ya comparado con la lista: no es texto ajeno
+    $h['Access-Control-Allow-Credentials'] = 'true';
+
+    if ($metodo === 'OPTIONS') {
+        $h['Access-Control-Allow-Methods'] = implode(', ', $metodos);
+        $h['Access-Control-Allow-Headers'] = 'Content-Type, X-CSRF-Token';
+        $h['Access-Control-Max-Age'] = '600';
+    } else {
+        $h['Access-Control-Expose-Headers'] = 'Retry-After';   # el 429 del login (WEB02)
+    }
+    return $h;
+}
+
+/** Primera línea de cada endpoint. El preflight termina aquí: no trae cookie y no llega a requireAuth. */
+function aplicarCors(array $metodos): void
+{
+    $metodo = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+    $origen = isset($_SERVER['HTTP_ORIGIN']) ? (string)$_SERVER['HTTP_ORIGIN'] : null;
+
+    foreach (cabecerasCors($origen, $metodo, $metodos) as $nombre =&gt; $valor) {
+        header("$nombre: $valor", $nombre !== 'Vary');   # Vary se suma a otro Vary, no lo pisa
+    }
+    if ($metodo === 'OPTIONS') {
+        http_response_code(204);
+        exit;
+    }
+}</code></pre>
+<p>Si no hiciste WEB03, crea <code>api/core/origen.php</code> con solo las dos primeras funciones:</p>
+<pre data-lang="php" data-file="api/core/origen.php (solo si no hiciste WEB03)"><code>&lt;?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/response.php';
+
+function origenesPermitidos(): array
+{
+    static $lista = null;
+    if ($lista === null) {
+        $lista = array_values(array_filter(array_map('trim',
+            explode(',', (string)Env::get('ORIGENES_PERMITIDOS', '')))));
+    }
+    return $lista;
+}
+
+function esOrigenPermitido(string $origen, ?array $lista = null): bool
+{
+    return $origen !== 'null' &amp;&amp; in_array($origen, $lista ?? origenesPermitidos(), true);
+}</code></pre>
+<aside class="callout callout--def">
+<p class="callout-label">PHP de por medio</p>
+<p>El segundo argumento de <code>header()</code> dice si la cabecera reemplaza a otra con el mismo nombre (<code>true</code>, el valor por defecto) o se suma (<code>false</code>). <code>Vary</code> se suma porque otra parte del código podría haber puesto <code>Vary: Accept-Encoding</code>. El <code>?string</code> del parámetro acepta un texto o <code>null</code>: un <code>Origin</code> ausente (<code>null</code>) no es lo mismo que un <code>Origin: null</code> literal, que mandan los iframes con <code>sandbox</code> y los archivos locales.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>La lista exacta del <code>.env</code>, el origen devuelto solo después de compararlo, y el preflight resuelto en la primera línea del endpoint, como en <a href="../modules/m75-cors.html#php">la política de M75</a>.</dd></div>
+<div><dt>Lo que descartas</dt><dd><code>Access-Control-Allow-Origin: *</code>: el navegador no deja leer con <code>*</code> una respuesta pedida con credenciales, así que no funcionaría, y si alguien quita las credenciales para que funcione, deja de mandarse la cookie. Tampoco una expresión regular sobre el origen: <code>/localhost:5173/</code> acepta <code>http://localhost:5173.atacante.test</code>. Y la lista en una constante, como en M75: sirve, pero cambiar de entorno sería cambiar código.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Devolver el <code>Origin</code> sin comparar: es la falla 1, y además mete en una cabecera un texto que escribe el cliente. Y poner <code>aplicarCors</code> después de <code>requireAuth</code>: el preflight no trae cookie, recibe 401 y el navegador cancela la request real (falla 2).</dd></div>
+</dl>
+<h3 id="paso-endpoints">Paso 2. Los 14 endpoints</h3>
+<p>Un script quita de cada endpoint las líneas <code>header("Access-Control-...")</code> (todas, también la que tiene la errata) y pone en su lugar la llamada, justo antes de la línea de <code>Content-Type</code>. Sin <code>-Aplicar</code> solo cuenta qué haría; con <code>-Aplicar</code> escribe. Córrelo desde la raíz del proyecto.</p>
+<pre data-lang="shell" data-file="lab/migrar-cors.ps1"><code># Reemplaza las cabeceras CORS copiadas en cada endpoint por aplicarCors([...]).
+# Uso: .\lab\migrar-cors.ps1            (solo muestra)
+#      .\lab\migrar-cors.ps1 -Aplicar   (escribe los archivos)
+param([switch]$Aplicar)
+
+$todos = "'GET', 'POST', 'PUT', 'DELETE'"
+$metodos = [ordered]@{
+  'asignaciones_roles.php'           = "'GET', 'POST', 'DELETE'"
+  'bitacora.php'                     = "'GET'"
+  'cambio_contrasena.php'            = "'PUT'"
+  'carreras.php'                     = $todos
+  'estadisticas.php'                 = "'GET'"
+  'historial_estado_postulacion.php' = $todos
+  'instituciones.php'                = $todos
+  'login.php'                        = "'GET', 'POST', 'DELETE'"
+  'notificaciones.php'               = $todos
+  'oportunidades.php'                = $todos
+  'postulaciones.php'                = $todos
+  'roles.php'                        = $todos
+  'solicitudes_publicacion.php'      = $todos
+  'usuarios.php'                     = $todos
+}
+$cors = [regex]'(?m)^header\("Access-Control-[^\r\n]*\r?\n'
+$tipo = [regex]'(?m)^header\("Content-Type: application/json"\);'
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+
+foreach ($archivo in $metodos.Keys) {
+  $ruta  = Join-Path 'api\endpoints' $archivo
+  $texto = [IO.File]::ReadAllText((Resolve-Path $ruta))
+  $n = $cors.Matches($texto).Count
+  if ($n -eq 0) { "{0,-34} sin cabeceras CORS: ¿ya migrado?" -f $archivo; continue }
+  if (-not $tipo.IsMatch($texto)) { "{0,-34} REVISAR: no tiene la línea de Content-Type" -f $archivo; continue }
+
+  $llamada = 'require_once __DIR__ . "/../core/cors.php";' + "`r`n" + "aplicarCors([$($metodos[$archivo])]);" + "`r`n"
+  $nuevo = $tipo.Replace($cors.Replace($texto, ''), $llamada + '$0', 1)
+  "{0,-34} quita {1} línea(s) -&gt; aplicarCors([{2}])" -f $archivo, $n, $metodos[$archivo]
+  if ($Aplicar) { [IO.File]::WriteAllText((Resolve-Path $ruta), $nuevo, $utf8) }
+}
+if (-not $Aplicar) { "`nNada se escribió. Revisa la lista y vuelve a correr con -Aplicar." }</code></pre>
+<aside class="callout callout--try">
+<p class="callout-label">Pruébalo ahora</p>
+<p>Corre primero <code>.\lab\migrar-cors.ps1</code>, sin <code>-Aplicar</code>. Tienen que salir 14 líneas: <code>login.php</code> quita 4 (también <code>Allow-Headers</code>), las demás quitan 3. Si alguna dice <code>REVISAR</code>, ese archivo no tiene la forma esperada y va a mano. Con la lista bien, córrelo con <code>-Aplicar</code> y revisa el resultado con <code>git diff --stat</code>: 14 archivos cambiados. Después, <code>C:\xampp\php\php.exe -l</code> sobre cada uno tiene que decir <code>No syntax errors detected</code>.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un script que escribe solo con <code>-Aplicar</code> y cuenta antes, sobre una tabla de métodos leída de los <code>case</code> de cada archivo, no de la lista copiada.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Poner <code>aplicarCors</code> dentro de <code>requireAuth</code>: el preflight tiene que terminar antes, y además <code>login.php</code> no siempre llama a <code>requireAuth</code>. Tampoco poner la política en el <code>.htaccess</code> con <code>Header set</code>: Apache no sabe qué métodos atiende cada endpoint, y la lista de orígenes viviría en dos lugares.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el script deje archivos con BOM o cambie los finales de línea: escribe UTF-8 sin BOM, y la llamada nueva usa <code>CRLF</code> como el resto del repositorio; <code>git diff</code> muestra si algo más cambió. Si un archivo quedó mal, <code>git checkout -- api/endpoints/&lt;archivo&gt;</code> lo vuelve atrás.</dd></div>
+</dl>
+<h3 id="paso-login">Paso 3. El preflight viejo de <code>login.php</code></h3>
+<p><code>login.php</code> era el único que respondía el preflight, con un bloque propio. Ahora lo hace <code>aplicarCors</code>, así que el bloque sobra. Bórralo a mano:</p>
+<pre data-lang="php" data-file="api/endpoints/login.php (borrar estas cinco líneas)"><code># Preflight CORS (solo aplica si el frontend llama a Apache directo, sin el proxy de Vite)
+if (($_SERVER["REQUEST_METHOD"] ?? '') === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}</code></pre>
+<p>El principio de <code>login.php</code> tiene que quedar así (con WEB03 aplicada):</p>
+<pre data-lang="php" data-file="api/endpoints/login.php (principio)"><code>require_once __DIR__ . "/../core/request.php";
+require_once __DIR__ . "/../core/origen.php";
+
+require_once __DIR__ . "/../core/cors.php";
+aplicarCors(['GET', 'POST', 'DELETE']);
+header("Content-Type: application/json");
+
+$connection = Connection::load();
+$response   = new Response();
+$method     = $_SERVER["REQUEST_METHOD"];
+
+# POST y DELETE escriben: primero de dónde vienen, después el cuerpo
+if ($method !== 'GET') {
+    requireOrigenConfiable();
+}
+$data = readJsonInput($method);</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un solo lugar que responde el preflight, el mismo para los 14 endpoints.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Dejar el bloque viejo "por las dudas": nunca se ejecuta (<code>aplicarCors</code> ya hizo <code>exit</code>), y quien lo lea va a creer que el login tiene un trato especial.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Borrar una línea de más. <code>php -l</code> encuentra la llave suelta; la matriz del final encuentra lo demás.</dd></div>
+</dl>
+<h3 id="paso-atacante">Paso 4. La página del atacante</h3>
+<p>Tres botones, en la misma carpeta que la página de WEB03, para servirla desde los dos sitios atacantes. El primero intenta <em>leer</em> la sesión; el segundo manda una escritura que necesita preflight; el tercero usa el token que haya leído el primero.</p>
+<pre data-lang="html" data-file="C:/xampp/htdocs/atacante/web04.html"><code>&lt;!doctype html&gt;
+&lt;meta charset="utf-8"&gt;
+&lt;title&gt;WEB04: leer desde otro origen&lt;/title&gt;
+&lt;h1&gt;WEB04: leer desde otro origen&lt;/h1&gt;
+&lt;p&gt;Abre DevTools (Network y Console). Antes, entra al frontend como estudiante en otra pestaña.&lt;/p&gt;
+
+&lt;button id="b1"&gt;1. Leer la sesión (GET login.php)&lt;/button&gt;
+&lt;button id="b2"&gt;2. Escritura con preflight (POST postulaciones.php)&lt;/button&gt;
+&lt;button id="b3"&gt;3. Usar el token leído (DELETE login.php)&lt;/button&gt;
+&lt;pre id="out"&gt;&lt;/pre&gt;
+
+&lt;script&gt;
+const API = 'http://localhost/SistemaControlPracticas/api/endpoints';
+const out = document.getElementById('out');
+let token = null;
+const ver = (t) =&gt; out.textContent = t;
+
+document.getElementById('b1').onclick = () =&gt;
+  fetch(API + '/login.php', { credentials: 'include' })
+    .then(r =&gt; r.json().then(j =&gt; { token = j.data &amp;&amp; j.data.csrfToken; ver(r.status + ' ' + JSON.stringify(j, null, 2)); }))
+    .catch(e =&gt; ver('El navegador no dejó leer: ' + e.message + '. El motivo está en Console.'));
+
+document.getElementById('b2').onclick = () =&gt;
+  fetch(API + '/postulaciones.php', {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' }, body: '{}'
+  }).then(r =&gt; ver('Llegó: ' + r.status)).catch(e =&gt; ver('Cancelada: ' + e.message + '. Mira el OPTIONS en Network.'));
+
+document.getElementById('b3').onclick = () =&gt;
+  fetch(API + '/login.php', {
+    method: 'DELETE', credentials: 'include', headers: { 'X-CSRF-Token': token || 'sin-token' }
+  }).then(r =&gt; r.json().then(j =&gt; ver(r.status + ' ' + JSON.stringify(j))))
+    .catch(e =&gt; ver('Cancelada: ' + e.message));
+&lt;/script&gt;</code></pre>
+<p>El botón 3 es un cierre de sesión: si llega a pasar, lo único que hace es sacarte del frontend. No hay datos en juego. Abre la página en <code>http://atacante.test/web04.html</code> y en <code>http://localhost:8081/web04.html</code>, antes y después de los pasos 1 a 3, y anota en <a href="#comprueba-navegador">la tabla</a>.</p>
+<aside class="callout callout--fail">
+<p class="callout-label">Errores típicos</p>
+<ul class="pj-errs">
+<li><b>El botón 1 dice <code>Failed to fetch</code> y nada más.</b> Es lo esperado cuando CORS no deja leer: el navegador no le da al JavaScript el motivo, a propósito. El motivo exacto lo escribe en Console.</li>
+<li><b>El botón 2 muestra un <code>OPTIONS</code> en Network pero no un <code>POST</code>.</b> También es lo esperado: si el preflight no autoriza, la request real nunca sale.</li>
+<li><b>Desde <code>localhost:8081</code> el botón 1 lee la sesión sin haber tocado nada.</b> Algo devuelve el <code>Origin</code>: revisa que la migración no haya dejado una línea vieja y que <code>8081</code> no esté en <code>ORIGENES_PERMITIDOS</code>.</li>
+</ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Leer, escribir con preflight y reusar el token, en ese orden, que son las tres cosas que CORS decide.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Pedir algo con datos sensibles reales: la sesión del estudiante de <code>seed.sql</code> alcanza para ver si se puede leer. Tampoco se prueban formas de saltar el navegador: cada botón es una llamada normal de <code>fetch</code>.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Probar con la sesión cerrada en la otra pestaña: el botón 1 devuelve un 401 y parece que la política funciona, cuando en realidad no había nada que leer.</dd></div>
+</dl>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="web04-cors"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-pruebas">La prueba sin servidor</h3>
+<p><code>cabecerasCors</code> no envía nada, así que se prueba con una lista fija y sin <code>.env</code>. Cada caso es un origen que alguna vez se coló en una política real.</p>
+<pre data-lang="php" data-file="tests/cors_test.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../api/core/cors.php';
+
+$fallos = 0;
+function caso(string $nombre, bool $esperado, bool $obtenido): void
+{
+    global $fallos;
+    $ok = $esperado === $obtenido;
+    if (!$ok) {
+        $fallos++;
+    }
+    printf("%s %s\n", $ok ? 'ok    ' : 'FALLA ', $nombre);
+}
+
+$lista = ['http://localhost:5173', 'http://localhost'];
+$lee = fn(?string $o): bool =&gt; array_key_exists('Access-Control-Allow-Origin', cabecerasCors($o, 'GET', ['GET'], $lista));
+
+caso('el frontend lee',                      true,  $lee('http://localhost:5173'));
+caso('Apache sin puerto lee',                true,  $lee('http://localhost'));
+caso('otro sitio no',                        false, $lee('http://atacante.test'));
+caso('el vecino del mismo sitio no',         false, $lee('http://localhost:8081'));
+caso('Origin: null no',                      false, $lee('null'));
+caso('el permitido como prefijo no',         false, $lee('http://localhost:5173.atacante.test'));
+caso('con barra al final no',                false, $lee('http://localhost:5173/'));
+caso('https no es http',                     false, $lee('https://localhost:5173'));
+caso('sin Origin no hay CORS',               false, $lee(null));
+
+$rechazo = cabecerasCors('http://atacante.test', 'GET', ['GET'], $lista);
+caso('Vary también en un rechazo',           true,  ($rechazo['Vary'] ?? '') === 'Origin');
+$pre = cabecerasCors('http://localhost:5173', 'OPTIONS', ['GET', 'PUT'], $lista);
+caso('el preflight lista los métodos',       true,  ($pre['Access-Control-Allow-Methods'] ?? '') === 'GET, PUT');
+caso('nunca un asterisco',                   false, in_array('*', $pre, true));
+
+echo $fallos === 0 ? "\nTodo bien\n" : "\n$fallos caso(s) fallaron\n";
+exit($fallos === 0 ? 0 : 1);</code></pre>
+<aside class="callout callout--try">
+<p class="callout-label">Pruébalo ahora</p>
+<p>Desde la raíz del proyecto, <code>C:\xampp\php\php.exe tests\cors_test.php</code>. Tienen que salir doce líneas <code>ok</code> y <code>Todo bien</code>. La prueba no carga el <code>.env</code>: <code>origenesPermitidos()</code> solo se llama cuando no se pasa una lista.</p>
+</aside>
+<h3 id="comprueba-matriz">La matriz con curl</h3>
+<p><code>curl</code> no aplica CORS, pero muestra las cabeceras que el servidor manda, y eso es todo lo que CORS es del lado del servidor. Los preflights van sin cookie, como los manda el navegador.</p>
+<pre data-lang="shell" data-file="lab/web04.ps1"><code>param([string]$Base = "http://localhost/SistemaControlPracticas/api/endpoints", [string]$Jar = "lab\jar.txt")
+
+# Sesión de estudiante (lab\login.json es el de WEB00)
+&amp; curl.exe -s -o NUL -c $Jar -H "Content-Type: application/json" --data-binary "@lab\login.json" "$Base/login.php"
+
+function Cabecera([string[]]$respuesta, [string]$nombre) {
+  $linea = $respuesta | Where-Object { $_ -match "^${nombre}:" } | Select-Object -First 1
+  if ($linea) { ($linea -replace "^${nombre}:\s*", '').Trim() } else { '(ninguna)' }
+}
+function Fila($nombre, $cabecera, $esperado, [string[]]$extra, [switch]$Preflight) {
+  $cookie = if ($Preflight) { @() } else { @("-b", $Jar) }
+  $r = &amp; curl.exe -s -o NUL -D - @cookie @extra
+  $valor = if ($cabecera -eq 'estado') { ($r[0] -split ' ')[1] } else { Cabecera $r $cabecera }
+  "{0} {1,-40} {2} = {3}" -f $(if ($valor -eq $esperado) { 'ok     ' } else { 'REVISAR' }), $nombre, $cabecera, $valor
+}
+
+$o = "$Base/oportunidades.php"; $p = "$Base/postulaciones.php"
+$pre = @("-X", "OPTIONS", "-H", "Access-Control-Request-Method: POST", "-H", "Access-Control-Request-Headers: content-type,x-csrf-token")
+$acao = 'Access-Control-Allow-Origin'
+
+Fila "GET desde el frontend"              $acao 'http://localhost:5173' @("-H", "Origin: http://localhost:5173", $o)
+Fila "GET desde otro sitio"               $acao '(ninguna)' @("-H", "Origin: http://atacante.test", $o)
+Fila "GET desde el vecino del 8081"       $acao '(ninguna)' @("-H", "Origin: http://localhost:8081", $o)
+Fila "GET con Origin: null"               $acao '(ninguna)' @("-H", "Origin: null", $o)
+Fila "GET con el permitido como prefijo"  $acao '(ninguna)' @("-H", "Origin: http://localhost:5173.atacante.test", $o)
+Fila "Vary en un rechazo"                 'Vary' 'Origin' @("-H", "Origin: http://atacante.test", $o)
+Fila "preflight a postulaciones"          'estado' '204' ($pre + @("-H", "Origin: http://localhost:5173", $p)) -Preflight
+Fila "preflight: métodos"                 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE' ($pre + @("-H", "Origin: http://localhost:5173", $p)) -Preflight
+Fila "preflight a cambio_contrasena"      'Access-Control-Allow-Methods' 'PUT' ($pre + @("-H", "Origin: http://localhost:5173", "$Base/cambio_contrasena.php")) -Preflight
+Fila "preflight a bitacora"               'Access-Control-Allow-Methods' 'GET' ($pre + @("-H", "Origin: http://localhost:5173", "$Base/bitacora.php")) -Preflight
+Fila "preflight desde otro sitio"         $acao '(ninguna)' ($pre + @("-H", "Origin: http://atacante.test", $p)) -Preflight</code></pre>
+<p>Con la guía aplicada, las once filas dicen <code>ok</code>. Córrelo también antes y guarda la salida; leyendo el código de hoy, el diseño espera estas diferencias:</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Fila</th><th>Antes (leído del código)</th><th>Por qué</th></tr></thead>
+<tbody>
+<tr><td>GET desde otro sitio, el vecino, null, prefijo</td><td><code>http://localhost:5173</code></td><td>El origen fijo sale siempre; el navegador igual no deja leer, porque no coincide</td></tr>
+<tr><td>Vary en un rechazo</td><td>(ninguna)</td><td>Ningún endpoint la manda</td></tr>
+<tr><td>preflight: métodos</td><td><code>GET, POST, PUT, QUERY, DELETE</code></td><td>La lista copiada, que no coincide con lo que atiende el endpoint</td></tr>
+<tr><td>preflight a postulaciones</td><td>401 (200 sin WEB01)</td><td>El <code>OPTIONS</code> llega a <code>requireAuth</code> sin cookie</td></tr>
+<tr><td>preflight a cambio_contrasena</td><td>(ninguna)</td><td>La cabecera se llama <code>Alow-Methods</code></td></tr>
+<tr><td>preflight desde otro sitio</td><td><code>http://localhost:5173</code></td><td>El mismo origen fijo</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-navegador">El frontend y el navegador</h3>
+<p>Arranca el frontend sin proxy (<a href="#infra-frontend">la infraestructura</a>), entra como <code>estudiante</code> y postúlate a una oportunidad o marca una notificación como leída. Antes de la guía, el diseño espera que el login y las pantallas de lectura funcionen y que la escritura falle con el preflight en rojo en Network; después, que todo funcione. Luego, con esa sesión abierta, usa la página del paso 4:</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Desde</th><th>Botón</th><th>Antes</th><th>Después</th><th>Falla 1 (reflejar)</th></tr></thead>
+<tbody>
+<tr><td>atacante.test</td><td>1. Leer la sesión</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>atacante.test</td><td>2. Preflight</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>localhost:8081</td><td>1. Leer la sesión</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>localhost:8081</td><td>2. Preflight</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>localhost:8081</td><td>3. Usar el token</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-fallas">Fallas provocadas</h3>
+<p><b>Falla 1. El arreglo de internet.</b> En <code>cabecerasCors</code>, cambia la condición por <code>if ($origen === null) {</code>: devuelve cualquier <code>Origin</code> que llegue. Corre <code>tests\cors_test.php</code> (seis casos tienen que fallar) y repite la página del paso 4. El diseño espera lo de <a href="#excusa">la figura WEB04.2</a>: desde <code>atacante.test</code>, el botón 1 lee un 401, porque la cookie <code>Strict</code> no viajó; desde <code>localhost:8081</code>, lee tu nombre y tu <code>csrfToken</code>. Después, el botón 3 manda ese token: con WEB03 aplicada, <code>requireOrigenConfiable</code> lo corta con 403 (<code>Origin</code> no permitido); sin WEB03, cierra tu sesión del frontend. Vuelve la condición a su lugar.</p>
+<p><b>Falla 2. El preflight detrás de la sesión.</b> En un endpoint, por ejemplo <code>notificaciones.php</code>, mueve <code>aplicarCors(...)</code> debajo de <code>requireAuth()</code>. Con el frontend sin proxy, marcar una notificación como leída falla, y Console dice que el preflight no tuvo un estado HTTP correcto (el texto exacto depende del navegador). Es el estado de hoy de 13 endpoints. Vuelve la línea arriba.</p>
+<p><b>Falla 3. El asterisco.</b> En <code>cabecerasCors</code>, pon <code>$h['Access-Control-Allow-Origin'] = '*';</code>. Desde el frontend sin proxy, todo lo que va con <code>credentials: 'include'</code> (o sea, todo) deja de poder leerse: el navegador rechaza <code>*</code> junto con credenciales, y Console lo dice. El caso <code>nunca un asterisco</code> de la prueba falla. Vuelve la línea.</p>
+<h2 id="limites">Limitaciones</h2>
+<ul>
+<li><b>CORS no frena requests.</b> Decide quién <em>lee</em> la respuesta, en el navegador. Un formulario de otro sitio sigue llegando a PHP; lo que frena eso es WEB03.</li>
+<li><b>El proxy sigue siendo lo más simple.</b> Con el frontend y la API en el mismo origen, nada de esta guía se usa. Esta política queda lista para el día que haga falta.</li>
+<li><b>Un origen permitido es de confianza total.</b> Si el frontend de <code>localhost:5173</code> tiene un XSS, ese script lee y escribe con tu sesión: está en la lista. Eso es WEB05.</li>
+<li><b>El preflight cuesta una ida y vuelta.</b> <code>Max-Age: 600</code> lo reusa diez minutos por URL; Chrome pone un tope de dos horas y Firefox de un día <span class="badge badge--doc">Documentado</span>. Sobre <code>localhost</code> no se nota; con 80 ms de latencia hasta el servidor, la primera escritura a cada URL tarda unos 80 ms más (una ida y vuelta, el supuesto es la latencia).</li>
+<li><b>Nada se ejecutó al escribir esta guía.</b> Las columnas del navegador son tuyas; las filas de la matriz salen de leer el código.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="web04">
+<p class="pj-repo-head">Trabaja en la rama <code>web04-cors</code>. La carpeta <code>C:\xampp\htdocs\atacante</code> no es parte del repositorio.</p>
+<ul class="pj-checks">
+<li data-check="cors"><code>core/cors.php</code> existe y <code>tests\cors_test.php</code> da <code>Todo bien</code>.</li>
+<li data-check="migrar"><code>migrar-cors.ps1 -Aplicar</code> cambió 14 endpoints y <code>php -l</code> no encuentra errores.</li>
+<li data-check="login"><code>login.php</code> ya no tiene su bloque de <code>OPTIONS</code>.</li>
+<li data-check="matriz"><code>web04.ps1</code> da once <code>ok</code>, y guardaste la salida de antes.</li>
+<li data-check="frontend">El frontend sin proxy escribe, y con el proxy sigue andando.</li>
+<li data-check="fallas">Provocaste las tres fallas y llenaste la tabla del navegador.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<p>Esta guía funciona sola. Si quieres juntarla con otras:</p>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con WEB03, CSRF</p>
+<p><code>cors.php</code> y <code>requireOrigenConfiable</code> leen la misma lista de <code>origen.php</code>. En la falla 1, la capa de WEB03 es la que impide que el token leído sirva para algo.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB02, la sesión</p>
+<p><code>Expose-Headers: Retry-After</code> deja que un frontend de otro origen lea cuánto esperar después del 429 del login.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB01, lo que no debe verse</p>
+<p>Con los códigos HTTP reales, el preflight roto de hoy se ve como un 401 en Network y no como un 200 que el navegador rechaza sin que se entienda por qué.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M75, CORS a fondo</p>
+<p>La política es la de <a href="../modules/m75-cors.html#php">75.9</a>, con la lista en el <code>.env</code>; las credenciales y el <code>*</code>, en <a href="../modules/m75-cors.html#credenciales">75.5</a>, y <code>Vary</code>, en <a href="../modules/m75-cors.html#vary">su sección</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/web04.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

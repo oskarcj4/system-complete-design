@@ -196,6 +196,18 @@
         <li><b>La varianza</b> (4 bytes): un promedio de su tamaño, para dar pasos más cortos donde el terreno es escarpado.</li>
       </ul>
 
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>La <b>copia maestra en fp32</b> es como llevar la cuenta de los centavos en una libreta aparte: si cada pago chico lo redondeas a pesos enteros, los centavos se pierden y la cuenta nunca se mueve. Los ajustes de cada paso son así de chicos, por eso se suman sobre la copia precisa. El <b>momento</b> y la <b>varianza</b> son como la memoria de un ciclista que baja un cerro: el momento recuerda hacia dónde venía yendo (no frena por cada bache) y la varianza recuerda qué tan accidentado está el camino, para ir más despacio donde hay mucho salto.</p>
+      </aside>
+
+      <p><b>Paso a paso, con la cuenta.</b> Los 16 bytes se multiplican por la cantidad de parámetros, igual que los 2 bytes de servir:</p>
+      <ol class="steps">
+        <li><span class="step-title">Un modelo chico, para servir</span>7 mil millones de parámetros × 2 B = 14&#8239;GB. Entra holgado en una H100 de 80&#8239;GB.</li>
+        <li><span class="step-title">El mismo modelo, para entrenar</span>7 mil millones × 16 B = 112&#8239;GB. Ya no entra en una sola H100, y todavía faltan las activaciones.</li>
+        <li><span class="step-title">El 70B de la figura</span>70.6 mil millones × 2 B = 141.2&#8239;GB para servir; × 16 B = 1&#8239;129.6&#8239;GB ≈ 1.13&#8239;TB para entrenar. Dividido por 80&#8239;GB da 14.1: más de catorce H100 llenas solo con los estados.</li>
+      </ol>
+
       <figure class="figure">
   <div class="figure-frame">
 <svg viewBox="0 0 770 250" role="img" aria-labelledby="f261t f261d">
@@ -349,6 +361,14 @@
         <figcaption><b>Figura 26.4.</b> Las tres etapas con un ejemplo de 64 GPUs. Cada etapa reparte un pedazo más de los 16 bytes; solo la etapa 3 baja de los 80&#8239;GB de una H100. <span class="badge badge--doc">Documentado</span></figcaption>
       </figure>
 
+      <p><b>Cómo leer la figura 26.4.</b> Cada barra es la memoria de una sola GPU, de las 64. La parte que dice "sin repartir" la guarda entera cada GPU; la parte "repartida" se divide por 64. Rehaciendo las cuentas con 70.6 mil millones de parámetros:</p>
+      <ul>
+        <li><b>Etapa 1:</b> pesos y gradientes enteros (2 + 2 = 4 B × 70.6 mil millones = 282.4&#8239;GB) más los 12 B del optimizador divididos por 64 (13.2&#8239;GB): 295.6&#8239;GB.</li>
+        <li><b>Etapa 2:</b> solo los pesos enteros (141.2&#8239;GB) más 14 B repartidos (15.4&#8239;GB): 156.6&#8239;GB. Todavía no entra en 80&#8239;GB.</li>
+        <li><b>Etapa 3:</b> los 16 B repartidos: 1&#8239;129.6&#8239;GB ÷ 64 = 17.65&#8239;GB. Recién acá queda lugar en la H100 para las activaciones.</li>
+      </ul>
+      <p>La idea que hay que llevarse: mientras una parte del estado quede "sin repartir", esa parte no baja por más GPUs que agregues.</p>
+
       <p>El precio de repartir es <b>comunicación</b>: cuanto más reparte ZeRO, más piezas hay que mover entre GPUs en cada paso. Por eso la etapa 3 solo conviene cuando el modelo de verdad no entra de otra forma, y por eso la red importa tanto.</p>
 
       <h2 id="tres-d"><span class="sec-num">26.4</span>Tensor, pipeline y contexto</h2>
@@ -371,6 +391,11 @@
         <li><b><dfn data-term="pipeline-parallelism">Pipeline parallelism</dfn>:</b> poner unas capas en unas GPUs y las siguientes en otras, como una línea de montaje. El riesgo es la <b>burbuja</b>: mientras la primera etapa trabaja, las otras esperan. Se achica partiendo el batch en micro-lotes que entran en fila.</li>
         <li><b>Paralelismo de contexto o de secuencia:</b> cuando la secuencia es larguísima, repartir la propia secuencia entre GPUs.</li>
       </ul>
+
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>El pipeline es una lavandería con lavadora, secadora y mesa de doblar. Si llevas toda la ropa en una sola carga gigante, la secadora espera mientras la lavadora trabaja, y la mesa espera a las dos: la <b>burbuja</b> es ese tiempo de máquinas paradas. Si la partes en cargas chicas (los micro-lotes), mientras se seca la primera ya se lava la segunda, y las tres máquinas trabajan a la vez casi todo el tiempo. Solo al principio y al final hay alguna parada.</p>
+      </aside>
 
       
       <figure class="figure">
@@ -494,6 +519,13 @@
         </div>
         <figcaption><b>Figura 26.5.</b> La burbuja del pipeline con 4 etapas. Partir el batch no cambia lo que tarda cada micro-lote; llena los turnos que antes se esperaban. <span class="badge badge--doc">Documentado</span></figcaption>
       </figure>
+
+      <p><b>Paso a paso con la fórmula de la figura.</b> Ocioso = (etapas − 1) ÷ (micro-lotes + etapas − 1). El numerador son los turnos de "arranque y vaciado", en los que alguna etapa todavía no tiene trabajo; el denominador son todos los turnos que dura el paso.</p>
+      <ol class="steps">
+        <li><span class="step-title">Un solo lote</span>4 etapas y 1 micro-lote: 3 ÷ (1 + 3) = 3 ÷ 4 = 75&#8239;% del tiempo ocioso.</li>
+        <li><span class="step-title">Ocho micro-lotes</span>3 ÷ (8 + 3) = 3 ÷ 11 ≈ 27&#8239;%, lo que muestra la figura.</li>
+        <li><span class="step-title">Treinta y dos micro-lotes</span>3 ÷ (32 + 3) = 3 ÷ 35 ≈ 8.6&#8239;%. Cuantos más micro-lotes, más se diluye el arranque. El límite es la memoria: cada micro-lote en vuelo guarda sus activaciones.</li>
+      </ol>
 
       <p>Un entrenamiento de frontera combina los cuatro a la vez —datos × tensor × pipeline × contexto—, lo que se llama paralelismo 3D o 4D. La regla práctica: tensor dentro del servidor (NVLink rápido), pipeline y datos entre servidores (red más lenta). En los modelos de mezcla de expertos (<dfn data-term="moe">MoE</dfn>) se suma el <dfn data-term="expert-parallelism">expert parallelism</dfn>, que reparte los expertos. El detalle de cada uno está en el <a href="m15-motores-inferencia.html#paralelismo">M15</a>.</p>
 
@@ -652,6 +684,105 @@
   <figcaption><b>Figura 26.7.</b> El all-reduce en anillo: cada GPU manda y recibe fragmentos de su vecino, nunca todo a una sola. Se hace en dos vueltas: una que suma (reduce-scatter) y otra que reparte la suma (all-gather).</figcaption>
       </figure>
 
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 270" role="img" aria-labelledby="fjr26at fjr26ad">
+<title id="fjr26at">All-reduce con números: tres GPUs</title>
+<desc id="fjr26ad">Tres GPUs con un vector de gradientes de tres fragmentos, A, B y C. Al inicio, la GPU 0 tiene 1, 2 y 3; la GPU 1, 4, 5 y 6; la GPU 2, 7, 8 y 9. Tras el reduce-scatter, en dos pasos por el anillo, cada GPU queda dueña de un fragmento ya sumado: la GPU 0 tiene A igual a 12, la GPU 1 tiene B igual a 15 y la GPU 2 tiene C igual a 18. Tras el all-gather, en otros dos pasos, las tres GPUs tienen el vector completo 12, 15 y 18.</desc>
+<defs><marker id="fjr26aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-label" x="20" y="24" text-anchor="start">Inicio</text>
+<text class="dg-tiny" x="105" y="46" text-anchor="middle">A</text>
+<text class="dg-tiny" x="161" y="46" text-anchor="middle">B</text>
+<text class="dg-tiny" x="217" y="46" text-anchor="middle">C</text>
+<text class="dg-small" x="20" y="79" text-anchor="start">GPU 0</text>
+<rect class="dg-box" x="80" y="56" width="50" height="36" rx="6"/>
+<text class="dg-small" x="105" y="79" text-anchor="middle">1</text>
+<rect class="dg-box" x="136" y="56" width="50" height="36" rx="6"/>
+<text class="dg-small" x="161" y="79" text-anchor="middle">2</text>
+<rect class="dg-box" x="192" y="56" width="50" height="36" rx="6"/>
+<text class="dg-small" x="217" y="79" text-anchor="middle">3</text>
+<text class="dg-small" x="20" y="127" text-anchor="start">GPU 1</text>
+<rect class="dg-box" x="80" y="104" width="50" height="36" rx="6"/>
+<text class="dg-small" x="105" y="127" text-anchor="middle">4</text>
+<rect class="dg-box" x="136" y="104" width="50" height="36" rx="6"/>
+<text class="dg-small" x="161" y="127" text-anchor="middle">5</text>
+<rect class="dg-box" x="192" y="104" width="50" height="36" rx="6"/>
+<text class="dg-small" x="217" y="127" text-anchor="middle">6</text>
+<text class="dg-small" x="20" y="175" text-anchor="start">GPU 2</text>
+<rect class="dg-box" x="80" y="152" width="50" height="36" rx="6"/>
+<text class="dg-small" x="105" y="175" text-anchor="middle">7</text>
+<rect class="dg-box" x="136" y="152" width="50" height="36" rx="6"/>
+<text class="dg-small" x="161" y="175" text-anchor="middle">8</text>
+<rect class="dg-box" x="192" y="152" width="50" height="36" rx="6"/>
+<text class="dg-small" x="217" y="175" text-anchor="middle">9</text>
+<path class="dg-edge" d="M248 122 H270" marker-end="url(#fjr26aa)"/>
+<text class="dg-label" x="275" y="24" text-anchor="start">Tras reduce-scatter</text>
+<text class="dg-tiny" x="360" y="46" text-anchor="middle">A</text>
+<text class="dg-tiny" x="416" y="46" text-anchor="middle">B</text>
+<text class="dg-tiny" x="472" y="46" text-anchor="middle">C</text>
+<text class="dg-small" x="275" y="79" text-anchor="start">GPU 0</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="335" y="56" width="50" height="36" rx="6"/>
+<text class="dg-small" x="360" y="79" text-anchor="middle">12</text>
+<rect class="dg-box" x="391" y="56" width="50" height="36" rx="6" stroke-dasharray="3 3"/>
+<text class="dg-small" x="416" y="79" text-anchor="middle">…</text>
+<rect class="dg-box" x="447" y="56" width="50" height="36" rx="6" stroke-dasharray="3 3"/>
+<text class="dg-small" x="472" y="79" text-anchor="middle">…</text>
+<text class="dg-small" x="275" y="127" text-anchor="start">GPU 1</text>
+<rect class="dg-box" x="335" y="104" width="50" height="36" rx="6" stroke-dasharray="3 3"/>
+<text class="dg-small" x="360" y="127" text-anchor="middle">…</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="391" y="104" width="50" height="36" rx="6"/>
+<text class="dg-small" x="416" y="127" text-anchor="middle">15</text>
+<rect class="dg-box" x="447" y="104" width="50" height="36" rx="6" stroke-dasharray="3 3"/>
+<text class="dg-small" x="472" y="127" text-anchor="middle">…</text>
+<text class="dg-small" x="275" y="175" text-anchor="start">GPU 2</text>
+<rect class="dg-box" x="335" y="152" width="50" height="36" rx="6" stroke-dasharray="3 3"/>
+<text class="dg-small" x="360" y="175" text-anchor="middle">…</text>
+<rect class="dg-box" x="391" y="152" width="50" height="36" rx="6" stroke-dasharray="3 3"/>
+<text class="dg-small" x="416" y="175" text-anchor="middle">…</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="447" y="152" width="50" height="36" rx="6"/>
+<text class="dg-small" x="472" y="175" text-anchor="middle">18</text>
+<path class="dg-edge" d="M503 122 H525" marker-end="url(#fjr26aa)"/>
+<text class="dg-label" x="530" y="24" text-anchor="start">Tras all-gather</text>
+<text class="dg-tiny" x="615" y="46" text-anchor="middle">A</text>
+<text class="dg-tiny" x="671" y="46" text-anchor="middle">B</text>
+<text class="dg-tiny" x="727" y="46" text-anchor="middle">C</text>
+<text class="dg-small" x="530" y="79" text-anchor="start">GPU 0</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="590" y="56" width="50" height="36" rx="6"/>
+<text class="dg-small" x="615" y="79" text-anchor="middle">12</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="646" y="56" width="50" height="36" rx="6"/>
+<text class="dg-small" x="671" y="79" text-anchor="middle">15</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="702" y="56" width="50" height="36" rx="6"/>
+<text class="dg-small" x="727" y="79" text-anchor="middle">18</text>
+<text class="dg-small" x="530" y="127" text-anchor="start">GPU 1</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="590" y="104" width="50" height="36" rx="6"/>
+<text class="dg-small" x="615" y="127" text-anchor="middle">12</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="646" y="104" width="50" height="36" rx="6"/>
+<text class="dg-small" x="671" y="127" text-anchor="middle">15</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="702" y="104" width="50" height="36" rx="6"/>
+<text class="dg-small" x="727" y="127" text-anchor="middle">18</text>
+<text class="dg-small" x="530" y="175" text-anchor="start">GPU 2</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="590" y="152" width="50" height="36" rx="6"/>
+<text class="dg-small" x="615" y="175" text-anchor="middle">12</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="646" y="152" width="50" height="36" rx="6"/>
+<text class="dg-small" x="671" y="175" text-anchor="middle">15</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="702" y="152" width="50" height="36" rx="6"/>
+<text class="dg-small" x="727" y="175" text-anchor="middle">18</text>
+<text class="dg-tiny" x="355" y="212" text-anchor="middle">2 vueltas: sumar</text>
+<text class="dg-tiny" x="610" y="212" text-anchor="middle">2 vueltas: repartir</text>
+<text class="dg-tiny" x="20" y="242" text-anchor="start">Punteado: fragmento que esa GPU ya pasó y no conserva sumado. Relleno: fragmento con la suma de las tres GPUs.</text>
+<text class="dg-tiny" x="20" y="260" text-anchor="start">Cada GPU manda 2 × (N − 1) ÷ N del vector: con N = 3, 4 fragmentos de 3; con muchas GPUs, casi el doble.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 26.7a.</b> El mismo all-reduce con números. El reduce-scatter deja a cada GPU con un fragmento ya sumado; el all-gather reparte esos fragmentos hasta que las tres tienen el total. La suma de A es 1 + 4 + 7 = 12.</figcaption>
+      </figure>
+
+      <p><b>Paso a paso.</b> Cada GPU parte su vector de gradientes en tantos fragmentos como GPUs hay (acá 3: A, B y C).</p>
+      <ol class="steps">
+        <li><span class="step-title">Reduce-scatter</span>En cada vuelta, cada GPU le pasa un fragmento a su vecina, que le suma el suyo y lo pasa a la siguiente. Después de N − 1 = 2 vueltas, cada fragmento recorrió las tres GPUs y una de ellas lo tiene completo: A = 1 + 4 + 7 = 12.</li>
+        <li><span class="step-title">All-gather</span>Ahora cada GPU pasa su fragmento terminado, sin sumar nada, durante otras 2 vueltas. Al final las tres tienen [12, 15, 18].</li>
+        <li><span class="step-title">Cuánto manda cada GPU</span>En cada vuelta manda un fragmento, que es 1 ÷ N del vector. Son 2 × (N − 1) vueltas, así que manda 2 × (N − 1) ÷ N del vector: con N = 3, 4 ÷ 3 ≈ 1.33 veces; con N = 64, 126 ÷ 64 ≈ 1.97 veces. Por eso "aproximadamente el doble", sin importar cuántas GPUs haya.</li>
+      </ol>
+
       <p>Hay más colectivas con el mismo patrón: el <b>all-gather</b> (cada GPU junta las piezas de todas, el que usa ZeRO-3) y el <b>reduce-scatter</b> (sumar y repartir el resultado por trozos). Todas mueven, por GPU, aproximadamente el doble de los datos que se comparten, sin importar cuántas GPUs haya.</p>
 
       <p>Y acá está el problema: ese tráfico ocurre <b>en cada paso</b>, y hasta que termina, las GPUs no pueden seguir. Si la red es lenta, las GPUs carísimas se quedan esperando y el <dfn data-term="mfu">MFU</dfn> —cuánto del cómputo pico se aprovecha— se desploma. Por eso un clúster de entrenamiento se arma con <dfn data-term="nvlink">NVLink</dfn> dentro del servidor (cientos de GB/s entre las 8 GPUs) e <dfn data-term="infiniband">InfiniBand</dfn> entre servidores, y por eso los frameworks se esfuerzan en <b>solapar</b> la comunicación con el cómputo: mandar los gradientes de las primeras capas mientras todavía se calculan las últimas. Un buen entrenamiento aprovecha entre un 35 y un 45&#8239;% del pico (M13); la red mal armada es lo primero que lo tira abajo.</p>
@@ -735,6 +866,15 @@
       <p>La defensa es el <dfn data-term="checkpoint-entrenamiento">checkpoint</dfn>: cada tanto, guardar todo el estado del entrenamiento —los 16 bytes por parámetro: pesos, gradientes y optimizador— en almacenamiento, para poder reanudar desde ahí. Cuando una GPU muere, se reemplaza el servidor y el job vuelve al último checkpoint; se pierde solo el trabajo hecho desde entonces.</p>
 
       <p>¿Cada cuánto guardar? Es un balance. Guardar seguido cuesta tiempo de escritura (un checkpoint de un modelo grande son terabytes). Guardar poco significa rehacer mucho trabajo cuando algo falla. El punto óptimo lo da la <b>fórmula de Young y Daly</b>: el intervalo ideal es aproximadamente <b>la raíz cuadrada de dos veces el MTBF por el costo de un checkpoint</b> (T ≈ √(2 · μ · C), con μ el tiempo medio entre fallas y C lo que tarda guardar). <span class="badge badge--doc">Documentado</span> Cuantas más fallas o más barato guardar, más seguido conviene.</p>
+
+      <p><b>Paso a paso, con los números de Llama 3.</b> El costo del checkpoint (C) es un supuesto para el ejemplo; el MTBF sale de las cifras de arriba.</p>
+      <ol class="steps">
+        <li><span class="step-title">El MTBF (μ)</span>54 días × 24 h = 1&#8239;296 h, divididas por 419 interrupciones = 3.09 h, unos 185 minutos entre fallas.</li>
+        <li><span class="step-title">El costo de guardar (C)</span>Supongamos que escribir un checkpoint frena el entrenamiento 5 minutos.</li>
+        <li><span class="step-title">La fórmula</span>T ≈ √(2 × 185 × 5) = √1&#8239;850 ≈ 43 minutos entre checkpoints.</li>
+        <li><span class="step-title">Por qué la raíz</span>Guardar cada T minutos pierde C ÷ T del tiempo escribiendo (5 ÷ 43 ≈ 11.6&#8239;%). Cada falla rehace, en promedio, medio intervalo, así que se pierde T ÷ (2μ) rehaciendo (43 ÷ 370 ≈ 11.6&#8239;%). En el óptimo las dos pérdidas son iguales, y despejar C ÷ T = T ÷ (2μ) da T² = 2μC.</li>
+        <li><span class="step-title">Qué cambia si C baja</span>Con C = 1 minuto, T ≈ √370 ≈ 19 minutos, y cada pérdida baja a 1 ÷ 19 ≈ 5.3&#8239;%. Por eso conviene que guardar sea barato: es lo que busca el checkpoint asíncrono de más abajo.</li>
+      </ol>
 
       <figure class="figure">
   <div class="figure-frame">
@@ -885,7 +1025,15 @@
   <figcaption><b>Figura 26.11.</b> LoRA congela el modelo y entrena solo dos matrices chicas por capa. Como son de rango bajo, los parámetros a ajustar caen diez mil veces; al terminar se suman a los pesos, así que servir no cuesta ni un milisegundo más.</figcaption>
       </figure>
 
-      <p><dfn data-term="qlora">QLoRA</dfn> va un paso más allá: además de congelar el modelo, lo <b>cuantiza a 4 bits</b> (M14) para que ocupe aún menos, y entrena los adaptadores LoRA encima. Con eso se puede <b>afinar un modelo de 65B en una sola GPU de 48 GB</b>, algo que antes pedía un servidor entero, sin perder calidad frente al fine-tuning de 16 bits. <span class="badge badge--doc">Documentado</span> El modelo que publicaron así, Guanaco, alcanzó el 99.3&#8239;% del rendimiento de ChatGPT en su prueba con 24 horas de ajuste en una sola GPU. <span class="badge badge--doc">Documentado</span></p>
+      <p><b>Paso a paso, con una sola matriz.</b> Para ver de dónde sale el ahorro, toma una matriz de una capa con d = 4&#8239;096 y un rango r = 8 (valores de ejemplo):</p>
+      <ol class="steps">
+        <li><span class="step-title">Afinar W entera</span>4&#8239;096 × 4&#8239;096 = 16&#8239;777&#8239;216 parámetros que entrenar, cada uno con sus 16 bytes de estado.</li>
+        <li><span class="step-title">Afinar con LoRA</span>A tiene 4&#8239;096 × 8 y B tiene 8 × 4&#8239;096: 2 × 32&#8239;768 = 65&#8239;536 parámetros. Es 256 veces menos, un 0.39&#8239;% de la matriz.</li>
+        <li><span class="step-title">Al usarlo</span>La salida es W × entrada + B × (A × entrada). Al terminar se calcula una vez W + B × A, que vuelve a ser una matriz de d × d: por eso servir no agrega latencia.</li>
+      </ol>
+      <p>Las 10&#8239;000 veces del artículo son más que estas 256 porque no se adaptan todas las matrices del modelo y el rango puede ser todavía más bajo; la idea es la misma.</p>
+
+      <p><dfn data-term="qlora">QLoRA</dfn> va un paso más allá: además de congelar el modelo, lo <b>cuantiza a 4 bits</b> (M14) para que ocupe aún menos, y entrena los adaptadores LoRA encima. Con eso se puede <b>afinar un modelo de 65B en una sola GPU de 48 GB</b>, algo que antes pedía un servidor entero, sin perder calidad frente al fine-tuning de 16 bits. <span class="badge badge--doc">Documentado</span> (La cuenta de por qué entra: 65 mil millones de parámetros × 0.5 bytes, que es lo que ocupa uno de 4 bits, = 32.5&#8239;GB; quedan unos 15&#8239;GB de la GPU de 48&#8239;GB para los adaptadores, su optimizador y las activaciones.) El modelo que publicaron así, Guanaco, alcanzó el 99.3&#8239;% del rendimiento de ChatGPT en su prueba con 24 horas de ajuste en una sola GPU. <span class="badge badge--doc">Documentado</span></p>
 
       <p>LoRA tiene un bonus para quien sirve modelos: como el adaptador es chiquito (unos pocos MB) y el modelo base es el mismo para todos, se pueden cargar <b>muchos adaptadores sobre una sola copia del modelo</b> y elegir el de cada request. Es el multi-LoRA que mencionaron el <a href="m15-motores-inferencia.html#paralelismo">M15</a> y el <a href="m19-router-flota.html">M19</a>: un cliente, un adaptador, sin pagar una flota por cada uno.</p>
 

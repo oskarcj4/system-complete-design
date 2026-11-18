@@ -1,0 +1,1469 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEC06. Un incidente de punta a punta</title>
+<meta name="description" content="auditd y osquery en el servidor de Tienda Norte, un incidente jugado con guion contra tu laboratorio, la contención con pause, la evidencia con su hash y su custodia, la línea de tiempo en UTC y el postmortem.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="sec06" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Un incidente de punta a punta</h1>
+        <p class="lead">Una alerta no es el final. Aquí se triá, se contiene sin borrar, se guarda la evidencia y se cuenta la historia en orden.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>SEC06</dd></div>
+          <div><dt>Plan</dt><dd>Blue Team y DevSecOps</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>2 h 5 min</dd></div>
+          <div><dt>Módulos</dt><dd>M60</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="sec06">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Preparar el servidor de la tienda con auditd y osquery, y llevar los dos a Wazuh.</li>
+<li>Jugar un incidente contra tu laboratorio con un guion que anota qué pasó y cuándo.</li>
+<li>Triar con las alertas y con osquery, y contener la API sin destruir la evidencia.</li>
+<li>Juntar la evidencia en orden de volatilidad, con su hash y su cadena de custodia.</li>
+<li>Armar la línea de tiempo en UTC con cinco fuentes, compararla con el guion y escribir el postmortem.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>Hasta aquí, cada guía de la serie terminaba en una alerta. Una alerta no es el final: alguien tiene que decidir qué tan grave es, cortar el daño sin borrar lo que pasó, juntar lo que sirve como prueba y contar la historia en orden. Es lo que <a href="../modules/m60-respuesta-forense.html">M60</a> explica con el marco de NIST, y lo que esta guía hace de punta a punta sobre Tienda Norte.</p>
+<p>El incidente lo juegas tú, con un script que solo apunta a tu laboratorio y que escribe un guion con cada paso y su hora. Al final, la línea de tiempo que armes con la evidencia se compara con ese guion: lo que falte en tu línea es lo que tus detecciones no vieron.</p>
+<figure class="figure" data-arch>
+<div class="figure-frame">
+<svg viewBox="0 0 770 410" role="img" aria-labelledby="fs06t fs06d">
+<title id="fs06t">La arquitectura de SEC06</title>
+<desc id="fs06d">En tu terminal, jugar.py provoca el incidente contra la tienda, dentro de la API y en el servidor, y evidencia.sh junta la evidencia. En el servidor corren la tienda, auditd y osquery. Wazuh lee los logs de la tienda, de auditd y de osquery. La evidencia se copia a una carpeta con su hash, y linea_de_tiempo.py la ordena en linea.md. Siete flechas numeradas.</desc>
+<defs><marker id="fs06a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="255" y="30" width="270" height="200" rx="10"/>
+<text class="dg-group" x="267" y="50" text-anchor="start">el servidor</text>
+<path class="dg-edge" d="M200 84 L278 84" marker-end="url(#fs06a)"/>
+<path class="dg-edge" d="M200 100 C232 130 250 176 278 176" marker-end="url(#fs06a)"/>
+<path class="dg-edge" d="M500 86 L578 116" marker-end="url(#fs06a)"/>
+<path class="dg-edge" d="M500 176 L578 140" marker-end="url(#fs06a)"/>
+<path class="dg-edge" d="M200 290 C236 300 250 334 278 334" marker-end="url(#fs06a)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M660 156 L660 262 L390 262 L390 308" marker-end="url(#fs06a)"/>
+<path class="dg-edge" d="M500 334 L578 334" marker-end="url(#fs06a)"/>
+<g data-part="jugar"><rect class="dg-layer" x="30" y="60" width="170" height="56" rx="8" style="--c: var(--l-client)"/><text class="dg-label" x="115" y="84" text-anchor="middle">jugar.py</text><text class="dg-tiny dg-mono" x="115" y="100" text-anchor="middle">el incidente y su guion</text></g>
+<g data-part="evidenciash"><rect class="dg-layer" x="30" y="262" width="170" height="56" rx="8" style="--c: var(--l-client)"/><text class="dg-label" x="115" y="286" text-anchor="middle">evidencia.sh</text><text class="dg-tiny dg-mono" x="115" y="302" text-anchor="middle">copias y hash</text></g>
+<g data-part="tienda"><rect class="dg-layer" x="280" y="62" width="220" height="52" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="390" y="84" text-anchor="middle">tienda</text><text class="dg-tiny dg-mono" x="390" y="100" text-anchor="middle">api, nginx y db</text></g>
+<g data-part="auditd"><rect class="dg-layer" x="280" y="150" width="100" height="52" rx="8" style="--c: var(--l-edge)"/><text class="dg-label" x="330" y="172" text-anchor="middle">auditd</text><text class="dg-tiny dg-mono" x="330" y="188" text-anchor="middle">audit.log</text></g>
+<g data-part="osquery"><rect class="dg-layer" x="400" y="150" width="100" height="52" rx="8" style="--c: var(--l-edge)"/><text class="dg-label" x="450" y="172" text-anchor="middle">osquery</text><text class="dg-tiny dg-mono" x="450" y="188" text-anchor="middle">results.log</text></g>
+<g data-part="wazuh"><rect class="dg-layer" x="580" y="100" width="160" height="56" rx="8" style="--c: var(--l-queue)"/><text class="dg-label" x="660" y="124" text-anchor="middle">Wazuh</text><text class="dg-tiny dg-mono" x="660" y="140" text-anchor="middle">alerts.json</text></g>
+<g data-part="evidencia"><rect class="dg-layer" x="280" y="310" width="220" height="50" rx="8" style="--c: var(--l-db)"/><text class="dg-label" x="390" y="331" text-anchor="middle">evidencia/</text><text class="dg-tiny dg-mono" x="390" y="347" text-anchor="middle">SHA256SUMS y custodia</text></g>
+<g data-part="linea"><rect class="dg-layer" x="580" y="310" width="160" height="50" rx="8" style="--c: var(--l-db)"/><text class="dg-label" x="660" y="331" text-anchor="middle">linea.md</text><text class="dg-tiny dg-mono" x="660" y="347" text-anchor="middle">UTC, cinco fuentes</text></g>
+<g class="pl-pin"><circle cx="239" cy="72" r="10"/><text x="239" y="76" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="226" cy="150" r="10"/><text x="226" y="154" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="540" cy="88" r="10"/><text x="540" y="92" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="540" cy="172" r="10"/><text x="540" y="176" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="236" cy="324" r="10"/><text x="236" y="328" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="676" cy="236" r="10"/><text x="676" y="240" text-anchor="middle">6</text></g>
+<g class="pl-pin"><circle cx="539" cy="350" r="10"/><text x="539" y="354" text-anchor="middle">7</text></g>
+</svg>
+</div>
+<figcaption><b>Figura SEC06.1.</b> El incidente entra por arriba (1 y 2), las fuentes llegan a Wazuh (3 y 4), y la respuesta sale por abajo: la evidencia (5 y 6) y la línea de tiempo (7).</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>#</th><th>De → a</th><th>Protocolo y formato</th><th>Ejemplo</th><th>Con qué permiso</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>jugar.py → tienda</td><td>HTTP a 127.0.0.1:8088, y <code>docker compose exec</code></td><td>Fuerza bruta y <code>env</code> dentro de la API</td><td>El de <code>provocar.py</code>, y tu usuario de Docker</td></tr>
+<tr><td>2</td><td>jugar.py → servidor</td><td><code>sudo useradd</code></td><td>El usuario <code>soporte</code></td><td><code>sudo</code>: te pide la clave</td></tr>
+<tr><td>3</td><td>Tienda → Wazuh</td><td>JSON por volumen <code>:ro</code></td><td>Los <code>login_fallido</code></td><td>Los montajes de SEC00</td></tr>
+<tr><td>4</td><td>auditd y osquery → Wazuh</td><td>Archivos del host montados <code>:ro</code></td><td><code>key="identidad"</code>, <code>"action":"added"</code></td><td>Lectura de <code>/var/log/audit</code> y <code>/var/log/osquery</code></td></tr>
+<tr><td>5</td><td>evidencia.sh → evidencia/</td><td><code>docker top</code>, <code>diff</code>, <code>export</code> y copias</td><td><code>03-diff.txt</code></td><td>Docker y <code>sudo</code> para los logs del host</td></tr>
+<tr><td>6</td><td>Wazuh → evidencia/</td><td><code>docker compose exec cat</code></td><td><code>07-alerts.json</code></td><td>Tu usuario de Docker</td></tr>
+<tr><td>7</td><td>evidencia/ → linea.md</td><td>Un lector por fuente, a UTC</td><td><code>| 15:04:12 | auditd | identidad: /usr/sbin/useradd |</code></td><td>Solo lectura</td></tr>
+</tbody>
+</table>
+</div>
+<p><b>Las fronteras.</b> Todo pasa en tu máquina. El incidente crea un usuario de verdad en tu servidor y lo borra en el paso 9: no corras esta guía en una máquina que comparte alguien más. La evidencia contiene la clave de la base de la tienda (la leyó el "atacante"), así que la carpeta no se sube al repositorio.</p>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 308" role="img" aria-labelledby="fs06vt fs06vd">
+<title id="fs06vt">Del primer intento a la línea de tiempo</title>
+<desc id="fs06vd">jugar.py ataca la tienda y el servidor. Wazuh alerta. La persona de guardia pausa la API, junta la evidencia y arma la línea de tiempo.</desc>
+<defs><marker id="fs06v-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs06v-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs06v-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs06v-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">jugar.py</text>
+<path class="dg-frame" d="M70.0 40 V298"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Tienda</text>
+<path class="dg-frame" d="M280.0 40 V298"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">Wazuh</text>
+<path class="dg-frame" d="M490.0 40 V298"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Guardia</text>
+<path class="dg-frame" d="M700.0 40 V298"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#fs06v-a)"/>
+<rect x="56.80000000000001" y="55" width="236.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">fuerza bruta, pedidos ajenos, exec</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M283.0 106 L485.0 106" marker-end="url(#fs06v-q)"/>
+<rect x="365.8" y="89" width="38.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">logs</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M493.0 140 L695.0 140" marker-end="url(#fs06v-q)"/>
+<rect x="516.4" y="123" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="134" text-anchor="middle">100102, 100104, 100140</text>
+<path class="dg-edge" d="M697.0 174 L285.0 174" marker-end="url(#fs06v-a)"/>
+<rect x="404.8" y="157" width="170.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="168" text-anchor="middle">docker compose pause api</text>
+<rect x="523.0" y="194" width="167" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="533.0" y="210">evidencia.sh y hashes</text>
+<rect x="544.0" y="228" width="146" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="554.0" y="244">linea_de_tiempo.py</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC06.2.</b> La versión corta. La completa está en <a href="#viaje">El viaje de un dato</a>.</figcaption>
+</figure>
+<h2 id="antes">Antes de empezar</h2>
+<h3 id="ae-repaso">Lo que viene de SEC00 y SEC05</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 211" role="img" aria-labelledby="fs06rt fs06rd">
+<title id="fs06rt">Lo que viene de las guías anteriores</title>
+<desc id="fs06rd">La tienda y sus reglas de SEC00, y la forma de sumar fuentes y alertas de SEC05.</desc>
+<defs><marker id="fs06ra" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="16" width="232.667" height="179" rx="8"/>
+<text class="dg-group" x="32.0" y="40" text-anchor="start">La tienda y sus reglas</text>
+<text class="dg-tiny" x="32.0" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="32.0" y="80" text-anchor="start">SEC00: compose,</text><text class="dg-tiny" x="32.0" y="95" text-anchor="start">&lt;code&gt;provocar.py&lt;/code&gt; y las</text><text class="dg-tiny" x="32.0" y="110" text-anchor="start">reglas 100102 a 100112.</text>
+<text class="dg-tiny" x="32.0" y="137" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="32.0" y="155" text-anchor="start">El incidente empieza con las mismas</text><text class="dg-tiny" x="32.0" y="170" text-anchor="start">técnicas.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="16" width="232.667" height="179" rx="8"/>
+<text class="dg-group" x="280.66666666666663" y="40" text-anchor="start">Sumar una fuente</text>
+<text class="dg-tiny" x="280.66666666666663" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="280.66666666666663" y="80" text-anchor="start">SEC05: un montaje &lt;code&gt;:ro&lt;/code&gt;,</text><text class="dg-tiny" x="280.66666666666663" y="95" text-anchor="start">un &lt;code&gt;localfile&lt;/code&gt; y una</text><text class="dg-tiny" x="280.66666666666663" y="110" text-anchor="start">regla.</text>
+<text class="dg-tiny" x="280.66666666666663" y="137" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="280.66666666666663" y="155" text-anchor="start">auditd y osquery entran igual.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="16" width="232.667" height="179" rx="8"/>
+<text class="dg-group" x="529.3333333333333" y="40" text-anchor="start">El pipeline de reglas</text>
+<text class="dg-tiny" x="529.3333333333333" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="529.3333333333333" y="80" text-anchor="start">SEC05: Sigma, casos y emulación.</text>
+<text class="dg-tiny" x="529.3333333333333" y="107" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="529.3333333333333" y="125" text-anchor="start">El postmortem termina en una regla</text><text class="dg-tiny" x="529.3333333333333" y="140" text-anchor="start">nueva por ese camino.</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC06.3.</b> Tres cosas que vuelven.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Dónde se vio</th></tr></thead>
+<tbody>
+<tr><td><code>compose.yaml</code> de la tienda y sus volúmenes</td><td><a href="sec00-laboratorio.html#paso-base">SEC00, paso 1</a></td></tr>
+<tr><td>El override del manager y <code>wazuh_manager.conf</code></td><td><a href="sec00-laboratorio.html#paso-leer">SEC00, paso 6</a></td></tr>
+<tr><td><code>provocar.py</code></td><td><a href="sec00-laboratorio.html#paso-provocar">SEC00, paso 8</a></td></tr>
+<tr><td>Sumar Falco a Wazuh, con montaje y regla</td><td><a href="sec05-deteccion.html#paso-falco-siem">SEC05, paso 6</a></td></tr>
+<tr><td>Reglas Sigma con casos</td><td><a href="sec05-deteccion.html#paso-sigma">SEC05, paso 2</a></td></tr>
+</tbody>
+</table>
+</div>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 168" role="img" aria-labelledby="fs06pt fs06pd">
+<title id="fs06pt">Lámina SEC06.A: las piezas de la respuesta</title>
+<desc id="fs06pd">Seis piezas: auditd, osquery, la contención con pause, la evidencia en orden de volatilidad, la cadena de custodia y la línea de tiempo.</desc>
+<defs><marker id="fs06pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="136.33333333333331" y="42" text-anchor="middle">auditd</text>
+<text class="dg-tiny dg-mono" x="136.33333333333331" y="60" text-anchor="middle">el kernel anota</text>
+<g class="pl-pin"><circle cx="36" cy="32" r="10"/><text x="36" y="36" text-anchor="middle">1</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="384.99999999999994" y="42" text-anchor="middle">osquery</text>
+<text class="dg-tiny dg-mono" x="384.99999999999994" y="60" text-anchor="middle">el servidor como tablas</text>
+<g class="pl-pin"><circle cx="284.667" cy="32" r="10"/><text x="284.667" y="36" text-anchor="middle">2</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="633.6666666666666" y="42" text-anchor="middle">Contención</text>
+<text class="dg-tiny dg-mono" x="633.6666666666666" y="60" text-anchor="middle">pause, no rm</text>
+<g class="pl-pin"><circle cx="533.333" cy="32" r="10"/><text x="533.333" y="36" text-anchor="middle">3</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="136.33333333333331" y="118" text-anchor="middle">Volatilidad</text>
+<text class="dg-tiny dg-mono" x="136.33333333333331" y="136" text-anchor="middle">de procesos a logs</text>
+<g class="pl-pin"><circle cx="36" cy="108" r="10"/><text x="36" y="112" text-anchor="middle">4</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="384.99999999999994" y="118" text-anchor="middle">Custodia</text>
+<text class="dg-tiny dg-mono" x="384.99999999999994" y="136" text-anchor="middle">hash y quién</text>
+<g class="pl-pin"><circle cx="284.667" cy="108" r="10"/><text x="284.667" y="112" text-anchor="middle">5</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="633.6666666666666" y="118" text-anchor="middle">Línea de tiempo</text>
+<text class="dg-tiny dg-mono" x="633.6666666666666" y="136" text-anchor="middle">UTC, varias fuentes</text>
+<g class="pl-pin"><circle cx="533.333" cy="108" r="10"/><text x="533.333" y="112" text-anchor="middle">6</text></g>
+</svg>
+</div>
+<figcaption><b>Lámina SEC06.A.</b> Las piezas, en el orden en que aparecen.</figcaption>
+</figure>
+<ol class="plate-key">
+  <li><b>auditd</b><span>El demonio de auditoría de Linux: el kernel anota las llamadas al sistema y los archivos que le pidas mirar. <a href="#paso-auditd">Paso 1</a></span></li>
+  <li><b>osquery</b><span>Muestra el servidor como tablas de SQL (usuarios, puertos, contenedores) y repite consultas en un horario. <a href="#paso-osquery">Paso 2</a></span></li>
+  <li><b>Contención</b><span>Cortar el daño sin destruir la evidencia; aquí, pausar el contenedor. <a href="#paso-contener">Paso 6</a></span></li>
+  <li><b>Orden de volatilidad</b><span>Se copia primero lo que desaparece antes: procesos, después disco, después logs. <a href="#ae-respuesta">La respuesta, en orden</a></span></li>
+  <li><b>Cadena de custodia</b><span>Quién copió qué, cuándo y con qué hash, para que la evidencia sirva después. <a href="#paso-evidencia">Paso 7</a></span></li>
+  <li><b>Línea de tiempo</b><span>Los hechos de varias fuentes, pasados a UTC y ordenados. <a href="#paso-linea">Paso 8</a></span></li>
+</ol>
+<h3 id="antes-instalar">Qué tienes que tener</h3>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Para qué</th><th>Cómo compruebas que está</th></tr></thead>
+<tbody>
+<tr><td>El laboratorio de SEC00 en una máquina Linux con systemd (la VM de SEC04 sirve)</td><td>auditd y osquery corren en el host</td><td><code>systemctl is-system-running</code> y <code>docker compose ps</code> en la tienda</td></tr>
+<tr><td>Docker CLI en <code>/usr/bin/docker</code></td><td>La regla de auditd que mira su uso</td><td><code>command -v docker</code></td></tr>
+<tr><td><code>sudo</code> en esa máquina, y nadie más usándola</td><td>Instalar, auditar y el usuario del incidente</td><td><code>sudo -v</code></td></tr>
+<tr><td>El <code>.venv</code> de SEC05, o Python 3.13</td><td>Los scripts del incidente y de la línea de tiempo</td><td><code>python3 --version</code></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="ae-respuesta">La respuesta, en orden</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un accidente de tránsito. Primero se corta la calle (contener), después la policía marca y fotografía todo antes de mover los autos (evidencia), y recién entonces se despeja (erradicar). El informe ordena lo que contaron los testigos, las cámaras y las marcas en el piso, cada uno con su reloj.</p>
+</aside>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="fs06at fs06ad">
+<title id="fs06at">Las fases de la respuesta en esta guía</title>
+<desc id="fs06ad">Detectar con las alertas, triar con severidad y alcance, contener pausando la API, juntar la evidencia con hash, erradicar y recuperar, y aprender con la línea de tiempo y el postmortem.</desc>
+<defs><marker id="fs06aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="96.25" y="46" text-anchor="middle">Detectar</text>
+<text class="dg-tiny" x="96.25" y="66" text-anchor="middle">las alertas de Wazuh</text>
+<path class="dg-edge" d="M174.5 55 H208.5" marker-end="url(#fs06aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="212.5" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="288.75" y="46" text-anchor="middle">Triar</text>
+<text class="dg-tiny" x="288.75" y="66" text-anchor="middle">severidad y alcance</text>
+<path class="dg-edge" d="M367 55 H401" marker-end="url(#fs06aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="405" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="481.25" y="46" text-anchor="middle">Contener</text>
+<text class="dg-tiny" x="481.25" y="66" text-anchor="middle">pause</text>
+<path class="dg-edge" d="M559.5 55 H593.5" marker-end="url(#fs06aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="597.5" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="673.75" y="46" text-anchor="middle">Evidencia</text>
+<text class="dg-tiny" x="673.75" y="66" text-anchor="middle">volatilidad y hash</text>
+<path class="dg-edge" d="M673.75 92 V120 H96.25 V128" marker-end="url(#fs06aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="130" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="96.25" y="156" text-anchor="middle">Erradicar</text>
+<text class="dg-tiny" x="96.25" y="176" text-anchor="middle">usuario y clave</text>
+<path class="dg-edge" d="M174.5 165 H208.5" marker-end="url(#fs06aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="212.5" y="130" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="288.75" y="156" text-anchor="middle">Aprender</text>
+<text class="dg-tiny" x="288.75" y="176" text-anchor="middle">línea y postmortem</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC06.4.</b> Las fases de <a href="../modules/m60-respuesta-forense.html#marco">60.1</a>, con lo que hace cada una aquí.</figcaption>
+</figure>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 364" role="img" aria-labelledby="fs06f1t fs06f1d">
+<title id="fs06f1t">Ficha: la evidencia de un contenedor</title>
+<desc id="fs06f1d">Ficha de la evidencia de un contenedor. Qué entra: Un contenedor pausado y los logs del host y de Wazuh. Qué hace: Copia de lo más volátil a lo menos, calcula el hash de cada archivo y deja la carpeta de solo lectura. Qué sale: Una carpeta con diez archivos, &lt;code&gt;SHA256SUMS&lt;/code&gt; y una nota de custodia. Ejemplo: 01-procesos.txt   docker top 03-diff.txt       docker diff 04-sistema-de-archivos.tar 08-audit.log      sudo cat Qué falla sin él: Un contenedor recreado "para limpiar", y con él el archivo que dejó el atacante. Dónde vive: evidencia.sh. Paso 7.</desc>
+<defs><marker id="fs06f1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="108" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Un contenedor pausado y los</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">logs del host y de Wazuh.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="108" rx="8"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Copia de lo más volátil a lo</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">menos, calcula el hash de cada</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">archivo y deja la carpeta de</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">solo lectura.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="108" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Una carpeta con diez archivos,</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">&lt;code&gt;SHA256SUMS&lt;/code&gt; y una</text>
+<text class="dg-tiny" x="550" y="88" text-anchor="start">nota de custodia.</text>
+<path class="dg-edge" d="M234 70 H275" marker-end="url(#fs06f1a)"/>
+<path class="dg-edge" d="M493 70 H534" marker-end="url(#fs06f1a)"/>
+<rect class="dg-box" x="20" y="138" width="730" height="110" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="158" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="178" style="white-space:pre">01-procesos.txt   docker top</text>
+<text class="dg-tiny dg-mono" x="32" y="194" style="white-space:pre">03-diff.txt       docker diff</text>
+<text class="dg-tiny dg-mono" x="32" y="210" style="white-space:pre">04-sistema-de-archivos.tar</text>
+<text class="dg-tiny dg-mono" x="32" y="226" style="white-space:pre">08-audit.log      sudo cat</text>
+<rect class="dg-warnbox" x="20" y="262" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="282" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="302" text-anchor="start">Un contenedor recreado "para limpiar", y con él el</text>
+<text class="dg-tiny" x="32" y="318" text-anchor="start">archivo que dejó el atacante.</text>
+<rect class="dg-box" x="393" y="262" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="282" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="302" text-anchor="start">evidencia.sh. Paso 7.</text>
+</svg>
+</div>
+<figcaption><b>Ficha SEC06.F1.</b> La evidencia.</figcaption>
+</figure>
+<h2 id="endpoints">Los endpoints</h2>
+<p>Los de <a href="sec00-laboratorio.html#endpoints">SEC00</a>. El incidente usa <code>POST /api/login</code> y <code>GET /api/pedidos/{id}</code> a través de <code>provocar.py</code>.</p>
+<h2 id="dependencias">Dependencias</h2>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Pieza</th><th>Versión</th><th>Cómo se instala</th><th>Para qué</th></tr></thead>
+<tbody>
+<tr><td>auditd</td><td>La del repositorio de Ubuntu 24.04</td><td><code>apt</code></td><td>Auditar archivos y comandos en el host</td></tr>
+<tr><td>osquery</td><td>5.24.1</td><td>El <code>.deb</code> de su release, con su SHA-256</td><td>Usuarios, puertos y contenedores como tablas</td></tr>
+<tr><td>Python</td><td>3.13, sin paquetes nuevos</td><td>El de SEC05</td><td><code>jugar.py</code> y <code>linea_de_tiempo.py</code>, solo con la biblioteca estándar</td></tr>
+</tbody>
+</table>
+</div>
+<p>osquery 5.24.1 es la última versión publicada al 18 de noviembre de 2026; el SHA-256 del paquete es el que muestra GitHub para ese archivo de la release <span class="badge badge--doc">Documentado</span>. De auditd anota la versión con <code>sudo auditctl -v</code>.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<pre data-lang="text"><code>tienda-norte/
+├── wazuh/tienda_rules.xml      # suma auditd y osquery (paso 3)
+├── servidor/
+│   ├── tienda.rules            # va a /etc/audit/rules.d/ (paso 1)
+│   └── osquery.conf            # va a /etc/osquery/ (paso 2)
+├── incidente/
+│   ├── jugar.py                # el incidente y su guion (paso 4)
+│   ├── guion.jsonl             # lo escribe jugar.py; la verdad para comparar
+│   ├── evidencia.sh            # paso 7
+│   ├── linea_de_tiempo.py      # paso 8
+│   └── postmortem.md           # paso 9
+└── evidencia/                  # en .gitignore: tiene la clave de la base</code></pre>
+<p>Agrega <code>evidencia/</code> e <code>incidente/guion.jsonl</code> al <code>.gitignore</code> de SEC00 antes de empezar.</p>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<aside class="hito" id="hito-1" data-toc="skip" aria-labelledby="hito-1-t">
+  <p class="hito-num">Hito 1 de 3, unos 40 min</p>
+  <p class="hito-title" id="hito-1-t">Preparar el servidor</p>
+  <p>auditd y osquery en el host, y los dos leídos por Wazuh con reglas propias.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-auditd">auditd</a></li>
+    <li><a href="#paso-osquery">osquery</a></li>
+    <li><a href="#paso-wazuh-host">El host en Wazuh</a></li>
+  </ol>
+</aside>
+<h3 id="paso-auditd">Paso 1. auditd</h3>
+<div class="step-map" data-where="auditd">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Tu servidor Linux.</dd></div>
+    <div><dt>Sale</dt><dd>auditd corriendo con cuatro grupos de reglas.</dd></div>
+    <div><dt>Cambia</dt><dd><code>servidor/tienda.rules</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m60-respuesta-forense.html#linux">60.6</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<p>Los logs de la tienda cuentan lo que pasó en la aplicación. Lo que pasa en el servidor (un usuario nuevo, un <code>docker exec</code>) lo cuenta el kernel, si se lo pides.</p>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>sudo apt-get install -y auditd
+sudo auditctl -v</code></pre>
+  <p><code>auditctl version …</code>. Anota la versión.</p>
+</aside>
+<div class="file-card" data-where="auditd">
+  <h4 class="file-card-path" id="archivo-servidor-tienda-rules">servidor/tienda.rules<span class="file-card-size">7 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Le dice a auditd qué mirar en el servidor de la tienda.</dd></div>
+    <div><dt>Quién lo usa</dt><dd><code>augenrules</code>, al cargar las reglas.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Eventos en <code>/var/log/audit/audit.log</code>, cada uno con su clave.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Los archivos de identidad: cualquier escritura o cambio de atributos.</li>
+    <li>El binario de Docker: cada vez que alguien lo corre.</li>
+    <li>La configuración de la propia auditoría.</li>
+    <li>Cada comando que corre como root alguien que entró con su usuario.</li>
+  </ol>
+</div>
+<pre data-lang="bash"><code>## Tienda Norte (SEC06): qué se audita en el servidor.
+# (1)
+-w /etc/passwd -p wa -k identidad
+-w /etc/shadow -p wa -k identidad
+-w /etc/sudoers -p wa -k identidad
+# (2)
+-w /usr/bin/docker -p x -k docker_exec
+# (3)
+-w /etc/audit/ -p wa -k auditoria
+# (4)
+-a always,exit -F arch=b64 -S execve -F euid=0 -F auid&gt;=1000 -F auid!=unset -k comando_root</code></pre>
+<ol class="code-key">
+  <li><code>-w</code> pone una vigilancia sobre una ruta; <code>-p wa</code>, en escritura y en cambio de atributos. Son las mismas que recomienda el benchmark de CIS para Linux, con otra clave. <code>useradd</code> escribe <code>/etc/passwd</code> y <code>/etc/shadow</code>.</li>
+  <li><code>-p x</code>: ejecución. Cada <code>docker compose exec</code> pasa por este binario, y el evento dice quién lo corrió.</li>
+  <li>Quien entra a borrar huellas empieza por la auditoría. Esta vigilancia hace que ese cambio quede anotado.</li>
+  <li>Una regla de llamada al sistema: cada <code>execve</code> con usuario efectivo 0 (root) de una sesión que empezó con un usuario real (<code>auid</code> de 1000 para arriba). Es lo que deja <code>sudo</code>.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver servidor/tienda.rules completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="bash" data-file="servidor/tienda.rules"><code>## Tienda Norte (SEC06): qué se audita en el servidor.
+-w /etc/passwd -p wa -k identidad
+-w /etc/shadow -p wa -k identidad
+-w /etc/sudoers -p wa -k identidad
+-w /usr/bin/docker -p x -k docker_exec
+-w /etc/audit/ -p wa -k auditoria
+-a always,exit -F arch=b64 -S execve -F euid=0 -F auid&gt;=1000 -F auid!=unset -k comando_root</code></pre>
+  </div>
+</details>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>sudo cp servidor/tienda.rules /etc/audit/rules.d/tienda.rules
+sudo augenrules --load
+sudo auditctl -l
+sudo touch /etc/passwd &amp;&amp; sudo ausearch -k identidad -i | tail -n 4</code></pre>
+  <p><code>auditctl -l</code> lista las seis reglas. El <code>touch</code> cambia atributos de <code>/etc/passwd</code>, y <code>ausearch</code> muestra un evento con <code>key=identidad</code>, <code>exe=/usr/bin/touch</code> y tu usuario como <code>auid</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Error sending add rule data request (No such file or directory)</code>: La ruta de una vigilancia no existe; casi siempre es <code>/usr/bin/docker</code>. Corrige la ruta con lo que dice <code>command -v docker</code>.</li>
+    <li><code>ausearch: &lt;no matches&gt;</code>: Las reglas no se cargaron. <code>sudo systemctl status auditd</code>, y vuelve a correr <code>augenrules --load</code>.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Pocas reglas, cada una con una clave que dice qué busca.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Auditar todos los <code>execve</code> del servidor: llena el disco y el SIEM, y nadie mira.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Con <code>-e 2</code> al final, las reglas no se pueden cambiar sin reiniciar. Es lo de producción; aquí te dejaría sin poder probar.</dd></div>
+</dl>
+<h3 id="paso-osquery">Paso 2. osquery</h3>
+<div class="step-map" data-where="osquery">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>El servidor del paso 1.</dd></div>
+    <div><dt>Sale</dt><dd>osqueryd anotando usuarios, puertos y contenedores que cambian.</dd></div>
+    <div><dt>Cambia</dt><dd><code>servidor/osquery.conf</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m60-respuesta-forense.html#linux">60.6</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<p>auditd dice qué pasó; osquery dice cómo está el servidor ahora y qué cambió desde la última vez que miró.</p>
+<pre data-lang="bash"><code>V=5.24.1
+SHA=c6a37aec1156712cce0fafeb01a3697a2b73a1863a2b39fc3473b07600aea68d
+curl -fsSLo /tmp/osquery.deb "https://github.com/osquery/osquery/releases/download/$V/osquery_$V-1.linux_amd64.deb"
+echo "$SHA  /tmp/osquery.deb" | sha256sum -c -
+sudo apt-get install -y /tmp/osquery.deb</code></pre>
+<div class="file-card" data-where="osquery">
+  <h4 class="file-card-path" id="archivo-servidor-osquery-conf">servidor/osquery.conf<span class="file-card-size">19 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Programa tres consultas cada minuto.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>osqueryd.</dd></div>
+    <div><dt>Qué entra</dt><dd>Las tablas del sistema y el socket de Docker.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una línea JSON por fila que aparece o desaparece.</dd></div>
+  </dl>
+</div>
+<pre data-lang="json" data-file="servidor/osquery.conf"><code>{
+  "options": {
+    "schedule_splay_percent": "0"
+  },
+  "schedule": {
+    "usuarios": {
+      "query": "SELECT uid, username, shell FROM users;",
+      "interval": 60
+    },
+    "puertos": {
+      "query": "SELECT p.name, l.port, l.address FROM listening_ports l JOIN processes p USING (pid) WHERE l.address NOT IN ('127.0.0.1', '::1');",
+      "interval": 60
+    },
+    "contenedores": {
+      "query": "SELECT name, image, state FROM docker_containers;",
+      "interval": 60
+    }
+  }
+}</code></pre>
+<p>Cada consulta corre cada 60 segundos, y osquery escribe solo la diferencia con la vuelta anterior: <code>"action":"added"</code> o <code>"removed"</code>. <code>schedule_splay_percent: 0</code> hace que corran en el minuto exacto, sin dispersarlas. La de puertos deja fuera los que escuchan solo en la máquina.</p>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>sudo cp servidor/osquery.conf /etc/osquery/osquery.conf
+sudo systemctl enable --now osqueryd
+sudo osqueryi "SELECT username FROM users WHERE uid &gt;= 1000;"
+# espera dos minutos
+sudo tail -n 3 /var/log/osquery/osqueryd.results.log</code></pre>
+  <p><code>osqueryi</code> responde con una tabla con tu usuario. En el log aparecen las primeras líneas: la primera vuelta de cada consulta marca todas sus filas como <code>added</code>; desde la segunda, solo lo que cambia.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>/tmp/osquery.deb: FAILED</code>: El archivo no es el de la release. No lo instales.</li>
+    <li><code>docker_containers vacía y Cannot connect to the Docker socket en el log de osqueryd</code>: osqueryd no llega a <code>/var/run/docker.sock</code>. Corre como root; revisa que el socket esté en esa ruta.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Tres consultas que miden lo que un atacante cambia para quedarse.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Encender los packs completos de osquery: decenas de consultas, y ruido para un servidor de laboratorio.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>La primera vuelta reporta todo como nuevo. La regla del paso 3 lo va a marcar, y por eso se instala antes del incidente.</dd></div>
+</dl>
+<h3 id="paso-wazuh-host">Paso 3. El host en Wazuh</h3>
+<div class="step-map" data-where="auditd osquery wazuh">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>auditd y osquery escribiendo.</dd></div>
+    <div><dt>Sale</dt><dd>Cinco reglas nuevas en Wazuh.</dd></div>
+    <div><dt>Cambia</dt><dd><code>wazuh/tienda_rules.xml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m60-respuesta-forense.html#preparar">60.2</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<p>Igual que Falco en SEC05: un montaje de solo lectura, un <code>localfile</code> y las reglas. En el override del manager, dos líneas más en sus <code>volumes</code>:</p>
+<pre data-lang="yaml"><code>      - /var/log/audit:/var/log/audit:ro
+      - /var/log/osquery:/var/log/osquery:ro</code></pre>
+<p>En <code>wazuh_manager.conf</code>, con <code>log_format audit</code> el logcollector junta las líneas de un mismo evento de auditd (comparten el número de serie) en uno solo <span class="badge badge--doc">Documentado</span>:</p>
+<pre data-lang="xml"><code>&lt;localfile&gt;
+  &lt;log_format&gt;audit&lt;/log_format&gt;
+  &lt;location&gt;/var/log/audit/audit.log&lt;/location&gt;
+&lt;/localfile&gt;
+&lt;localfile&gt;
+  &lt;log_format&gt;json&lt;/log_format&gt;
+  &lt;location&gt;/var/log/osquery/osqueryd.results.log&lt;/location&gt;
+&lt;/localfile&gt;</code></pre>
+<p>Y al final de <code>tienda_rules.xml</code>. La 80700 es la regla madre de auditd en el ruleset de Wazuh <span class="badge badge--doc">Documentado</span>; las dos primeras cuelgan de ella para no competir con las de fábrica:</p>
+<pre data-lang="xml"><code>&lt;group name="tienda,host,"&gt;
+  &lt;rule id="100140" level="10"&gt;
+    &lt;if_sid&gt;80700&lt;/if_sid&gt;
+    &lt;field name="audit.key"&gt;^identidad$&lt;/field&gt;
+    &lt;description&gt;auditd: cambio en los archivos de identidad ($(audit.exe))&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1136.001&lt;/id&gt;&lt;/mitre&gt;
+  &lt;/rule&gt;
+  &lt;rule id="100141" level="5"&gt;
+    &lt;if_sid&gt;80700&lt;/if_sid&gt;
+    &lt;field name="audit.key"&gt;^docker_exec$&lt;/field&gt;
+    &lt;description&gt;auditd: alguien usó docker (auid $(audit.auid))&lt;/description&gt;
+  &lt;/rule&gt;
+  &lt;rule id="100143" level="0"&gt;
+    &lt;decoded_as&gt;json&lt;/decoded_as&gt;
+    &lt;field name="name"&gt;^usuarios$|^puertos$|^contenedores$&lt;/field&gt;
+    &lt;match&gt;"hostIdentifier"&lt;/match&gt;
+    &lt;description&gt;osquery: resultado programado&lt;/description&gt;
+  &lt;/rule&gt;
+  &lt;rule id="100144" level="10"&gt;
+    &lt;if_sid&gt;100143&lt;/if_sid&gt;
+    &lt;field name="name"&gt;^usuarios$&lt;/field&gt;
+    &lt;match&gt;"action":"added"&lt;/match&gt;
+    &lt;description&gt;osquery: usuario nuevo en el servidor&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1136.001&lt;/id&gt;&lt;/mitre&gt;
+  &lt;/rule&gt;
+  &lt;rule id="100145" level="8"&gt;
+    &lt;if_sid&gt;100143&lt;/if_sid&gt;
+    &lt;field name="name"&gt;^puertos$&lt;/field&gt;
+    &lt;match&gt;"action":"added"&lt;/match&gt;
+    &lt;description&gt;osquery: un proceso empezó a escuchar en un puerto&lt;/description&gt;
+  &lt;/rule&gt;
+&lt;/group&gt;</code></pre>
+<p>En osquery, <code>action</code> se busca con <code>&lt;match&gt;</code> sobre la línea entera, porque Wazuh trata ese nombre de campo como uno de sus campos fijos y <code>&lt;field name="action"&gt;</code> no lo encuentra.</p>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>cd ../wazuh-docker/single-node &amp;&amp; docker compose up -d
+sudo grep -m1 'key="identidad"' /var/log/audit/audit.log
+docker compose exec wazuh.manager /var/ossec/bin/wazuh-logtest</code></pre>
+  <p>Pega en <code>wazuh-logtest</code> la línea que imprimió <code>grep</code> (la del <code>touch</code> del paso 1). La fase 2 dice <code>decoder: 'auditd'</code> y la fase 3, <code>id: '100140'</code>. Si la fase 3 muestra otra regla de la familia 807xx, esa regla de fábrica coincidió antes; anota cuál.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Error opening /var/log/audit/audit.log en ossec.log</code>: El montaje no está, o la carpeta no es legible. Revisa el override y que el manager se haya recreado con <code>docker compose up -d</code>.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>El host entra al mismo SIEM que la aplicación, con reglas propias y pocas.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Instalar un agente de Wazuh en el host, que es lo de producción, en un laboratorio donde el manager ya está en la misma máquina.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>La primera vuelta de osquery marca a todos los usuarios como nuevos: verás una ráfaga de 100144 al conectar la fuente. Es esperado, y es la razón de conectarla antes de un incidente.</dd></div>
+</dl>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>auditd anota identidad, Docker, la auditoría y los comandos de root.</li>
+    <li>osquery anota usuarios, puertos y contenedores que cambian.</li>
+    <li>Wazuh lee los dos, con cinco reglas propias.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>docker compose exec wazuh.manager grep -c '"id":"10014[0-5]"' /var/ossec/logs/alerts/alerts.json</code></pre>
+  <p>Un número mayor que cero: el <code>touch</code> y la primera vuelta de osquery.</p>
+</aside>
+<aside class="hito" id="hito-2" data-toc="skip" aria-labelledby="hito-2-t">
+  <p class="hito-num">Hito 2 de 3, unos 30 min</p>
+  <p class="hito-title" id="hito-2-t">El incidente</p>
+  <p>jugar.py ataca el laboratorio y deja un guion; tú triás con las alertas y con osquery.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-incidente">Jugar el incidente</a></li>
+    <li><a href="#paso-triaje">Triar</a></li>
+  </ol>
+</aside>
+<h3 id="paso-incidente">Paso 4. Jugar el incidente</h3>
+<div class="step-map" data-where="jugar tienda auditd osquery">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>El laboratorio preparado en el hito 1.</dd></div>
+    <div><dt>Sale</dt><dd>Un incidente con seis técnicas y su guion.</dd></div>
+    <div><dt>Cambia</dt><dd><code>incidente/jugar.py</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m60-respuesta-forense.html#mapa">60.12</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<p>Seis técnicas en unos dos minutos, como un atacante que encontró una clave débil y siguió adelante. Es tráfico de ataque: solo contra tu laboratorio, con el usuario de prueba que se borra al final.</p>
+<div class="file-card" data-where="jugar tienda auditd">
+  <h4 class="file-card-path" id="archivo-incidente-jugar-py">incidente/jugar.py<span class="file-card-size">47 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Juega seis técnicas contra tu laboratorio y anota cada una con su hora.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Tú, una vez.</dd></div>
+    <div><dt>Qué entra</dt><dd>El laboratorio corriendo.</dd></div>
+    <div><dt>Qué sale</dt><dd>El incidente y <code>incidente/guion.jsonl</code>.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Usa provocar.py de SEC00, con su lista de direcciones permitidas.</li>
+    <li>Anota cada paso antes de correrlo, en UTC.</li>
+    <li>Corre un comando dentro de la API, en primer plano o en segundo.</li>
+    <li>Fuerza bruta y después beto con pedidos ajenos.</li>
+    <li>Lee las variables de entorno de la API sin imprimirlas.</li>
+    <li>Deja un archivo y un proceso en la API.</li>
+    <li>Crea un usuario en el servidor.</li>
+  </ol>
+</div>
+<pre data-lang="python"><code>"""Juega el incidente de SEC06 contra TU laboratorio y anota en guion.jsonl qué hizo y cuándo."""
+import json
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parent.parent
+# (1)
+sys.path.insert(0, str(RAIZ))
+import provocar  # noqa: E402
+
+BASE = "http://127.0.0.1:8088"
+GUION = RAIZ / "incidente" / "guion.jsonl"
+
+# (2)
+def anotar(tecnica, paso):
+    linea = {"ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "tecnica": tecnica, "paso": paso}
+    with GUION.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(linea, ensure_ascii=False) + "\n")
+    print(linea["ts"], tecnica, paso)</code></pre>
+<ol class="code-key">
+  <li><code>provocar.py</code> está en la raíz del repositorio; se agrega esa carpeta al camino de búsqueda y se importa. Sus funciones solo hablan con <code>BASE</code>, que es 127.0.0.1.</li>
+  <li>El guion se escribe antes de cada paso: es la verdad contra la que se compara la línea de tiempo del paso 8. Va en UTC, con el mismo formato que <code>registro.py</code>.</li>
+</ol>
+<pre data-lang="python"><code># (3)
+def en_la_api(*comando, fondo=False):
+    base = ["docker", "compose", "exec", "-T"] + (["-d"] if fondo else []) + ["api"]
+    return subprocess.run(base + list(comando), cwd=RAIZ, check=True, capture_output=True, text=True).stdout
+
+
+def main():
+# (4)
+    anotar("T1110.001", "fuerza bruta contra ana")
+    provocar.fuerza(BASE, 12)
+    time.sleep(20)
+    anotar("T1078", "beto entra y pide pedidos ajenos")
+    provocar.ajenos(BASE, 6)
+    time.sleep(20)
+# (5)
+    anotar("T1552", "lee las variables de entorno de la API")
+    print(f"  {len(en_la_api('env').splitlines())} variables leídas")
+    time.sleep(20)</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li><code>-T</code> sin terminal, porque no hay una persona escribiendo; <code>-d</code> deja el comando corriendo y vuelve enseguida.</li>
+  <li>Las dos técnicas de SEC00, una detrás de la otra. Las pausas de 20 segundos separan los pasos en la línea de tiempo.</li>
+  <li>El "atacante" lee el entorno, que tiene el DSN con la clave de la base. El script solo cuenta las líneas: la clave no aparece en tu terminal, pero sí la leyó.</li>
+</ol>
+<pre data-lang="python"><code># (6)
+    anotar("T1074", "deja un archivo en /tmp de la API")
+    en_la_api("sh", "-c", "echo prueba &gt; /tmp/.sec06")
+    time.sleep(10)
+    anotar("T1059.006", "deja un proceso esperando en la API")
+    en_la_api("python", "-c", "import time; time.sleep(3600)", fondo=True)
+    time.sleep(20)
+# (7)
+    anotar("T1136.001", "crea el usuario soporte en el servidor")
+    subprocess.run(["sudo", "useradd", "-M", "-s", "/usr/sbin/nologin", "soporte"], check=True)
+
+
+if __name__ == "__main__":
+    main()</code></pre>
+<ol class="code-key" style="counter-reset: ck 5">
+  <li>Lo que deja dentro del contenedor no está en ningún log: solo lo verán <code>docker diff</code> y <code>docker top</code> en el paso 7.</li>
+  <li>Persistencia en el host: un usuario sin carpeta y sin shell. Lo ven auditd (identidad y comando_root) y osquery (usuarios). Se borra en el paso 9.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver incidente/jugar.py completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="python" data-file="incidente/jugar.py"><code>"""Juega el incidente de SEC06 contra TU laboratorio y anota en guion.jsonl qué hizo y cuándo."""
+import json
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(RAIZ))
+import provocar  # noqa: E402
+
+BASE = "http://127.0.0.1:8088"
+GUION = RAIZ / "incidente" / "guion.jsonl"
+
+def anotar(tecnica, paso):
+    linea = {"ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "tecnica": tecnica, "paso": paso}
+    with GUION.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(linea, ensure_ascii=False) + "\n")
+    print(linea["ts"], tecnica, paso)
+def en_la_api(*comando, fondo=False):
+    base = ["docker", "compose", "exec", "-T"] + (["-d"] if fondo else []) + ["api"]
+    return subprocess.run(base + list(comando), cwd=RAIZ, check=True, capture_output=True, text=True).stdout
+
+
+def main():
+    anotar("T1110.001", "fuerza bruta contra ana")
+    provocar.fuerza(BASE, 12)
+    time.sleep(20)
+    anotar("T1078", "beto entra y pide pedidos ajenos")
+    provocar.ajenos(BASE, 6)
+    time.sleep(20)
+    anotar("T1552", "lee las variables de entorno de la API")
+    print(f"  {len(en_la_api('env').splitlines())} variables leídas")
+    time.sleep(20)
+    anotar("T1074", "deja un archivo en /tmp de la API")
+    en_la_api("sh", "-c", "echo prueba &gt; /tmp/.sec06")
+    time.sleep(10)
+    anotar("T1059.006", "deja un proceso esperando en la API")
+    en_la_api("python", "-c", "import time; time.sleep(3600)", fondo=True)
+    time.sleep(20)
+    anotar("T1136.001", "crea el usuario soporte en el servidor")
+    subprocess.run(["sudo", "useradd", "-M", "-s", "/usr/sbin/nologin", "soporte"], check=True)
+
+
+if __name__ == "__main__":
+    main()</code></pre>
+  </div>
+</details>
+<aside class="callout callout--def">
+<p class="callout-label">Python de por medio</p>
+<p><code>*comando</code> junta todos los argumentos sueltos en una tupla, y <code>fondo=False</code> es un argumento con nombre y valor por defecto. Ver <a href="ia00-laboratorio.html#py-tipos">IA00</a>.</p>
+</aside>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>python3 incidente/jugar.py
+cat incidente/guion.jsonl</code></pre>
+  <p>Seis líneas con hora, técnica y paso, la lista de códigos de <code>provocar.py</code> (doce 401, después 200 y 403) y <code>N variables leídas</code>. <code>sudo</code> te pide la clave en el último paso. El guion tiene las mismas seis líneas.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>useradd: user 'soporte' already exists</code>: Ya corriste el incidente antes y no borraste el usuario: <code>sudo userdel soporte</code>, borra <code>guion.jsonl</code> y vuelve a empezar.</li>
+    <li><code>beto no entró: 401</code>: La clave de beto no es la de SEC00. Revisa <code>init.sql</code>.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un incidente con guion, para tener contra qué comparar la línea de tiempo.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Mirar las alertas que salgan y suponer que son todo lo que pasó.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Si corres el incidente dos veces sin limpiar, la línea de tiempo mezcla las dos. Antes de repetir, borra el usuario, el guion y recrea la API.</dd></div>
+</dl>
+<h3 id="paso-triaje">Paso 5. Triar</h3>
+<div class="step-map" data-where="wazuh osquery">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Las alertas del incidente.</dd></div>
+    <div><dt>Sale</dt><dd>Una severidad y un alcance escritos.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m60-respuesta-forense.html#triaje">60.3</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<p>Ahora eres la persona de guardia. Primero las alertas, en orden:</p>
+<pre data-lang="bash"><code>cd ../wazuh-docker/single-node
+docker compose exec wazuh.manager sh -c "grep -o '\"rule\":{[^}]*}' /var/ossec/logs/alerts/alerts.json | tail -n 40"</code></pre>
+<p>Tienen que aparecer la 100102 (fuerza bruta), la 100104 (pedidos ajenos), varias 100141 (uso de Docker), la 100140 y la 100144 (usuario nuevo). Con eso, dos preguntas: qué tan grave es y hasta dónde llegó. osquery contesta la segunda sin entrar al contenedor:</p>
+<pre data-lang="bash"><code>sudo osqueryi "SELECT uid, username, shell, directory FROM users WHERE uid &gt;= 1000;"
+sudo osqueryi "SELECT name, state, status FROM docker_containers;"
+sudo ausearch -k docker_exec -i --start recent | grep -o 'a[0-9]=[^ ]*' | head -n 20</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>sudo osqueryi "SELECT username, shell FROM users WHERE username = 'soporte';"</code></pre>
+  <p>Una fila: <code>soporte</code> con <code>/usr/sbin/nologin</code>. <code>ausearch</code> muestra los argumentos de cada <code>docker</code> que corrió tu usuario: <code>compose</code>, <code>exec</code>, <code>-T</code>, <code>api</code>, <code>env</code>.</p>
+</aside>
+<p>Escribe la severidad y el alcance antes de seguir, en dos líneas, como en la decisión 1 de las <a href="#decisiones">decisiones guiadas</a>: qué está comprometido (la cuenta de beto, la API, el servidor) y qué no sabes todavía.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Severidad alta por la persistencia en el host, y el alcance con osquery y auditd antes de tocar nada.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Empezar a borrar lo que se ve raro: se pierde la evidencia y no se sabe qué más había.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Las 100141 también salen por tus propios <code>docker compose exec</code> de la respuesta. Anota a qué hora empezaste a responder: lo vas a necesitar en la línea de tiempo.</dd></div>
+</dl>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Un incidente con seis técnicas y su guion.</li>
+    <li>Las alertas que lo vieron y una severidad escrita.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>wc -l incidente/guion.jsonl</code></pre>
+  <p><code>6 incidente/guion.jsonl</code>.</p>
+</aside>
+<aside class="hito" id="hito-3" data-toc="skip" aria-labelledby="hito-3-t">
+  <p class="hito-num">Hito 3 de 3, unos 55 min</p>
+  <p class="hito-title" id="hito-3-t">Responder</p>
+  <p>Contener sin perder evidencia, juntarla con su hash, ordenar la historia y cerrar.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-contener">Contener</a></li>
+    <li><a href="#paso-evidencia">La evidencia</a></li>
+    <li><a href="#paso-linea">La línea de tiempo</a></li>
+    <li><a href="#paso-erradicar">Erradicar, recuperar y aprender</a></li>
+  </ol>
+</aside>
+<h3 id="paso-contener">Paso 6. Contener</h3>
+<div class="step-map" data-where="tienda">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La API con un proceso y un archivo del atacante.</dd></div>
+    <div><dt>Sale</dt><dd>La API pausada.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m60-respuesta-forense.html#contener">60.4</a></dd></div>
+    <div><dt>Tiempo</dt><dd>5 min</dd></div>
+  </dl>
+</div>
+<div data-exercise="sec06-p-pausa"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker compose pause api
+docker compose ps api
+curl -s -m 5 -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8088/api/productos</code></pre>
+  <p><code>ps</code> muestra la API en <code>paused</code>. El <code>curl</code> corta a los 5 segundos sin respuesta y escribe <code>000</code>: Nginx recibió la conexión, pero la API no contesta. Contener tiene un costo, y aquí es la tienda caída.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Pausar: corta el daño y conserva procesos, memoria y disco.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Borrar y levantar limpio, que es lo primero que se le ocurre a cualquiera: se pierde lo que dejó el atacante.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Despausar devuelve al atacante su proceso. Desde aquí, la API solo sale de la pausa recreada, en el paso 9.</dd></div>
+</dl>
+<h3 id="paso-evidencia">Paso 7. La evidencia</h3>
+<div class="step-map" data-where="evidenciash evidencia wazuh">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La API pausada.</dd></div>
+    <div><dt>Sale</dt><dd>La carpeta del caso, sus hashes y la nota de custodia.</dd></div>
+    <div><dt>Cambia</dt><dd><code>incidente/evidencia.sh</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m60-respuesta-forense.html#evidencia">60.5</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="evidenciash evidencia wazuh">
+  <h4 class="file-card-path" id="archivo-incidente-evidencia-sh">incidente/evidencia.sh<span class="file-card-size">26 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Junta la evidencia en orden de volatilidad y la deja con su hash.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Tú, con la API pausada, desde la raíz de la tienda.</dd></div>
+    <div><dt>Qué entra</dt><dd>El contenedor pausado y los logs.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una carpeta <code>evidencia/AAAAMMDDTHHMMSSZ</code> de solo lectura y su nota de custodia.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Una carpeta por caso, con la hora en UTC.</li>
+    <li>Primero lo del contenedor: procesos, inspect, diff y el sistema de archivos.</li>
+    <li>Después los logs, desde Wazuh y desde el host.</li>
+    <li>El hash de cada archivo y la carpeta de solo lectura.</li>
+    <li>La nota de custodia, al lado.</li>
+  </ol>
+</div>
+<pre data-lang="bash"><code>#!/usr/bin/env bash
+# Junta la evidencia del incidente en orden de volatilidad. Corre desde la raíz de tienda-norte.
+set -euo pipefail
+# (1)
+caso="evidencia/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$caso"
+api=$(docker compose ps -q api)
+W=../wazuh-docker/single-node
+wz() { (cd "$W" &amp;&amp; docker compose exec -T wazuh.manager "$@"); }
+# (2)
+docker top "$api" -eo pid,ppid,user,etime,args &gt; "$caso/01-procesos.txt"
+docker inspect "$api" &gt; "$caso/02-inspect.json"
+docker diff "$api" &gt; "$caso/03-diff.txt"
+docker export "$api" &gt; "$caso/04-sistema-de-archivos.tar"</code></pre>
+<ol class="code-key">
+  <li>La carpeta lleva la hora de inicio en UTC. <code>wz</code> corre un comando en el manager desde su carpeta de compose.</li>
+  <li>De lo más volátil a lo menos: los procesos (con cuánto llevan corriendo), la configuración del contenedor, qué cambió en su disco respecto de la imagen y el disco entero. Las cuatro funcionan con el contenedor pausado.</li>
+</ol>
+<pre data-lang="bash"><code># (3)
+wz cat /var/log/tienda/api/api.log &gt; "$caso/05-api.log"
+wz cat /var/log/tienda/nginx/nginx-access.log &gt; "$caso/06-nginx.log"
+wz cat /var/ossec/logs/alerts/alerts.json &gt; "$caso/07-alerts.json"
+sudo cat /var/log/audit/audit.log &gt; "$caso/08-audit.log"
+sudo cat /var/log/osquery/osqueryd.results.log &gt; "$caso/09-osquery.log"
+# (4)
+(cd "$caso" &amp;&amp; sha256sum -- * &gt; SHA256SUMS)
+chmod -R a-w "$caso"
+# (5)
+{
+  echo "# Custodia de $caso"
+  echo "- Copió: $(id -un) en $(hostname), $(date -u +%FT%TZ)"
+  echo "- sha256 de SHA256SUMS: $(sha256sum "$caso/SHA256SUMS" | cut -d' ' -f1)"
+  echo "- Notas:"
+} &gt; "$caso.custodia.md"
+echo "$caso"</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>Los logs de la tienda se leen desde el manager, que ya los monta; los del host, con <code>sudo</code>, porque son de root.</li>
+  <li>Un hash por archivo, calculado al copiar. <code>chmod</code> evita un cambio por descuido; lo que prueba que no cambió es el hash.</li>
+  <li>La nota va al lado de la carpeta, no adentro, para poder seguir escribiendo en ella: a quién se la pasaste, cuándo, para qué.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver incidente/evidencia.sh completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="bash" data-file="incidente/evidencia.sh"><code>#!/usr/bin/env bash
+# Junta la evidencia del incidente en orden de volatilidad. Corre desde la raíz de tienda-norte.
+set -euo pipefail
+caso="evidencia/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$caso"
+api=$(docker compose ps -q api)
+W=../wazuh-docker/single-node
+wz() { (cd "$W" &amp;&amp; docker compose exec -T wazuh.manager "$@"); }
+docker top "$api" -eo pid,ppid,user,etime,args &gt; "$caso/01-procesos.txt"
+docker inspect "$api" &gt; "$caso/02-inspect.json"
+docker diff "$api" &gt; "$caso/03-diff.txt"
+docker export "$api" &gt; "$caso/04-sistema-de-archivos.tar"
+wz cat /var/log/tienda/api/api.log &gt; "$caso/05-api.log"
+wz cat /var/log/tienda/nginx/nginx-access.log &gt; "$caso/06-nginx.log"
+wz cat /var/ossec/logs/alerts/alerts.json &gt; "$caso/07-alerts.json"
+sudo cat /var/log/audit/audit.log &gt; "$caso/08-audit.log"
+sudo cat /var/log/osquery/osqueryd.results.log &gt; "$caso/09-osquery.log"
+(cd "$caso" &amp;&amp; sha256sum -- * &gt; SHA256SUMS)
+chmod -R a-w "$caso"
+{
+  echo "# Custodia de $caso"
+  echo "- Copió: $(id -un) en $(hostname), $(date -u +%FT%TZ)"
+  echo "- sha256 de SHA256SUMS: $(sha256sum "$caso/SHA256SUMS" | cut -d' ' -f1)"
+  echo "- Notas:"
+} &gt; "$caso.custodia.md"
+echo "$caso"</code></pre>
+  </div>
+</details>
+<div data-exercise="sec06-p-diff"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>chmod +x incidente/evidencia.sh
+caso=$(incidente/evidencia.sh)
+cat "$caso/01-procesos.txt" "$caso/03-diff.txt"
+(cd "$caso" &amp;&amp; sha256sum -c SHA256SUMS)</code></pre>
+  <p>En los procesos aparece <code>python -c import time; time.sleep(3600)</code> con su tiempo corriendo, junto a uvicorn. En el diff, <code>C /tmp</code> y <code>A /tmp/.sec06</code>. <code>sha256sum -c</code> dice <code>OK</code> para los nueve archivos. Abre <code>$caso.custodia.md</code> y escribe en Notas para qué copiaste esto.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Error response from daemon: Container … is paused</code>: Tu versión de Docker no deja hacer una de las cuatro operaciones con la pausa. Anota cuál falló y sigue con las demás: no despauses.</li>
+    <li><code>cat: /var/log/osquery/osqueryd.results.log: No such file or directory</code>: osqueryd no escribió todavía. Revisa el paso 2.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Orden de volatilidad, hash al copiar y custodia por escrito.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Copiar solo los logs: el archivo y el proceso del atacante no están en ningún log.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>La memoria de los procesos no se copia: con la pausa sigue ahí, pero sacarla pide herramientas que esta guía no usa. Es una limitación, y por eso no se despausa.</dd></div>
+</dl>
+<h3 id="paso-linea">Paso 8. La línea de tiempo</h3>
+<div class="step-map" data-where="evidencia linea">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La carpeta del caso.</dd></div>
+    <div><dt>Sale</dt><dd><code>linea.md</code>, comparada con el guion.</dd></div>
+    <div><dt>Cambia</dt><dd><code>incidente/linea_de_tiempo.py</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m60-respuesta-forense.html#timeline">60.8</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<p>Cinco fuentes, cinco formatos de hora, y una sola historia. El script es corto porque cada fuente tiene su lector y todos devuelven lo mismo: una hora en UTC, la fuente y qué pasó.</p>
+<div data-exercise="sec06-p-hora"></div>
+<div class="file-card" data-where="evidencia linea">
+  <h4 class="file-card-path" id="archivo-incidente-linea-de-tiempo-py">incidente/linea_de_tiempo.py<span class="file-card-size">73 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Ordena en UTC lo que dicen cinco fuentes de la evidencia, y el guion si se lo pasas.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Tú, después del paso 7.</dd></div>
+    <div><dt>Qué entra</dt><dd>La carpeta del caso.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una tabla en Markdown, una fila por hecho, con las repeticiones juntas.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Pasa una hora ISO a UTC y lee un archivo de líneas JSON.</li>
+    <li>La API y Nginx: sus eventos, sin las respuestas 200 de Nginx.</li>
+    <li>Wazuh: la regla de cada alerta.</li>
+    <li>auditd: una fila por evento con clave, y la hora sale de los segundos desde 1970.</li>
+    <li>osquery y el guion.</li>
+    <li>Junta las filas iguales seguidas y escribe la tabla.</li>
+  </ol>
+</div>
+<pre data-lang="python"><code>"""Arma la línea de tiempo del incidente con la evidencia de una carpeta, en UTC."""
+import argparse
+import json
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+
+AUDIT = re.compile(r'msg=audit\((\d+)\.\d+:(\d+)\).*?key="([^"]+)"')
+EXE = re.compile(r'exe="([^"]+)"')
+
+# (1)
+def utc(texto):
+    return datetime.fromisoformat(texto).astimezone(timezone.utc)
+
+
+def lineas(ruta):
+    for texto in ruta.read_text(encoding="utf-8", errors="replace").splitlines():
+        if texto.strip():
+            yield json.loads(texto)</code></pre>
+<ol class="code-key">
+  <li>Cada fuente escribe la hora a su manera: la tienda con <code>+00:00</code>, Nginx igual, Wazuh con <code>+0000</code>, auditd en segundos y osquery también. Todas terminan en UTC antes de ordenar. <code>yield</code> devuelve las líneas de a una, como en <a href="ia00-laboratorio.html#py-yield">IA00</a>.</li>
+</ol>
+<pre data-lang="python"><code># (2)
+def api(ruta):
+    for e in lineas(ruta):
+        yield utc(e["ts"]), "api", f'{e["evento"]} {e.get("usuario", "")} desde {e.get("ip", "?")}'
+
+
+def nginx(ruta):
+    for e in lineas(ruta):
+        if e.get("estado") != "200":
+            yield utc(e["ts"]), "nginx", f'{e["estado"]} {e["metodo"]} {e["ruta"]}'
+
+# (3)
+def wazuh(ruta):
+    for e in lineas(ruta):
+        t = datetime.strptime(e["timestamp"], "%Y-%m-%dT%H:%M:%S.%f%z").astimezone(timezone.utc)
+        yield t, "wazuh", f'{e["rule"]["id"]} nivel {e["rule"]["level"]}: {e["rule"]["description"]}'</code></pre>
+<ol class="code-key" style="counter-reset: ck 1">
+  <li>Las respuestas 200 de Nginx no cuentan nada que la API no diga mejor; las 401, 403 y 404 sí.</li>
+  <li><code>strptime</code> con <code>%z</code> acepta el <code>+0000</code> de Wazuh.</li>
+</ol>
+<pre data-lang="python"><code># (4)
+def auditd(ruta):
+    vistos = set()
+    for texto in ruta.read_text(encoding="utf-8", errors="replace").splitlines():
+        m = AUDIT.search(texto)
+        if m and m.group(3) != "(null)" and m.group(2) not in vistos:
+            vistos.add(m.group(2))
+            exe = EXE.search(texto)
+            yield datetime.fromtimestamp(int(m.group(1)), timezone.utc), "auditd", f'{m.group(3)}: {exe.group(1) if exe else "?"}'
+
+# (5)
+def osquery(ruta):
+    for e in lineas(ruta):
+        yield datetime.fromtimestamp(e["unixTime"], timezone.utc), "osquery", f'{e["name"]} {e["action"]}: {json.dumps(e["columns"], ensure_ascii=False)}'
+
+
+def guion(ruta):
+    for e in lineas(ruta):
+        yield utc(e["ts"]), "GUION", f'{e["tecnica"]} {e["paso"]}'</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li>Un evento de auditd son varias líneas con el mismo número de serie (el segundo grupo). Se toma una por serie, la que trae la clave; las líneas sin clave (<code>key=(null)</code>) no se miran.</li>
+  <li>osquery: qué consulta, si la fila apareció o desapareció, y la fila. El guion va con su fuente en mayúsculas para verlo en la tabla.</li>
+</ol>
+<pre data-lang="python"><code>FUENTES = {"05-api.log": api, "06-nginx.log": nginx, "07-alerts.json": wazuh, "08-audit.log": auditd, "09-osquery.log": osquery}
+
+# (6)
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("caso", type=Path)
+    ap.add_argument("--guion", type=Path)
+    ap.add_argument("--desde", type=utc, help="hora ISO; lo anterior no entra")
+    a = ap.parse_args()
+    filas = [f for nombre, lector in FUENTES.items() for f in lector(a.caso / nombre)]
+    if a.guion:
+        filas += list(guion(a.guion))
+    juntas = []
+    for t, fuente, que in sorted(f for f in filas if not a.desde or f[0] &gt;= a.desde):
+        if juntas and juntas[-1][1:3] == [fuente, que]:
+            juntas[-1][3] += 1
+        else:
+            juntas.append([t, fuente, que, 1])
+    print("| UTC | Fuente | Qué |\n|---|---|---|")
+    for t, fuente, que, n in juntas:
+        print(f'| {t:%H:%M:%S} | {fuente} | {que.replace("|", "/")}{f" (×{n})" if n &gt; 1 else ""} |')
+
+
+if __name__ == "__main__":
+    main()</code></pre>
+<ol class="code-key" style="counter-reset: ck 5">
+  <li>Se ordena todo junto por hora y, si una fila es igual a la anterior (misma fuente, mismo texto), se suma a ella: doce <code>login_fallido</code> seguidos son una fila con <code>(×12)</code>.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver incidente/linea_de_tiempo.py completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="python" data-file="incidente/linea_de_tiempo.py"><code>"""Arma la línea de tiempo del incidente con la evidencia de una carpeta, en UTC."""
+import argparse
+import json
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+
+AUDIT = re.compile(r'msg=audit\((\d+)\.\d+:(\d+)\).*?key="([^"]+)"')
+EXE = re.compile(r'exe="([^"]+)"')
+
+def utc(texto):
+    return datetime.fromisoformat(texto).astimezone(timezone.utc)
+
+
+def lineas(ruta):
+    for texto in ruta.read_text(encoding="utf-8", errors="replace").splitlines():
+        if texto.strip():
+            yield json.loads(texto)
+def api(ruta):
+    for e in lineas(ruta):
+        yield utc(e["ts"]), "api", f'{e["evento"]} {e.get("usuario", "")} desde {e.get("ip", "?")}'
+
+
+def nginx(ruta):
+    for e in lineas(ruta):
+        if e.get("estado") != "200":
+            yield utc(e["ts"]), "nginx", f'{e["estado"]} {e["metodo"]} {e["ruta"]}'
+
+def wazuh(ruta):
+    for e in lineas(ruta):
+        t = datetime.strptime(e["timestamp"], "%Y-%m-%dT%H:%M:%S.%f%z").astimezone(timezone.utc)
+        yield t, "wazuh", f'{e["rule"]["id"]} nivel {e["rule"]["level"]}: {e["rule"]["description"]}'
+def auditd(ruta):
+    vistos = set()
+    for texto in ruta.read_text(encoding="utf-8", errors="replace").splitlines():
+        m = AUDIT.search(texto)
+        if m and m.group(3) != "(null)" and m.group(2) not in vistos:
+            vistos.add(m.group(2))
+            exe = EXE.search(texto)
+            yield datetime.fromtimestamp(int(m.group(1)), timezone.utc), "auditd", f'{m.group(3)}: {exe.group(1) if exe else "?"}'
+
+def osquery(ruta):
+    for e in lineas(ruta):
+        yield datetime.fromtimestamp(e["unixTime"], timezone.utc), "osquery", f'{e["name"]} {e["action"]}: {json.dumps(e["columns"], ensure_ascii=False)}'
+
+
+def guion(ruta):
+    for e in lineas(ruta):
+        yield utc(e["ts"]), "GUION", f'{e["tecnica"]} {e["paso"]}'
+FUENTES = {"05-api.log": api, "06-nginx.log": nginx, "07-alerts.json": wazuh, "08-audit.log": auditd, "09-osquery.log": osquery}
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("caso", type=Path)
+    ap.add_argument("--guion", type=Path)
+    ap.add_argument("--desde", type=utc, help="hora ISO; lo anterior no entra")
+    a = ap.parse_args()
+    filas = [f for nombre, lector in FUENTES.items() for f in lector(a.caso / nombre)]
+    if a.guion:
+        filas += list(guion(a.guion))
+    juntas = []
+    for t, fuente, que in sorted(f for f in filas if not a.desde or f[0] &gt;= a.desde):
+        if juntas and juntas[-1][1:3] == [fuente, que]:
+            juntas[-1][3] += 1
+        else:
+            juntas.append([t, fuente, que, 1])
+    print("| UTC | Fuente | Qué |\n|---|---|---|")
+    for t, fuente, que, n in juntas:
+        print(f'| {t:%H:%M:%S} | {fuente} | {que.replace("|", "/")}{f" (×{n})" if n &gt; 1 else ""} |')
+
+
+if __name__ == "__main__":
+    main()</code></pre>
+  </div>
+</details>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>python3 incidente/linea_de_tiempo.py "$caso" --desde "$(head -n1 incidente/guion.jsonl | python3 -c 'import json,sys; print(json.load(sys.stdin)["ts"])')" &gt; linea.md
+python3 incidente/linea_de_tiempo.py "$caso" --guion incidente/guion.jsonl --desde "…la misma hora…" &gt; linea-con-guion.md</code></pre>
+  <p><code>linea.md</code> empieza con la hora del primer paso del guion. Las filas de la fuerza bruta aparecen juntas (<code>login_fallido ana desde … (×12)</code>, <code>401 POST /api/login (×12)</code>) y la 100102 enseguida. Al final, auditd con <code>identidad: /usr/sbin/useradd</code> y osquery con <code>usuarios added</code> y <code>soporte</code>.</p>
+</aside>
+<p>Ahora abre <code>linea-con-guion.md</code> y busca cada fila <code>GUION</code>. Debajo de cada una tiene que haber algo de otra fuente que la vea. Anota en una tabla, para el postmortem, qué paso del guion tiene evidencia y de qué fuente:</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Paso del guion</th><th>Lo que el diseño espera ver</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>T1110.001 fuerza bruta</td><td>api, nginx y la 100102</td><td></td></tr>
+<tr><td>T1078 beto y pedidos ajenos</td><td>api (<code>login_ok</code>, <code>pedido_ajeno</code>) y la 100104</td><td></td></tr>
+<tr><td>T1552 lee el entorno</td><td>auditd <code>docker_exec</code> y la 100141, nada más</td><td></td></tr>
+<tr><td>T1074 archivo en /tmp</td><td>auditd <code>docker_exec</code>; el archivo, solo en <code>03-diff.txt</code></td><td></td></tr>
+<tr><td>T1059.006 proceso que espera</td><td>auditd <code>docker_exec</code>; el proceso, solo en <code>01-procesos.txt</code></td><td></td></tr>
+<tr><td>T1136.001 usuario soporte</td><td>auditd <code>identidad</code> y <code>comando_root</code>, la 100140 y la 100144</td><td></td></tr>
+</tbody>
+</table>
+</div>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>KeyError: 'ts'</code>: Una línea del log no es de la tienda (por ejemplo, de una versión anterior de <code>registro.py</code>). Usa <code>--desde</code> con la hora del guion.</li>
+    <li><code>Las horas de auditd están corridas varias horas</code>: No son de auditd: es <code>ausearch -i</code>, que muestra la hora local. El script lee los segundos crudos, en UTC.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un lector por fuente que devuelve UTC, y el guion como verdad para comparar.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Ordenar por la hora de llegada al SIEM, o mirar solo las alertas.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Tres pasos del guion (el entorno, el archivo, el proceso) solo se ven como "alguien usó docker". Eso es lo que el postmortem tiene que arreglar.</dd></div>
+</dl>
+<h3 id="paso-erradicar">Paso 9. Erradicar, recuperar y aprender</h3>
+<div class="step-map" data-where="tienda auditd">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La evidencia guardada.</dd></div>
+    <div><dt>Sale</dt><dd>El servidor limpio, la clave nueva, la API recreada y un postmortem.</dd></div>
+    <div><dt>Cambia</dt><dd><code>incidente/postmortem.md</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m60-respuesta-forense.html#erradicar">60.9</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<p>Con la evidencia a salvo, se saca lo que dejó el atacante y se cambia lo que vio. El orden importa: primero el usuario del servidor, después la clave, y al final la API, que vuelve recreada desde la imagen, sin el archivo ni el proceso.</p>
+<pre data-lang="bash"><code>sudo userdel soporte
+nueva=$(openssl rand -hex 24)
+docker compose exec -T db psql -U tienda -d tienda -c "ALTER ROLE tienda PASSWORD '$nueva'"
+sed -i "s/^TIENDA_DB_CLAVE=.*/TIENDA_DB_CLAVE=$nueva/" .env
+unset nueva
+docker compose rm -sf api
+docker compose up -d api</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker compose ps api
+curl -s http://127.0.0.1:8088/api/productos
+docker compose exec -T api ls -la /tmp</code></pre>
+  <p>La API en <code>running</code> con un contenedor nuevo, los productos de vuelta y <code>/tmp</code> sin <code>.sec06</code>. En Wazuh aparece otra 100140 por el <code>userdel</code>, y en un minuto osquery escribe <code>usuarios removed</code> con <code>soporte</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>You cannot remove a paused container</code>: Tu Docker no fuerza el borrado con la pausa. Corre <code>docker compose unpause api &amp;&amp; docker compose rm -sf api</code> en la misma línea, para que el proceso del atacante viva menos de un segundo.</li>
+    <li><code>La API arranca y falla con password authentication failed</code>: El <code>sed</code> no cambió <code>.env</code>, o el <code>ALTER ROLE</code> no corrió. Repite los dos con la misma clave.</li>
+  </ul>
+</aside>
+<div class="file-card" data-where="linea">
+  <h4 class="file-card-path" id="archivo-incidente-postmortem-md">incidente/postmortem.md<span class="file-card-size">20 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>El molde del postmortem, sin culpables.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Tú y quien revise el incidente.</dd></div>
+    <div><dt>Qué entra</dt><dd>La línea de tiempo y la tabla del paso 8.</dd></div>
+    <div><dt>Qué sale</dt><dd>Acciones con responsable y fecha.</dd></div>
+  </dl>
+</div>
+<pre data-lang="markdown" data-file="incidente/postmortem.md"><code># Postmortem: incidente de SEC06 en Tienda Norte
+
+## Resumen
+Qué pasó, en tres líneas, sin culpables.
+
+## Línea de tiempo
+La tabla de linea.md, recortada a lo que importa, con la hora de detección y la de contención.
+
+## Qué funcionó
+- Alertas que vieron cada paso (de la tabla del paso 8).
+
+## Qué no vimos
+- Lo que leyó el entorno, el archivo y el proceso solo dejaron "alguien usó docker".
+
+## Acciones
+| Acción | Responsable | Fecha |
+|---|---|---|
+| Regla nueva: docker exec en la API fuera de un despliegue, con su Sigma y sus casos (SEC05) | | |
+| Bloqueo por IP o usuario después de la fuerza bruta | | |
+| La clave de la base fuera del entorno de la API | | |</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Borrar la persistencia, rotar el secreto que se leyó, recrear desde la imagen y escribir el postmortem con acciones.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Despausar la API y seguir, o recrear sin rotar la clave.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Un postmortem sin acciones con fecha no cambia nada. La primera acción vuelve a SEC05: una regla Sigma con casos para el <code>docker exec</code> en la API, y su emulación.</dd></div>
+</dl>
+<h2 id="viaje">El viaje de un dato</h2>
+<p>El caso principal: el usuario <code>soporte</code>, desde que <code>jugar.py</code> lo crea hasta que aparece en la línea de tiempo.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 478" role="img" aria-labelledby="fs06st fs06sd">
+<title id="fs06st">El usuario soporte, de useradd a linea.md</title>
+<desc id="fs06sd">jugar.py anota el paso en el guion y corre sudo useradd. El kernel escribe en audit.log con la clave identidad. osquery ve el usuario nuevo en su siguiente vuelta. Wazuh lee los dos archivos y escribe las alertas 100140 y 100144. evidencia.sh copia audit.log, el log de osquery y alerts.json con su hash, y linea_de_tiempo.py pone las tres filas debajo de la fila del guion.</desc>
+<defs><marker id="fs06s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs06s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs06s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs06s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">jugar.py</text>
+<path class="dg-frame" d="M70.0 40 V468"/>
+<rect class="dg-box" x="165.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="227.5" y="29" text-anchor="middle" style="font-size:13.5px">Host</text>
+<path class="dg-frame" d="M227.5 40 V468"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Wazuh</text>
+<path class="dg-frame" d="M385.0 40 V468"/>
+<rect class="dg-box" x="480.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="542.5" y="29" text-anchor="middle" style="font-size:13.5px">evidencia.sh</text>
+<path class="dg-frame" d="M542.5 40 V468"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">linea_de_tiempo</text>
+<path class="dg-frame" d="M700.0 40 V468"/>
+<rect x="80.0" y="58" width="132" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="90.0" y="74">guion: T1136.001</text>
+<path class="dg-edge" d="M73.0 106 L222.5 106" marker-end="url(#fs06s-a)"/>
+<rect x="76.75" y="89" width="144.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="100" text-anchor="middle">sudo useradd soporte</text>
+<rect x="237.5" y="126" width="181" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="247.5" y="142">audit.log key=identidad</text>
+<rect x="237.5" y="160" width="181" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="247.5" y="176">osquery: usuarios added</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M230.5 208 L380.0 208" marker-end="url(#fs06s-q)"/>
+<rect x="230.95" y="191" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="306.25" y="202" text-anchor="middle">los dos archivos, :ro</text>
+<rect x="395.0" y="228" width="125" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="405.0" y="244">100140 y 100144</text>
+<path class="dg-edge" d="M539.5 276 L232.5 276" marker-end="url(#fs06s-a)"/>
+<rect x="286.6" y="259" width="196.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">sudo cat audit.log y osquery</text>
+<path class="dg-edge" d="M539.5 310 L390.0 310" marker-end="url(#fs06s-a)"/>
+<rect x="408.25" y="293" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="463.75" y="304" text-anchor="middle">cat alerts.json</text>
+<rect x="552.5" y="330" width="90" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="562.5" y="346">SHA256SUMS</text>
+<path class="dg-edge" d="M697.0 378 L547.5 378" marker-end="url(#fs06s-a)"/>
+<rect x="578.95" y="361" width="84.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="621.25" y="372" text-anchor="middle">lee el caso</text>
+<rect x="467.0" y="398" width="223" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="477.0" y="414">GUION, auditd, osquery, wazuh</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC06.5.</b> El viaje completo. El mismo hecho llega por dos fuentes y una alerta, y la línea de tiempo los pone juntos.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Paso</th><th>De → a</th><th>Qué viaja</th><th>Dónde queda</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>jugar.py → host</td><td><code>useradd soporte</code></td><td><code>/etc/passwd</code> y el guion</td></tr>
+<tr><td>2</td><td>Kernel → auditd</td><td>El evento con <code>key="identidad"</code></td><td><code>/var/log/audit/audit.log</code></td></tr>
+<tr><td>3</td><td>osqueryd</td><td>La fila nueva de <code>users</code></td><td><code>osqueryd.results.log</code></td></tr>
+<tr><td>4</td><td>Host → Wazuh</td><td>Las dos líneas</td><td><code>alerts.json</code>: 100140 y 100144</td></tr>
+<tr><td>5</td><td>evidencia.sh → caso</td><td>Las copias y sus hashes</td><td><code>evidencia/…/08-audit.log</code>, <code>09-osquery.log</code></td></tr>
+<tr><td>6</td><td>Caso → linea.md</td><td>Tres filas en UTC</td><td><code>linea.md</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="sec06-incidente"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-verde">El punto de partida</h3>
+<div class="step-map" data-where="auditd osquery wazuh evidencia linea">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Todo lo de los pasos 1 a 9.</dd></div>
+    <div><dt>Sale</dt><dd>Una tabla con lo que viste.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-respuesta">La respuesta, en orden</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Lo que el diseño espera</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td><code>sha256sum -c SHA256SUMS</code> en el caso</td><td>Nueve <code>OK</code></td><td></td></tr>
+<tr><td><code>03-diff.txt</code></td><td><code>A /tmp/.sec06</code></td><td></td></tr>
+<tr><td><code>linea-con-guion.md</code></td><td>Cada fila GUION con evidencia debajo</td><td></td></tr>
+<tr><td><code>getent passwd soporte</code></td><td>Nada: el usuario ya no existe</td><td></td></tr>
+<tr><td>La tienda</td><td>Responde con la clave nueva</td><td></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-fallas">Las fallas, a propósito</h3>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 1: evidencia que cambió</p>
+<p><b>Provócala.</b> En una copia del caso (<code>cp -r "$caso" /tmp/caso-copia</code>, <code>chmod -R u+w /tmp/caso-copia</code>), agrega una línea a <code>05-api.log</code> y corre <code>sha256sum -c SHA256SUMS</code> en la copia.</p><p><b>Qué tiene que pasar.</b> <code>05-api.log: FAILED</code> y <code>WARNING: 1 computed checksum did NOT match</code>. Los demás, <code>OK</code>. <b>Por qué importa.</b> Si alguien edita un log después de copiarlo, sin querer o a propósito, el hash lo dice. Sin el hash de la nota de custodia, no se podría saber cuál es el original. <b>Deshazla</b> borrando la copia: <code>rm -rf /tmp/caso-copia</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 2: contener borrando</p>
+<p><b>Provócala.</b> Repite el incidente (después de limpiar como en el paso 9 y de borrar el guion) y, en lugar del paso 6, corre <code>docker compose rm -sf api &amp;&amp; docker compose up -d api</code>. Después, <code>evidencia.sh</code>.</p><p><b>Qué tiene que pasar.</b> <code>03-diff.txt</code> sale vacío o sin <code>/tmp/.sec06</code>, y <code>01-procesos.txt</code> solo muestra uvicorn. En la línea de tiempo, los pasos T1074 y T1059.006 no tienen nada debajo, ni siquiera en la evidencia. <b>Por qué importa.</b> Es lo que pasa cuando alguien "limpia" antes de preguntar: lo que el atacante dejó en el contenedor desaparece para siempre. <b>Deshazla</b> limpiando otra vez con el paso 9.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 3: la auditoría apagada</p>
+<p><b>Provócala.</b> <code>sudo auditctl -e 0</code>, y después <code>sudo useradd -M -s /usr/sbin/nologin soporte2</code>.</p><p><b>Qué tiene que pasar.</b> No aparece ningún evento nuevo de <code>identidad</code> en <code>audit.log</code>. Pero sí uno de tipo <code>CONFIG_CHANGE</code> por el <code>auditctl -e 0</code>, y Wazuh lo marca con la 80705. osquery ve <code>soporte2</code> en su siguiente vuelta. <b>Por qué importa.</b> Apagar la auditoría es lo primero que hace quien sabe que está ahí. El cambio de configuración queda anotado, y una segunda fuente (osquery) sigue viendo. <b>Deshazla</b> con <code>sudo auditctl -e 1</code> y <code>sudo userdel soporte2</code>.</p>
+</aside>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Qué la ve</th><th>¿Pasó?</th><th>Lo que decía</th></tr></thead>
+<tbody>
+<tr><td>1. Evidencia que cambió</td><td>El hash</td><td></td><td></td></tr>
+<tr><td>2. Contener borrando</td><td>Nadie: la evidencia ya no existe</td><td></td><td></td></tr>
+<tr><td>3. Auditoría apagada</td><td>La 80705 y osquery</td><td></td><td></td></tr>
+</tbody>
+</table>
+</div>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>El servidor auditado, con dos fuentes en Wazuh.</li>
+    <li>Un incidente contenido sin perder evidencia, con su hash y su custodia.</li>
+    <li>Una línea de tiempo comparada con el guion y un postmortem con acciones.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>(cd "$caso" &amp;&amp; sha256sum -c --quiet SHA256SUMS) &amp;&amp; echo integra; getent passwd soporte || echo limpio</code></pre>
+  <p><code>integra</code> y <code>limpio</code>.</p>
+</aside>
+<h2 id="limitaciones">Limitaciones</h2>
+<ul>
+<li><b>Sin memoria.</b> La pausa conserva la memoria de los procesos, pero esta guía no la copia. En un incidente real, la memoria del proceso del atacante puede tener lo que nunca tocó el disco.</li>
+<li><b>Los logs viven en el mismo servidor.</b> Quien tiene root en el host puede editar <code>audit.log</code> antes de que lo copies. En producción, auditd y osquery mandan a un servidor remoto y el SIEM guarda su copia.</li>
+<li><b>Lo que pasa dentro del contenedor no se audita.</b> auditd ve el <code>docker exec</code>, no el <code>env</code> ni el <code>echo</code> que corren adentro. Falco, de SEC04, sí los vería en el clúster.</li>
+<li><b>El guion es una ventaja que un incidente real no tiene.</b> Aquí sabes qué buscar. En uno real, lo que falta en la línea de tiempo no se sabe que falta.</li>
+<li><b>La custodia es un archivo de texto.</b> Sirve para el hábito; en un caso con consecuencias legales, la evidencia se firma, se guarda fuera de la máquina y la custodia la lleva alguien que no participó.</li>
+</ul>
+<h3 id="limitaciones-costo">Costo y tiempo, con la cuenta a mano</h3>
+<p>No hay costo de nube. El espacio sí cuenta: el <code>.tar</code> del contenedor pesa lo que la imagen de la API más sus cambios (míralo con <code>ls -lh</code>), y cada incidente guarda uno. auditd con estas seis reglas escribe poco; supuesto: si el servidor recibe 50 <code>sudo</code> y 200 <code>docker</code> por día, a unos 1&#8239;000 bytes por evento agrupado, son 250 KB por día, menos de 100 MB por año. El tiempo que importa es otro: anota cuántos minutos pasaron entre la primera alerta y la pausa. Es tu tiempo de contención.</p>
+<h3 id="limitaciones-produccion">Qué cambia en producción</h3>
+<ul>
+<li>Un agente de Wazuh (o del SIEM que sea) en cada servidor, con auditd y osquery mandando afuera.</li>
+<li>Un playbook escrito para cada tipo de incidente, con quién decide la contención y con qué comando.</li>
+<li>La evidencia en un almacenamiento de solo escritura (por ejemplo, un bucket con retención bloqueada), firmada.</li>
+<li>Los secretos fuera del entorno de los contenedores, para que un <code>env</code> no alcance.</li>
+<li>El triaje de las alertas, que en SEC08 lo hace un agente con una persona aprobando la contención.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="sec06">
+<p class="pj-repo-head">El mismo repositorio de la tienda, con <code>servidor/</code> e <code>incidente/</code>. La carpeta <code>evidencia/</code> no se sube. Marca cada comprobación cuando la veas.</p>
+<ul class="pj-checks">
+<li data-check="auditd">auditd anota <code>identidad</code> y Wazuh lo marca con la 100140.</li>
+<li data-check="osquery">osquery anota usuarios y Wazuh lo marca con la 100144.</li>
+<li data-check="contener">La API quedó pausada y <code>docker top</code> mostró el proceso del atacante.</li>
+<li data-check="evidencia">La carpeta del caso pasa <code>sha256sum -c</code> y tiene su nota de custodia.</li>
+<li data-check="linea">La línea de tiempo con guion tiene evidencia debajo de cada paso.</li>
+<li data-check="postmortem">El postmortem tiene al menos una acción con responsable y fecha.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con SEC00 y SEC05</p>
+<p>La tienda, sus reglas y <code>provocar.py</code> son de <a href="sec00-laboratorio.html">SEC00</a>; la forma de sumar fuentes y la regla nueva del postmortem siguen el camino de <a href="sec05-deteccion.html">SEC05</a>. Si hiciste <a href="sec04-cluster.html">SEC04</a>, Falco ve lo que auditd no ve dentro del contenedor.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con la Parte VII del curso</p>
+<p>El marco en <a href="../modules/m60-respuesta-forense.html#marco">60.1</a>, el triaje en <a href="../modules/m60-respuesta-forense.html#triaje">60.3</a>, la contención en <a href="../modules/m60-respuesta-forense.html#contener">60.4</a>, la evidencia en <a href="../modules/m60-respuesta-forense.html#evidencia">60.5</a>, los artefactos de Linux en <a href="../modules/m60-respuesta-forense.html#linux">60.6</a>, la línea de tiempo en <a href="../modules/m60-respuesta-forense.html#timeline">60.8</a> y el postmortem en <a href="../modules/m60-respuesta-forense.html#postmortem">60.11</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con el glosario</p>
+<p><a href="../glosario.html#t-contencion">contención</a>, <a href="../glosario.html#t-timeline-forense">línea de tiempo forense</a>, <a href="../glosario.html#t-siem">SIEM</a>, <a href="../glosario.html#t-ioc">IoC</a> y <a href="../glosario.html#t-mitre-attack">MITRE ATT&amp;CK</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/sec06.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

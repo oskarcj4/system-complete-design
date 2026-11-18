@@ -59,6 +59,12 @@
       </section>
 
       <h2 id="usuarios"><span class="sec-num">34.1</span>Usuarios, grupos y permisos, en el día a día</h2>
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>En Linux todo programa que corre lo hace "a nombre de" un usuario, y cada archivo dice quién puede leerlo, escribirlo o ejecutarlo. Saber leer esos permisos te ahorra la mayoría de los errores "permission denied" y evita que un servicio tenga más poder del que necesita.</p>
+        <p class="jr-like"><b>Es como</b> las llaves de un edificio de oficinas: el conserje (root) abre todo, cada empleado tiene la llave de su piso, y un cartel en cada puerta dice quién entra a mirar, quién puede mover cosas y quién puede usar las máquinas.</p>
+        <dl class="jr-words"><dt>UID / GID</dt><dd>el número con el que el kernel identifica a un usuario y a un grupo.</dd><dt>root</dt><dd>el usuario 0, que puede hacer cualquier cosa en la máquina.</dd><dt>rwx</dt><dd>leer (read), escribir (write) y ejecutar (execute), los tres permisos básicos.</dd><dt>setuid</dt><dd>un bit que hace correr un programa con el usuario de su dueño, no con el tuyo.</dd></dl>
+      </aside>
       <p>Operar un servidor es un oficio distinto del de endurecerlo. En M33 pusiste los candados; aquí vives dentro de la casa: arrancas servicios, revisas por qué uno no levantó, haces espacio en el disco y, cuando algo va lento, encuentras la causa sin cambiar diez cosas a la vez. Todo lo que sigue son comandos de administración y de diagnóstico, de los que lees el estado del sistema y lo ajustas.</p>
 
       <p>Empecemos por lo que toca todo lo demás: la identidad. Cada proceso en Linux corre como un usuario, con su <b>UID</b> (número de usuario) y sus grupos (<b>GID</b>). El kernel no conoce nombres; conoce números. El UID&#8239;0 es <code>root</code> y puede todo. Un servicio bien montado no corre como root: tiene su propio usuario de sistema, sin shell de inicio, para que si lo comprometen el atacante herede lo mínimo (lo viste en <a href="m33-hardening-linux.html#cuentas">M33</a>, y el sandbox de <code>systemd</code> lo lleva más lejos).</p>
@@ -85,9 +91,49 @@ www-data   812 nginx                   # los workers, sin privilegios</code></pr
         </table>
       </div>
 
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="fjr34at fjr34ad">
+<title id="fjr34at">Cómo se lee -rwxr-x--- y por qué vale 750</title>
+<desc id="fjr34ad">La cadena de permisos se parte en cuatro trozos: el tipo (un guion para archivo, d para directorio) y tres ternas para el dueño, el grupo y el resto. En cada terna, r vale 4, w vale 2 y x vale 1; se suman los presentes. rwx da 7, r-x da 5 y --- da 0, así que -rwxr-x--- es 750.</desc>
+<rect class="dg-box" x="40" y="40" width="90" height="50" rx="8"/>
+<text class="dg-label dg-mono" x="85" y="71" text-anchor="middle">-</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="150" y="40" width="180" height="50" rx="8"/>
+<text class="dg-label dg-mono" x="240" y="71" text-anchor="middle">r w x</text>
+<rect class="dg-layer" style="--c: var(--l-queue)" x="344" y="40" width="180" height="50" rx="8"/>
+<text class="dg-label dg-mono" x="434" y="71" text-anchor="middle">r - x</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="538" y="40" width="180" height="50" rx="8"/>
+<text class="dg-label dg-mono" x="628" y="71" text-anchor="middle">- - -</text>
+<text class="dg-small" x="85" y="114" text-anchor="middle">Tipo</text>
+<text class="dg-small" x="240" y="114" text-anchor="middle">Dueño</text>
+<text class="dg-small" x="434" y="114" text-anchor="middle">Grupo</text>
+<text class="dg-small" x="628" y="114" text-anchor="middle">Resto</text>
+<text class="dg-tiny" x="85" y="140" text-anchor="middle">- archivo</text>
+<text class="dg-tiny" x="85" y="156" text-anchor="middle">d directorio</text>
+<text class="dg-tiny dg-mono" x="240" y="140" text-anchor="middle">4 + 2 + 1</text>
+<text class="dg-label" x="240" y="162" text-anchor="middle">= 7</text>
+<text class="dg-tiny dg-mono" x="434" y="140" text-anchor="middle">4 + 0 + 1</text>
+<text class="dg-label" x="434" y="162" text-anchor="middle">= 5</text>
+<text class="dg-tiny dg-mono" x="628" y="140" text-anchor="middle">0 + 0 + 0</text>
+<text class="dg-label" x="628" y="162" text-anchor="middle">= 0</text>
+<rect class="dg-ok" x="150" y="180" width="568" height="36" rx="8"/>
+<text class="dg-small dg-mono" x="434" y="203" text-anchor="middle">r = 4 · w = 2 · x = 1   →   chmod 750 archivo</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 34.1a.</b> Una cadena de permisos se lee en cuatro trozos. Cada terna se convierte en un dígito sumando r = 4, w = 2 y x = 1.</figcaption>
+      </figure>
+
+      <p><b>Paso a paso, de letras a número.</b> Toma <code>-rw-r-----</code>. Quita el primer carácter (es el tipo: archivo). Quedan <code>rw-</code>, <code>r--</code> y <code>---</code>. Suma en cada una: 4 + 2 + 0 = 6, 4 + 0 + 0 = 4 y 0. El resultado es <code>640</code>: el dueño lee y escribe, el grupo solo lee y el resto no ve nada. Al revés, <code>chmod 600 clave.pem</code> se lee como 6 = 4 + 2 (rw) para el dueño y 0 para los demás.</p>
+
       <p>Dos trampas clásicas. Un bit <b>setuid</b> (<code>-rwsr-xr-x</code>) hace que el programa corra con el usuario de su dueño, no con el tuyo; es necesario en unos pocos binarios (<code>sudo</code>, <code>passwd</code>) y peligroso en cualquier otro, así que se audita (<a href="m33-hardening-linux.html#auditoria">M33</a> lo revisa con AIDE). Y <code>sudo</code> no es "ser root para todo": se acota por comando y por usuario, con el mínimo privilegio que viste en M33. La base de datos, cuando llegues a ella, es otro servicio con su propio usuario y sus propios permisos, y se opera con el mismo cuidado (<a href="m35-seguridad-bd.html#modelo">M35</a>).</p>
 
       <h2 id="systemd"><span class="sec-num">34.2</span>systemd: arrancar, vigilar y acotar servicios</h2>
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>systemd es el programa que arranca primero y se encarga de todos los demás: los prende, los vuelve a levantar si se caen y les pone un techo de memoria y de CPU. Sus logs los guarda journald, y es lo primero que lees cuando un servicio no arranca.</p>
+        <p class="jr-like"><b>Es como</b> el encargado de un turno en una fábrica: sabe qué máquinas prender y en qué orden, reinicia la que se traba, apunta en una bitácora todo lo que pasa y no deja que una sola máquina se lleve toda la electricidad.</p>
+        <dl class="jr-words"><dt>Unidad</dt><dd>el archivo <code>.service</code> que describe cómo arrancar un servicio.</dd><dt>systemctl</dt><dd>el comando para prender, apagar y ver el estado de un servicio.</dd><dt>MemoryMax / CPUQuota</dt><dd>el techo de memoria y de CPU que le pones a un servicio.</dd><dt>journalctl</dt><dd>el comando para leer los logs que guarda journald.</dd></dl>
+      </aside>
       <p><dfn data-term="systemd">systemd</dfn> es el primer proceso que arranca el kernel (PID&#8239;1) y el que gobierna a todos los demás: decide qué servicios levantan, en qué orden, qué hacer si uno muere y cuántos recursos puede gastar cada uno. Un servicio se describe en una <b>unidad</b> (un archivo <code>.service</code>), y lo manejas con <code>systemctl</code>.</p>
 
       <figure class="figure">
@@ -164,6 +210,12 @@ $ journalctl --disk-usage            # cuánto ocupa; se acota con SystemMaxUse 
       <p>Por defecto el journal puede ser volátil (se pierde al reiniciar). En un servidor de verdad se hace persistente (<code>Storage=persistent</code>) y, mejor aún, se envían los logs fuera de la máquina, para que un atacante que entre no pueda borrarlos (otra idea de <a href="m33-hardening-linux.html#auditoria">M33</a>, y el corazón de la observabilidad de <a href="m11-observabilidad.html#logs">M11</a>).</p>
 
       <h2 id="discos"><span class="sec-num">34.3</span>Discos, particiones y LVM</h2>
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Aquí aprendes a ver cuánto espacio queda, a encontrar qué carpeta se comió el disco y a agrandar un volumen sin apagar el servidor. La herramienta para agrandar en caliente es LVM, una capa que junta discos en una bolsa común de espacio.</p>
+        <p class="jr-like"><b>Es como</b> una bodega con estanterías móviles: en vez de muros fijos entre bodegas (particiones), juntas todo el espacio y vas corriendo las estanterías para darle más lugar al que lo necesita.</p>
+        <dl class="jr-words"><dt>df / du</dt><dd>espacio libre por disco / cuánto ocupa cada carpeta.</dd><dt>Inode</dt><dd>la ficha que el sistema de archivos guarda por cada archivo; si se acaban, no puedes crear archivos aunque haya espacio.</dd><dt>PV, VG, LV</dt><dd>disco físico, grupo que junta discos, y volumen que cortas de ese grupo.</dd><dt>Snapshot</dt><dd>una foto del volumen en un instante, para copiarlo sin parar el servicio.</dd></dl>
+      </aside>
       <p>Dos preguntas resuelven casi todo lo de disco: ¿cuánto espacio queda? y ¿cómo lo agrando sin apagar nada? Para la primera, <code>df</code> mira el espacio por sistema de archivos y <code>du</code> mira qué carpeta se lo comió:</p>
 
 <pre data-lang="shell"><code>$ df -h                 # espacio libre por punto de montaje, en unidades legibles
@@ -173,12 +225,19 @@ Filesystem      Size  Used Avail Use% Mounted on
 $ df -i                 # inodes: un disco puede tener espacio y aun así no dejar crear archivos
 $ du -sh /var/* | sort -h | tail        # los mayores de /var; casi siempre /var/log</code></pre>
 
+      <p><b>Cómo leer esta salida.</b> <code>Size</code> es el tamaño del volumen (50&#8239;GB), <code>Used</code> lo ocupado (47&#8239;GB) y <code>Avail</code> lo que todavía puedes escribir (0.6&#8239;GB). Si sumas, 47 + 0.6 = 47.6, no 50: los 2.4&#8239;GB que faltan los reserva ext4 para root (por defecto el 5&#8239;%, y 5&#8239;% de 50 es 2.5). El <code>Use%</code> se calcula sobre lo que tú puedes usar: 47 / 47.6 ≈ 0.987, que se redondea a 99&#8239;%. Y <code>df -i</code> mira otra cosa: cada archivo gasta un inode (su ficha), y una carpeta con millones de archivos diminutos puede agotarlos con el disco medio vacío; el error es el mismo "No space left on device".</p>
+
       <aside class="callout callout--fail">
         <p class="callout-label">Qué pasa si falla</p>
         <p>Un disco al 100&#8239;% no da un error limpio: las escrituras fallan y los servicios se caen en cadena. La base no puede escribir su WAL, el log no se puede abrir, journald deja de registrar justo cuando más lo necesitas. Por eso <code>df</code> es la primera alerta que se monta (<a href="m11-observabilidad.html#alertas">M11</a>) y la primera que miras.</p>
       </aside>
 
       <p>Para la segunda pregunta está <dfn data-term="lvm">LVM</dfn> (Logical Volume Manager). En vez de atar un sistema de archivos a una partición fija, LVM pone una capa en medio: los discos son volúmenes físicos (PV), juntos forman un grupo (VG) y de ese grupo cortas volúmenes lógicos (LV) del tamaño que quieras, y los creces después tomando del espacio libre.</p>
+
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>Piensa en una cuenta bancaria familiar. Cada disco (PV) es un sueldo que entra; el grupo (VG) es la cuenta común donde se junta todo; cada volumen lógico (LV) es un sobre con un destino ("raíz", "datos"). Si el sobre de datos se queda corto, no abres otra cuenta ni rompes los sobres: pasas plata del saldo libre de la cuenta al sobre (<code>lvextend</code>). Y si se acaba el saldo libre, sumas otro sueldo, un disco nuevo, a la misma cuenta (<code>vgextend</code>).</p>
+      </aside>
 
       <figure class="figure">
         <div class="figure-frame">
@@ -224,6 +283,12 @@ $ lvcreate -s -n snap_data -L 20G /dev/vg0/lv_data   # snapshot para un backup c
       <p>El <code>-r</code> es la clave: crece el volumen y el sistema de archivos de encima en un paso, sin desmontar y sin tocar los datos. Y un <b>snapshot</b> (una foto del volumen en un instante) te deja hacer el backup de una base que sigue escribiendo, sin pararla. De los backups va la sección que sigue.</p>
 
       <h2 id="backups"><span class="sec-num">34.4</span>Backups y la prueba que los convierte en backups</h2>
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un backup sirve solo si lo puedes restaurar. La regla 3-2-1 reparte las copias para que un solo desastre no se lleve todas, y la prueba de restauración te dice dos números: cuántos datos pierdes y cuánto tardas en volver.</p>
+        <p class="jr-like"><b>Es como</b> la llanta de repuesto del auto: tenerla en el maletero no basta; tienes que saber que está inflada y que sabes cambiarla, y lo compruebas antes del pinchazo, no en la carretera.</p>
+        <dl class="jr-words"><dt>3-2-1</dt><dd>tres copias, en dos medios distintos, una fuera del sitio.</dd><dt>RPO</dt><dd>cuántos datos puedes perder (la edad de tu última copia).</dd><dt>RTO</dt><dd>cuánto tardas en tener el servicio arriba otra vez.</dd><dt>Restaurar</dt><dd>volver a poner los datos de una copia en un servidor y comprobar que sirven.</dd></dl>
+      </aside>
       <p>La regla que se repite porque funciona es <dfn data-term="backup-3-2-1">3-2-1</dfn>: tres copias de los datos, en dos medios distintos, con una fuera del sitio. Así ningún fallo único (un disco, un incendio, un ransomware que cifra la red local) se lleva todo.</p>
 
       <figure class="figure">
@@ -277,9 +342,44 @@ $ lvcreate -s -n snap_data -L 20G /dev/vg0/lv_data   # snapshot para un backup c
         </dl>
       </aside>
 
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 236" role="img" aria-labelledby="fjr34bt fjr34bd">
+<title id="fjr34bt">RPO y RTO en una línea de tiempo</title>
+<desc id="fjr34bd">Un día con backup diario a las 00:00. A las 18:00 falla el disco: se pierden las 18 horas de datos desde el último backup, que es el RPO real de ese día. La restauración tarda 3 horas y el servicio vuelve a las 21:00: eso es el RTO. Si la falla llegara justo antes del backup siguiente, se perderían casi 24 horas, por eso con backup diario el RPO se declara de 24 horas.</desc>
+<defs><marker id="fjr34ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-edge" d="M40 112 H740"/>
+<path class="dg-edge" d="M64 62 H534" marker-start="url(#fjr34ba)" marker-end="url(#fjr34ba)"/>
+<text class="dg-small" x="300" y="50" text-anchor="middle">Datos perdidos: 18 h (el RPO real de ese día)</text>
+<path class="dg-feedback" d="M60 70 V104"/>
+<path class="dg-feedback" d="M540 70 V104"/>
+<rect class="dg-ok" x="52" y="104" width="16" height="16" rx="3"/>
+<text class="dg-tiny" x="48" y="142" text-anchor="start">00:00 último backup</text>
+<rect class="dg-bad" x="532" y="104" width="16" height="16" rx="3"/>
+<text class="dg-tiny" x="528" y="92" text-anchor="end">18:00 falla el disco</text>
+<rect class="dg-ok" x="612" y="104" width="16" height="16" rx="3"/>
+<text class="dg-tiny" x="620" y="142" text-anchor="middle">21:00 de vuelta</text>
+<rect class="dg-box" x="692" y="104" width="16" height="16" rx="3"/>
+<text class="dg-tiny" x="700" y="92" text-anchor="middle">24:00 backup</text>
+<path class="dg-feedback" d="M540 120 V164"/>
+<path class="dg-feedback" d="M620 150 V164"/>
+<path class="dg-edge" d="M546 170 H614" marker-start="url(#fjr34ba)" marker-end="url(#fjr34ba)"/>
+<text class="dg-small" x="580" y="190" text-anchor="middle">RTO: 3 h caído</text>
+<text class="dg-tiny" x="40" y="222" text-anchor="start">Peor caso: si falla a las 23:59, pierdes casi 24 h. Por eso, con backup diario, el RPO que prometes es 24 h.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 34.4a.</b> El ejemplo de la definición en una línea de tiempo: el RPO mira hacia atrás desde la falla (qué perdiste) y el RTO hacia adelante (cuánto tardas en volver).</figcaption>
+      </figure>
+
       <p>Las herramientas importan menos que la disciplina. <code>pg_dump</code> para el volcado lógico de una base (<a href="m35-seguridad-bd.html#rbac">M35</a> entra en el detalle), <code>rsync</code> para copiar archivos, y <code>restic</code> o <code>borg</code> cuando quieres copias deduplicadas, cifradas y con histórico. Todas se agendan con un <code>systemd timer</code> y todas se prueban restaurando.</p>
 
       <h2 id="troubleshooting"><span class="sec-num">34.5</span>Un método para diagnosticar</h2>
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Cuando algo va lento, no se toca al azar: describes el síntoma, adivinas una causa, la mides, arreglas y vuelves a medir. El árbol de esta sección te dice qué recurso mirar (CPU, memoria, disco o red) y con qué comando.</p>
+        <p class="jr-like"><b>Es como</b> un médico ante la fiebre: no te receta cinco remedios a la vez; pregunta, toma la temperatura, pide un análisis que confirme la sospecha y recién entonces trata, para saber qué funcionó.</p>
+        <dl class="jr-words"><dt>Hipótesis</dt><dd>tu sospecha de la causa, que todavía no está comprobada.</dd><dt>Método USE</dt><dd>mirar de cada recurso su uso, su saturación (cola) y sus errores.</dd><dt>Cuello de botella</dt><dd>el recurso que se llenó primero y frena todo lo demás.</dd></dl>
+      </aside>
       <p>Cuando algo va lento o se cae, la tentación es tocar cosas hasta que mejore. El método que no te deja perder es al revés: <b>síntoma, hipótesis, medición, arreglo</b>, y una cosa a la vez. Primero describes el síntoma con precisión ("la API tarda 4&#8239;s desde las 02:00"), formas una hipótesis ("se llenó el disco de logs"), la mides con la herramienta que la confirma o la descarta, arreglas, y vuelves a medir para comprobar. Cambiar varias cosas juntas te deja sin saber cuál era.</p>
 
       <figure class="figure">
@@ -358,6 +458,12 @@ $ lvcreate -s -n snap_data -L 20G /dev/vg0/lv_data   # snapshot para un backup c
       <div data-sim="triage"></div>
 
       <h2 id="cpu-mem"><span class="sec-num">34.6</span>CPU y memoria</h2>
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>El load average parece un medidor de CPU, pero cuenta también a los procesos que esperan al disco; hay que leerlo junto al número de núcleos y a <code>top</code>. En memoria, el número útil es la memoria disponible, y cuando se acaba entra el OOM killer y mata un proceso.</p>
+        <p class="jr-like"><b>Es como</b> la fila de un banco: el load average cuenta a todos los que están en la fila, también a los que esperan un documento de otra oficina (el disco); que la fila sea larga no siempre significa que falten cajeros (CPU).</p>
+        <dl class="jr-words"><dt>Load average</dt><dd>cuántos procesos corren o esperan, promediado en 1, 5 y 15 minutos.</dd><dt>us, sy, id, wa</dt><dd>tiempo de CPU en tu código, en el kernel, sin hacer nada y esperando al disco.</dd><dt>available</dt><dd>la memoria que de verdad puede usar un programa nuevo.</dd><dt>Swap</dt><dd>disco usado como memoria de emergencia, mucho más lento que la RAM.</dd><dt>OOM killer</dt><dd>la parte del kernel que mata un proceso cuando la memoria se agota.</dd></dl>
+      </aside>
       <p>El primer número que todos miran es el <dfn data-term="load-average">load average</dfn>, y el primero que casi todos malinterpretan. No mide la CPU: mide cuántos procesos están corriendo <em>o</em> esperando para correr, y en Linux incluye además los que esperan por disco sin poder interrumpirse (estado D). Por eso un load alto con la CPU ociosa casi nunca es falta de CPU.</p>
 
       <figure class="figure">
@@ -398,6 +504,16 @@ $ vmstat 1 5
  r  b   swpd   free   buff  cache   si   so    bi    bo   us sy id wa
  1  6      0  102400  2048 512000    0    0  2048 51200    6  3 30 61    # wa 61: es disco</code></pre>
 
+      <p><b>Paso a paso con la salida de arriba.</b> Así se lee sin adivinar:</p>
+      <ol class="steps">
+        <li><span class="step-title">Divide por núcleos</span><code>8.10 / 4 ≈ 2.0</code>: por cada núcleo hay unos dos procesos que quieren correr o que esperan. Por encima de 1 por núcleo ya hay cola.</li>
+        <li><span class="step-title">Mira la tendencia</span>8.10 (1&#8239;min), 7.90 (5&#8239;min) y 6.40 (15&#8239;min): la carga viene subiendo y sigue alta; no es un pico que ya pasó.</li>
+        <li><span class="step-title">¿Quién hace la cola?</span>En <code>vmstat</code>, <code>r = 1</code> (uno listo para CPU) y <code>b = 6</code> (seis bloqueados esperando al disco). La cola es de disco, no de CPU.</li>
+        <li><span class="step-title">Confirma con los porcentajes</span><code>us + sy = 6 + 3 = 9</code>&#8239;% de CPU trabajando, <code>id = 30</code> y <code>wa = 61</code>: suman 100. La CPU pasa más de la mitad del tiempo esperando al disco.</li>
+        <li><span class="step-title">Elige la rama</span>Rama de disco del árbol de la figura 34.5: el siguiente comando es <code>iostat -x 1</code> (sección <a href="#disco-red">34.7</a>), no comprar más CPU.</li>
+      </ol>
+      <p>Un detalle práctico: en la salida real, la primera línea de <code>vmstat</code> es el promedio desde que arrancó la máquina; las que siguen son cada segundo y son las que importan para lo que pasa ahora.</p>
+
       <p>La memoria tiene su propia trampa: <code>free -m</code> muestra poca <code>free</code> casi siempre, porque Linux usa la RAM libre como caché de disco y la suelta cuando hace falta. El número que importa es <code>available</code>. Cuando <em>ese</em> se agota y el <dfn data-term="swap">swap</dfn> (memoria de respaldo en disco) también, el kernel no tiene de dónde sacar y entra el <dfn data-term="oom-killer">OOM killer</dfn>.</p>
 
       <figure class="figure">
@@ -437,11 +553,19 @@ $ vmstat 1 5
       <p>El OOM killer elige el proceso con mayor <code>oom_score</code> (grande y poco protegido), lo mata y lo anota en el log del kernel. El síntoma clásico es un servicio que "desaparece" de noche sin que nadie lo tocara. La defensa no es subir el swap —eso solo lleva al <b>thrashing</b>, páginas yendo y viniendo del disco hasta que todo se arrastra— sino poner un <code>MemoryMax</code> por servicio (sección <a href="#systemd">34.2</a>) y arreglar la fuga que lo infla.</p>
 
       <h2 id="disco-red"><span class="sec-num">34.7</span>Disco y red</h2>
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Si el árbol te manda al disco, <code>iostat</code> te dice si está ocupado todo el tiempo y cuánto tarda cada operación. Si te manda a la red, <code>ss</code> muestra las conexiones y <code>dig</code> cuánto tarda el DNS. Cuando ya sabes qué proceso es, <code>strace</code> muestra en qué se quedó esperando.</p>
+        <p class="jr-like"><b>Es como</b> revisar el tráfico de una ciudad: primero miras qué avenida está atascada (iostat, ss) y solo después sigues a un auto concreto para ver en qué semáforo se quedó parado (strace).</p>
+        <dl class="jr-words"><dt>%util</dt><dd>qué parte del tiempo estuvo ocupado el disco.</dd><dt>await</dt><dd>cuántos milisegundos tarda en promedio cada operación de disco, contando la espera en cola.</dd><dt>ss</dt><dd>el comando que lista conexiones y puertos abiertos.</dd><dt>Syscall</dt><dd>un pedido que un programa le hace al kernel (leer, conectar, esperar).</dd></dl>
+      </aside>
       <p>Cuando el árbol te manda a disco o a red, cambian las herramientas pero no el método: mides el uso, la saturación y los errores del recurso. Para disco, <code>iostat -x 1</code> es el que manda; su <code>%util</code> cercano a 100 y un <code>await</code> (latencia media por operación) de cientos de milisegundos dicen que el disco está al límite. <code>iotop</code> te dice quién escribe.</p>
 
 <pre data-lang="shell"><code>$ iostat -x 1
 Device    r/s    w/s   rkB/s    wkB/s  await  %util
 nvme0n1   2.0  480.0    16.0  51200.0  182.4   99.2     # saturado: await alto, %util ~100</code></pre>
+
+      <p><b>Cómo leer esta línea.</b> <code>w/s = 480</code> son escrituras por segundo y <code>wkB/s = 51200</code> son unos 50&#8239;MB por segundo escritos, o sea 51&#8239;200 / 480 ≈ 107&#8239;KB por escritura. <code>%util = 99.2</code> dice que el disco tuvo trabajo pendiente el 99&#8239;% del tiempo, y <code>await = 182.4</code> que cada operación tardó en promedio 182&#8239;ms contando la espera en la cola: una escritura que debería ser casi instantánea hace fila. Ojo con un matiz: un SSD o NVMe atiende muchas operaciones en paralelo, así que un <code>%util</code> cerca de 100 no siempre es saturación por sí solo; lo que lo confirma es que el <code>await</code> crezca a la vez.</p>
 
       <p>Para red, <code>ss</code> reemplaza al viejo <code>netstat</code>: <code>ss -s</code> resume las conexiones, <code>ss -tn</code> muestra su estado (un montón en <code>SYN-SENT</code> es "mando el SYN y no vuelve nada"), y <code>ss -tulpen</code> es el inventario de puertos que escuchas (el mismo de <a href="m33-hardening-linux.html#inventario">M33</a>). Cuando el problema huele a nombres, <code>dig</code> mide cuánto tarda el DNS; cuando huele a pérdida, <code>ping</code> y <code>mtr</code> la cuantifican.</p>
 
@@ -512,6 +636,12 @@ connect(7, {sa_family=AF_INET, sin_port=htons(5432), ...}   # se quedó esperand
       </aside>
 
       <h2 id="runbooks"><span class="sec-num">34.8</span>Runbooks y mantenimiento</h2>
+      <aside class="callout callout--simple">
+        <p class="callout-label">En simple</p>
+        <p>Un runbook es la receta escrita para un problema que ya viste: cómo confirmarlo, cómo salir del paso y cómo arreglarlo de verdad. El mantenimiento se hace por tandas y con aviso, y cada incidente grande termina con un postmortem que deja un runbook o una alerta nueva.</p>
+        <p class="jr-like"><b>Es como</b> el manual de emergencias pegado en la pared de un avión: nadie lo improvisa en pleno incidente; se escribió con calma antes, a partir de lo que ya salió mal alguna vez.</p>
+        <dl class="jr-words"><dt>Runbook</dt><dd>la receta paso a paso para un síntoma concreto.</dd><dt>Mitigar</dt><dd>devolver el servicio rápido, aunque la causa siga ahí.</dd><dt>Drenar</dt><dd>sacar un servidor del balanceador antes de tocarlo, para que no reciba tráfico.</dd><dt>Postmortem</dt><dd>el análisis sin culpables de qué pasó y qué lo habría evitado.</dd></dl>
+      </aside>
       <p>La última pieza de operar es no tener que redescubrir el diagnóstico cada vez. Un <dfn data-term="runbook">runbook</dfn> —que ya conociste en <a href="m11-observabilidad.html#sin-runbook">M11</a>— es la receta para un síntoma concreto: cómo confirmarlo, cómo mitigarlo rápido y cómo arreglarlo de fondo. Los que escribes en este módulo son los de recursos: "disco lleno", "servicio en failed", "OOM de noche", "DNS lento". Cada incidente que resuelves deja uno nuevo.</p>
 
       <ol class="steps">

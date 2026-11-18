@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WEB07. Inyecciones</title>
+<meta name="description" content="Preparadas de verdad, comodines de LIKE escapados en un lugar, un ORDER BY con lista permitida, una bitácora que no guarda hashes y un registro en JSON que un salto de línea no parte.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="web07" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Inyecciones</h1>
+        <p class="lead">Tu API ya usa consultas preparadas. Lo que queda son los bordes que un parámetro no cubre: el orden, los comodines, la bitácora y el registro.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>WEB07</dd></div>
+          <div><dt>Plan</dt><dd>Seguridad web</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>3 h</dd></div>
+          <div><dt>Módulos</dt><dd>M79</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="web07">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Comprobar, con la lista de <a href="../modules/m79-inyecciones.html#sql-limites">M79</a>, que tu API ya separa código y datos en casi todo, y saber leer las excepciones (columnas que salen de una constante, un <code>sprintf</code> con un nombre de tabla que no viene de la request).</li>
+<li>Cerrar los cuatro huecos que quedan: la emulación de PDO, los comodines de <code>LIKE</code> en la búsqueda de usuarios, un <code>ORDER BY</code> que se pide como dato, y el hash de la contraseña que la bitácora guarda en claro.</li>
+<li>Pasar el registro de errores a una línea JSON por evento, para que un salto de línea dentro de un dato no fabrique una entrada falsa.</li>
+<li>Probarlo con funciones puras (sin base), con <code>curl</code> y con una consulta a la bitácora.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>La re-auditoría buscó, como pide <a href="../modules/m79-inyecciones.html#fallas">M79</a>, cada intérprete al que llega un string de la request: <code>exec</code>, <code>include</code> con variable, <code>unserialize</code>, plantillas, XML. No hay ninguno. En SQL, cada consulta es una <code>prepare</code> con <code>?</code>, y los tres lugares que arman SQL con variables lo hacen con fragmentos fijos: las columnas de <code>postulaciones</code> salen de las llaves de la constante <code>CAMPOS_FORMULARIO</code>, el <code>$porEmail</code> de la búsqueda es uno de dos strings escritos en el código, y la bitácora interpola un nombre de tabla que saca de su propia consulta, no de la request. Las búsquedas de ofertas y de la bitácora escapan los comodines de <code>LIKE</code>, y los dos <code>LIMIT ?</code> van con <code>PDO::PARAM_INT</code>.</p>
+<p>Eso es una API cuidada. Lo que queda son cuatro bordes, ninguno es una inyección SQL clásica y los cuatro están en la lista de "lo que un parámetro no puede ser" de M79:</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="fw7at fw7ad">
+<title id="fw7at">Dónde llega un dato y qué lo protege</title>
+<desc id="fw7ad">Una rejilla con seis filas. Valores en un WHERE: protegidos por consultas preparadas, ya bien. Columnas del formulario: salen de una constante, ya bien. La conexión: emula las preparadas, hueco 1. LIKE en la búsqueda de usuarios: los comodines no se escapan, hueco 2. ORDER BY de Mis ofertas: hoy no existe, se agrega con lista permitida, hueco 3. La bitácora y el registro: el hash va en claro y los saltos de línea crean líneas, hueco 4.</desc>
+<g class="dg-small"><text x="20" y="28">Dónde cae el dato</text><text x="300" y="28">Qué lo protege hoy</text><text x="600" y="28">Estado</text></g>
+<path class="dg-frame" d="M14 40 H756"/>
+<text class="dg-label" x="20" y="66">Un valor en un WHERE</text><text class="dg-tiny" x="300" y="66">prepare con ? y execute</text>
+<rect x="596" y="50" width="150" height="26" rx="6" class="dg-ok"/><text class="dg-tiny" x="671" y="67" text-anchor="middle">ya bien</text>
+<text class="dg-label" x="20" y="108">Columnas del formulario</text><text class="dg-tiny" x="300" y="108">llaves de CAMPOS_FORMULARIO</text>
+<rect x="596" y="92" width="150" height="26" rx="6" class="dg-ok"/><text class="dg-tiny" x="671" y="109" text-anchor="middle">ya bien</text>
+<text class="dg-label" x="20" y="150">La conexión</text><text class="dg-tiny" x="300" y="150">PDO emula: escapa y pega</text>
+<rect x="596" y="134" width="150" height="26" rx="6" class="dg-warnbox"/><text class="dg-tiny" x="671" y="151" text-anchor="middle">hueco 1, paso 1</text>
+<text class="dg-label" x="20" y="192">LIKE de usuarios.php</text><text class="dg-tiny" x="300" y="192">nada: % y _ son comodines</text>
+<rect x="596" y="176" width="150" height="26" rx="6" class="dg-bad"/><text class="dg-tiny" x="671" y="193" text-anchor="middle">hueco 2, paso 2</text>
+<text class="dg-label" x="20" y="234">ORDER BY de Mis ofertas</text><text class="dg-tiny" x="300" y="234">no hay: se agrega, con lista</text>
+<rect x="596" y="218" width="150" height="26" rx="6" class="dg-warnbox"/><text class="dg-tiny" x="671" y="235" text-anchor="middle">hueco 3, paso 3</text>
+<text class="dg-label" x="20" y="276">Bitácora y registro</text><text class="dg-tiny" x="300" y="276">nada: hash en claro, \n crea líneas</text>
+<rect x="596" y="260" width="150" height="26" rx="6" class="dg-bad"/><text class="dg-tiny" x="671" y="277" text-anchor="middle">huecos 4 y 5, pasos 4 y 5</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB07.1.</b> La re-auditoría, en una rejilla. Las dos primeras filas son el patrón que hay que conservar. Las rojas dejan pasar algo hoy; las amarillas son defensa en profundidad (la emulación es segura con el <code>charset</code> en el DSN, como lo tienes) o una función nueva que conviene nacer bien.</figcaption>
+</figure>
+<ul>
+<li><b>H1. La emulación.</b> <code>pdo_mysql</code> emula las consultas preparadas por defecto: escapa cada valor y pega el string antes de mandarlo. Con <code>charset=utf8mb4</code> en el DSN es seguro, pero la plantilla y los datos viajan juntos. <a href="../modules/m79-inyecciones.html#sql">79.2</a>.</li>
+<li><b>H2. Los comodines.</b> <code>Usuarios::search()</code> arma <code>'%' . $termino . '%'</code> sin escapar. Con <code>?q=%</code>, cualquier sesión recibe los primeros 15 usuarios activos, sin saber ninguna letra de su nombre; con <code>?q=_</code>, lo mismo. Las otras dos búsquedas ya lo escapan: esta se quedó atrás.</li>
+<li><b>H3. El orden como dato.</b> "Mis ofertas" ordena por fecha de publicación, fijo. Producto quiere ordenar por fecha de cierre o por título. Un nombre de columna no puede ir en un <code>?</code>, y la tentación es <code>ORDER BY $orden</code>. Nace con lista permitida.</li>
+<li><b>H4. La bitácora.</b> <code>AuditLog</code> tacha las llaves que se llaman <code>password</code>, pero el cambio de contraseña usa <code>?</code> posicionales, cuyas llaves son <code>0</code> y <code>1</code>. El hash <code>$2y$…</code> nuevo queda en la bitácora, y la pantalla "Bitácora" del administrador lo muestra con "Ver datos".</li>
+<li><b>H5. El registro.</b> Después de <a href="web01-lo-que-no-debe-verse.html">WEB01</a>, el texto de cada excepción va al registro, y el texto de una excepción de MariaDB puede traer lo que mandó el cliente. Un salto de línea en ese dato escribe una segunda línea con la forma que quiera. <a href="../modules/m79-inyecciones.html#crlf">79.7</a>.</li>
+</ul>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 342" role="img" aria-labelledby="fw7st fw7sd">
+<title id="fw7st">Dos intérpretes en una request</title>
+<desc id="fw7sd">Con un ORDER BY armado con el dato, el cliente manda orden igual a una columna que no existe con un salto de línea y un texto con forma de entrada del registro. MariaDB rechaza la consulta y su mensaje de error trae el dato. PHP escribe el mensaje en el registro de texto, y el salto de línea crea una línea falsa. Después de la guía, la lista permitida responde 400 sin llegar a la base, y el registro escribe JSON en una sola línea.</desc>
+<defs><marker id="fw7s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw7s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fw7s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fw7s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Cliente</text>
+<path class="dg-frame" d="M70.0 40 V332"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">API (PHP)</text>
+<path class="dg-frame" d="M280.0 40 V332"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">MariaDB</text>
+<path class="dg-frame" d="M490.0 40 V332"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Registro</text>
+<path class="dg-frame" d="M700.0 40 V332"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#fw7s-a)"/>
+<rect x="27.099999999999994" y="55" width="295.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">GET ?creado_por=2&amp;orden=`x%0A[api …] falso`</text>
+<path class="dg-edge" d="M283.0 106 L485.0 106" marker-end="url(#fw7s-a)"/>
+<rect x="283.3" y="89" width="203.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">… ORDER BY `x\n[api …] falso`</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M487.0 140 L285.0 140" marker-end="url(#fw7s-f)"/>
+<rect x="286.6" y="123" width="196.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="134" text-anchor="middle">error: Unknown column &#x27;x\n…&#x27;</text>
+<path class="dg-edge" d="M283.0 174 L695.0 174" marker-end="url(#fw7s-a)"/>
+<rect x="391.6" y="157" width="196.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="490.0" y="168" text-anchor="middle">[api id] … Unknown column &#x27;x</text>
+<rect x="432.0" y="194" width="258" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="442.0" y="210">y una segunda línea: [api …] falso</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 242 L75.0 242" marker-end="url(#fw7s-r)"/>
+<rect x="106.30000000000001" y="225" width="137.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="236" text-anchor="middle">500, Referencia: id</text>
+<rect x="290.0" y="262" width="251" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="300.0" y="278">después: no está en la lista, 400</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB07.2.</b> Lo que se ve en la falla 2. La base no ejecuta nada raro, solo rechaza la columna; el daño está en el segundo lector, el registro de texto. Por eso el paso 3 corta en la lista y el paso 5 cambia el formato del registro: cada uno cierra un intérprete.</figcaption>
+</figure>
+<h2 id="endpoints">Los endpoints</h2>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Request</th><th>Hoy (leído del código)</th><th>Después</th></tr></thead>
+<tbody>
+<tr><td><code>GET usuarios.php?q=%25</code> (el <code>%</code> codificado)</td><td>200, hasta 15 usuarios</td><td>200, los que tengan un <code>%</code> en el nombre: ninguno</td></tr>
+<tr><td><code>GET usuarios.php?q=_</code></td><td>200, hasta 15 usuarios</td><td>200, los que tengan un <code>_</code></td></tr>
+<tr><td><code>GET oportunidades.php?creado_por=2&amp;orden=cierre</code></td><td>200, ordenado por publicación (<code>orden</code> se ignora)</td><td>200, por fecha de cierre</td></tr>
+<tr><td><code>GET oportunidades.php?creado_por=2&amp;orden=no_existe</code></td><td>200 (se ignora)</td><td>400, <code>orden</code> no válido</td></tr>
+<tr><td><code>PUT cambio_contrasena.php</code></td><td>200, y una fila de bitácora con el hash</td><td>200, y la fila con <code>[REDACTED]</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="dependencias">Qué necesitas</h2>
+<p>El laboratorio de <a href="web00-laboratorio.html">WEB00</a> con <a href="web01-lo-que-no-debe-verse.html">WEB01</a> aplicada: esta guía modifica <code>Response::serverError()</code> y supone que los <code>catch</code> de los modelos ya lo llaman. Las sesiones de <code>lab/login.json</code> y <code>lab/reclutador.json</code> (<a href="web06-control-acceso.html">WEB06</a>) y una oferta del reclutador. Nada que instalar.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<p>No cambia. Antes de empezar, deja una fila de bitácora con el problema, para verla desaparecer al final: entra como <code>estudiante2</code> (o cualquier cuenta de laboratorio), cambia su contraseña desde el perfil a otra y vuelve a la original. Después, como <code>admin</code>, abre "Bitácora", filtra por la tabla <code>usuarios</code> y aprieta "Ver datos" en la fila <code>UPDATE</code> más nueva.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Lo que espera el diseño</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td><code>"changes"</code> es una lista de dos valores: el primero empieza con <code>$2y$</code>, el segundo es el id</td><td>&nbsp;</td></tr>
+<tr><td><code>"record"</code> es <code>null</code> (sin una llave <code>id</code>, la bitácora no sabe qué fila leer)</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<pre data-lang="sql" data-file="lab/web07-bitacora.sql"><code>-- ¿Cuántas filas de la bitácora tienen un hash de bcrypt? Antes de la guía, al menos una.
+SELECT COUNT(*) AS filas_con_hash
+  FROM bitacora
+ WHERE JSON_SEARCH(newDate, 'one', '$2y$%') IS NOT NULL;</code></pre>
+<pre data-lang="shell"><code>cmd /c "C:\xampp\mysql\bin\mysql.exe -u root -h 127.0.0.1 -P 3308 control_practicas_db &lt; lab\web07-bitacora.sql"</code></pre>
+<p><code>JSON_SEARCH</code> busca el patrón en cualquier valor del documento, a cualquier profundidad; el <code>%</code> es el comodín de <code>LIKE</code>, el mismo de H2. Anota el número.</p>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<h3 id="paso-emulacion">Paso 1. Preparadas de verdad</h3>
+<p>En <code>api/core/connection.php</code>, debajo de la línea de <code>ATTR_ERRMODE</code>:</p>
+<pre data-lang="php" data-file="api/core/connection.php"><code>            $this-&gt;setAttribute(PDO::ATTR_EMULATE_PREPARES, false); // la plantilla y los datos viajan separados</code></pre>
+<p>Desde aquí, MariaDB compila la plantilla con los <code>?</code> y recibe los valores aparte, con su tipo. No cambia ninguna consulta. Lo que conviene saber:</p>
+<ul>
+<li><b>Los tipos que llegan al JSON no cambian.</b> Desde PHP 8.1, <code>pdo_mysql</code> devuelve enteros y decimales como números también con emulación <span class="badge badge--doc">Documentado</span>, así que el frontend recibe lo mismo que antes.</li>
+<li><b>Un nombre repetido falla.</b> Con preparadas reales, <code>:id</code> dos veces en la misma consulta es un error <code>SQLSTATE[HY093]</code>. En el repositorio, la única consulta con nombres es la de la bitácora, y no repite ninguno.</li>
+<li><b>Los <code>LIMIT ?</code> ya estaban bien.</b> El feed y la bitácora los atan con <code>PDO::PARAM_INT</code>, que funciona con y sin emulación.</li>
+</ul>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Apagar la emulación en la conexión, una sola vez.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Dejarla porque "con el charset en el DSN es segura": lo es, pero depende de que nadie cambie el DSN ni haga un <code>SET NAMES</code> a mano. Sin emulación, la seguridad no depende de cómo se escapa un string.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Una consulta que dependía de la emulación (un nombre repetido, un <code>?</code> en un lugar donde el servidor no acepta parámetros). Lo ves en la primera request que la usa: 500 con referencia, y el mensaje en el registro. Recorre la aplicación una vez después del cambio.</dd></div>
+</dl>
+<h3 id="paso-like">Paso 2. Los comodines, en un solo lugar</h3>
+<p>Tres búsquedas usan <code>LIKE</code>, dos lo escapan con <code>addcslashes</code> en línea y una no. La función va a un archivo nuevo, con su hermana para el orden del paso 3, y las tres búsquedas la usan.</p>
+<div class="pseudo"><ol>
+<li><code>likeContiene</code>: escapa <code>\</code>, <code>%</code> y <code>_</code> con una barra (el escape por defecto de MariaDB en <code>LIKE</code>) y rodea el texto con <code>%</code>.</li>
+<li><code>ordenPermitido</code>: busca el valor en un mapa de nombres a fragmentos de SQL escritos en el código. Si no está, devuelve <code>null</code>; quien llama decide responder 400.</li>
+</ol></div>
+<pre data-lang="php" data-file="api/core/sql.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+/**
+ * Lo que un parámetro de una consulta preparada no puede ser (M79, 79.3), resuelto en un lugar.
+ */
+
+/** Patrón de LIKE que busca el texto literal en cualquier parte: % y _ escritos por el usuario no son comodines. */
+function likeContiene(string $texto): string
+{
+    return '%' . addcslashes($texto, '\\%_') . '%';
+}
+
+/**
+ * Fragmento de ORDER BY para un valor pedido. El fragmento sale del mapa, escrito en el código;
+ * el valor del cliente solo elige una llave. Devuelve null si la llave no existe.
+ *
+ * @param array&lt;string, string&gt; $permitidos nombre público =&gt; fragmento de SQL
+ */
+function ordenPermitido(mixed $pedido, array $permitidos, string $porDefecto): ?string
+{
+    if ($pedido === null || $pedido === '') {
+        return $permitidos[$porDefecto];
+    }
+    if (!is_string($pedido)) {
+        return null;
+    }
+    return $permitidos[$pedido] ?? null;
+}</code></pre>
+<p>En <code>api/models/usuarios.php</code>, agrega arriba, debajo de <code>&lt;?php</code>:</p>
+<pre data-lang="php"><code>require_once __DIR__ . "/../core/sql.php";</code></pre>
+<p>Y en <code>search()</code>, cambia la línea del patrón:</p>
+<pre data-lang="php"><code>            $like   = '%' . $termino . '%';</code></pre>
+<p>por:</p>
+<pre data-lang="php" data-file="api/models/usuarios.php (search)"><code>            $like   = likeContiene($termino);</code></pre>
+<p>En <code>models/oportunidades.php</code> y <code>endpoints/bitacora.php</code>, las líneas con <code>addcslashes</code> pueden pasar a <code>likeContiene($q)</code> y <code>likeContiene(mb_substr($usuario, 0, 100))</code> con el mismo <code>require_once</code>. Hacen lo mismo; el cambio es para que la próxima búsqueda copie la función y no se olvide del escape.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una función con nombre para el patrón, usada por las tres búsquedas.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Prohibir <code>%</code> y <code>_</code> en la búsqueda: hay nombres de usuario con guion bajo (<code>ana_lopez</code>), y buscarlos tiene que funcionar.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Escapar dos veces (una en el endpoint y otra en el modelo): <code>a_b</code> se buscaría como <code>a\\_b</code> y no encontraría nada. El escape va solo en el modelo, justo donde se arma el patrón.</dd></div>
+</dl>
+<h3 id="paso-orden">Paso 3. <code>ORDER BY</code> con lista permitida</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 210" role="img" aria-labelledby="fw7bt fw7bd">
+<title id="fw7bt">El cliente elige una llave, el código escribe el SQL</title>
+<desc id="fw7bd">Tres valores de orden entran por la izquierda: cierre, titulo y no_existe. Al centro, el mapa ORDENES_CREADOR con tres llaves, publicacion, cierre y titulo, cada una con su fragmento de SQL. cierre y titulo encuentran su llave y el fragmento fijo llega a la consulta. no_existe no encuentra llave y la API responde 400 sin consultar la base.</desc>
+<defs><marker id="fw7ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-client)" x="12" y="30" width="140" height="36" rx="8"/><text class="dg-small dg-mono" x="82" y="53" text-anchor="middle">orden=cierre</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="12" y="86" width="140" height="36" rx="8"/><text class="dg-small dg-mono" x="82" y="109" text-anchor="middle">orden=titulo</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="12" y="142" width="140" height="36" rx="8"/><text class="dg-small dg-mono" x="82" y="165" text-anchor="middle">orden=no_existe</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="214" y="18" width="356" height="120" rx="8"/>
+<text class="dg-label" x="392" y="40" text-anchor="middle">ORDENES_CREADOR</text>
+<text class="dg-tiny dg-mono" x="228" y="66">publicacion  o.fecha_publicacion DESC, o.id DESC</text>
+<text class="dg-tiny dg-mono" x="228" y="90">cierre       o.fecha_cierre ASC, o.id ASC</text>
+<text class="dg-tiny dg-mono" x="228" y="114">titulo       o.titulo ASC, o.id ASC</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="604" y="48" width="152" height="56" rx="8"/><text class="dg-label" x="680" y="72" text-anchor="middle">MariaDB</text><text class="dg-tiny" x="680" y="90" text-anchor="middle">el fragmento fijo</text>
+<rect x="596" y="142" width="160" height="40" rx="8" class="dg-bad"/><text class="dg-small" x="676" y="167" text-anchor="middle">400, sin consulta</text>
+<path class="dg-edge" d="M152 48 L212 80" marker-end="url(#fw7ba)"/>
+<path class="dg-edge" d="M152 104 L212 104" marker-end="url(#fw7ba)"/>
+<path class="dg-edge" d="M570 78 L602 76" marker-end="url(#fw7ba)"/>
+<path class="dg-edge" d="M152 160 L594 162" marker-end="url(#fw7ba)"/>
+<rect x="300" y="150" width="150" height="20" rx="4" fill="var(--paper)"/><text class="dg-tiny" x="375" y="164" text-anchor="middle">no es una llave</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB07.3.</b> La regla de <a href="../modules/m79-inyecciones.html#sql-limites">79.3</a>: el dato nunca se vuelve SQL, solo elige entre fragmentos que escribiste tú. El <code>o.id</code> al final de cada orden lo hace estable: dos ofertas con la misma fecha salen siempre en el mismo orden.</figcaption>
+</figure>
+<p>En <code>api/models/oportunidades.php</code>, debajo de <code>ESTADOS_OPORTUNIDAD</code>, el mapa:</p>
+<pre data-lang="php" data-file="api/models/oportunidades.php (constante)"><code>    # ORDER BY de Mis ofertas: el cliente elige una llave; el SQL lo escribe el código
+    public const ORDENES_CREADOR = [
+        'publicacion' =&gt; 'o.fecha_publicacion DESC, o.id DESC',
+        'cierre'      =&gt; 'o.fecha_cierre ASC, o.id ASC',
+        'titulo'      =&gt; 'o.titulo ASC, o.id ASC',
+    ];</code></pre>
+<p>Agrega también <code>require_once __DIR__ . "/../core/sql.php";</code> debajo del <code>require_once</code> de <code>permisos.php</code> (o de <code>&lt;?php</code>, si no hiciste WEB06). <code>findByCreador</code> recibe el orden, lo resuelve antes de tocar la base y lo pega en la consulta. Cambia la firma y el principio:</p>
+<pre data-lang="php" data-file="api/models/oportunidades.php (findByCreador)"><code>    # Filtrar por creador (las ofertas que publicó un reclutador), en el orden pedido
+    public function findByCreador(int $creado_por, mixed $orden = null){
+        if ($creado_por &lt;= 0) {
+            $this-&gt;response-&gt;error("El ID del creador es invalido", -1, 400);
+        }
+        $porOrden = ordenPermitido($orden, self::ORDENES_CREADOR, 'publicacion');
+        if ($porOrden === null) {
+            $this-&gt;response-&gt;error("El orden no es valido", -1, 400);
+        }</code></pre>
+<p>y al final de su consulta, <code>ORDER BY o.fecha_publicacion DESC");</code> pasa a:</p>
+<pre data-lang="php"><code>                            WHERE o.estado = 1 AND o.creado_por = ? ORDER BY $porOrden");</code></pre>
+<p>Esta sí es una variable dentro del SQL, y está bien: <code>$porOrden</code> solo puede ser uno de los tres strings del mapa. En <code>api/endpoints/oportunidades.php</code>, la rama del creador pasa el parámetro tal cual llegó (string, array o nada; <code>ordenPermitido</code> decide):</p>
+<pre data-lang="php" data-file="api/endpoints/oportunidades.php (case GET)"><code>            } elseif ($creado_por &gt; 0) {
+                $oportunidad-&gt;findByCreador($creado_por, $_GET['orden'] ?? null);</code></pre>
+<p>En el frontend, "Mis ofertas" gana un selector. En <code>frontend/src/components/MisOfertas.jsx</code>, junto a los otros <code>useState</code>:</p>
+<pre data-lang="javascript"><code>  const [orden, setOrden] = useState("publicacion");</code></pre>
+<p>En <code>cargar</code>, la URL y la lista de dependencias:</p>
+<pre data-lang="javascript"><code>        const res = await apiFetch(`oportunidades.php?creado_por=${usuarioId}&amp;orden=${orden}`, { signal });</code></pre>
+<pre data-lang="javascript"><code>    [usuarioId, orden]</code></pre>
+<p>Y en la cabecera, debajo del <code>h2</code> "Mis ofertas":</p>
+<pre data-lang="javascript" data-file="frontend/src/components/MisOfertas.jsx (cabecera)"><code>        &lt;select
+          value={orden}
+          onChange={(e) =&gt; setOrden(e.target.value)}
+          aria-label="Ordenar mis ofertas"
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700"
+        &gt;
+          &lt;option value="publicacion"&gt;Más recientes&lt;/option&gt;
+          &lt;option value="cierre"&gt;Cierran antes&lt;/option&gt;
+          &lt;option value="titulo"&gt;Por título&lt;/option&gt;
+        &lt;/select&gt;</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Un mapa de nombres públicos a fragmentos, y 400 si el nombre no está.</dd></div>
+<div><dt>Lo que descartas</dt><dd><code>ORDER BY $orden</code> "validado" con una expresión regular de identificadores: deja pasar cualquier columna de las tablas unidas (por ejemplo, ordenar por <code>u.password_hash</code> y deducir hashes por comparación) y te ata a los nombres internos de la base.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Usar el valor por defecto cuando la llave no existe: el cliente que escribió <code>cierre_asc</code> recibe un orden que no pidió y no se entera. Un 400 hace visible el error en el primer intento.</dd></div>
+</dl>
+<h3 id="paso-bitacora">Paso 4. La bitácora no guarda secretos</h3>
+<p>La regla de hoy tacha por <em>nombre de llave</em>, y los <code>?</code> posicionales no tienen nombre. La regla nueva mira la sentencia: si toca una columna sensible, no se guarda ningún valor de esa sentencia. Es la misma idea de fallar cerrado de <a href="web06-control-acceso.html#paso-reglas">WEB06</a>: ante la duda, el valor no entra.</p>
+<div class="pseudo"><ol>
+<li>Si el SQL nombra <code>password</code>, <code>contrasena</code>, <code>token</code> o <code>secret</code>, cada parámetro pasa a <code>[REDACTED]</code>; se conserva cuántos eran.</li>
+<li>Si no, se aplica el tachado por llave de siempre (el registro leído con <code>SELECT *</code> sigue tachando su <code>password_hash</code> por nombre).</li>
+</ol></div>
+<p>En <code>api/core/audit-log.php</code>, dentro de <code>AuditLog</code>, agrega este método público, después de <code>record()</code>:</p>
+<pre data-lang="php" data-file="api/core/audit-log.php (AuditLog)"><code>    private const COLUMNAS_SENSIBLES = '/password|contrase(n|ñ)a|token|secret/i';
+
+    /**
+     * Parámetros de una sentencia, listos para la bitácora. Si la sentencia toca una columna
+     * sensible, no se guarda ningún valor: con ? posicionales no hay nombre por el que tachar.
+     */
+    public static function parametrosAuditables(string $sql, array $params): array
+    {
+        if (preg_match(self::COLUMNAS_SENSIBLES, $sql) === 1) {
+            return array_fill_keys(array_keys($params), '[REDACTED]');
+        }
+        return self::redact($params);
+    }</code></pre>
+<p>Y en <code>AuditedPDOStatement::execute()</code>, la línea que arma los datos:</p>
+<pre data-lang="php"><code>        $data = $params ?? [];</code></pre>
+<p>pasa a:</p>
+<pre data-lang="php" data-file="api/core/audit-log.php (execute)"><code>        $data = AuditLog::parametrosAuditables($this-&gt;queryString, $params ?? []);</code></pre>
+<p>Una consecuencia buscada: <code>findRowId</code> recibe ahora los datos tachados, así que en una sentencia sensible nunca encuentra un <code>id</code> y el registro queda en <code>null</code>, como ya pasaba con los posicionales. La bitácora dice que alguien cambió una contraseña, y quién; no cuál.</p>
+<pre data-lang="sql" data-file="lab/web07-limpiar.sql"><code>-- Tacha los hashes que ya quedaron en la bitácora. Haz antes la copia de abajo.
+UPDATE bitacora
+   SET newDate = JSON_SET(newDate, '$.changes', '[REDACTED]')
+ WHERE JSON_SEARCH(newDate, 'one', '$2y$%') IS NOT NULL;</code></pre>
+<pre data-lang="shell"><code>C:\xampp\mysql\bin\mysqldump.exe -u root -h 127.0.0.1 -P 3308 control_practicas_db bitacora &gt; lab\bitacora-antes.sql
+cmd /c "C:\xampp\mysql\bin\mysql.exe -u root -h 127.0.0.1 -P 3308 control_practicas_db &lt; lab\web07-limpiar.sql"</code></pre>
+<aside class="callout callout--fail">
+<p class="callout-label">Un UPDATE sobre la bitácora</p>
+<p>Este <code>UPDATE</code> cambia filas de auditoría y no se deshace solo: por eso va la copia con <code>mysqldump</code> primero. En un sistema real, tocar la bitácora es una decisión con dueño (quien responde por la auditoría), y se deja constancia de qué se tachó y por qué. Aquí es tu laboratorio. <code>lab\bitacora-antes.sql</code> tiene los hashes: bórralo cuando compruebes que todo funciona.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Tachar por sentencia, no por valor ni por llave.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Buscar valores con forma de hash (<code>$2y$</code>): cubre bcrypt y no un token, una clave de API ni el próximo algoritmo. La lista de columnas sensibles es corta y se lee en el código.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que la expresión tache de más: una tabla con una columna <code>token_publico</code> perdería sus valores en la bitácora. Es el lado bueno del error; si alguna vez molesta, se nombra esa columna como excepción.</dd></div>
+</dl>
+<h3 id="paso-registro">Paso 5. Una línea JSON por evento</h3>
+<p><code>json_encode</code> escribe un salto de línea como <code>\n</code>, dos caracteres. Si cada evento es un objeto JSON en su línea, ningún dato puede partirla: es el formato que lee cualquier herramienta de logs (y el que <a href="../modules/m59-deteccion.html">M59</a> espera de una fuente).</p>
+<pre data-lang="php" data-file="api/core/registro.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+/**
+ * El registro del servidor: un objeto JSON por línea. Un dato con saltos de línea no puede
+ * partir la entrada, porque json_encode los escribe como \n.
+ */
+function lineaDeLog(string $origen, array $campos): string
+{
+    $evento = ['ts' =&gt; date('c'), 'origen' =&gt; $origen] + $campos;
+    $json = json_encode($evento, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    return $json === false ? '{"origen":"log","error":"no se pudo codificar el evento"}' : $json;
+}
+
+/** Escribe el evento en el archivo de error_log, sin el prefijo de fecha que agrega PHP. */
+function registrar(string $origen, array $campos): void
+{
+    $archivo = (string)ini_get('error_log');
+    $linea = lineaDeLog($origen, $campos);
+    if ($archivo !== '') {
+        error_log($linea . PHP_EOL, 3, $archivo);
+    } else {
+        error_log($linea);
+    }
+}</code></pre>
+<p>El <code>3</code> de <code>error_log</code> significa "agrega este texto a este archivo", tal cual: sin el prefijo <code>[fecha]</code> que PHP pone en el modo normal, así que la línea es JSON puro. Ahora, los cuatro lugares que escriben en el registro. En <code>api/core/response.php</code>, arriba, <code>require_once __DIR__ . '/registro.php';</code>, y en <code>serverError</code> el <code>error_log(sprintf(…));</code> entero pasa a:</p>
+<pre data-lang="php" data-file="api/core/response.php (serverError)"><code>        registrar('api', [
+            'ref'     =&gt; $id,
+            'clase'   =&gt; $e::class,
+            'mensaje' =&gt; $e-&gt;getMessage(),
+            'archivo' =&gt; $e-&gt;getFile(),
+            'linea'   =&gt; $e-&gt;getLine(),
+        ]);</code></pre>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Archivo</th><th>Hoy</th><th>Pasa a</th></tr></thead>
+<tbody>
+<tr><td><code>core/env.php</code> (<code>fallar</code>, WEB01)</td><td><code>error_log("[config] $motivo");</code></td><td><code>registrar('config', ['motivo' =&gt; $motivo]);</code>, con <code>require_once __DIR__ . '/registro.php';</code> arriba</td></tr>
+<tr><td><code>core/storage.php</code></td><td><code>error_log('[storage] S3 ' . $metodo …);</code></td><td><code>registrar('storage', ['metodo' =&gt; $metodo, 'http' =&gt; $status, 'cuerpo' =&gt; substr($resultado, 0, 400)]);</code>, con el <code>require_once</code> debajo del de <code>env.php</code></td></tr>
+<tr><td><code>endpoints/postulaciones.php</code>, <code>catch (StorageException $e)</code></td><td><code>error_log('[postulaciones] StorageException: ' …);</code></td><td><code>registrar('postulaciones', ['clase' =&gt; 'StorageException', 'mensaje' =&gt; $e-&gt;getMessage()]);</code></td></tr>
+<tr><td><code>endpoints/postulaciones.php</code>, <code>catch (\Throwable $th)</code></td><td><code>error_log('[postulaciones] ' . get_class($th) …);</code></td><td>Se borra: después de WEB01, el <code>serverError($th)</code> de la línea siguiente ya lo registra con referencia</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>postulaciones.php</code> no necesita su propio <code>require_once</code>: <code>registro.php</code> llega con <code>response.php</code>, que todos los endpoints cargan.</p>
+<pre data-lang="shell"><code>C:\xampp\php\php.exe -l api\core\registro.php
+C:\xampp\php\php.exe -l api\core\response.php
+C:\xampp\php\php.exe -l api\core\audit-log.php
+C:\xampp\php\php.exe -l api\core\sql.php</code></pre>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>JSON por línea, escrito por una sola función.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Limpiar los saltos de línea del mensaje con <code>str_replace</code>: cierra <code>\n</code> y deja <code>\r</code>, los separadores de Unicode y lo que inventen después. <code>json_encode</code> escapa todos los caracteres de control.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>El archivo queda mezclado: los avisos propios de PHP (un <code>Warning</code>, un <code>Deprecated</code>) siguen saliendo en texto con su prefijo. Para leer solo los eventos, filtra las líneas que empiezan con <code>{</code>, como hace la comprobación.</dd></div>
+</dl>
+<h3 id="paso-prueba">Paso 6. Las reglas, sin base</h3>
+<pre data-lang="php" data-file="tests/inyecciones_test.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../api/core/sql.php';
+require __DIR__ . '/../api/core/registro.php';
+require __DIR__ . '/../api/core/audit-log.php';
+
+$fallos = 0;
+function caso(string $nombre, mixed $esperado, mixed $obtenido): void
+{
+    global $fallos;
+    $ok = $esperado === $obtenido;
+    if (!$ok) {
+        $fallos++;
+    }
+    printf("%s %s\n", $ok ? 'ok    ' : 'FALLA ', $nombre);
+}
+
+# LIKE
+caso('H2: % es literal',                  '%\\%%',     likeContiene('%'));
+caso('H2: _ es literal',                  '%a\\_b%',   likeContiene('a_b'));
+caso('la barra también se escapa',        '%\\\\%',    likeContiene('\\'));
+caso('un nombre normal no cambia',        '%Ana%',     likeContiene('Ana'));
+
+# ORDER BY
+$mapa = ['publicacion' =&gt; 'p DESC', 'cierre' =&gt; 'c ASC'];
+caso('H3: una llave del mapa',            'c ASC',     ordenPermitido('cierre', $mapa, 'publicacion'));
+caso('sin orden, el de por defecto',      'p DESC',    ordenPermitido(null, $mapa, 'publicacion'));
+caso('vacío, el de por defecto',          'p DESC',    ordenPermitido('', $mapa, 'publicacion'));
+caso('una columna que no es llave: null', null,        ordenPermitido('c ASC', $mapa, 'publicacion'));
+caso('un array: null',                    null,        ordenPermitido(['cierre'], $mapa, 'publicacion'));
+caso('mayúsculas no son la llave: null',  null,        ordenPermitido('CIERRE', $mapa, 'publicacion'));
+
+# Bitácora
+$cambio = AuditLog::parametrosAuditables('UPDATE usuarios SET password_hash = ? WHERE id = ?', ['$2y$10$abc', 3]);
+caso('H4: el hash no entra',              ['[REDACTED]', '[REDACTED]'], $cambio);
+$normal = AuditLog::parametrosAuditables('UPDATE oportunidades SET titulo = ? WHERE id = ?', ['Prácticas', 7]);
+caso('una sentencia normal se guarda',    ['Prácticas', 7], $normal);
+$nombre = AuditLog::parametrosAuditables('UPDATE x SET a = :a', [':password' =&gt; 'p']);
+caso('el tachado por llave sigue',        [':password' =&gt; '[REDACTED]'], $nombre);
+
+# Registro
+$linea = lineaDeLog('api', ['mensaje' =&gt; "x\n[api 000000000000] falso"]);
+caso('H5: una sola línea',                false, str_contains($linea, "\n"));
+caso('el dato vuelve igual al leerlo',    "x\n[api 000000000000] falso", json_decode($linea, true)['mensaje']);
+caso('\\r tampoco parte la línea',        false, str_contains(lineaDeLog('api', ['m' =&gt; "a\rb"]), "\r"));
+
+echo $fallos === 0 ? "Todo bien\n" : "$fallos casos fallaron\n";
+exit($fallos === 0 ? 0 : 1);</code></pre>
+<pre data-lang="shell"><code>C:\xampp\php\php.exe tests\inyecciones_test.php</code></pre>
+<p>Tiene que terminar con <code>Todo bien</code>. <code>audit-log.php</code> se puede cargar sin base porque declarar una clase no abre conexiones; la prueba solo llama al método estático.</p>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="web07-inyecciones"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-script">El script</h3>
+<pre data-lang="shell" data-file="lab/web07.ps1"><code>param(
+    [string]$Base = "http://localhost/SistemaControlPracticas/api/endpoints",
+    [string]$Log  = "C:\xampp\logs\practicas-api.log",
+    [string]$Mysql = "C:\xampp\mysql\bin\mysql.exe"
+)
+
+function Entrar([string]$Json, [string]$Jar) {
+    &amp; curl.exe -s -o NUL -c $Jar -H "Content-Type: application/json" --data-binary "@$Json" "$Base/login.php"
+}
+Entrar "lab\login.json" "lab\jar-estudiante.txt"
+Entrar "lab\reclutador.json" "lab\jar-reclutador.txt"
+
+function Fila([string]$Que, [string]$Esperado, [string]$Obtenido) {
+    $marca = if ($Obtenido -eq $Esperado) { "ok " } else { "MAL" }
+    "{0}  {1,-48} esperado {2,-6} obtenido {3}" -f $marca, $Que, $Esperado, $Obtenido
+}
+
+# 1. La conexión no emula
+$emula = (Select-String -Path "api\core\connection.php" -Pattern "ATTR_EMULATE_PREPARES, false" -Quiet)
+Fila "connection.php apaga la emulación" "True" "$emula"
+
+# 2. Comodines: cuántos usuarios devuelve buscar '%' y '_'
+foreach ($c in @("%25", "_")) {
+    $n = @((&amp; curl.exe -s -b "lab\jar-estudiante.txt" "$Base/usuarios.php?q=$c" | ConvertFrom-Json).data).Count
+    Fila "usuarios.php?q=$c devuelve" "0" "$n"
+}
+
+# 3. ORDER BY: llaves del mapa y lo que no lo es
+foreach ($par in @(@("cierre", "200"), @("titulo", "200"), @("no_existe", "400"), @("titulo%20DESC", "400"))) {
+    $s = &amp; curl.exe -s -o NUL -w "%{http_code}" -b "lab\jar-reclutador.txt" "$Base/oportunidades.php?creado_por=2&amp;orden=$($par[0])"
+    Fila "orden=$($par[0])" $par[1] $s
+}
+
+# 4. Bitácora: filas con un hash de bcrypt
+$filas = (&amp; cmd /c "`"$Mysql`" -u root -h 127.0.0.1 -P 3308 -N control_practicas_db &lt; lab\web07-bitacora.sql").Trim()
+Fila "filas de bitácora con un hash" "0" $filas
+
+# 5. Registro: la última línea JSON se puede leer
+$ultima = Get-Content $Log -Tail 200 | Where-Object { $_.StartsWith("{") } | Select-Object -Last 1
+$lee = $false; try { $null = $ultima | ConvertFrom-Json; $lee = [bool]$ultima } catch {}
+Fila "la última línea JSON del registro se lee" "True" "$lee"
+
+# 6. Las reglas puras
+&amp; C:\xampp\php\php.exe tests\inyecciones_test.php | Out-Null
+Fila "tests\inyecciones_test.php (código de salida)" "0" "$LASTEXITCODE"</code></pre>
+<pre data-lang="shell"><code>powershell -ExecutionPolicy Bypass -File lab\web07.ps1</code></pre>
+<p>La fila 5 necesita al menos un evento escrito con el formato nuevo. Para tener uno, repite la falla 2 de WEB01 (un <code>PASSWORD_DB</code> incorrecto, un login, y vuelve a ponerlo) antes de correr el script. Con la guía aplicada, todas las filas dicen <code>ok</code>. Córrelo antes también, y anota lo que da: leyendo el código de hoy, el diseño espera <code>MAL</code> en la fila 1, en las dos de comodines (un número mayor que cero, hasta 15), en <code>no_existe</code> y <code>titulo%20DESC</code> (200, porque hoy <code>orden</code> se ignora), en la bitácora y en el registro.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Fila</th><th>Antes</th><th>Después</th></tr></thead>
+<tbody>
+<tr><td>1. Emulación</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>2. <code>q=%25</code> y <code>q=_</code></td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>3. Los cuatro <code>orden</code></td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>4. Bitácora</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>5. Registro</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>6. Prueba</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<p>Después, repite el cambio de contraseña de la infraestructura y abre "Ver datos" en la fila nueva: <code>"changes"</code> tiene que ser <code>["[REDACTED]", "[REDACTED]"]</code>.</p>
+<h3 id="comprueba-fallas">Fallas provocadas</h3>
+<p><b>Falla 1. El comodín que vuelve.</b> En <code>search()</code>, vuelve a poner <code>'%' . $termino . '%'</code>. La fila 2 del script da un número mayor que cero; la prueba pura sigue pasando, porque prueba la función y no si alguien la usa. Por eso hay dos comprobaciones: una de la regla y otra del sistema. Vuelve la línea.</p>
+<p><b>Falla 2. El <code>ORDER BY</code> armado con el dato.</b> Es la figura WEB07.2. En <code>findByCreador</code>, cambia temporalmente <code>ORDER BY $porOrden</code> por <code>ORDER BY {$orden}</code> y comenta el <code>if ($porOrden === null)</code>. Para el paso B, deja también <code>serverError</code> con el <code>error_log(sprintf(…))</code> de WEB01 en lugar de <code>registrar</code>.</p>
+<ol class="steps">
+<li><span class="step-title">A. Una columna que no existe</span><code>curl.exe -s -b lab\jar-reclutador.txt "http://localhost/SistemaControlPracticas/api/endpoints/oportunidades.php?creado_por=2&amp;orden=no_existe"</code>. El diseño espera un 500 con referencia, y en el registro, con esa referencia, <code>Unknown column 'no_existe' in 'order clause'</code>: lo que escribiste llegó al parser de SQL. No hace falta más para saber que es inyectable.</li>
+<li><span class="step-title">B. Un salto de línea</span>La misma request con <code>orden=%60x%0A[api%20000000000000]%20falso%60</code>: un nombre de columna entre comillas invertidas (<code>%60</code>) con un salto de línea adentro (<code>%0A</code>), para que el mensaje de la base lo repita entero. Abre el registro: el diseño espera dos líneas, la real, cortada después de <code>Unknown column 'x</code>, y otra que empieza con <code>[api 000000000000] falso</code>, con la forma de una entrada legítima.</li>
+<li><span class="step-title">C. Con <code>registrar</code></span>Vuelve <code>serverError</code> a la versión del paso 5 y repite B. Ahora es una sola línea JSON, y el <code>\n</code> está dentro del campo <code>mensaje</code>.</li>
+<li><span class="step-title">D. Con la lista</span>Vuelve <code>findByCreador</code> a la versión del paso 3 y repite A y B: 400 las dos, sin referencia, porque la consulta nunca se armó.</li>
+</ol>
+<p>Con esto no se ejecutó nada en la base: la falla se reconoce con una columna inexistente, que es la forma mínima. Las cargas que leen datos no hacen falta para saber que el hueco existe, y no se escriben aquí.</p>
+<p><b>Falla 3. Un nombre repetido.</b> Para ver qué cambia sin emulación: en <code>AuditLog::record()</code>, cambia <code>:row_id</code> del <code>VALUES</code> por <code>:table</code> (el nombre ya usado dos líneas antes) y borra <code>':row_id' =&gt; (string)$rowId,</code>. Edita una oferta: con <code>ATTR_EMULATE_PREPARES</code> en <code>false</code>, el diseño espera un 500 con referencia y <code>SQLSTATE[HY093]</code> en el registro. Vuelve las dos líneas. Es el tipo de rotura que el paso 1 anticipa, y la razón de recorrer la aplicación después del cambio.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>1. El número de la fila 2</td><td>&nbsp;</td></tr>
+<tr><td>2A. El mensaje de la base en el registro</td><td>&nbsp;</td></tr>
+<tr><td>2B. Las dos líneas</td><td>&nbsp;</td></tr>
+<tr><td>2C y 2D</td><td>&nbsp;</td></tr>
+<tr><td>3. El error sin emulación</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="limites">Limitaciones</h2>
+<ul>
+<li><b>La lista de intérpretes es de hoy.</b> No hay <code>exec</code>, <code>include</code> con variable ni XML; el día que se agregue un export a PDF con una herramienta de línea de comandos o un importador de XML, vuelve a <a href="../modules/m79-inyecciones.html#comandos">79.4</a> y <a href="../modules/m79-inyecciones.html#xml">79.8</a>. La búsqueda con <code>grep</code> de <a href="../modules/m79-inyecciones.html#fallas">79.10</a> es la que lo encuentra.</li>
+<li><b>El mensaje de la excepción sigue en el registro.</b> En JSON ya no fabrica líneas, pero puede traer datos personales (un correo en un <code>Duplicate entry</code>). El registro vive fuera de <code>htdocs</code> desde WEB01; quién lo lee y cuánto se guarda es una decisión de operación.</li>
+<li><b>La bitácora tacha por patrón.</b> Una columna sensible con un nombre que no dice <code>password</code>, <code>token</code> ni <code>secret</code> pasa sin tachar. Cuando agregues una, agrega su nombre a la expresión.</li>
+<li><b>Las filas tachadas a mano no tienen marca.</b> El <code>UPDATE</code> del paso 4 cambia el pasado sin dejar constancia en la propia bitácora (la bitácora no se audita a sí misma). En un sistema real, se anota fuera.</li>
+<li><b>Costo.</b> Las preparadas reales hacen dos idas a la base por consulta (preparar y ejecutar) en lugar de una. Para este sistema, con un puñado de consultas por request, no hay nada que medir; con miles por segundo, se mide antes.</li>
+<li><b>Nada se ejecutó al escribir esta guía.</b> Los estados de antes salen de leer el código, y los números de las tablas son tuyos.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="web07">
+<p class="pj-repo-head">Trabaja en la rama <code>web07-inyecciones</code>. <code>lab\bitacora-antes.sql</code> no va al repositorio y se borra al terminar.</p>
+<ul class="pj-checks">
+<li data-check="emulacion"><code>connection.php</code> apaga la emulación y recorriste la aplicación sin errores.</li>
+<li data-check="sql"><code>core/sql.php</code> existe y las tres búsquedas usan <code>likeContiene</code>.</li>
+<li data-check="orden">"Mis ofertas" ordena con <code>ORDENES_CREADOR</code> y un orden desconocido da 400.</li>
+<li data-check="bitacora">La bitácora tacha las sentencias sensibles y limpiaste las filas viejas con copia.</li>
+<li data-check="registro">El registro escribe una línea JSON por evento y <code>web07.ps1</code> da todo <code>ok</code>.</li>
+<li data-check="fallas">Provocaste las tres fallas y llenaste las tablas.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<p>Esta guía funciona sola. Si quieres juntarla con otras:</p>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con WEB01, lo que no debe verse</p>
+<p>WEB01 mandó el detalle de cada excepción al registro y no al cliente; esta guía le da al registro un formato que un dato no puede romper. Las dos juntas son "hacia afuera nada, hacia adentro todo, y bien escrito".</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB02, la sesión</p>
+<p>El cambio de contraseña que dejaba el hash en la bitácora es el de WEB02, que además sube <code>version_sesion</code>. Las dos columnas siguen en la sentencia; ahora ninguno de sus valores llega a la bitácora.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB06, control de acceso</p>
+<p>La búsqueda pública de <code>usuarios.php</code> que WEB06 dejó abierta a propósito es la que tenía los comodines: WEB06 decide quién busca, esta guía, qué significa lo que escribe.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M79, inyecciones</p>
+<p>Las preparadas, lo que un parámetro no puede ser y la inyección de saltos de línea están en <a href="../modules/m79-inyecciones.html#sql">79.2</a>, <a href="../modules/m79-inyecciones.html#sql-limites">79.3</a> y <a href="../modules/m79-inyecciones.html#crlf">79.7</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/web07.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

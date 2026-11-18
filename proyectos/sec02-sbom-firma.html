@@ -1,0 +1,1286 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEC02. SBOM, firma y verificación</title>
+<meta name="description" content="La imagen de Tienda Norte con su SBOM de Syft, Grype antes de subirla, la firma sin llaves de cosign, la provenance de GitHub y un despliegue que solo levanta lo que verifica.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="sec02" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>SBOM, firma y verificación</h1>
+        <p class="lead">Saber qué hay en la imagen y que la firmaste tú.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>SEC02</dd></div>
+          <div><dt>Plan</dt><dd>Blue Team y DevSecOps</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>2 h</dd></div>
+          <div><dt>Módulos</dt><dd>M56</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="sec02">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Armar el SBOM de la imagen de la API con Syft y cortar con Grype antes de que la imagen salga del runner.</li>
+<li>Publicar la imagen en el registro de GitHub y firmarla sin llaves con cosign, con el token OIDC del workflow.</li>
+<li>Pegar al digest el SBOM como attestation firmada y la provenance de GitHub.</li>
+<li>Verificar firma, SBOM y provenance con la identidad del workflow, y desplegar solo lo que pasa.</li>
+<li>Fijar por digest las herramientas de SEC01 y mantener todo al día con Dependabot.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>El pipeline de SEC01 revisa el código antes de que llegue a <code>main</code>. Pero lo que corre en el servidor no es el código: es una imagen. Si alguien con acceso al registro sube otra imagen con el mismo nombre, o si el build se hace en una máquina que nadie revisa, el pipeline no lo ve.</p>
+<p>Esta guía cierra ese tramo, que es la cadena de <a href="../modules/m56-supply-chain.html#sbom">M56</a>: qué hay adentro de cada imagen (el SBOM), quién la construyó (la firma y la provenance) y una verificación que se niega a levantar lo que no salió de tu workflow.</p>
+<p>Todo pasa en tu repositorio, tu registro y tu máquina.</p>
+<figure class="figure" data-arch>
+  <div class="figure-frame">
+<svg viewBox="0 0 770 420" role="img" aria-labelledby="fs02t fs02d">
+<title id="fs02t">La arquitectura de SEC02</title>
+<desc id="fs02d">Un push a main arranca el workflow publicar, que construye la imagen, arma el SBOM y corre Grype. Pide un certificado a Fulcio con su token OIDC y deja la firma en Rekor. Sube la imagen al registro de GitHub con su firma, el SBOM y la provenance pegados al digest. verificar.sh lee esas firmas del registro, comprueba la identidad contra Sigstore y, solo si todo cierra, la tienda se levanta con esa imagen. Seis flechas numeradas.</desc>
+<defs><marker id="fs02a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-edge" d="M180 98 L260 98" marker-end="url(#fs02a)"/>
+<path class="dg-edge" d="M430 98 L530 98" marker-end="url(#fs02a)"/>
+<path class="dg-edge" d="M345 126 L345 230" marker-end="url(#fs02a)"/>
+<path class="dg-edge" d="M530 258 L430 258" marker-end="url(#fs02a)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M615 230 L615 126" marker-end="url(#fs02a)"/>
+<path class="dg-edge" d="M615 286 L615 350" marker-end="url(#fs02a)"/>
+<g data-part="github"><rect class="dg-layer" x="40" y="70" width="140" height="56" rx="8" style="--c: var(--l-external)"/><text class="dg-label" x="110" y="90" text-anchor="middle">GitHub</text><text class="dg-tiny dg-mono" x="110" y="106" text-anchor="middle">push a main</text></g>
+<g data-part="runner"><rect class="dg-layer" x="260" y="70" width="170" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="345" y="90" text-anchor="middle">Workflow publicar</text><text class="dg-tiny dg-mono" x="345" y="106" text-anchor="middle">build, SBOM, Grype</text></g>
+<g data-part="sigstore"><rect class="dg-layer" x="530" y="70" width="170" height="56" rx="8" style="--c: var(--l-external)"/><text class="dg-label" x="615" y="90" text-anchor="middle">Sigstore</text><text class="dg-tiny dg-mono" x="615" y="106" text-anchor="middle">Fulcio y Rekor</text></g>
+<g data-part="ghcr"><rect class="dg-layer" x="260" y="230" width="170" height="56" rx="8" style="--c: var(--l-db)"/><text class="dg-label" x="345" y="250" text-anchor="middle">GHCR</text><text class="dg-tiny dg-mono" x="345" y="266" text-anchor="middle">imagen por digest</text></g>
+<g data-part="verificar"><rect class="dg-layer" x="530" y="230" width="170" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="615" y="250" text-anchor="middle">verificar.sh</text><text class="dg-tiny dg-mono" x="615" y="266" text-anchor="middle">cosign y gh</text></g>
+<g data-part="tienda"><rect class="dg-layer" x="530" y="350" width="170" height="56" rx="8" style="--c: var(--l-client)"/><text class="dg-label" x="615" y="370" text-anchor="middle">Tienda Norte</text><text class="dg-tiny dg-mono" x="615" y="386" text-anchor="middle">compose --no-build</text></g>
+<g class="pl-pin"><circle cx="220" cy="98" r="10"/><text x="220" y="102" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="480" cy="98" r="10"/><text x="480" y="102" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="345" cy="178" r="10"/><text x="345" y="182" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="480" cy="258" r="10"/><text x="480" y="262" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="615" cy="178" r="10"/><text x="615" y="182" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="615" cy="318" r="10"/><text x="615" y="322" text-anchor="middle">6</text></g>
+</svg>
+  </div>
+  <figcaption><b>Figura SEC02.1.</b> Lo que se publica y lo que se comprueba. El workflow firma sin llaves (flecha 2) y deja todo pegado al digest en el registro (flecha 3). Antes de desplegar, <code>verificar.sh</code> lee el registro (4), comprueba la identidad (5) y recién ahí levanta la tienda (6).</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>#</th><th>De → a</th><th>Protocolo y formato</th><th>Ejemplo</th><th>Con qué permiso</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>GitHub → workflow</td><td>El evento <code>push</code> a <code>main</code></td><td>Un merge del pull request</td><td>Token con <code>packages: write</code>, <code>id-token: write</code> y <code>attestations: write</code></td></tr>
+<tr><td>2</td><td>workflow → Sigstore</td><td>HTTPS, OIDC</td><td>Token de GitHub a Fulcio; firma a Rekor</td><td>El token OIDC del job, que dura minutos</td></tr>
+<tr><td>3</td><td>workflow → GHCR</td><td>OCI sobre HTTPS</td><td><code>docker push</code>; firma, SBOM y provenance por digest</td><td><code>GITHUB_TOKEN</code> con <code>packages: write</code></td></tr>
+<tr><td>4</td><td>verificar.sh → GHCR</td><td>OCI sobre HTTPS</td><td>Lee las firmas y attestations del digest</td><td><code>packages: read</code> o el paquete público</td></tr>
+<tr><td>5</td><td>verificar.sh → Sigstore</td><td>HTTPS</td><td>La raíz de confianza y la entrada en Rekor</td><td>Público</td></tr>
+<tr><td>6</td><td>verificar.sh → Tienda Norte</td><td>Docker Compose</td><td><code>up -d --no-build</code> con la imagen por digest</td><td>Tu máquina</td></tr>
+</tbody>
+</table>
+</div>
+<p><b>Las fronteras.</b> La firma sin llaves deja una entrada en Rekor, un registro público: dice qué repositorio y qué workflow firmaron qué digest. Las attestations de GitHub funcionan en repositorios públicos con cualquier plan; en uno privado hacen falta GitHub Enterprise Cloud <span class="badge badge--doc">Documentado</span>. Por eso esta guía usa un repositorio público, sin secretos adentro: SEC01 ya se encarga de que no los haya. El código de la tienda no sale de GitHub; a Sigstore solo va el digest.</p>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="fs02vt fs02vd">
+<title id="fs02vt">Una imagen firmada, de main al despliegue</title>
+<desc id="fs02vd">Un merge a main arranca publicar. El workflow construye, arma el SBOM y pasa Grype. Pide un certificado a Fulcio con su token OIDC, sube la imagen al registro y la firma por digest. Antes de desplegar, verificar.sh pide la firma al registro y comprueba la identidad; con firma, SBOM y provenance en orden, compose levanta la imagen.</desc>
+<defs><marker id="fs02v-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs02v-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs02v-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs02v-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">GitHub</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="165.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="227.5" y="29" text-anchor="middle" style="font-size:13.5px">publicar</text>
+<path class="dg-frame" d="M227.5 40 V366"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Sigstore</text>
+<path class="dg-frame" d="M385.0 40 V366"/>
+<rect class="dg-box" x="480.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="542.5" y="29" text-anchor="middle" style="font-size:13.5px">GHCR</text>
+<path class="dg-frame" d="M542.5 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">verificar.sh</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M73.0 72 L222.5 72" marker-end="url(#fs02v-q)"/>
+<rect x="106.45" y="55" width="84.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="66" text-anchor="middle">push a main</text>
+<rect x="237.5" y="92" width="188" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="247.5" y="108">build, SBOM, Grype: pasa</text>
+<path class="dg-edge" d="M230.5 140 L380.0 140" marker-end="url(#fs02v-a)"/>
+<rect x="267.25" y="123" width="78.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="306.25" y="134" text-anchor="middle">token OIDC</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 174 L232.5 174" marker-end="url(#fs02v-r)"/>
+<rect x="263.95" y="157" width="84.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="306.25" y="168" text-anchor="middle">certificado</text>
+<path class="dg-edge" d="M230.5 208 L537.5 208" marker-end="url(#fs02v-a)"/>
+<rect x="296.5" y="191" width="177.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="202" text-anchor="middle">imagen + firma por digest</text>
+<path class="dg-edge" d="M697.0 242 L547.5 242" marker-end="url(#fs02v-a)"/>
+<rect x="559.15" y="225" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="621.25" y="236" text-anchor="middle">firmas del digest</text>
+<path class="dg-edge" d="M697.0 276 L390.0 276" marker-end="url(#fs02v-a)"/>
+<rect x="473.8" y="259" width="137.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="270" text-anchor="middle">¿identidad y Rekor?</text>
+<rect x="481.0" y="296" width="209" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="491.0" y="312">firma, sbom, provenance: ok</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC02.2.</b> La versión corta. La completa está en <a href="#viaje">El viaje de un dato</a>.</figcaption>
+</figure>
+<h2 id="antes">Antes de empezar</h2>
+<h3 id="ae-repaso">Lo que viene de SEC00 y SEC01</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 196" role="img" aria-labelledby="fs02rt fs02rd">
+<title id="fs02rt">Lo que viene de las guías anteriores</title>
+<desc id="fs02rd">La imagen: SEC00 construye la API con su Dockerfile en el compose. Ahora se construye en el workflow y se baja por digest. El gate: SEC01 corta con un umbral que se puede cumplir. Grype corta igual, antes de subir la imagen. Lo fijado: SEC01 fija checkout por SHA y las imágenes por versión. El paso 3 les suma el digest, como prometía.</desc>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="16" width="233" height="164" rx="8"/>
+<text class="dg-group" x="32" y="40">La imagen</text>
+<text class="dg-tiny" x="32" y="62" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="32" y="80">SEC00 construye la API con su</text>
+<text class="dg-tiny" x="32" y="95">Dockerfile en el compose.</text>
+<text class="dg-tiny" x="32" y="132" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="32" y="150">Ahora se construye en el workflow y</text>
+<text class="dg-tiny" x="32" y="165">se baja por digest.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="269" y="16" width="233" height="164" rx="8"/>
+<text class="dg-group" x="281" y="40">El gate</text>
+<text class="dg-tiny" x="281" y="62" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="281" y="80">SEC01 corta con un umbral que se</text>
+<text class="dg-tiny" x="281" y="95">puede cumplir.</text>
+<text class="dg-tiny" x="281" y="132" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="281" y="150">Grype corta igual, antes de subir</text>
+<text class="dg-tiny" x="281" y="165">la imagen.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517" y="16" width="233" height="164" rx="8"/>
+<text class="dg-group" x="529" y="40">Lo fijado</text>
+<text class="dg-tiny" x="529" y="62" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="529" y="80">SEC01 fija checkout por SHA y las</text>
+<text class="dg-tiny" x="529" y="95">imágenes por versión.</text>
+<text class="dg-tiny" x="529" y="132" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="529" y="150">El paso 3 les suma el digest, como</text>
+<text class="dg-tiny" x="529" y="165">prometía.</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC02.4.</b> Tres cosas que vuelven.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Dónde se vio</th></tr></thead>
+<tbody>
+<tr><td>El Dockerfile de la API</td><td><a href="sec00-laboratorio.html#paso-api">SEC00, paso 3</a></td></tr>
+<tr><td>El gate y el umbral</td><td><a href="sec01-pipeline.html#ae-gate">SEC01, el gate</a></td></tr>
+<tr><td>Fijar lo que corre</td><td><a href="sec01-pipeline.html#ae-fijar">SEC01, fijar</a></td></tr>
+</tbody>
+</table>
+</div>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 200" role="img" aria-labelledby="fs02pt fs02pd">
+<title id="fs02pt">Lámina SEC02.A: una imagen y lo que se le pega</title>
+<desc id="fs02pd">Una imagen nombrada por su digest y, pegados a ese digest, tres cosas: la firma, el SBOM como attestation y la provenance. Cada una lleva un certificado de Fulcio con la identidad del workflow y una entrada en Rekor. Seis marcas numeradas.</desc>
+<rect class="dg-layer" style="--c: var(--l-db)" x="30" y="70" width="200" height="64" rx="8"/><text class="dg-label" x="130" y="98" text-anchor="middle">Imagen</text><text class="dg-tiny dg-mono" x="130" y="118" text-anchor="middle">api@sha256:4f2…</text>
+<rect class="dg-box" x="300" y="20" width="190" height="44" rx="8"/><text class="dg-label" x="395" y="47" text-anchor="middle">Firma</text>
+<rect class="dg-box" x="300" y="80" width="190" height="44" rx="8"/><text class="dg-label" x="395" y="107" text-anchor="middle">SBOM (attestation)</text>
+<rect class="dg-box" x="300" y="140" width="190" height="44" rx="8"/><text class="dg-label" x="395" y="167" text-anchor="middle">Provenance</text>
+<path class="dg-feedback" d="M232 92 L298 42"/><path class="dg-feedback" d="M232 102 H298"/><path class="dg-feedback" d="M232 112 L298 162"/>
+<rect class="dg-layer" style="--c: var(--l-external)" x="560" y="40" width="190" height="56" rx="8"/><text class="dg-label" x="655" y="64" text-anchor="middle">Certificado</text><text class="dg-tiny" x="655" y="82" text-anchor="middle">identidad del workflow</text>
+<rect class="dg-layer" style="--c: var(--l-external)" x="560" y="116" width="190" height="56" rx="8"/><text class="dg-label" x="655" y="140" text-anchor="middle">Rekor</text><text class="dg-tiny" x="655" y="158" text-anchor="middle">registro público</text>
+<path class="dg-feedback" d="M492 72 L558 68"/><path class="dg-feedback" d="M492 132 L558 144"/>
+<g class="pl-pin"><circle cx="44" cy="80" r="11"/><text x="44" y="84" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="312" cy="30" r="11"/><text x="312" y="34" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="312" cy="90" r="11"/><text x="312" y="94" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="312" cy="150" r="11"/><text x="312" y="154" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="572" cy="50" r="11"/><text x="572" y="54" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="572" cy="126" r="11"/><text x="572" y="130" text-anchor="middle">6</text></g>
+</svg>
+</div>
+<figcaption><b>Lámina SEC02.A.</b> Una imagen y lo que se le pega. Todo cuelga del digest, y cada pieza dice quién la produjo.</figcaption>
+</figure>
+<ol class="plate-key">
+  <li><b>Digest</b><span>El hash del manifiesto de la imagen. Si cambia un byte, cambia el digest. <a href="#ae-digest">El digest</a></span></li>
+  <li><b>Firma</b><span>Prueba de que una identidad aprobó ese digest. La hace cosign. <a href="#ae-sinllaves">Firmar sin llaves</a></span></li>
+  <li><b>SBOM</b><span>La lista de lo que hay en la imagen, paquete por paquete, firmada como attestation. <a href="#ae-sbom">El SBOM</a></span></li>
+  <li><b>Provenance</b><span>Dónde, cuándo y con qué workflow se construyó la imagen, en el formato de SLSA. <a href="#ae-sbom">El SBOM</a></span></li>
+  <li><b>Certificado</b><span>Lo emite Fulcio por unos minutos y dice la identidad: tu workflow, desde main. <a href="#ae-sinllaves">Firmar sin llaves</a></span></li>
+  <li><b>Rekor</b><span>El registro público donde queda cada firma, para que no se pueda negar ni esconder. <a href="#ae-sinllaves">Firmar sin llaves</a></span></li>
+</ol>
+<h3 id="antes-instalar">Qué tienes que tener</h3>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Herramienta</th><th>Para qué</th><th>Cómo compruebas que está</th></tr></thead>
+<tbody>
+<tr><td>El repositorio <code>tienda-norte</code> de SEC01, <b>público</b></td><td>Donde corre el workflow</td><td>La página del repositorio dice Public</td></tr>
+<tr><td>Linux o WSL (Ubuntu) en Windows</td><td>Correr los scripts de <code>seguridad/</code>, que bajan binarios de Linux</td><td><code>uname -s</code> dice <code>Linux</code></td></tr>
+<tr><td>Docker, visible desde esa terminal</td><td>Construir y levantar la tienda</td><td><code>docker version</code> muestra cliente y servidor</td></tr>
+<tr><td>La CLI de GitHub, con sesión</td><td>Verificar la provenance y entrar al registro</td><td><code>gh auth status</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Si tu repositorio de SEC01 es privado, haz un fork público vacío o cambia su visibilidad en Settings: lo que sigue no funciona con un privado salvo en Enterprise Cloud.</p>
+<h3 id="ae-digest">El digest</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una etiqueta es el nombre de una carpeta en el escritorio: alguien puede cambiar lo que hay adentro y el nombre sigue igual. El digest es la huella digital del contenido: otro contenido, otra huella.</p>
+</aside>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 230" role="img" aria-labelledby="fs02dt fs02dd">
+<title id="fs02dt">Una etiqueta se mueve, un digest no</title>
+<desc id="fs02dd">Arriba, la etiqueta api:v1 apunta el lunes a la imagen A y el martes, después de otro push, a la imagen B. Abajo, el digest sha256:4f2… apunta siempre a la imagen A; la imagen B tiene otro digest.</desc>
+<defs><marker id="fs02da" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="20" y="34">Por etiqueta</text>
+<rect class="dg-box" x="160" y="52" width="130" height="44" rx="8"/><text class="dg-label dg-mono" x="225" y="79" text-anchor="middle">api:v1</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="420" y="20" width="150" height="44" rx="8"/><text class="dg-label" x="495" y="47" text-anchor="middle">Imagen A (lunes)</text>
+<rect class="dg-warnbox" x="420" y="84" width="150" height="44" rx="8"/><text class="dg-label" x="495" y="111" text-anchor="middle">Imagen B (martes)</text>
+<path class="dg-feedback" d="M292 66 L418 42"/><path class="dg-edge" d="M292 82 L418 106" marker-end="url(#fs02da)"/>
+<text class="dg-tiny" x="600" y="47">antes</text><text class="dg-tiny" x="600" y="111">después de otro push</text>
+<text class="dg-group" x="20" y="174">Por digest</text>
+<rect class="dg-box" x="160" y="152" width="200" height="44" rx="8"/><text class="dg-label dg-mono" x="260" y="179" text-anchor="middle">api@sha256:4f2…</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="420" y="152" width="150" height="44" rx="8"/><text class="dg-label" x="495" y="179" text-anchor="middle">Imagen A</text>
+<path class="dg-edge" d="M362 174 H418" marker-end="url(#fs02da)"/><text class="dg-tiny" x="600" y="179">siempre; B tiene otro</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC02.3.</b> Una etiqueta es un nombre que se puede reasignar; el digest es el hash del contenido. Lo que se firma y lo que se despliega es el digest.</figcaption>
+</figure>
+<p>Cuando haces <code>docker push</code>, el registro guarda el manifiesto de la imagen y lo identifica por su SHA-256. Ese es el digest, y una referencia como <code>ghcr.io/ana/tienda-norte/api@sha256:4f2…</code> siempre baja lo mismo. Con <code>:v1</code>, en cambio, baja lo último que alguien empujó con ese nombre. Por eso todo lo que sigue usa el digest.</p>
+<h3 id="ae-sinllaves">Firmar sin llaves</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una credencial de visitante que te dan en la recepción: dura el día, tiene tu nombre y el registro de la entrada queda en un libro que todos pueden leer. No hay una llave maestra que perder.</p>
+</aside>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 334" role="img" aria-labelledby="fs02f1t fs02f1d">
+<title id="fs02f1t">Ficha: la firma sin llaves</title>
+<desc id="fs02f1d">Ficha de Ficha: la firma sin llaves. Qué entra: El digest de la imagen y el token OIDC del job de GitHub. Qué hace: Fulcio cambia el token por un certificado corto con la identidad; cosign firma y Rekor lo anota. Qué sale: Una firma pegada al digest en el registro y su entrada pública en Rekor. Ejemplo: cosign sign --yes ghcr.io/ana/tienda-norte/api@sha256:… identidad: https://github.com/ana/tienda-norte/.github/workflows/publicar.yml@refs/heads/main Qué falla sin él: Una llave privada en un secreto, que alguien copia, o ninguna firma, y la imagen que corre puede ser cualquiera. Dónde vive: .github/workflows/publicar.yml, marca (4); seguridad/verificar.sh. Pasos 5 y 6.</desc>
+<defs><marker id="fs02f1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="32" y="36">Qué entra</text>
+<text class="dg-tiny" x="32" y="56">El digest de la imagen y el</text>
+<text class="dg-tiny" x="32" y="72">token OIDC del job de GitHub.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="291" y="36">Qué hace</text>
+<text class="dg-tiny" x="291" y="56">Fulcio cambia el token por un</text>
+<text class="dg-tiny" x="291" y="72">certificado corto con la</text>
+<text class="dg-tiny" x="291" y="88">identidad; cosign firma y Rekor</text>
+<text class="dg-tiny" x="291" y="104">lo anota.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="550" y="36">Qué sale</text>
+<text class="dg-tiny" x="550" y="56">Una firma pegada al digest en</text>
+<text class="dg-tiny" x="550" y="72">el registro y su entrada</text>
+<text class="dg-tiny" x="550" y="88">pública en Rekor.</text>
+<path class="dg-edge" d="M234 67 H275" marker-end="url(#fs02f1a)"/>
+<path class="dg-edge" d="M493 67 H534" marker-end="url(#fs02f1a)"/>
+<rect class="dg-box" x="20" y="132" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="152">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="172" style="white-space:pre">cosign sign --yes ghcr.io/ana/tienda-norte/api@sha256:…</text>
+<text class="dg-tiny dg-mono" x="32" y="188" style="white-space:pre">identidad: https://github.com/ana/tienda-norte/.github/workflows/publicar.yml@refs/heads/main</text>
+<rect class="dg-warnbox" x="20" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="252">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="272">Una llave privada en un secreto, que alguien copia, o</text>
+<text class="dg-tiny" x="32" y="288">ninguna firma, y la imagen que corre puede ser</text>
+<text class="dg-tiny" x="32" y="304">cualquiera.</text>
+<rect class="dg-box" x="393" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="252">Dónde vive</text>
+<text class="dg-tiny" x="405" y="272">.github/workflows/publicar.yml, marca (4);</text>
+<text class="dg-tiny" x="405" y="288">seguridad/verificar.sh. Pasos 5 y 6.</text>
+</svg>
+  </div>
+  <figcaption><b>Ficha SEC02.F1.</b> La firma sin llaves.</figcaption>
+</figure>
+<p>Firmar es la mitad. La otra mitad es verificar con la identidad correcta: una firma válida de otra persona no dice nada. La teoría de Sigstore está en <a href="../modules/m56-supply-chain.html#firmas">56.7</a>, y cómo se verifica, en <a href="../modules/m56-supply-chain.html#verificar">56.8</a>.</p>
+<h3 id="ae-sbom">El SBOM y la provenance</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>La etiqueta de ingredientes de un alimento y el lote de la fábrica. La primera dice qué tiene; la segunda, dónde y cuándo se hizo. Las dos van pegadas al envase, no en una carpeta aparte.</p>
+</aside>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 334" role="img" aria-labelledby="fs02f2t fs02f2d">
+<title id="fs02f2t">Ficha: el SBOM como attestation</title>
+<desc id="fs02f2d">Ficha de Ficha: el SBOM como attestation. Qué entra: La imagen construida en el runner. Qué hace: Syft lista sus paquetes en SPDX; Grype los compara con su base; cosign firma la lista y la pega al digest. Qué sale: Un SBOM firmado que se puede pedir al registro para cualquier imagen publicada. Ejemplo: syft docker:tienda-api:ci -o spdx-json=sbom.spdx.json cosign attest --yes --type spdxjson --predicate sbom.spdx.json ghcr.io/…@sha256:… Qué falla sin él: El día que sale una vulnerabilidad nueva no sabes qué imágenes la tienen sin volver a escanear todo. Dónde vive: .github/workflows/publicar.yml, marcas (2) y (4). Paso 5.</desc>
+<defs><marker id="fs02f2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="32" y="36">Qué entra</text>
+<text class="dg-tiny" x="32" y="56">La imagen construida en el</text>
+<text class="dg-tiny" x="32" y="72">runner.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="291" y="36">Qué hace</text>
+<text class="dg-tiny" x="291" y="56">Syft lista sus paquetes en</text>
+<text class="dg-tiny" x="291" y="72">SPDX; Grype los compara con su</text>
+<text class="dg-tiny" x="291" y="88">base; cosign firma la lista y</text>
+<text class="dg-tiny" x="291" y="104">la pega al digest.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="550" y="36">Qué sale</text>
+<text class="dg-tiny" x="550" y="56">Un SBOM firmado que se puede</text>
+<text class="dg-tiny" x="550" y="72">pedir al registro para</text>
+<text class="dg-tiny" x="550" y="88">cualquier imagen publicada.</text>
+<path class="dg-edge" d="M234 67 H275" marker-end="url(#fs02f2a)"/>
+<path class="dg-edge" d="M493 67 H534" marker-end="url(#fs02f2a)"/>
+<rect class="dg-box" x="20" y="132" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="152">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="172" style="white-space:pre">syft docker:tienda-api:ci -o spdx-json=sbom.spdx.json</text>
+<text class="dg-tiny dg-mono" x="32" y="188" style="white-space:pre">cosign attest --yes --type spdxjson --predicate sbom.spdx.json ghcr.io/…@sha256:…</text>
+<rect class="dg-warnbox" x="20" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="252">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="272">El día que sale una vulnerabilidad nueva no sabes qué</text>
+<text class="dg-tiny" x="32" y="288">imágenes la tienen sin volver a escanear todo.</text>
+<rect class="dg-box" x="393" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="252">Dónde vive</text>
+<text class="dg-tiny" x="405" y="272">.github/workflows/publicar.yml, marcas (2) y (4). Paso</text>
+<text class="dg-tiny" x="405" y="288">5.</text>
+</svg>
+  </div>
+  <figcaption><b>Ficha SEC02.F2.</b> El SBOM como attestation.</figcaption>
+</figure>
+<p>La provenance la hace la acción de GitHub <code>attest-build-provenance</code>: un documento en el formato de <a href="../modules/m56-supply-chain.html#slsa">SLSA</a> que dice el repositorio, el commit y el workflow que construyeron el digest, firmado con la misma idea sin llaves.</p>
+<h2 id="endpoints">Los endpoints</h2>
+<p>La tienda no cambia: son los endpoints de <a href="sec00-laboratorio.html#endpoints">SEC00</a>. Lo nuevo habla con el registro de GitHub y con Sigstore, que son servicios de otros, por los comandos de cosign y de <code>gh</code>.</p>
+<h2 id="dependencias">Dependencias</h2>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Herramienta</th><th>Versión</th><th>Cómo corre</th><th>Para qué</th></tr></thead>
+<tbody>
+<tr><td>Syft</td><td>1.57.1</td><td>Binario de la página de releases, con checksum</td><td>El SBOM en SPDX</td></tr>
+<tr><td>Grype</td><td>0.121.3</td><td>Binario, con checksum</td><td>Las vulnerabilidades del SBOM</td></tr>
+<tr><td>cosign</td><td>3.1.4</td><td>Binario, con checksum</td><td>Firmar, adjuntar y verificar</td></tr>
+<tr><td>actions/attest-build-provenance</td><td>4.2.2, SHA <code>4d101475…</code></td><td>Acción</td><td>La provenance de GitHub</td></tr>
+<tr><td>actions/checkout</td><td>7.0.1, SHA <code>3d3c42e5…</code></td><td>Acción</td><td>Bajar el código</td></tr>
+<tr><td>gh</td><td>La que tengas</td><td>CLI de GitHub</td><td>Verificar la provenance</td></tr>
+</tbody>
+</table>
+</div>
+<p>Versiones y SHA tomados de cada página de releases el 9 de noviembre de 2026 <span class="badge badge--doc">Documentado</span>. cosign 3 guarda las firmas con el formato de bundle nuevo y las referencias de OCI 1.1 por defecto <span class="badge badge--doc">Documentado</span>; los comandos de esta guía son los de esa versión.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<pre data-lang="text"><code>tienda-norte/
+├── .github/
+│   ├── dependabot.yml                # paso 7
+│   └── workflows/
+│       ├── publicar.yml              # build, SBOM, firma y verificación (paso 5)
+│       └── seguridad.yml             # de SEC01, con los digests (paso 3)
+├── compose.verificada.yaml           # la api por digest (paso 6)
+└── seguridad/
+    ├── desplegar.sh                  # verifica y levanta (paso 6)
+    ├── herramientas.sh               # syft, grype y cosign con checksum (paso 1)
+    └── verificar.sh                  # firma, SBOM y provenance (paso 6)</code></pre>
+<p>El registro es GHCR, el de GitHub, que viene con el repositorio. Sigstore es la instancia pública: Fulcio emite los certificados y Rekor guarda las firmas.</p>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<aside class="hito" id="hito-1" data-toc="skip" aria-labelledby="hito-1-t">
+  <p class="hito-num">Hito 1 de 3, unos 40 min</p>
+  <p class="hito-title" id="hito-1-t">Las herramientas y el SBOM, en tu máquina</p>
+  <p>Las tres herramientas con su checksum, el primer SBOM de la imagen y los digests que SEC01 dejó pendientes.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-herramientas">Herramientas con checksum</a></li>
+    <li><a href="#paso-sbom">El primer SBOM</a></li>
+    <li><a href="#paso-pines">Los digests de SEC01</a></li>
+  </ol>
+</aside>
+<h3 id="paso-herramientas">Paso 1. Herramientas con checksum</h3>
+<div class="step-map" data-where="runner verificar">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Las versiones exactas.</dd></div>
+    <div><dt>Sale</dt><dd><code>syft</code>, <code>grype</code> y <code>cosign</code> en una carpeta.</dd></div>
+    <div><dt>Cambia</dt><dd><code>seguridad/herramientas.sh</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-sinllaves">Firmar sin llaves</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="runner verificar">
+  <h4 class="file-card-path" id="archivo-seguridad-herramientas-sh">seguridad/herramientas.sh<span class="file-card-size">28 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Baja las tres herramientas y comprueba cada archivo contra el checksum que publica su proyecto.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>El workflow y tú, en Linux o WSL.</dd></div>
+    <div><dt>Qué entra</dt><dd>La carpeta de destino.</dd></div>
+    <div><dt>Qué sale</dt><dd>Tres binarios, o un error si un checksum no coincide.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Fija las versiones.</li>
+    <li>Baja Syft y Grype, verifica su checksum y los instala.</li>
+    <li>Baja cosign y verifica su checksum.</li>
+    <li>Muestra las versiones.</li>
+  </ol>
+</div>
+<pre data-lang="bash"><code>#!/usr/bin/env bash
+# Baja syft, grype y cosign en una versión exacta y verifica su checksum antes de dejarlos en la carpeta.
+set -euo pipefail
+mkdir -p &quot;${1:?uso: herramientas.sh carpeta}&quot;
+DESTINO=$(cd &quot;$1&quot; &amp;&amp; pwd)
+cd &quot;$(mktemp -d)&quot;
+# (1)
+SYFT=1.57.1
+GRYPE=0.121.3
+COSIGN=3.1.4</code></pre>
+<ol class="code-key">
+  <li>Las versiones en un solo lugar. Cambiar una es un commit que pasa por el pipeline.</li>
+</ol>
+<pre data-lang="bash"><code># (2)
+anchore() {
+  local nombre=$1 version=$2
+  local base=&quot;https://github.com/anchore/$nombre/releases/download/v$version&quot;
+  curl -sSfLO &quot;$base/${nombre}_${version}_linux_amd64.tar.gz&quot;
+  curl -sSfLO &quot;$base/${nombre}_${version}_checksums.txt&quot;
+  sha256sum --check --ignore-missing &quot;${nombre}_${version}_checksums.txt&quot;
+  tar -xzf &quot;${nombre}_${version}_linux_amd64.tar.gz&quot; &quot;$nombre&quot;
+  install -m 0755 &quot;$nombre&quot; &quot;$DESTINO/$nombre&quot;
+}
+anchore syft &quot;$SYFT&quot;
+anchore grype &quot;$GRYPE&quot;</code></pre>
+<ol class="code-key" style="counter-reset: ck 1">
+  <li>Syft y Grype vienen de Anchore con el mismo formato de nombres: el tarball y un <code>checksums.txt</code>. <code>--ignore-missing</code> revisa solo los archivos que bajaste; si el que está no coincide, <code>sha256sum</code> sale con error y <code>set -e</code> corta el script.</li>
+</ol>
+<pre data-lang="bash"><code># (3)
+base=&quot;https://github.com/sigstore/cosign/releases/download/v$COSIGN&quot;
+curl -sSfLO &quot;$base/cosign-linux-amd64&quot;
+curl -sSfLO &quot;$base/cosign_checksums.txt&quot;
+sha256sum --check --ignore-missing cosign_checksums.txt
+install -m 0755 cosign-linux-amd64 &quot;$DESTINO/cosign&quot;
+# (4)
+&quot;$DESTINO/syft&quot; version
+&quot;$DESTINO/grype&quot; version
+&quot;$DESTINO/cosign&quot; version</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>cosign publica el binario suelto y su <code>cosign_checksums.txt</code>.</li>
+  <li>Cada uno dice su versión, para que el log del job muestre qué corrió.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver seguridad/herramientas.sh completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="bash" data-file="seguridad/herramientas.sh"><code>#!/usr/bin/env bash
+# Baja syft, grype y cosign en una versión exacta y verifica su checksum antes de dejarlos en la carpeta.
+set -euo pipefail
+mkdir -p &quot;${1:?uso: herramientas.sh carpeta}&quot;
+DESTINO=$(cd &quot;$1&quot; &amp;&amp; pwd)
+cd &quot;$(mktemp -d)&quot;
+SYFT=1.57.1
+GRYPE=0.121.3
+COSIGN=3.1.4
+anchore() {
+  local nombre=$1 version=$2
+  local base=&quot;https://github.com/anchore/$nombre/releases/download/v$version&quot;
+  curl -sSfLO &quot;$base/${nombre}_${version}_linux_amd64.tar.gz&quot;
+  curl -sSfLO &quot;$base/${nombre}_${version}_checksums.txt&quot;
+  sha256sum --check --ignore-missing &quot;${nombre}_${version}_checksums.txt&quot;
+  tar -xzf &quot;${nombre}_${version}_linux_amd64.tar.gz&quot; &quot;$nombre&quot;
+  install -m 0755 &quot;$nombre&quot; &quot;$DESTINO/$nombre&quot;
+}
+anchore syft &quot;$SYFT&quot;
+anchore grype &quot;$GRYPE&quot;
+base=&quot;https://github.com/sigstore/cosign/releases/download/v$COSIGN&quot;
+curl -sSfLO &quot;$base/cosign-linux-amd64&quot;
+curl -sSfLO &quot;$base/cosign_checksums.txt&quot;
+sha256sum --check --ignore-missing cosign_checksums.txt
+install -m 0755 cosign-linux-amd64 &quot;$DESTINO/cosign&quot;
+&quot;$DESTINO/syft&quot; version
+&quot;$DESTINO/grype&quot; version
+&quot;$DESTINO/cosign&quot; version</code></pre>
+  </div>
+</details>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>chmod +x seguridad/*.sh
+seguridad/herramientas.sh &quot;$HOME/.local/bin&quot;</code></pre>
+  <p>Tres líneas <code>OK</code> de <code>sha256sum</code> (una por archivo), y después la versión de cada herramienta: 1.57.1, 0.121.3 y 3.1.4. Si <code>$HOME/.local/bin</code> no está en tu <code>PATH</code>, agrégalo.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>sha256sum: WARNING: 1 computed checksum did NOT match</code>: El archivo bajado no es el publicado: no lo uses. Borra la carpeta temporal y vuelve a correr; si se repite, revisa la página de releases.</li>
+    <li><code>curl: (22) The requested URL returned error: 404</code>: La versión o el nombre del archivo cambió: compáralo con la página de releases del proyecto.</li>
+  </ul>
+</aside>
+<h3 id="paso-sbom">Paso 2. El primer SBOM</h3>
+<div class="step-map" data-where="runner">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La imagen <code>tienda-api:ci</code>.</dd></div>
+    <div><dt>Sale</dt><dd><code>sbom.spdx.json</code> y la lista de vulnerabilidades.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada en el repositorio.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-sbom">El SBOM</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<p>Antes de llevarlo al workflow, míralo en tu máquina:</p>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker build -t tienda-api:ci api
+syft docker:tienda-api:ci -o spdx-json=sbom.spdx.json
+grype sbom:sbom.spdx.json --fail-on high --only-fixed; echo &quot;código: $?&quot;
+python3 -c &quot;import json; d=json.load(open(&#x27;sbom.spdx.json&#x27;)); print(len(d[&#x27;packages&#x27;]), &#x27;paquetes&#x27;)&quot;</code></pre>
+  <p>Syft no imprime el SBOM: lo deja en el archivo. Grype muestra una tabla con el nombre, la versión instalada, la versión que lo arregla y la severidad, y el código sale 0 si no hay nada alto con arreglo. La última línea cuenta los paquetes: los de Debian de la base más los de Python. Anota cuántos son.</p>
+</aside>
+<div data-exercise="sec02-p-grype"></div>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>SPDX y Grype sobre el SBOM, no sobre la imagen.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Escanear la imagen otra vez con Grype o con Trivy: funciona, pero lo que se firma y lo que se revisa serían dos lecturas distintas de la misma imagen.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>El SBOM es lo que Syft vio. Si un paquete se instaló de una forma que Syft no detecta, no está en la lista ni en el escaneo; Trivy en SEC01 es una segunda lectura independiente.</dd></div>
+</dl>
+<h3 id="paso-pines">Paso 3. Los digests de SEC01</h3>
+<div class="step-map" data-where="runner">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Las imágenes de <code>seguridad.yml</code>.</dd></div>
+    <div><dt>Sale</dt><dd>Las mismas imágenes, fijadas por digest.</dd></div>
+    <div><dt>Cambia</dt><dd><code>.github/workflows/seguridad.yml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-digest">El digest</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<p>SEC01 dejó las imágenes de Semgrep, Trivy y ZAP por etiqueta. Con <code>nombre:versión@sha256:…</code>, Docker baja exactamente ese contenido, y la versión queda para que se lea. Estas son las tres líneas que cambian:</p>
+<pre data-lang="yaml"><code>          docker run --rm -v "$PWD:/src" semgrep/semgrep:1.184.0@sha256:cc1b68266f267878b39739373ea9985b9a78e5d64497dd875c8de100b22695ed
+          aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb image --exit-code 1 ...
+          docker run --rm --network host -v "$PWD/zap:/zap/wrk:rw" zaproxy/zap-stable:2.17.0@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af \</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker buildx imagetools inspect semgrep/semgrep:1.184.0 | grep -m1 Digest
+docker buildx imagetools inspect aquasec/trivy:0.76.2 | grep -m1 Digest
+docker buildx imagetools inspect zaproxy/zap-stable:2.17.0 | grep -m1 Digest</code></pre>
+  <p>Cada línea muestra el <code>Digest:</code> de la etiqueta en Docker Hub. Tienen que ser los mismos de arriba, que se tomaron de Docker Hub el 9 de noviembre de 2026; si alguno no coincide, alguien volvió a empujar la etiqueta: usa el que ves después de leer por qué cambió.</p>
+</aside>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Las tres herramientas, con su checksum.</li>
+    <li>El SBOM de la imagen y su escaneo.</li>
+    <li>SEC01 con sus imágenes por digest.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>grep -c &quot;@sha256:&quot; .github/workflows/seguridad.yml</code></pre>
+  <p>Tiene que dar 3.</p>
+</aside>
+<aside class="hito" id="hito-2" data-toc="skip" aria-labelledby="hito-2-t">
+  <p class="hito-num">Hito 2 de 3, unos 45 min</p>
+  <p class="hito-title" id="hito-2-t">Publicar y firmar</p>
+  <p>El registro, el workflow que sube la imagen solo si pasa Grype, y la firma, el SBOM y la provenance pegados al digest.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-registro">El registro</a></li>
+    <li><a href="#paso-workflow">El workflow publicar</a></li>
+  </ol>
+</aside>
+<h3 id="paso-registro">Paso 4. El registro</h3>
+<div class="step-map" data-where="ghcr">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Tu cuenta de GitHub.</dd></div>
+    <div><dt>Sale</dt><dd>Una sesión de Docker en GHCR.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada en el repositorio.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-digest">El digest</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<p>El workflow entra al registro con su propio <code>GITHUB_TOKEN</code>, y el paquete queda asociado al repositorio. Tú necesitas entrar para bajar la imagen y para la falla 1. La CLI de GitHub te da un token con el permiso de paquetes:</p>
+<pre data-lang="bash"><code>gh auth refresh -s read:packages,write:packages
+gh auth token | docker login ghcr.io -u TU-USUARIO --password-stdin</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker login ghcr.io</code></pre>
+  <p><code>Login Succeeded</code>, sin pedir nada más: usa la sesión guardada.</p>
+</aside>
+<aside class="callout callout--prod">
+<p class="callout-label">En producción real</p>
+<p>El token de tu sesión puede escribir en todos tus paquetes. Para un servidor que solo baja imágenes, usa un token con <code>read:packages</code> y nada más.</p>
+</aside>
+<h3 id="paso-workflow">Paso 5. El workflow publicar</h3>
+<div class="step-map" data-where="github runner sigstore ghcr">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Un push a <code>main</code>.</dd></div>
+    <div><dt>Sale</dt><dd>La imagen en GHCR por digest, con firma, SBOM y provenance.</dd></div>
+    <div><dt>Cambia</dt><dd><code>.github/workflows/publicar.yml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-sinllaves">Firmar sin llaves</a></dd></div>
+    <div><dt>Tiempo</dt><dd>35 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="runner sigstore ghcr verificar">
+  <h4 class="file-card-path" id="archivo-github-workflows-publicar-yml">.github/workflows/publicar.yml<span class="file-card-size">77 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Construye la imagen, la revisa, la sube, la firma, le pega el SBOM y la provenance, y la verifica en un job aparte.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>GitHub Actions, en cada push a <code>main</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>El código de <code>main</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una imagen por digest en <code>ghcr.io/dueño/tienda-norte/api</code>.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Corre en cada push a main.</li>
+    <li>Instala las herramientas con checksum.</li>
+    <li>Construye, arma el SBOM y corta con Grype.</li>
+    <li>Sube la imagen y guarda su digest.</li>
+    <li>Firma, adjunta el SBOM y la provenance.</li>
+    <li>En otro job, sin permisos de escritura, verifica lo publicado.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code>name: publicar
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  publicar:
+    runs-on: ubuntu-24.04
+    # (1)
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      imagen: ${{ steps.subir.outputs.imagen }}
+      digest: ${{ steps.subir.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Herramientas, con checksum
+        run: |
+          seguridad/herramientas.sh &quot;$RUNNER_TEMP/bin&quot;
+          echo &quot;$RUNNER_TEMP/bin&quot; &gt;&gt; &quot;$GITHUB_PATH&quot;</code></pre>
+<ol class="code-key">
+  <li>Los permisos se dan por job y solo los que hacen falta: <code>packages: write</code> para subir, <code>id-token: write</code> para pedir el token OIDC con el que se firma, y <code>attestations: write</code> para la provenance. El resto del workflow queda en solo lectura.</li>
+</ol>
+<pre data-lang="yaml"><code>      - name: Construir, SBOM y vulnerabilidades
+        # (2)
+        run: |
+          docker build -t tienda-api:ci api
+          syft docker:tienda-api:ci -o spdx-json=sbom.spdx.json
+          grype sbom:sbom.spdx.json --fail-on high --only-fixed
+      - name: Subir la imagen
+        id: subir
+        # (3)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          IMAGEN=&quot;ghcr.io/${GITHUB_REPOSITORY,,}/api&quot;
+          echo &quot;$GH_TOKEN&quot; | docker login ghcr.io -u &quot;$GITHUB_ACTOR&quot; --password-stdin
+          docker tag tienda-api:ci &quot;$IMAGEN:$GITHUB_SHA&quot;
+          docker push &quot;$IMAGEN:$GITHUB_SHA&quot;
+          DIGEST=$(docker inspect --format &#x27;{{index .RepoDigests 0}}&#x27; &quot;$IMAGEN:$GITHUB_SHA&quot; | cut -d@ -f2)
+          echo &quot;imagen=$IMAGEN&quot; &gt;&gt; &quot;$GITHUB_OUTPUT&quot;
+          echo &quot;digest=$DIGEST&quot; &gt;&gt; &quot;$GITHUB_OUTPUT&quot;
+          echo &quot;Imagen publicada: $IMAGEN@$DIGEST&quot; &gt;&gt; &quot;$GITHUB_STEP_SUMMARY&quot;</code></pre>
+<ol class="code-key" style="counter-reset: ck 1">
+  <li>Construir y revisar antes de subir: si Grype corta, la imagen no sale del runner. <code>docker:tienda-api:ci</code> le dice a Syft que lea la imagen del Docker local.</li>
+  <li>La imagen se sube con el SHA del commit como etiqueta, para encontrarla, y lo que se guarda es el digest que devuelve el registro. <code>${GITHUB_REPOSITORY,,}</code> pasa el nombre a minúsculas, porque el registro no acepta mayúsculas.</li>
+</ol>
+<pre data-lang="yaml"><code>      - name: Firmar y adjuntar el SBOM
+        # (4)
+        env:
+          REF: ${{ steps.subir.outputs.imagen }}@${{ steps.subir.outputs.digest }}
+        run: |
+          cosign sign --yes &quot;$REF&quot;
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json &quot;$REF&quot;
+      - name: Provenance de GitHub
+        # (5)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.subir.outputs.imagen }}
+          subject-digest: ${{ steps.subir.outputs.digest }}
+          push-to-registry: true</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li>Firma y SBOM por digest. <code>--yes</code> acepta sin preguntar que la entrada vaya al registro público Rekor.</li>
+  <li>La provenance de GitHub, fijada por SHA como checkout. <code>push-to-registry</code> la deja también en el registro, junto a la firma.</li>
+</ol>
+<pre data-lang="yaml"><code>  verificar:
+    runs-on: ubuntu-24.04
+    needs: publicar
+    # (6)
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verificar lo que se acaba de publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ needs.publicar.outputs.imagen }}@${{ needs.publicar.outputs.digest }}
+        run: |
+          seguridad/herramientas.sh &quot;$RUNNER_TEMP/bin&quot;
+          export PATH=&quot;$RUNNER_TEMP/bin:$PATH&quot;
+          echo &quot;$GH_TOKEN&quot; | docker login ghcr.io -u &quot;$GITHUB_ACTOR&quot; --password-stdin
+          seguridad/verificar.sh &quot;$REF&quot;</code></pre>
+<ol class="code-key" style="counter-reset: ck 5">
+  <li>Un job aparte, con permisos de solo lectura, verifica lo recién publicado con el mismo script que vas a usar para desplegar. Si el script tiene un error, lo ves aquí y no el día del despliegue.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver .github/workflows/publicar.yml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file=".github/workflows/publicar.yml"><code>name: publicar
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  publicar:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      imagen: ${{ steps.subir.outputs.imagen }}
+      digest: ${{ steps.subir.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Herramientas, con checksum
+        run: |
+          seguridad/herramientas.sh &quot;$RUNNER_TEMP/bin&quot;
+          echo &quot;$RUNNER_TEMP/bin&quot; &gt;&gt; &quot;$GITHUB_PATH&quot;
+      - name: Construir, SBOM y vulnerabilidades
+        run: |
+          docker build -t tienda-api:ci api
+          syft docker:tienda-api:ci -o spdx-json=sbom.spdx.json
+          grype sbom:sbom.spdx.json --fail-on high --only-fixed
+      - name: Subir la imagen
+        id: subir
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          IMAGEN=&quot;ghcr.io/${GITHUB_REPOSITORY,,}/api&quot;
+          echo &quot;$GH_TOKEN&quot; | docker login ghcr.io -u &quot;$GITHUB_ACTOR&quot; --password-stdin
+          docker tag tienda-api:ci &quot;$IMAGEN:$GITHUB_SHA&quot;
+          docker push &quot;$IMAGEN:$GITHUB_SHA&quot;
+          DIGEST=$(docker inspect --format &#x27;{{index .RepoDigests 0}}&#x27; &quot;$IMAGEN:$GITHUB_SHA&quot; | cut -d@ -f2)
+          echo &quot;imagen=$IMAGEN&quot; &gt;&gt; &quot;$GITHUB_OUTPUT&quot;
+          echo &quot;digest=$DIGEST&quot; &gt;&gt; &quot;$GITHUB_OUTPUT&quot;
+          echo &quot;Imagen publicada: $IMAGEN@$DIGEST&quot; &gt;&gt; &quot;$GITHUB_STEP_SUMMARY&quot;
+      - name: Firmar y adjuntar el SBOM
+        env:
+          REF: ${{ steps.subir.outputs.imagen }}@${{ steps.subir.outputs.digest }}
+        run: |
+          cosign sign --yes &quot;$REF&quot;
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json &quot;$REF&quot;
+      - name: Provenance de GitHub
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.subir.outputs.imagen }}
+          subject-digest: ${{ steps.subir.outputs.digest }}
+          push-to-registry: true
+  verificar:
+    runs-on: ubuntu-24.04
+    needs: publicar
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verificar lo que se acaba de publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ needs.publicar.outputs.imagen }}@${{ needs.publicar.outputs.digest }}
+        run: |
+          seguridad/herramientas.sh &quot;$RUNNER_TEMP/bin&quot;
+          export PATH=&quot;$RUNNER_TEMP/bin:$PATH&quot;
+          echo &quot;$GH_TOKEN&quot; | docker login ghcr.io -u &quot;$GITHUB_ACTOR&quot; --password-stdin
+          seguridad/verificar.sh &quot;$REF&quot;</code></pre>
+  </div>
+</details>
+<aside class="callout callout--def">
+<p class="callout-label">Python de por medio</p>
+<p><code>${{ steps.subir.outputs.digest }}</code> es una expresión de GitHub Actions, no de bash: GitHub la reemplaza antes de correr. Por eso se pasa a los scripts por <code>env:</code> y no pegada en el <code>run:</code>, que es la forma de evitar que un valor raro se interprete como comando.</p>
+</aside>
+<pre data-lang="bash"><code>git checkout -b publicar
+git add .github seguridad compose.verificada.yaml
+git commit -m "Publicar firmado (SEC02)"
+git push -u origin publicar        # abre el pull request; al mezclarlo corre publicar</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>gh run list --workflow publicar.yml --limit 1</code></pre>
+  <p>Después del merge, una corrida de <code>publicar</code>. En su resumen, la línea <code>Imagen publicada: ghcr.io/…/api@sha256:…</code>. Copia esa referencia: es la que vas a verificar.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>denied: installation not allowed to Create organization package</code>: El repositorio es de una organización que no deja crear paquetes desde Actions: en Settings de la organización, Packages, permítelo.</li>
+    <li><code>Error: signing ...: getting signer: ... id-token</code>: Falta <code>id-token: write</code> en el job, o el workflow corre desde un fork.</li>
+    <li><code>Feature not available for the ... repository</code>: La provenance de GitHub en un repositorio privado: hazlo público (mira <a href="#antes-instalar">Qué tienes que tener</a>).</li>
+  </ul>
+</aside>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>La imagen en GHCR, nombrada por su digest.</li>
+    <li>Su firma, su SBOM y su provenance pegados al digest.</li>
+    <li>El job verificar en verde.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>gh run view --log --job verificar | grep -E &quot;firma|sbom|provenance&quot;</code></pre>
+  <p>Las tres líneas <code>firma: ok</code>, <code>sbom: ok</code> y <code>provenance: ok</code> en el log del job.</p>
+</aside>
+<aside class="hito" id="hito-3" data-toc="skip" aria-labelledby="hito-3-t">
+  <p class="hito-num">Hito 3 de 3, unos 35 min</p>
+  <p class="hito-title" id="hito-3-t">Verificar antes de desplegar</p>
+  <p>El script que verifica, el despliegue que solo levanta lo verificado y Dependabot para que lo fijado no se quede viejo.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-verificar">Verificar y desplegar</a></li>
+    <li><a href="#paso-dependabot">Mantenerlo al día</a></li>
+    <li><a href="#comprueba-fallas">Las fallas, a propósito</a></li>
+  </ol>
+</aside>
+<h3 id="paso-verificar">Paso 6. Verificar y desplegar</h3>
+<div class="step-map" data-where="verificar ghcr sigstore tienda">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La imagen por digest.</dd></div>
+    <div><dt>Sale</dt><dd>La tienda levantada con esa imagen, o un error.</dd></div>
+    <div><dt>Cambia</dt><dd><code>seguridad/verificar.sh</code>, <code>desplegar.sh</code>, <code>compose.verificada.yaml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-sinllaves">Firmar sin llaves</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="verificar ghcr sigstore">
+  <h4 class="file-card-path" id="archivo-seguridad-verificar-sh">seguridad/verificar.sh<span class="file-card-size">18 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Verifica la firma, el SBOM y la provenance de una imagen con la identidad de tu workflow.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>El job verificar y <code>desplegar.sh</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Una referencia por digest y el repositorio.</dd></div>
+    <div><dt>Qué sale</dt><dd>Tres <code>ok</code>, o el primer error y el código 1.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Exige un digest y el repositorio.</li>
+    <li>Arma la identidad esperada.</li>
+    <li>Verifica la firma, el SBOM y la provenance, en ese orden.</li>
+  </ol>
+</div>
+<pre data-lang="bash"><code>#!/usr/bin/env bash
+# Verifica la firma, el SBOM y la provenance de una imagen por su digest. Sale con 1 si algo no cierra.
+set -euo pipefail
+# (1)
+REF=&quot;${1:?uso: verificar.sh ghcr.io/dueño/tienda-norte/api@sha256:...}&quot;
+REPO=&quot;${TIENDA_REPO:-${GITHUB_REPOSITORY:?define TIENDA_REPO=dueño/tienda-norte}}&quot;
+case &quot;$REF&quot; in
+  *@sha256:*) ;;
+  *) echo &quot;usa el digest, no una etiqueta: $REF&quot; &gt;&amp;2; exit 1 ;;
+esac
+# (2)
+IDENTIDAD=&quot;https://github.com/$REPO/.github/workflows/publicar.yml@refs/heads/main&quot;
+EMISOR=&quot;https://token.actions.githubusercontent.com&quot;</code></pre>
+<ol class="code-key">
+  <li>Solo acepta un digest. Una etiqueta se puede mover entre la verificación y el despliegue.</li>
+  <li>La identidad que tiene que tener el certificado: el workflow <code>publicar.yml</code> de tu repositorio, desde <code>main</code>, con el emisor de GitHub Actions.</li>
+</ol>
+<pre data-lang="bash"><code># (3)
+cosign verify &quot;$REF&quot; --certificate-identity &quot;$IDENTIDAD&quot; --certificate-oidc-issuer &quot;$EMISOR&quot; &gt; /dev/null
+echo &quot;firma: ok&quot;
+# (4)
+cosign verify-attestation &quot;$REF&quot; --type spdxjson \
+  --certificate-identity &quot;$IDENTIDAD&quot; --certificate-oidc-issuer &quot;$EMISOR&quot; &gt; /dev/null
+echo &quot;sbom: ok&quot;
+# (5)
+gh attestation verify &quot;oci://$REF&quot; --repo &quot;$REPO&quot; &gt; /dev/null
+echo &quot;provenance: ok&quot;</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>La firma. Sin <code>--certificate-identity</code> y <code>--certificate-oidc-issuer</code>, cosign 3 no verifica una firma sin llaves.</li>
+  <li>El SBOM, como attestation del tipo <code>spdxjson</code>, firmada por la misma identidad.</li>
+  <li>La provenance de GitHub, que <code>gh</code> comprueba contra el repositorio.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver seguridad/verificar.sh completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="bash" data-file="seguridad/verificar.sh"><code>#!/usr/bin/env bash
+# Verifica la firma, el SBOM y la provenance de una imagen por su digest. Sale con 1 si algo no cierra.
+set -euo pipefail
+REF=&quot;${1:?uso: verificar.sh ghcr.io/dueño/tienda-norte/api@sha256:...}&quot;
+REPO=&quot;${TIENDA_REPO:-${GITHUB_REPOSITORY:?define TIENDA_REPO=dueño/tienda-norte}}&quot;
+case &quot;$REF&quot; in
+  *@sha256:*) ;;
+  *) echo &quot;usa el digest, no una etiqueta: $REF&quot; &gt;&amp;2; exit 1 ;;
+esac
+IDENTIDAD=&quot;https://github.com/$REPO/.github/workflows/publicar.yml@refs/heads/main&quot;
+EMISOR=&quot;https://token.actions.githubusercontent.com&quot;
+cosign verify &quot;$REF&quot; --certificate-identity &quot;$IDENTIDAD&quot; --certificate-oidc-issuer &quot;$EMISOR&quot; &gt; /dev/null
+echo &quot;firma: ok&quot;
+cosign verify-attestation &quot;$REF&quot; --type spdxjson \
+  --certificate-identity &quot;$IDENTIDAD&quot; --certificate-oidc-issuer &quot;$EMISOR&quot; &gt; /dev/null
+echo &quot;sbom: ok&quot;
+gh attestation verify &quot;oci://$REF&quot; --repo &quot;$REPO&quot; &gt; /dev/null
+echo &quot;provenance: ok&quot;</code></pre>
+  </div>
+</details>
+<div data-exercise="sec02-p-etiqueta"></div>
+<pre data-lang="yaml" data-file="compose.verificada.yaml"><code># Usa la imagen publicada y verificada en lugar de construirla. Va junto a compose.yaml.
+services:
+  api:
+    # (1)
+    image: ${TIENDA_API_IMAGEN:?Define TIENDA_API_IMAGEN con la imagen por digest}
+    pull_policy: always</code></pre>
+<p><code>compose.yaml</code> de SEC00 construye la API con <code>build:</code>. Con este archivo encima y <code>--no-build</code>, Compose usa la imagen por digest y nunca construye.</p>
+<div class="file-card" data-where="verificar tienda">
+  <h4 class="file-card-path" id="archivo-seguridad-desplegar-sh">seguridad/desplegar.sh<span class="file-card-size">7 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Levanta la tienda con la imagen publicada solo si pasa la verificación.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Tú, o quien despliegue.</dd></div>
+    <div><dt>Qué entra</dt><dd>La referencia por digest.</dd></div>
+    <div><dt>Qué sale</dt><dd>La tienda andando, o nada.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Verifica.</li>
+    <li>Levanta la tienda con esa imagen, sin construir.</li>
+  </ol>
+</div>
+<pre data-lang="bash"><code>#!/usr/bin/env bash
+# Levanta la tienda con la imagen publicada, solo si pasa la verificación.
+set -euo pipefail
+REF=&quot;${1:?uso: desplegar.sh ghcr.io/dueño/tienda-norte/api@sha256:...}&quot;
+# (1)
+seguridad/verificar.sh &quot;$REF&quot;
+# (2)
+TIENDA_API_IMAGEN=&quot;$REF&quot; docker compose -f compose.yaml -f compose.verificada.yaml up -d --no-build
+docker compose ps api</code></pre>
+<ol class="code-key">
+  <li>Si la verificación falla, <code>set -e</code> corta antes de tocar Compose.</li>
+  <li>La imagen entra por variable de entorno, así el archivo no cambia en cada despliegue.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver seguridad/desplegar.sh completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="bash" data-file="seguridad/desplegar.sh"><code>#!/usr/bin/env bash
+# Levanta la tienda con la imagen publicada, solo si pasa la verificación.
+set -euo pipefail
+REF=&quot;${1:?uso: desplegar.sh ghcr.io/dueño/tienda-norte/api@sha256:...}&quot;
+seguridad/verificar.sh &quot;$REF&quot;
+TIENDA_API_IMAGEN=&quot;$REF&quot; docker compose -f compose.yaml -f compose.verificada.yaml up -d --no-build
+docker compose ps api</code></pre>
+  </div>
+</details>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>export TIENDA_REPO=TU-USUARIO/tienda-norte
+seguridad/desplegar.sh ghcr.io/tu-usuario/tienda-norte/api@sha256:EL-DIGEST-DEL-RESUMEN</code></pre>
+  <p><code>firma: ok</code>, <code>sbom: ok</code>, <code>provenance: ok</code>, y después la tabla de <code>docker compose ps</code> con el servicio <code>api</code> corriendo esa imagen. <code>curl http://127.0.0.1:8088/api/salud</code> responde como en SEC00.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Error: no matching signatures</code>: La identidad no coincide: revisa <code>TIENDA_REPO</code> (mayúsculas incluidas) y que la imagen haya salido de <code>publicar.yml</code> en <code>main</code>.</li>
+    <li><code>unauthorized: authentication required</code>: Falta el <code>docker login ghcr.io</code> del paso 4, o el paquete es privado y el token no tiene <code>read:packages</code>.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Verificar con un script antes del despliegue.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Un controlador de admisión en Kubernetes que rechaza imágenes sin firma, que es lo de producción: aquí no hay clúster todavía.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>El script lo tiene que correr alguien. En SEC04, el clúster lo exige solo con una política de admisión.</dd></div>
+</dl>
+<h3 id="paso-dependabot">Paso 7. Mantenerlo al día</h3>
+<div class="step-map" data-where="github">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Las versiones fijadas.</dd></div>
+    <div><dt>Sale</dt><dd>Un pull request por cada actualización.</dd></div>
+    <div><dt>Cambia</dt><dd><code>.github/dependabot.yml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-digest">El digest</a></dd></div>
+    <div><dt>Tiempo</dt><dd>5 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="github">
+  <h4 class="file-card-path" id="archivo-github-dependabot-yml">.github/dependabot.yml<span class="file-card-size">14 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Le dice a Dependabot qué revisar cada semana.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>GitHub.</dd></div>
+    <div><dt>Qué entra</dt><dd>Las acciones, el Dockerfile y <code>requirements.txt</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Pull requests que pasan por el pipeline de SEC01.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Revisa las acciones y el Dockerfile cada semana.</li>
+    <li>Revisa las dependencias de Python.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code>version: 2
+updates:
+  # (1)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /api
+    schedule:
+      interval: weekly
+  # (2)
+  - package-ecosystem: pip
+    directory: /api
+    schedule:
+      interval: weekly</code></pre>
+<ol class="code-key">
+  <li>Las acciones fijadas por SHA (Dependabot entiende el comentario con la versión) y la base del Dockerfile de la API.</li>
+  <li>Las dependencias de Python de la API. Una actualización de FastAPI llega como pull request y pasa por Semgrep, Trivy y el resto.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver .github/dependabot.yml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file=".github/dependabot.yml"><code>version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /api
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /api
+    schedule:
+      interval: weekly</code></pre>
+  </div>
+</details>
+<div data-exercise="sec02-p-dependabot"></div>
+<p>Lo que Dependabot no lee son las imágenes dentro de un <code>run:</code>, como las del paso 3, ni las versiones de <code>herramientas.sh</code>. Van en una lista que se revisa a mano una vez al mes:</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Dónde</th><th>Cómo se actualiza</th></tr></thead>
+<tbody>
+<tr><td>Semgrep, Trivy y ZAP</td><td><code>seguridad.yml</code> de SEC01</td><td>Versión nueva, digest con <code>imagetools inspect</code></td></tr>
+<tr><td>gitleaks</td><td><code>seguridad.yml</code> de SEC01</td><td>Versión nueva; el checksum lo baja el job</td></tr>
+<tr><td>Syft, Grype y cosign</td><td><code>herramientas.sh</code></td><td>Versión nueva; el checksum lo baja el script</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="viaje">El viaje de un dato</h2>
+<p>El caso principal: un merge a <code>main</code> que termina en la tienda levantada con la imagen verificada.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 478" role="img" aria-labelledby="fs02st fs02sd">
+<title id="fs02st">De main a la tienda, con la imagen verificada</title>
+<desc id="fs02sd">Un merge arranca publicar. El workflow construye, arma el SBOM y pasa Grype; sube la imagen y recibe el digest. Pide un certificado a Fulcio, firma y adjunta el SBOM, y la entrada queda en Rekor. La acción de GitHub agrega la provenance. Después, desplegar.sh llama a verificar.sh, que pide las firmas al registro y las comprueba; con las tres en orden, Compose baja la imagen por digest y la levanta.</desc>
+<defs><marker id="fs02s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs02s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs02s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs02s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">publicar</text>
+<path class="dg-frame" d="M70.0 40 V468"/>
+<rect class="dg-box" x="165.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="227.5" y="29" text-anchor="middle" style="font-size:13.5px">GHCR</text>
+<path class="dg-frame" d="M227.5 40 V468"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">Sigstore</text>
+<path class="dg-frame" d="M385.0 40 V468"/>
+<rect class="dg-box" x="480.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="542.5" y="29" text-anchor="middle" style="font-size:13.5px">desplegar.sh</text>
+<path class="dg-frame" d="M542.5 40 V468"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Compose</text>
+<path class="dg-frame" d="M700.0 40 V468"/>
+<rect x="80.0" y="58" width="188" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="90.0" y="74">build, syft, grype: pasa</text>
+<path class="dg-edge" d="M73.0 106 L222.5 106" marker-end="url(#fs02s-a)"/>
+<rect x="129.55" y="89" width="38.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="100" text-anchor="middle">push</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M224.5 140 L75.0 140" marker-end="url(#fs02s-r)"/>
+<rect x="106.45" y="123" width="84.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="134" text-anchor="middle">sha256:4f2…</text>
+<path class="dg-edge" d="M73.0 174 L380.0 174" marker-end="url(#fs02s-a)"/>
+<rect x="188.5" y="157" width="78.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="168" text-anchor="middle">token OIDC</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 208 L75.0 208" marker-end="url(#fs02s-r)"/>
+<rect x="185.2" y="191" width="84.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="202" text-anchor="middle">certificado</text>
+<path class="dg-edge" d="M73.0 242 L222.5 242" marker-end="url(#fs02s-a)"/>
+<rect x="66.85000000000001" y="225" width="163.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="236" text-anchor="middle">firma, SBOM, provenance</text>
+<path class="dg-edge" d="M539.5 276 L232.5 276" marker-end="url(#fs02s-a)"/>
+<rect x="309.7" y="259" width="150.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">firmas de sha256:4f2…</text>
+<path class="dg-edge" d="M539.5 310 L390.0 310" marker-end="url(#fs02s-a)"/>
+<rect x="404.95" y="293" width="117.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="463.75" y="304" text-anchor="middle">identidad, Rekor</text>
+<rect x="552.5" y="330" width="209" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="562.5" y="346">firma, sbom, provenance: ok</text>
+<path class="dg-edge" d="M545.5 378 L695.0 378" marker-end="url(#fs02s-a)"/>
+<rect x="572.35" y="361" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="621.25" y="372" text-anchor="middle">up --no-build</text>
+<path class="dg-edge" d="M697.0 412 L232.5 412" marker-end="url(#fs02s-a)"/>
+<rect x="401.65" y="395" width="124.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="463.75" y="406" text-anchor="middle">pull @sha256:4f2…</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC02.5.</b> El viaje completo.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Paso</th><th>De → a</th><th>Qué viaja</th><th>Dónde queda</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Workflow → GHCR</td><td>La imagen</td><td>El registro, por digest</td></tr>
+<tr><td>2</td><td>Workflow → Fulcio</td><td>El token OIDC del job</td><td>Nada: el certificado vence en minutos</td></tr>
+<tr><td>3</td><td>Workflow → Rekor</td><td>La firma y el certificado</td><td>Rekor, público y para siempre</td></tr>
+<tr><td>4</td><td>Workflow → GHCR</td><td>Firma, SBOM y provenance</td><td>El registro, junto al digest</td></tr>
+<tr><td>5</td><td>desplegar.sh → GHCR y Sigstore</td><td>Pedidos de lectura</td><td>Nada</td></tr>
+<tr><td>6</td><td>Compose → GHCR</td><td>La imagen por digest</td><td>Tu máquina</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="sec02-firma"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-verde">El punto de partida</h3>
+<div class="step-map" data-where="runner ghcr verificar tienda">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La primera corrida de <code>publicar</code>.</dd></div>
+    <div><dt>Sale</dt><dd>Los dos jobs en verde y la tienda levantada.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-sinllaves">Firmar sin llaves</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Lo que el diseño espera</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>Job publicar</td><td>Verde, con la línea del digest en el resumen</td><td></td></tr>
+<tr><td>Job verificar</td><td><code>firma: ok</code>, <code>sbom: ok</code>, <code>provenance: ok</code></td><td></td></tr>
+<tr><td>Paquetes en el SBOM</td><td>Los de la base y los de Python</td><td></td></tr>
+<tr><td><code>desplegar.sh</code></td><td>La tienda responde en <code>/api/salud</code></td><td></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-fallas">Las fallas, a propósito</h3>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 1: una imagen cambiada en el registro</p>
+<p><b>Provócala.</b> En tu máquina, cambia algo de la API (un comentario en <code>app.py</code> alcanza), construye y empuja con el nombre del registro: <code>docker build -t ghcr.io/tu-usuario/tienda-norte/api:cambiada api</code> y <code>docker push</code> de esa etiqueta. El push imprime el digest nuevo.</p><p><b>Qué tiene que pasar.</b> <code>desplegar.sh</code> con ese digest falla en <code>cosign verify</code> y no levanta nada: nadie firmó ese contenido. <b>Por qué importa.</b> Es lo que haría alguien con acceso al registro y no al repositorio. <b>Deshazla</b> borrando esa versión del paquete en la página de GitHub.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 2: desplegar por etiqueta</p>
+<p><b>Provócala.</b> <code>seguridad/desplegar.sh ghcr.io/tu-usuario/tienda-norte/api:cambiada</code>.</p><p><b>Qué tiene que pasar.</b> <code>usa el digest, no una etiqueta</code> y código 1, antes de cualquier llamada a la red. <b>Por qué importa.</b> Entre verificar una etiqueta y bajarla, la etiqueta puede cambiar. <b>No hay nada que deshacer.</b></p>
+</aside>
+<div data-exercise="sec02-p-identidad"></div>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 3: una firma válida de otra identidad</p>
+<p><b>Antes de provocarla:</b> firmar desde tu máquina abre el navegador para que entres con tu cuenta, y deja tu correo en Rekor, que es público y no se borra. Si no quieres eso, lee la falla y sigue.</p><p><b>Provócala.</b> Firma la imagen de la falla 1 con <code>cosign sign ghcr.io/tu-usuario/tienda-norte/api@sha256:EL-DE-LA-FALLA-1</code>.</p><p><b>Qué tiene que pasar.</b> La firma es válida, pero <code>verificar.sh</code> sigue fallando en la firma: el certificado dice tu correo, no el workflow. <b>Por qué importa.</b> Una firma dice quién; verificar es decidir de quién aceptas. <b>Deshazla</b> borrando esa versión del paquete; la entrada en Rekor queda.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 4: una dependencia vulnerable</p>
+<p><b>Provócala.</b> En un pull request, agrega <code>jinja2==2.10</code> a <code>api/requirements.txt</code>. SEC01 lo va a cortar en <code>imagen</code>; para verlo aquí, mézclalo sin la regla de la rama, en una copia del repositorio, o corre la marca (2) en tu máquina.</p><p><b>Qué tiene que pasar.</b> Grype muestra CVE-2019-10906 y sale con error; el paso que sube no corre y no hay imagen nueva en el registro. <b>Por qué importa.</b> Dos herramientas con bases distintas cortan lo mismo: si una se equivoca, la otra lo ve. <b>Deshazla</b> quitando la línea.</p>
+</aside>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Qué la corta</th><th>¿Cortó?</th><th>Lo que decía</th></tr></thead>
+<tbody>
+<tr><td>1. Imagen cambiada</td><td>cosign verify</td><td></td><td></td></tr>
+<tr><td>2. Por etiqueta</td><td>verificar.sh, marca (1)</td><td></td><td></td></tr>
+<tr><td>3. Otra identidad</td><td>cosign verify, la identidad</td><td></td><td></td></tr>
+<tr><td>4. Dependencia vulnerable</td><td>Grype, antes del push</td><td></td><td></td></tr>
+</tbody>
+</table>
+</div>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Cada imagen publicada tiene SBOM, firma y provenance pegados a su digest.</li>
+    <li>El despliegue solo levanta lo que salió de tu workflow.</li>
+    <li>Cuatro fallas, cada una cortada donde tenía que cortarse.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>cosign tree ghcr.io/tu-usuario/tienda-norte/api@sha256:EL-DIGEST</code></pre>
+  <p>La lista de lo que cuelga del digest: firmas y attestations. Anota qué tipos aparecen.</p>
+</aside>
+<h2 id="limitaciones">Limitaciones</h2>
+<ul>
+<li><b>Lo que no hace.</b> La firma dice que la imagen salió de tu workflow, no que el código sea bueno: eso lo revisa SEC01. Si alguien mezcla código malo en <code>main</code>, se firma igual.</li>
+<li><b>Dónde se rompe.</b> Si GitHub o Sigstore no responden, no se publica ni se verifica. Para desplegar con Sigstore caído hace falta guardar el bundle de la firma junto a la imagen y verificar sin conexión.</li>
+<li><b>Riesgos que quedan.</b> Quien tenga permiso de escritura en el repositorio puede cambiar <code>publicar.yml</code> en <code>main</code>. La regla de la rama de SEC01 y las revisiones son lo que lo frena; un archivo CODEOWNERS sobre <code>.github/</code> lo hace explícito.</li>
+<li><b>Lo público.</b> Rekor guarda para siempre qué repositorio firmó qué digest.</li>
+</ul>
+<h3 id="limitaciones-costo">Costo y tiempo, con la cuenta a mano</h3>
+<p>Con supuestos dichos como supuestos: si <code>publicar</code> tarda 4 minutos (build, SBOM, Grype con su base, push y firmas) y <code>verificar</code> 1, cada merge a <code>main</code> consume unos 5 minutos de runner. Con 20 merges al mes son 100 minutos, gratis en un repositorio público. GHCR guarda una imagen por merge: borra las viejas con una política de retención cuando el paquete crezca. Reemplaza los supuestos con tus minutos.</p>
+<h3 id="limitaciones-produccion">Qué cambia en producción</h3>
+<ul>
+<li>La verificación la hace el clúster con una política de admisión (Kyverno, o el policy controller de Sigstore) y no un script: es <a href="#conectar">SEC04</a>.</li>
+<li>Un SBOM por entrega guardado en un sistema que lo cruce con las vulnerabilidades nuevas cada día (Dependency-Track, por ejemplo), para saber qué imágenes en uso están afectadas.</li>
+<li>El workflow de build separado y aislado, para subir de nivel en SLSA.</li>
+<li>Retención y borrado de imágenes viejas, sin borrar las que están desplegadas.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="sec02">
+<p class="pj-repo-head">El mismo repositorio de la tienda, público. Marca cada comprobación cuando la veas.</p>
+<ul class="pj-checks">
+<li data-check="herr"><code>herramientas.sh</code> instala las tres herramientas y sus checksums coinciden.</li>
+<li data-check="pines"><code>seguridad.yml</code> tiene las tres imágenes por digest.</li>
+<li data-check="publicar">El workflow publicar sube una imagen con firma, SBOM y provenance.</li>
+<li data-check="desplegar"><code>desplegar.sh</code> levanta la tienda con la imagen verificada.</li>
+<li data-check="fallas">Las fallas 1, 2 y 4 cortaron donde tenían que cortar.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con SEC00 y SEC01</p>
+<p>La imagen es la de <a href="sec00-laboratorio.html#paso-api">SEC00</a>, y el paso 3 cumple lo que <a href="sec01-pipeline.html#limitaciones">las limitaciones de SEC01</a> dejaban pendiente: las imágenes de las herramientas por digest.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con la Parte VII del curso</p>
+<p>SBOM, firma, provenance y SLSA están en <a href="../modules/m56-supply-chain.html#sbom">M56</a>; la prioridad de lo que Grype encuentra, en <a href="../modules/m58-vulnerabilidades.html">M58</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M36</p>
+<p>La firma digital por dentro, en <a href="../modules/m36-criptografia.html">M36</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con el glosario</p>
+<p><a href="../glosario.html#t-sbom">SBOM</a> y <a href="../glosario.html#t-slsa">SLSA</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/sec02.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

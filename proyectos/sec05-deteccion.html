@@ -1,0 +1,1666 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEC05. Detection as code</title>
+<meta name="description" content="Las reglas de Tienda Norte en Sigma, probadas con pySigma y SQLite en el pipeline, Falco en Wazuh, una alerta de silencio por fuente y una emulación por técnica solo contra el laboratorio.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="sec05" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Detection as code</h1>
+        <p class="lead">Una regla sin pruebas funciona hasta el próximo cambio. Aquí cada regla tiene casos, un par y una emulación.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>SEC05</dd></div>
+          <div><dt>Plan</dt><dd>Blue Team y DevSecOps</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>2 h 10 min</dd></div>
+          <div><dt>Módulos</dt><dd>M59</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="sec05">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Escribir las reglas de Tienda Norte en Sigma, con correlaciones por ventana y por campo.</li>
+<li>Probar cada regla con casos positivos y con negativos que casi alertan, convirtiéndola con pySigma a SQLite.</li>
+<li>Sumar las pruebas al pipeline de SEC01 y comprobar que cada regla Sigma tiene su par en Wazuh.</li>
+<li>Llevar las alertas de Falco de SEC04 a Wazuh y convertir el silencio de una fuente en una alerta.</li>
+<li>Emular cada técnica solo contra tu laboratorio y comprobar que su alerta llega.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>Las tres reglas de <a href="sec00-laboratorio.html#paso-reglas">SEC00</a> funcionan hoy. Nadie sabe si funcionarán después del próximo cambio: viven en un XML que se edita a mano y se prueba a ojo con <code>wazuh-logtest</code>. Y en la falla 4 de SEC00 viste el peor caso: una ruta de log cambiada, cero alertas, y nada que avise.</p>
+<p>Esta guía trata las reglas como código, que es lo que <a href="../modules/m59-deteccion.html#detection-as-code">M59</a> llama detection as code. Cada regla se escribe en Sigma, tiene casos que tienen que alertar y casos que no, y corre en el pipeline de <a href="sec01-pipeline.html">SEC01</a>. Además, Falco entra al SIEM, cada fuente tiene una alerta si se calla, y cada técnica se emula contra el laboratorio para ver la alerta del otro lado.</p>
+<figure class="figure" data-arch>
+<div class="figure-frame">
+<svg viewBox="0 0 770 440" role="img" aria-labelledby="fs05t fs05d">
+<title id="fs05t">La arquitectura de SEC05</title>
+<desc id="fs05d">En el repositorio, las reglas Sigma y sus casos. El pipeline de GitHub las convierte con pySigma a SQL de SQLite y las corre sobre los casos. En el laboratorio, la tienda y Falco escriben sus logs; el manager de Wazuh los lee, corre además un comando de silencio cada cinco minutos y escribe las alertas. El script de emulación provoca cada técnica contra la tienda o el clúster y busca su alerta en alerts.json. Seis flechas numeradas.</desc>
+<defs><marker id="fs05a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="20" y="20" width="300" height="190" rx="10"/>
+<text class="dg-group" x="32" y="42" text-anchor="start">el repositorio y el pipeline</text>
+<rect class="dg-frame" x="20" y="222" width="730" height="200" rx="10"/>
+<text class="dg-group" x="32" y="240" text-anchor="start">tu laboratorio</text>
+<path class="dg-edge" d="M170 108 L170 130" marker-end="url(#fs05a)"/>
+<path class="dg-edge" d="M210 288 L298 316" marker-end="url(#fs05a)"/>
+<path class="dg-edge" d="M210 366 L298 342" marker-end="url(#fs05a)"/>
+<path class="dg-edge" d="M580 328 L522 328" marker-end="url(#fs05a)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M655 300 L655 252 L125 252 L125 260" marker-end="url(#fs05a)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M655 356 L655 406 L125 406 L125 394" marker-end="url(#fs05a)"/>
+<g data-part="reglas"><rect class="dg-layer" x="40" y="56" width="260" height="52" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="170" y="78" text-anchor="middle">reglas Sigma y casos</text><text class="dg-tiny dg-mono" x="170" y="94" text-anchor="middle">deteccion/reglas, deteccion/casos</text></g>
+<g data-part="pipeline"><rect class="dg-layer" x="40" y="130" width="260" height="56" rx="8" style="--c: var(--l-edge)"/><text class="dg-label" x="170" y="154" text-anchor="middle">pipeline: job deteccion</text><text class="dg-tiny dg-mono" x="170" y="170" text-anchor="middle">pySigma a SQLite, pytest</text></g>
+<g data-part="tienda"><rect class="dg-layer" x="40" y="262" width="170" height="52" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="125" y="284" text-anchor="middle">tienda</text><text class="dg-tiny dg-mono" x="125" y="300" text-anchor="middle">api.log y nginx</text></g>
+<g data-part="falco"><rect class="dg-layer" x="40" y="340" width="170" height="52" rx="8" style="--c: var(--l-gpu)"/><text class="dg-label" x="125" y="362" text-anchor="middle">Falco</text><text class="dg-tiny dg-mono" x="125" y="378" text-anchor="middle">events.json</text></g>
+<g data-part="wazuh"><rect class="dg-layer" x="300" y="300" width="220" height="56" rx="8" style="--c: var(--l-queue)"/><text class="dg-label" x="410" y="324" text-anchor="middle">manager de Wazuh</text><text class="dg-tiny dg-mono" x="410" y="340" text-anchor="middle">reglas, silencio, alerts.json</text></g>
+<g data-part="emular"><rect class="dg-layer" x="580" y="300" width="150" height="56" rx="8" style="--c: var(--l-client)"/><text class="dg-label" x="655" y="324" text-anchor="middle">emular.py</text><text class="dg-tiny dg-mono" x="655" y="340" text-anchor="middle">técnica y alerta</text></g>
+<g class="pl-pin"><circle cx="186" cy="120" r="10"/><text x="186" y="124" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="254" cy="290" r="10"/><text x="254" y="294" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="254" cy="366" r="10"/><text x="254" y="370" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="551" cy="314" r="10"/><text x="551" y="318" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="400" cy="252" r="10"/><text x="400" y="256" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="400" cy="406" r="10"/><text x="400" y="410" text-anchor="middle">6</text></g>
+</svg>
+</div>
+<figcaption><b>Figura SEC05.1.</b> Dos mundos. Arriba, las reglas se prueban sin SIEM (1). Abajo, las fuentes llegan a Wazuh (2 y 3), y <code>emular.py</code> provoca cada técnica (5 y 6) y busca su alerta (4).</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>#</th><th>De → a</th><th>Protocolo y formato</th><th>Ejemplo</th><th>Con qué permiso</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Reglas → job <code>deteccion</code></td><td>Git, YAML de Sigma y JSONL</td><td><code>pytest -q deteccion</code></td><td><code>contents: read</code>, como todo el workflow</td></tr>
+<tr><td>2</td><td>Tienda → Wazuh</td><td>Archivo JSON por volumen de solo lectura</td><td><code>{"evento":"login_fallido",…}</code></td><td>El montaje <code>:ro</code> de SEC00</td></tr>
+<tr><td>3</td><td>Falco → Wazuh</td><td>Archivo JSON en el nodo, montado <code>:ro</code></td><td><code>{"rule":"Shell en un contenedor…"}</code></td><td>Lectura de <code>/var/log/falco</code></td></tr>
+<tr><td>4</td><td>emular.py → alerts.json</td><td><code>docker compose exec</code> y <code>grep -c</code></td><td>¿subió la cuenta de la 100102?</td><td>Tu usuario de Docker</td></tr>
+<tr><td>5</td><td>emular.py → tienda</td><td>HTTP a 127.0.0.1:8088</td><td><code>provocar.py fuerza</code></td><td>Ninguno: el script se niega a otra dirección</td></tr>
+<tr><td>6</td><td>emular.py → clúster</td><td><code>kubectl exec</code></td><td><code>sh -c id</code> en la API</td><td>El kubeconfig de SEC04</td></tr>
+</tbody>
+</table>
+</div>
+<p><b>Las fronteras.</b> El pipeline no ve el laboratorio: prueba las reglas con datos escritos a mano, sin red. El laboratorio no sale de tu máquina, salvo las descargas. Las emulaciones son tráfico de ataque y solo apuntan a 127.0.0.1 y a tu clúster.</p>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 342" role="img" aria-labelledby="fs05vt fs05vd">
+<title id="fs05vt">Una regla nueva, de la idea a la alerta</title>
+<desc id="fs05vd">La persona escribe la regla y sus casos. El pipeline la prueba. Después la emulación provoca la técnica en la tienda, Wazuh escribe la alerta y la emulación la encuentra.</desc>
+<defs><marker id="fs05v-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs05v-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs05v-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs05v-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Persona</text>
+<path class="dg-frame" d="M70.0 40 V332"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">Pipeline</text>
+<path class="dg-frame" d="M280.0 40 V332"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">Tienda</text>
+<path class="dg-frame" d="M490.0 40 V332"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Wazuh</text>
+<path class="dg-frame" d="M700.0 40 V332"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#fs05v-a)"/>
+<rect x="79.9" y="55" width="190.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">pull request: regla y casos</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 106 L75.0 106" marker-end="url(#fs05v-r)"/>
+<rect x="66.7" y="89" width="216.6" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="100" text-anchor="middle">si.jsonl alerta, no.jsonl calla</text>
+<path class="dg-edge" d="M73.0 140 L485.0 140" marker-end="url(#fs05v-a)"/>
+<rect x="178.3" y="123" width="203.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="134" text-anchor="middle">emular.py: provocar.py fuerza</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M493.0 174 L695.0 174" marker-end="url(#fs05v-q)"/>
+<rect x="496.6" y="157" width="196.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="168" text-anchor="middle">login_fallido ×12 en api.log</text>
+<rect x="586.0" y="194" width="104" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="596.0" y="210">regla 100102</text>
+<path class="dg-edge" d="M73.0 242 L695.0 242" marker-end="url(#fs05v-a)"/>
+<rect x="332.8" y="225" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="236" text-anchor="middle">grep -c 100102</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 276 L75.0 276" marker-end="url(#fs05v-r)"/>
+<rect x="306.4" y="259" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">la cuenta subió: VISTA</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC05.2.</b> La versión corta. La completa está en <a href="#viaje">El viaje de un dato</a>.</figcaption>
+</figure>
+<h2 id="antes">Antes de empezar</h2>
+<h3 id="ae-repaso">Lo que viene de SEC00, SEC01 y SEC04</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 196" role="img" aria-labelledby="fs05rt fs05rd">
+<title id="fs05rt">Lo que viene de las guías anteriores</title>
+<desc id="fs05rd">Las reglas y los eventos de SEC00, el workflow de SEC01 y la regla de Falco de SEC04.</desc>
+<defs><marker id="fs05ra" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="16" width="232.667" height="164" rx="8"/>
+<text class="dg-group" x="32.0" y="40" text-anchor="start">Las reglas de SEC00</text>
+<text class="dg-tiny" x="32.0" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="32.0" y="80" text-anchor="start">100102, 100104 y 100112, con su</text><text class="dg-tiny" x="32.0" y="95" text-anchor="start">umbral y su técnica.</text>
+<text class="dg-tiny" x="32.0" y="122" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="32.0" y="140" text-anchor="start">Cada una pasa a Sigma, y el XML</text><text class="dg-tiny" x="32.0" y="155" text-anchor="start">queda como su par.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="16" width="232.667" height="164" rx="8"/>
+<text class="dg-group" x="280.66666666666663" y="40" text-anchor="start">El workflow de SEC01</text>
+<text class="dg-tiny" x="280.66666666666663" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="280.66666666666663" y="80" text-anchor="start">&lt;code&gt;seguridad.yml&lt;/code&gt;, con</text><text class="dg-tiny" x="280.66666666666663" y="95" text-anchor="start">&lt;code&gt;contents: read&lt;/code&gt; y un</text><text class="dg-tiny" x="280.66666666666663" y="110" text-anchor="start">job por herramienta.</text>
+<text class="dg-tiny" x="280.66666666666663" y="137" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="280.66666666666663" y="155" text-anchor="start">Suma el job &lt;code&gt;deteccion&lt;/code&gt;.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="16" width="232.667" height="164" rx="8"/>
+<text class="dg-group" x="529.3333333333333" y="40" text-anchor="start">La regla de Falco</text>
+<text class="dg-tiny" x="529.3333333333333" y="62" text-anchor="start" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="529.3333333333333" y="80" text-anchor="start">"Shell en un contenedor de la</text><text class="dg-tiny" x="529.3333333333333" y="95" text-anchor="start">tienda", en SEC04.</text>
+<text class="dg-tiny" x="529.3333333333333" y="122" text-anchor="start" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="529.3333333333333" y="140" text-anchor="start">Sus alertas llegan a Wazuh y tienen</text><text class="dg-tiny" x="529.3333333333333" y="155" text-anchor="start">su regla.</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC05.3.</b> Tres cosas que vuelven.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Dónde se vio</th></tr></thead>
+<tbody>
+<tr><td>Las reglas 100102, 100104 y 100112, y <code>wazuh-logtest</code></td><td><a href="sec00-laboratorio.html#paso-reglas">SEC00, paso 7</a></td></tr>
+<tr><td><code>provocar.py</code> y su lista de direcciones permitidas</td><td><a href="sec00-laboratorio.html#paso-provocar">SEC00, paso 8</a></td></tr>
+<tr><td>El montaje de los logs en el manager y <code>wazuh_manager.conf</code></td><td><a href="sec00-laboratorio.html#paso-leer">SEC00, paso 6</a></td></tr>
+<tr><td>El workflow y su primer job</td><td><a href="sec01-pipeline.html#paso-pruebas">SEC01, paso 2</a></td></tr>
+<tr><td>La regla de Falco y su falla</td><td><a href="sec04-cluster.html#paso-falco">SEC04, paso 7</a></td></tr>
+</tbody>
+</table>
+</div>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 168" role="img" aria-labelledby="fs05pt fs05pd">
+<title id="fs05pt">Lámina SEC05.A: detection as code</title>
+<desc id="fs05pd">Seis piezas: la regla Sigma, la correlación, los casos, pySigma con el backend de SQLite, la alerta de silencio y la emulación.</desc>
+<defs><marker id="fs05pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="136.33333333333331" y="42" text-anchor="middle">Regla Sigma</text>
+<text class="dg-tiny dg-mono" x="136.33333333333331" y="60" text-anchor="middle">qué eventos mirar</text>
+<g class="pl-pin"><circle cx="36" cy="32" r="10"/><text x="36" y="36" text-anchor="middle">1</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="384.99999999999994" y="42" text-anchor="middle">Correlación</text>
+<text class="dg-tiny dg-mono" x="384.99999999999994" y="60" text-anchor="middle">cuántos y en cuánto tiempo</text>
+<g class="pl-pin"><circle cx="284.667" cy="32" r="10"/><text x="284.667" y="36" text-anchor="middle">2</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="16" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="633.6666666666666" y="42" text-anchor="middle">Casos</text>
+<text class="dg-tiny dg-mono" x="633.6666666666666" y="60" text-anchor="middle">si.jsonl y no.jsonl</text>
+<g class="pl-pin"><circle cx="533.333" cy="32" r="10"/><text x="533.333" y="36" text-anchor="middle">3</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="136.33333333333331" y="118" text-anchor="middle">pySigma</text>
+<text class="dg-tiny dg-mono" x="136.33333333333331" y="136" text-anchor="middle">Sigma a SQL de SQLite</text>
+<g class="pl-pin"><circle cx="36" cy="108" r="10"/><text x="36" y="112" text-anchor="middle">4</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="268.667" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="384.99999999999994" y="118" text-anchor="middle">Silencio</text>
+<text class="dg-tiny dg-mono" x="384.99999999999994" y="136" text-anchor="middle">callada cada 5 min</text>
+<g class="pl-pin"><circle cx="284.667" cy="108" r="10"/><text x="284.667" y="112" text-anchor="middle">5</text></g>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517.333" y="92" width="232.667" height="60" rx="8"/>
+<text class="dg-label" x="633.6666666666666" y="118" text-anchor="middle">Emulación</text>
+<text class="dg-tiny dg-mono" x="633.6666666666666" y="136" text-anchor="middle">técnica y alerta esperada</text>
+<g class="pl-pin"><circle cx="533.333" cy="108" r="10"/><text x="533.333" y="112" text-anchor="middle">6</text></g>
+</svg>
+</div>
+<figcaption><b>Lámina SEC05.A.</b> Las piezas, en el orden en que aparecen.</figcaption>
+</figure>
+<ol class="plate-key">
+  <li><b>Regla Sigma</b><span>Una regla de detección en YAML que no depende de ningún SIEM: qué fuente, qué campos y qué condición. <a href="#ae-sigma">Sigma y sus correlaciones</a></span></li>
+  <li><b>Correlación</b><span>Una regla Sigma sobre otra: cuenta sus eventos en una ventana, agrupados por un campo. <a href="#ae-sigma">Sigma y sus correlaciones</a></span></li>
+  <li><b>Casos</b><span>Eventos escritos a mano: los de <code>si.jsonl</code> tienen que alertar y los de <code>no.jsonl</code>, no. <a href="#paso-casos">Paso 3</a></span></li>
+  <li><b>pySigma</b><span>La biblioteca que lee Sigma y la convierte, con un backend, al lenguaje de un motor; aquí, SQLite. <a href="#paso-pruebas">Paso 4</a></span></li>
+  <li><b>Alerta de silencio</b><span>Una alerta que sale cuando una fuente deja de escribir. <a href="#paso-silencio">Paso 7</a></span></li>
+  <li><b>Emulación</b><span>Provocar una técnica de ATT&amp;CK contra el laboratorio y comprobar que su alerta llega. <a href="#paso-emular">Paso 8</a></span></li>
+</ol>
+<h3 id="antes-instalar">Qué tienes que tener</h3>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Para qué</th><th>Cómo compruebas que está</th></tr></thead>
+<tbody>
+<tr><td>El laboratorio de SEC00 corriendo, con sus tres reglas</td><td>La tienda, Wazuh y <code>provocar.py</code></td><td><code>python provocar.py fuerza</code> y la 100102 en <code>alerts.json</code>, como en SEC00</td></tr>
+<tr><td>El workflow de SEC01 en tu repositorio</td><td>Sumar el job <code>deteccion</code></td><td>La pestaña Actions muestra <code>seguridad</code> en verde</td></tr>
+<tr><td>El clúster de SEC04 con Falco, en la misma máquina Linux que Wazuh</td><td>Llevar Falco al SIEM (pasos 6 y 7)</td><td><code>kubectl -n falco get pods</code> en la misma terminal donde corre <code>docker compose</code> de Wazuh</td></tr>
+<tr><td>Python 3.13 con <code>venv</code></td><td>Las pruebas y la emulación</td><td><code>python3 --version</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Si tu clúster de SEC04 está en otra máquina que Wazuh, los pasos 6 y 7 van con un agente de Wazuh en el nodo, que esta guía no arma: haz los demás y marca esos dos como pendientes.</p>
+<h3 id="ae-sigma">Sigma y sus correlaciones</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Una receta escrita en gramos, no en "tazas de la abuela". La puede seguir cualquier cocina, cada una con su horno: Sigma es la receta, y cada SIEM es un horno al que se la traduce.</p>
+</aside>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 240" role="img" aria-labelledby="fs05at fs05ad">
+<title id="fs05at">De un evento a una alerta en Sigma</title>
+<desc id="fs05ad">Una regla base elige eventos (login_fallido de la tienda). Una correlación cuenta los eventos de esa regla por IP en una ventana deslizante de 2 minutos y alerta al llegar a 8.</desc>
+<defs><marker id="fs05aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="96.25" y="46" text-anchor="middle">Eventos</text>
+<text class="dg-tiny" x="96.25" y="66" text-anchor="middle">líneas JSON de api.log</text>
+<path class="dg-edge" d="M174.5 55 H208.5" marker-end="url(#fs05aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="212.5" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="288.75" y="46" text-anchor="middle">Regla base</text>
+<text class="dg-tiny" x="288.75" y="66" text-anchor="middle">evento: login_fallido</text>
+<path class="dg-edge" d="M367 55 H401" marker-end="url(#fs05aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="405" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="481.25" y="46" text-anchor="middle">Agrupa</text>
+<text class="dg-tiny" x="481.25" y="66" text-anchor="middle">group-by: ip</text>
+<path class="dg-edge" d="M559.5 55 H593.5" marker-end="url(#fs05aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="597.5" y="20" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="673.75" y="46" text-anchor="middle">Cuenta</text>
+<text class="dg-tiny" x="673.75" y="66" text-anchor="middle">ventana de 2 min</text>
+<path class="dg-edge" d="M673.75 92 V120 H96.25 V128" marker-end="url(#fs05aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="130" width="152.5" height="70" rx="8"/>
+<text class="dg-label" x="96.25" y="156" text-anchor="middle">Alerta</text>
+<text class="dg-tiny" x="96.25" y="176" text-anchor="middle">si llega a 8</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC05.4.</b> La regla base no alerta sola: es el filtro. La correlación es la que cuenta.</figcaption>
+</figure>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 396" role="img" aria-labelledby="fs05f1t fs05f1d">
+<title id="fs05f1t">Ficha: una correlación event_count</title>
+<desc id="fs05f1d">Ficha de una correlación event_count. Qué entra: Los eventos que eligió la regla base, con su campo de tiempo. Qué hace: Para cada valor del campo de &lt;code&gt;group-by&lt;/code&gt;, cuenta los eventos de la ventana que termina en cada evento. Qué sale: Una fila por cada vez que la cuenta llega al umbral. Ejemplo: correlation:   type: event_count   rules: [tienda_login_fallido]   group-by: [ip]   timespan: 2m   condition: {gte: 8} Qué falla sin él: Una alerta por cada login fallido, o ninguna para la fuerza bruta. Dónde vive: deteccion/reglas/login_fallido.yml. Paso 2.</desc>
+<defs><marker id="fs05f1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="108" rx="8"/>
+<text class="dg-group" x="32" y="36" text-anchor="start">Qué entra</text>
+<text class="dg-tiny" x="32" y="56" text-anchor="start">Los eventos que eligió la</text>
+<text class="dg-tiny" x="32" y="72" text-anchor="start">regla base, con su campo de</text>
+<text class="dg-tiny" x="32" y="88" text-anchor="start">tiempo.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="108" rx="8"/>
+<text class="dg-group" x="291" y="36" text-anchor="start">Qué hace</text>
+<text class="dg-tiny" x="291" y="56" text-anchor="start">Para cada valor del campo de</text>
+<text class="dg-tiny" x="291" y="72" text-anchor="start">&lt;code&gt;group-by&lt;/code&gt;, cuenta</text>
+<text class="dg-tiny" x="291" y="88" text-anchor="start">los eventos de la ventana que</text>
+<text class="dg-tiny" x="291" y="104" text-anchor="start">termina en cada evento.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="108" rx="8"/>
+<text class="dg-group" x="550" y="36" text-anchor="start">Qué sale</text>
+<text class="dg-tiny" x="550" y="56" text-anchor="start">Una fila por cada vez que la</text>
+<text class="dg-tiny" x="550" y="72" text-anchor="start">cuenta llega al umbral.</text>
+<path class="dg-edge" d="M234 70 H275" marker-end="url(#fs05f1a)"/>
+<path class="dg-edge" d="M493 70 H534" marker-end="url(#fs05f1a)"/>
+<rect class="dg-box" x="20" y="138" width="730" height="142" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="158" text-anchor="start">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="178" style="white-space:pre">correlation:</text>
+<text class="dg-tiny dg-mono" x="32" y="194" style="white-space:pre">  type: event_count</text>
+<text class="dg-tiny dg-mono" x="32" y="210" style="white-space:pre">  rules: [tienda_login_fallido]</text>
+<text class="dg-tiny dg-mono" x="32" y="226" style="white-space:pre">  group-by: [ip]</text>
+<text class="dg-tiny dg-mono" x="32" y="242" style="white-space:pre">  timespan: 2m</text>
+<text class="dg-tiny dg-mono" x="32" y="258" style="white-space:pre">  condition: {gte: 8}</text>
+<rect class="dg-warnbox" x="20" y="294" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="314" text-anchor="start">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="334" text-anchor="start">Una alerta por cada login fallido, o ninguna para la</text>
+<text class="dg-tiny" x="32" y="350" text-anchor="start">fuerza bruta.</text>
+<rect class="dg-box" x="393" y="294" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="314" text-anchor="start">Dónde vive</text>
+<text class="dg-tiny" x="405" y="334" text-anchor="start">deteccion/reglas/login_fallido.yml. Paso 2.</text>
+</svg>
+</div>
+<figcaption><b>Ficha SEC05.F1.</b> Una correlación.</figcaption>
+</figure>
+<p>El backend de SQLite de pySigma evalúa la ventana como deslizante: para cada evento en el tiempo <code>t</code>, cuenta los de <code>[t - timespan, t]</code>, con los dos bordes incluidos <span class="badge badge--doc">Documentado</span>. Es lo que hay que tener en la cabeza para escribir los negativos.</p>
+<h2 id="endpoints">Los endpoints</h2>
+<p>Los de <a href="sec00-laboratorio.html#endpoints">SEC00</a>, sin cambios. Esta guía no toca el código de la tienda: lee sus logs y le manda tráfico de prueba.</p>
+<h2 id="dependencias">Dependencias</h2>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Paquete</th><th>Versión</th><th>Para qué</th></tr></thead>
+<tbody>
+<tr><td><code>pysigma</code></td><td>2.1.0</td><td>Leer las reglas Sigma y sus correlaciones</td></tr>
+<tr><td><code>pysigma-backend-sqlite</code></td><td>2.1.1</td><td>Convertir cada regla a una consulta de SQLite</td></tr>
+<tr><td><code>sigma-cli</code></td><td>4.0.1</td><td>Ver la consulta y revisar las reglas desde la terminal</td></tr>
+<tr><td><code>pytest</code></td><td>9.1.1</td><td>Las pruebas, con la misma versión que el job <code>formato</code> de SEC01</td></tr>
+</tbody>
+</table>
+</div>
+<p>Versiones de PyPI al 18 de noviembre de 2026; las tres de Sigma piden Python 3.11 o más nuevo <span class="badge badge--doc">Documentado</span>. Las correlaciones del backend necesitan SQLite 3.38 o más nuevo <span class="badge badge--doc">Documentado</span>: <code>python3 -c "import sqlite3; print(sqlite3.sqlite_version)"</code> te dice cuál trae tu Python.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<pre data-lang="text"><code>tienda-norte/
+├── provocar.py                     # el de SEC00
+├── .github/workflows/seguridad.yml # suma el job deteccion (paso 5)
+├── wazuh/
+│   ├── tienda_rules.xml            # suma Falco y el silencio (pasos 6 y 7)
+│   └── silencio.sh                 # ¿cambió el archivo? (paso 7)
+├── cluster/falco-salida.yaml       # Falco a un archivo del nodo (paso 6)
+└── deteccion/
+    ├── requisitos.txt              # paso 1
+    ├── reglas/                     # una regla Sigma por archivo (paso 2)
+    ├── casos/&lt;regla&gt;/si.jsonl      # lo que tiene que alertar (paso 3)
+    ├── casos/&lt;regla&gt;/no.jsonl      # lo que no
+    ├── test_reglas.py              # Sigma a SQLite sobre los casos (paso 4)
+    ├── test_pares.py               # cada Sigma tiene su regla en Wazuh (paso 5)
+    ├── emulaciones.yaml            # técnica, comando y alerta (paso 8)
+    └── emular.py</code></pre>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<aside class="hito" id="hito-1" data-toc="skip" aria-labelledby="hito-1-t">
+  <p class="hito-num">Hito 1 de 3, unos 45 min</p>
+  <p class="hito-title" id="hito-1-t">Las reglas en Sigma</p>
+  <p>La carpeta, las cuatro reglas y sus casos.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-carpeta">La carpeta y sus dependencias</a></li>
+    <li><a href="#paso-sigma">Las reglas</a></li>
+    <li><a href="#paso-casos">Los casos</a></li>
+  </ol>
+</aside>
+<h3 id="paso-carpeta">Paso 1. La carpeta y sus dependencias</h3>
+<div class="step-map" data-where="reglas">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>El repositorio de la tienda.</dd></div>
+    <div><dt>Sale</dt><dd>Un entorno virtual con pySigma.</dd></div>
+    <div><dt>Cambia</dt><dd><code>deteccion/requisitos.txt</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-sigma">Sigma y sus correlaciones</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="reglas pipeline">
+  <h4 class="file-card-path" id="archivo-deteccion-requisitos-txt">deteccion/requisitos.txt<span class="file-card-size">4 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Fija las versiones de las cuatro dependencias directas.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>El entorno virtual y el job del pipeline.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Las bibliotecas de Sigma y pytest.</dd></div>
+  </dl>
+</div>
+<pre data-lang="text" data-file="deteccion/requisitos.txt"><code>pysigma==2.1.0
+pysigma-backend-sqlite==2.1.1
+sigma-cli==4.0.1
+pytest==9.1.1</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>mkdir -p deteccion/reglas deteccion/casos
+python3 -m venv .venv
+.venv/bin/pip install -r deteccion/requisitos.txt
+.venv/bin/sigma version
+.venv/bin/sigma plugin list</code></pre>
+  <p><code>sigma version</code> muestra 4.0.1. <code>plugin list</code> lista los backends del catálogo; el de SQLite ya está instalado por <code>requisitos.txt</code>, así que no hace falta <code>sigma plugin install</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Could not find a version that satisfies the requirement pysigma==2.1.0</code>: Tu Python es anterior a 3.11. Crea el entorno con <code>python3.13 -m venv .venv</code>.</li>
+    <li><code>error: externally-managed-environment</code>: Corriste <code>pip</code> fuera del entorno virtual. Usa <code>.venv/bin/pip</code>.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Cuatro dependencias directas fijadas con <code>==</code>.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Instalar sigma-cli y dejar que baje la última versión de cada backend con <code>sigma plugin install</code>.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Las dependencias de pySigma (pyparsing, jinja2, google-re2) no quedan fijadas: es la segunda limitación de la guía.</dd></div>
+</dl>
+<h3 id="paso-sigma">Paso 2. Las reglas</h3>
+<div class="step-map" data-where="reglas">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La carpeta del paso 1.</dd></div>
+    <div><dt>Sale</dt><dd>Cuatro reglas Sigma, cada una con su par en Wazuh.</dd></div>
+    <div><dt>Cambia</dt><dd><code>deteccion/reglas/</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-sigma">Sigma y sus correlaciones</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<p>Una regla por archivo, y el archivo lleva el nombre que van a tener sus casos. Las tres de la tienda son correlaciones: una regla base que elige eventos y una que los cuenta, en el mismo archivo, separadas por <code>---</code>.</p>
+<div class="file-card" data-where="reglas">
+  <h4 class="file-card-path" id="archivo-deteccion-reglas-login-fallido-yml">deteccion/reglas/login_fallido.yml<span class="file-card-size">31 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>La fuerza bruta de SEC00, en Sigma: la regla base y la correlación.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>pySigma, en las pruebas; <code>sigma convert</code> si quieres ver la consulta.</dd></div>
+    <div><dt>Qué entra</dt><dd>Los eventos de <code>api.log</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una alerta por cada vez que una IP llega a 8 fallos en 2 minutos.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>La regla base elige los login_fallido de la tienda.</li>
+    <li>Tiene un nombre, para que otra regla la nombre.</li>
+    <li>La correlación dice cuál es su par en Wazuh y su técnica.</li>
+    <li>Cuenta los eventos de la base, por IP, en 2 minutos, y alerta desde 8.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code># (1)
+title: Login fallido en la API de la tienda
+# (2)
+name: tienda_login_fallido
+id: 959fb7ae-2ceb-4f81-a144-bef578c93f29
+status: test
+logsource:
+  product: tienda
+  service: api
+detection:
+  seleccion:
+    app: tienda
+    evento: login_fallido
+  condition: seleccion
+level: low
+---</code></pre>
+<ol class="code-key">
+  <li>Los campos son los del JSON de <code>registro.py</code>: <code>app</code> y <code>evento</code>. <code>logsource</code> dice de qué fuente se trata; sin un pipeline de procesamiento, el backend no lo usa, pero documenta la regla y lo usarían otros backends.</li>
+  <li><code>name</code> es el identificador legible que usa la correlación. El <code>id</code> es un UUID fijo: no cambia aunque cambie el título.</li>
+</ol>
+<pre data-lang="yaml"><code># (3)
+title: Muchos logins fallidos desde una IP en 2 minutos
+id: af401258-685c-40b4-a8bd-c995932feb8b
+status: test
+wazuh: 100102
+tags:
+  - attack.credential-access
+  - attack.t1110.001
+# (4)
+correlation:
+  type: event_count
+  rules:
+    - tienda_login_fallido
+  group-by:
+    - ip
+  timespan: 2m
+  condition:
+    gte: 8
+level: high</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li><code>wazuh</code> no es un campo de Sigma: es un atributo propio, que pySigma guarda sin interpretarlo. <code>test_pares.py</code> lo usa en el paso 5. Las etiquetas <code>attack.*</code> sí son de Sigma.</li>
+  <li>Es la regla 100102 de SEC00: <code>frequency="8"</code>, <code>timeframe="120"</code> y <code>same_field</code> ip. <code>gte</code> es "mayor o igual".</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver deteccion/reglas/login_fallido.yml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file="deteccion/reglas/login_fallido.yml"><code>title: Login fallido en la API de la tienda
+name: tienda_login_fallido
+id: 959fb7ae-2ceb-4f81-a144-bef578c93f29
+status: test
+logsource:
+  product: tienda
+  service: api
+detection:
+  seleccion:
+    app: tienda
+    evento: login_fallido
+  condition: seleccion
+level: low
+---
+title: Muchos logins fallidos desde una IP en 2 minutos
+id: af401258-685c-40b4-a8bd-c995932feb8b
+status: test
+wazuh: 100102
+tags:
+  - attack.credential-access
+  - attack.t1110.001
+correlation:
+  type: event_count
+  rules:
+    - tienda_login_fallido
+  group-by:
+    - ip
+  timespan: 2m
+  condition:
+    gte: 8
+level: high</code></pre>
+  </div>
+</details>
+<p>Las otras dos correlaciones siguen el mismo molde: la 100104 cuenta pedidos ajenos por <code>usuario</code> (5 en 5 minutos) y la 100112, respuestas 404 de Nginx por <code>ip</code> (20 en 1 minuto).</p>
+<div class="file-card" data-where="reglas">
+  <h4 class="file-card-path" id="archivo-deteccion-reglas-pedidos-ajenos-yml">deteccion/reglas/pedidos_ajenos.yml<span class="file-card-size">31 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Los pedidos ajenos de SEC00, por usuario.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>pySigma.</dd></div>
+    <div><dt>Qué entra</dt><dd>Los eventos de <code>api.log</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una alerta cuando una persona pide 5 pedidos ajenos en 5 minutos.</dd></div>
+  </dl>
+</div>
+<pre data-lang="yaml" data-file="deteccion/reglas/pedidos_ajenos.yml"><code>title: Pedido ajeno pedido en la API
+name: tienda_pedido_ajeno
+id: 7eaa0928-9a1a-489b-b2f1-2a9484830148
+status: test
+logsource:
+  product: tienda
+  service: api
+detection:
+  seleccion:
+    app: tienda
+    evento: pedido_ajeno
+  condition: seleccion
+level: medium
+---
+title: Una persona recorre pedidos ajenos
+id: 3634731a-a4bb-49e5-97a0-4494d0d2b6ae
+status: test
+wazuh: 100104
+tags:
+  - attack.collection
+  - attack.t1213
+correlation:
+  type: event_count
+  rules:
+    - tienda_pedido_ajeno
+  group-by:
+    - usuario
+  timespan: 5m
+  condition:
+    gte: 5
+level: high</code></pre>
+<div class="file-card" data-where="reglas">
+  <h4 class="file-card-path" id="archivo-deteccion-reglas-escaneo-yml">deteccion/reglas/escaneo.yml<span class="file-card-size">31 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>El escaneo de rutas de SEC00, por IP.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>pySigma.</dd></div>
+    <div><dt>Qué entra</dt><dd>Los eventos de Nginx.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una alerta cuando una IP recibe 20 respuestas 404 en 1 minuto.</dd></div>
+  </dl>
+</div>
+<pre data-lang="yaml" data-file="deteccion/reglas/escaneo.yml"><code>title: Ruta que no existe en Nginx
+name: tienda_ruta_404
+id: cfe60011-77bc-41d8-b171-548ff83da8cf
+status: test
+logsource:
+  product: tienda
+  service: nginx
+detection:
+  seleccion:
+    app: tienda-nginx
+    estado: '404'
+  condition: seleccion
+level: low
+---
+title: Una IP prueba muchas rutas que no existen
+id: f2f1bc51-326b-4f08-8f8f-e29aa706ca48
+status: test
+wazuh: 100112
+tags:
+  - attack.reconnaissance
+  - attack.t1595.003
+correlation:
+  type: event_count
+  rules:
+    - tienda_ruta_404
+  group-by:
+    - ip
+  timespan: 1m
+  condition:
+    gte: 20
+level: medium</code></pre>
+<p>El <code>'404'</code> va entre comillas porque el log de Nginx de SEC00 lo escribe como texto (<code>"estado":"404"</code>). La cuarta regla no es de la tienda: mira las alertas de Falco de SEC04. Es una regla simple, sin correlación, sobre un campo de la alerta.</p>
+<div class="file-card" data-where="reglas falco">
+  <h4 class="file-card-path" id="archivo-deteccion-reglas-shell-tienda-yml">deteccion/reglas/shell_tienda.yml<span class="file-card-size">14 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>La alerta de Falco de SEC04, como regla del SIEM.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>pySigma.</dd></div>
+    <div><dt>Qué entra</dt><dd>Las líneas de <code>events.json</code> de Falco.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una alerta por cada shell en la tienda.</dd></div>
+  </dl>
+</div>
+<pre data-lang="yaml" data-file="deteccion/reglas/shell_tienda.yml"><code>title: Falco vio una shell en un pod de la tienda
+id: a8acfade-060e-4c40-8b0c-c60a1c1a0919
+status: test
+wazuh: 100121
+tags:
+  - attack.execution
+  - attack.t1059
+logsource:
+  product: falco
+detection:
+  seleccion:
+    rule: Shell en un contenedor de la tienda
+  condition: seleccion
+level: high</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>.venv/bin/sigma convert -t sqlite -O timestamp_field=ts deteccion/reglas/login_fallido.yml
+.venv/bin/sigma check deteccion/reglas</code></pre>
+  <p><code>convert</code> imprime una consulta de SQLite sobre la tabla <code>logs</code>: una parte elige los <code>login_fallido</code>, otra agrupa por <code>ip</code> y cuenta en la ventana. No hace falta entenderla entera; fíjate en que nombra <code>ts</code>, <code>ip</code> y <code>evento</code>. <code>check</code> corre los validadores de pySigma: anota qué avisa (por ejemplo, reglas sin <code>description</code> o sin <code>author</code>). Esos avisos no rompen la conversión.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>SigmaCorrelationRuleReferenceError o "rule … not found"</code>: El nombre en <code>rules:</code> no coincide con el <code>name:</code> de la base. Tienen que ser idénticos.</li>
+    <li><code>No module named sigma.backends.sqlite</code>: El paquete se llama <code>pysigma-backend-sqlite</code>; revisa que <code>pip install -r</code> haya terminado sin error.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Sigma como versión de referencia, con un UUID fijo, la técnica en las etiquetas y el id de Wazuh al lado.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Mantener solo el XML de Wazuh: no se prueba sin Wazuh y no se lleva a otro SIEM.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Una regla base sin <code>name</code> no se puede nombrar desde la correlación: pySigma no encuentra la referencia y la conversión falla.</dd></div>
+</dl>
+<h3 id="paso-casos">Paso 3. Los casos</h3>
+<div class="step-map" data-where="reglas">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Las cuatro reglas del paso 2.</dd></div>
+    <div><dt>Sale</dt><dd>Un <code>si.jsonl</code> y un <code>no.jsonl</code> por regla.</dd></div>
+    <div><dt>Cambia</dt><dd><code>deteccion/casos/</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-sigma">Sigma y sus correlaciones</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<p>Un caso positivo prueba que la regla ve el ataque. Los negativos prueban lo que se rompe al editarla: la ventana, el umbral, el campo de agrupación y el filtro de la base. Los eventos se escriben a mano con los campos reales de <code>registro.py</code> y de Nginx; no son una medición.</p>
+<pre data-lang="json" data-file="deteccion/casos/login_fallido/si.jsonl"><code>{"repetir": 8, "cada_s": 5, "desde": "2026-11-18T15:00:00.000+00:00", "evento": {"app": "tienda", "evento": "login_fallido", "usuario": "ana", "ip": "172.18.0.1"}}</code></pre>
+<p>Ocho fallos, uno cada 5 segundos: 35 segundos en total.</p>
+<pre data-lang="json" data-file="deteccion/casos/login_fallido/no.jsonl"><code>{"repetir": 8, "cada_s": 30, "desde": "2026-11-18T15:00:00.000+00:00", "evento": {"app": "tienda", "evento": "login_fallido", "usuario": "ana", "ip": "172.18.0.1"}}
+{"repetir": 4, "cada_s": 15, "desde": "2026-11-18T16:00:00.000+00:00", "evento": {"app": "tienda", "evento": "login_fallido", "usuario": "ana", "ip": "172.18.0.7"}}
+{"repetir": 4, "cada_s": 15, "desde": "2026-11-18T16:00:05.000+00:00", "evento": {"app": "tienda", "evento": "login_fallido", "usuario": "beto", "ip": "172.18.0.8"}}
+{"repetir": 12, "cada_s": 2, "desde": "2026-11-18T17:00:00.000+00:00", "evento": {"app": "tienda", "evento": "login_ok", "usuario": "ana", "ip": "172.18.0.1"}}</code></pre>
+<ol class="code-key"><li>Cada línea es un evento o, como aquí, una ráfaga: <code>repetir</code> eventos iguales, separados <code>cada_s</code> segundos, desde <code>desde</code>. <code>test_reglas.py</code> la expande y le pone el <code>ts</code> a cada uno. La primera son los mismos 8 fallos, uno cada 30 segundos: ninguna ventana de 2 minutos junta 8.</li><li>Las dos siguientes empiezan con 5 segundos de diferencia: en un minuto hay 8 fallos, pero 4 por IP. Prueban el <code>group-by</code>.</li><li>La última prueba la regla base: <code>login_ok</code> no es <code>login_fallido</code>, por más que sean muchos.</li></ol>
+<div data-exercise="sec05-p-ventana"></div>
+<div data-exercise="sec05-p-grupo"></div>
+<p>Los otros tres pares, con la misma idea: el positivo pasa el umbral, y los negativos lo rozan.</p>
+<pre data-lang="json" data-file="deteccion/casos/pedidos_ajenos/si.jsonl"><code>{"repetir": 5, "cada_s": 10, "desde": "2026-11-18T15:00:00.000+00:00", "evento": {"app": "tienda", "evento": "pedido_ajeno", "usuario": "beto", "pedido": 1, "ip": "172.18.0.1"}}</code></pre>
+<pre data-lang="json" data-file="deteccion/casos/pedidos_ajenos/no.jsonl"><code>{"repetir": 4, "cada_s": 10, "desde": "2026-11-18T15:00:00.000+00:00", "evento": {"app": "tienda", "evento": "pedido_ajeno", "usuario": "beto", "pedido": 1, "ip": "172.18.0.1"}}
+{"repetir": 5, "cada_s": 90, "desde": "2026-11-18T18:00:00.000+00:00", "evento": {"app": "tienda", "evento": "pedido_ajeno", "usuario": "beto", "pedido": 2, "ip": "172.18.0.1"}}</code></pre>
+<p>Con 90 segundos entre pedidos, la ventana de 5 minutos (300 segundos, bordes incluidos) junta como mucho 4: 0, 90, 180 y 270.</p>
+<pre data-lang="json" data-file="deteccion/casos/escaneo/si.jsonl"><code>{"repetir": 20, "cada_s": 2, "desde": "2026-11-18T15:00:00+00:00", "evento": {"app": "tienda-nginx", "ip": "172.18.0.1", "metodo": "GET", "ruta": "/.env", "estado": "404"}}</code></pre>
+<pre data-lang="json" data-file="deteccion/casos/escaneo/no.jsonl"><code>{"repetir": 20, "cada_s": 4, "desde": "2026-11-18T15:00:00+00:00", "evento": {"app": "tienda-nginx", "ip": "172.18.0.1", "metodo": "GET", "ruta": "/.env", "estado": "404"}}
+{"repetir": 30, "cada_s": 1, "desde": "2026-11-18T16:00:00+00:00", "evento": {"app": "tienda-nginx", "ip": "172.18.0.1", "metodo": "GET", "ruta": "/api/productos", "estado": "200"}}</code></pre>
+<p>Para Falco, pega en <code>si.jsonl</code> la línea real que viste en la falla 6 de SEC04 (<code>kubectl -n falco logs ds/falco -c falco | grep -m1 "Shell en un contenedor"</code>). Si no la tienes a mano, esta tiene la misma forma, escrita a mano:</p>
+<pre data-lang="json" data-file="deteccion/casos/shell_tienda/si.jsonl"><code>{"time": "2026-11-18T15:00:00.000000000Z", "rule": "Shell en un contenedor de la tienda", "priority": "Warning", "source": "syscall", "output_fields": {"user.uid": 10001, "k8s.pod.name": "api-1", "proc.cmdline": "sh -c id", "proc.pname": "runc"}}</code></pre>
+<pre data-lang="json" data-file="deteccion/casos/shell_tienda/no.jsonl"><code>{"time": "2026-11-18T15:05:00.000000000Z", "rule": "Terminal shell in container", "priority": "Notice", "source": "syscall", "output_fields": {"user.uid": 0, "k8s.pod.name": "sonda", "proc.cmdline": "sh", "proc.pname": "runc"}}</code></pre>
+<p>El negativo de Falco es una alerta de otra regla, en otro pod: la regla del SIEM tiene que mirar solo la de la tienda.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Negativos que casi alertan, uno por cada parte de la regla.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Un solo negativo con un evento cualquiera: pasa siempre y no prueba nada.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Un caso con un <code>ts</code> mal escrito no da error al cargarse: la ventana no lo cuenta y el positivo deja de alertar. Las ráfagas generan el <code>ts</code> por ti, y por eso se usan.</dd></div>
+</dl>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Cuatro reglas Sigma, cada una con su id de Wazuh y su técnica.</li>
+    <li>Un positivo y negativos que rozan el umbral para cada una.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>ls deteccion/reglas deteccion/casos/*</code></pre>
+  <p>Cuatro <code>.yml</code> y cuatro carpetas con <code>si.jsonl</code> y <code>no.jsonl</code>.</p>
+</aside>
+<aside class="hito" id="hito-2" data-toc="skip" aria-labelledby="hito-2-t">
+  <p class="hito-num">Hito 2 de 3, unos 35 min</p>
+  <p class="hito-title" id="hito-2-t">Las reglas se prueban solas</p>
+  <p>pytest convierte cada regla a SQLite y la corre sobre sus casos, en tu máquina y en el pipeline.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-pruebas">Sigma a SQLite, sobre los casos</a></li>
+    <li><a href="#paso-pipeline">El job y la prueba de pares</a></li>
+  </ol>
+</aside>
+<h3 id="paso-pruebas">Paso 4. Sigma a SQLite, sobre los casos</h3>
+<div class="step-map" data-where="reglas pipeline">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Las reglas y los casos del hito 1.</dd></div>
+    <div><dt>Sale</dt><dd>Ocho pruebas que pasan.</dd></div>
+    <div><dt>Cambia</dt><dd><code>deteccion/test_reglas.py</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-sigma">Sigma y sus correlaciones</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<p>No hace falta un SIEM para saber si una regla ve un ataque: alcanza con convertirla a una consulta y correrla sobre eventos. SQLite viene con Python, así que la prueba no necesita red ni servicios.</p>
+<div class="file-card" data-where="reglas pipeline">
+  <h4 class="file-card-path" id="archivo-deteccion-test-reglas-py">deteccion/test_reglas.py<span class="file-card-size">59 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Convierte cada regla a SQLite y la corre sobre sus casos.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>pytest, en tu máquina y en el job <code>deteccion</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Las reglas y los casos.</dd></div>
+    <div><dt>Qué sale</dt><dd>Dos pruebas por regla: <code>si.jsonl</code> alerta y <code>no.jsonl</code> no.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Encuentra las reglas.</li>
+    <li>Aplana los campos anidados de Falco.</li>
+    <li>Expande las ráfagas, con su ts.</li>
+    <li>Lee un archivo de casos.</li>
+    <li>Convierte la regla y arma la tabla logs con las columnas de los casos.</li>
+    <li>Corre la consulta y devuelve las filas.</li>
+    <li>Una prueba que tiene que alertar y otra que no.</li>
+  </ol>
+</div>
+<pre data-lang="python"><code>"""Cada regla Sigma contra sus casos: si.jsonl tiene que alertar y no.jsonl, no."""
+import json
+import sqlite3
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pytest
+from sigma.backends.sqlite import sqliteBackend
+from sigma.collection import SigmaCollection
+# (1)
+AQUI = Path(__file__).parent
+REGLAS = sorted((AQUI / "reglas").glob("*.yml"))
+
+# (2)
+def plano(evento):
+    salida = {k: v for k, v in evento.items() if k != "output_fields"}
+    for k, v in evento.get("output_fields", {}).items():
+        salida[k.replace(".", "_")] = v
+    return salida</code></pre>
+<ol class="code-key">
+  <li>Las reglas son los <code>.yml</code> de <code>reglas/</code>, y el nombre de cada una (<code>login_fallido</code>) es el de su carpeta de casos.</li>
+  <li>Falco anida los campos en <code>output_fields</code> y los nombra con puntos (<code>k8s.pod.name</code>). Una columna de SQLite con puntos tiene que ir entre comillas; con guion bajo, no. La convención de la carpeta es: los campos de Falco se escriben <code>k8s_pod_name</code>.</li>
+</ol>
+<pre data-lang="python"><code># (3)
+def expandir(linea):
+    if "repetir" not in linea:
+        return [linea]
+    inicio = datetime.fromisoformat(linea["desde"])
+    return [
+        dict(linea["evento"], ts=(inicio + timedelta(seconds=i * linea["cada_s"])).isoformat(timespec="milliseconds"))
+        for i in range(linea["repetir"])
+    ]
+
+# (4)
+def leer(ruta):
+    eventos = []
+    for texto in ruta.read_text(encoding="utf-8").splitlines():
+        if texto.strip():
+            eventos += [plano(e) for e in expandir(json.loads(texto))]
+    return eventos</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>Una ráfaga se convierte en <code>repetir</code> eventos con el <code>ts</code> en el mismo formato que escribe <code>registro.py</code>: ISO 8601 con milisegundos y zona.</li>
+  <li>Una línea vacía se salta; cualquier otra que no sea JSON hace fallar la prueba con el número de línea en el error de <code>json</code>.</li>
+</ol>
+<pre data-lang="python"><code># (5)
+def filas(regla, eventos, columnas):
+    reglas = SigmaCollection.from_yaml(regla.read_text(encoding="utf-8"))
+    consulta = sqliteBackend(timestamp_field="ts").convert(reglas)[-1]
+    db = sqlite3.connect(":memory:")
+    db.execute(f"CREATE TABLE logs ({', '.join(c + ' TEXT' for c in columnas)})")
+    db.executemany(
+        f"INSERT INTO logs VALUES ({', '.join('?' * len(columnas))})",
+        [[None if e.get(c) is None else str(e[c]) for c in columnas] for e in eventos],
+    )
+# (6)
+    return db.execute(consulta).fetchall()</code></pre>
+<ol class="code-key" style="counter-reset: ck 4">
+  <li><code>timestamp_field="ts"</code> le dice al backend qué columna es el tiempo; por defecto busca <code>timestamp</code>. <code>[-1]</code> toma la última consulta del archivo, que es la correlación (o la única regla, en Falco). Todas las columnas son <code>TEXT</code>: así <code>'404'</code> de la regla se compara con <code>"404"</code> del log sin sorpresas de tipos.</li>
+  <li>Cada fila es una alerta. La prueba no mira qué columnas trae, solo si hay alguna.</li>
+</ol>
+<pre data-lang="python"><code># (7)
+def casos(regla):
+    carpeta = AQUI / "casos" / regla.stem
+    si, no = leer(carpeta / "si.jsonl"), leer(carpeta / "no.jsonl")
+    columnas = sorted({k for e in si + no for k in e})
+    return si, no, columnas
+
+
+@pytest.mark.parametrize("regla", REGLAS, ids=lambda r: r.stem)
+def test_alerta_con_si(regla):
+    si, _, columnas = casos(regla)
+    assert filas(regla, si, columnas), f"{regla.stem}: si.jsonl no alertó"
+
+
+@pytest.mark.parametrize("regla", REGLAS, ids=lambda r: r.stem)
+def test_calla_con_no(regla):
+    _, no, columnas = casos(regla)
+    assert not filas(regla, no, columnas), f"{regla.stem}: no.jsonl alertó"</code></pre>
+<ol class="code-key" style="counter-reset: ck 6">
+  <li>Las columnas salen de los dos archivos juntos: si la regla nombra un campo que solo aparece en el positivo, la tabla del negativo lo tiene igual (vacío) y la consulta no falla con <code>no such column</code>. <code>parametrize</code> crea una prueba por regla, con su nombre.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver deteccion/test_reglas.py completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="python" data-file="deteccion/test_reglas.py"><code>"""Cada regla Sigma contra sus casos: si.jsonl tiene que alertar y no.jsonl, no."""
+import json
+import sqlite3
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pytest
+from sigma.backends.sqlite import sqliteBackend
+from sigma.collection import SigmaCollection
+AQUI = Path(__file__).parent
+REGLAS = sorted((AQUI / "reglas").glob("*.yml"))
+
+def plano(evento):
+    salida = {k: v for k, v in evento.items() if k != "output_fields"}
+    for k, v in evento.get("output_fields", {}).items():
+        salida[k.replace(".", "_")] = v
+    return salida
+def expandir(linea):
+    if "repetir" not in linea:
+        return [linea]
+    inicio = datetime.fromisoformat(linea["desde"])
+    return [
+        dict(linea["evento"], ts=(inicio + timedelta(seconds=i * linea["cada_s"])).isoformat(timespec="milliseconds"))
+        for i in range(linea["repetir"])
+    ]
+
+def leer(ruta):
+    eventos = []
+    for texto in ruta.read_text(encoding="utf-8").splitlines():
+        if texto.strip():
+            eventos += [plano(e) for e in expandir(json.loads(texto))]
+    return eventos
+def filas(regla, eventos, columnas):
+    reglas = SigmaCollection.from_yaml(regla.read_text(encoding="utf-8"))
+    consulta = sqliteBackend(timestamp_field="ts").convert(reglas)[-1]
+    db = sqlite3.connect(":memory:")
+    db.execute(f"CREATE TABLE logs ({', '.join(c + ' TEXT' for c in columnas)})")
+    db.executemany(
+        f"INSERT INTO logs VALUES ({', '.join('?' * len(columnas))})",
+        [[None if e.get(c) is None else str(e[c]) for c in columnas] for e in eventos],
+    )
+    return db.execute(consulta).fetchall()
+def casos(regla):
+    carpeta = AQUI / "casos" / regla.stem
+    si, no = leer(carpeta / "si.jsonl"), leer(carpeta / "no.jsonl")
+    columnas = sorted({k for e in si + no for k in e})
+    return si, no, columnas
+
+
+@pytest.mark.parametrize("regla", REGLAS, ids=lambda r: r.stem)
+def test_alerta_con_si(regla):
+    si, _, columnas = casos(regla)
+    assert filas(regla, si, columnas), f"{regla.stem}: si.jsonl no alertó"
+
+
+@pytest.mark.parametrize("regla", REGLAS, ids=lambda r: r.stem)
+def test_calla_con_no(regla):
+    _, no, columnas = casos(regla)
+    assert not filas(regla, no, columnas), f"{regla.stem}: no.jsonl alertó"</code></pre>
+  </div>
+</details>
+<aside class="callout callout--def">
+<p class="callout-label">Python de por medio</p>
+<p><code>@pytest.mark.parametrize</code> es un decorador: corre la misma función una vez por cada elemento de <code>REGLAS</code>, como en <a href="ia00-laboratorio.html#py-decoradores">IA00</a>. <code>dict(base, ts=…)</code> copia el diccionario y le agrega o cambia la clave <code>ts</code>.</p>
+</aside>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>.venv/bin/python -m pytest -q deteccion</code></pre>
+  <p><code>8 passed</code>: dos pruebas por cada una de las cuatro reglas. Ahora rómpelo a propósito: en <code>login_fallido.yml</code> cambia <code>timespan: 2m</code> por <code>timespan: 4m</code> y corre otra vez. Falla <code>test_calla_con_no[login_fallido]</code> con <code>login_fallido: no.jsonl alertó</code>: con 4 minutos, los 8 intentos cada 30 segundos entran en una ventana. Vuelve a <code>2m</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>sqlite3.OperationalError: no such function: …</code>: Tu SQLite es anterior a 3.38. Usa el Python 3.13 oficial, que trae uno más nuevo.</li>
+    <li><code>sqlite3.OperationalError: no such column: …</code>: La regla nombra un campo que ningún caso tiene, o lo escribe distinto (<code>k8s.pod.name</code> en lugar de <code>k8s_pod_name</code>).</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una base en memoria, creada por prueba, con las columnas de los casos.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Levantar Wazuh en cada prueba, o comparar la consulta generada con un texto guardado.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Si una versión nueva del backend cambia la consulta, la prueba sigue pasando mientras la regla haga lo mismo: es lo que quieres. Comparar textos se rompería en cada actualización.</dd></div>
+</dl>
+<h3 id="paso-pipeline">Paso 5. El job y la prueba de pares</h3>
+<div class="step-map" data-where="pipeline wazuh">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Las pruebas del paso 4 y el workflow de SEC01.</dd></div>
+    <div><dt>Sale</dt><dd>El job <code>deteccion</code> y la prueba de pares.</dd></div>
+    <div><dt>Cambia</dt><dd><code>deteccion/test_pares.py</code>, <code>.github/workflows/seguridad.yml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m59-deteccion.html#detection-as-code">59.7</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<p>Esta guía no convierte Sigma al XML de Wazuh: las reglas de Wazuh se siguen escribiendo a mano, y una prueba vigila que no se separen de su Sigma. La regla de Falco todavía no tiene par: lo escribes en el paso 6, y hasta entonces esta prueba falla para <code>shell_tienda</code>, a propósito.</p>
+<div class="file-card" data-where="reglas pipeline wazuh">
+  <h4 class="file-card-path" id="archivo-deteccion-test-pares-py">deteccion/test_pares.py<span class="file-card-size">20 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Comprueba que cada regla Sigma tiene su regla en Wazuh, con la misma técnica.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>pytest, en el job <code>deteccion</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Las reglas Sigma y <code>wazuh/tienda_rules.xml</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una prueba por regla.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Lee el XML de Wazuh una vez.</li>
+    <li>Toma el atributo wazuh y las técnicas de la última parte de cada regla.</li>
+    <li>La regla de Wazuh con ese id tiene que existir.</li>
+    <li>Y nombrar las mismas técnicas.</li>
+  </ol>
+</div>
+<pre data-lang="python"><code>"""Cada regla Sigma nombra su par en Wazuh, y ese par existe y dice la misma técnica."""
+import re
+from pathlib import Path
+
+import pytest
+import yaml
+
+AQUI = Path(__file__).parent
+# (1)
+WAZUH = (AQUI.parent / "wazuh" / "tienda_rules.xml").read_text(encoding="utf-8")
+REGLAS = sorted((AQUI / "reglas").glob("*.yml"))
+
+
+@pytest.mark.parametrize("regla", REGLAS, ids=lambda r: r.stem)
+def test_tiene_par(regla):
+# (2)
+    ultima = list(yaml.safe_load_all(regla.read_text(encoding="utf-8")))[-1]
+    tecnicas = {t.split(".", 1)[1].upper() for t in ultima.get("tags", []) if re.fullmatch(r"attack\.t\d{4}(\.\d{3})?", t)}
+# (3)
+    bloque = re.search(rf"&lt;rule id=\"{ultima['wazuh']}\".*?&lt;/rule&gt;", WAZUH, re.S)
+    assert bloque, f'{regla.stem}: no hay regla {ultima["wazuh"]} en tienda_rules.xml'
+# (4)
+    en_wazuh = set(re.findall(r"&lt;id&gt;(T[\d.]+)&lt;/id&gt;", bloque.group(0)))
+    assert tecnicas == en_wazuh, f"{regla.stem}: Sigma dice {tecnicas} y Wazuh dice {en_wazuh}"</code></pre>
+<ol class="code-key">
+  <li>El XML se lee una vez, al importar el archivo. <code>yaml</code> viene con pySigma.</li>
+  <li><code>safe_load_all</code> lee los dos documentos del archivo; la última parte es la correlación, que es la que tiene <code>wazuh</code> y las etiquetas. Solo cuentan las etiquetas de técnica (<code>attack.t1110.001</code>), no las de táctica (<code>attack.credential-access</code>).</li>
+  <li>Busca el bloque <code>&lt;rule id="100102" …&gt;</code> hasta su cierre. Con <code>re.S</code>, el punto también cruza los saltos de línea.</li>
+  <li>Las técnicas del bloque, en mayúsculas como las escribe Wazuh (<code>T1110.001</code>).</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver deteccion/test_pares.py completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="python" data-file="deteccion/test_pares.py"><code>"""Cada regla Sigma nombra su par en Wazuh, y ese par existe y dice la misma técnica."""
+import re
+from pathlib import Path
+
+import pytest
+import yaml
+
+AQUI = Path(__file__).parent
+WAZUH = (AQUI.parent / "wazuh" / "tienda_rules.xml").read_text(encoding="utf-8")
+REGLAS = sorted((AQUI / "reglas").glob("*.yml"))
+
+
+@pytest.mark.parametrize("regla", REGLAS, ids=lambda r: r.stem)
+def test_tiene_par(regla):
+    ultima = list(yaml.safe_load_all(regla.read_text(encoding="utf-8")))[-1]
+    tecnicas = {t.split(".", 1)[1].upper() for t in ultima.get("tags", []) if re.fullmatch(r"attack\.t\d{4}(\.\d{3})?", t)}
+    bloque = re.search(rf"&lt;rule id=\"{ultima['wazuh']}\".*?&lt;/rule&gt;", WAZUH, re.S)
+    assert bloque, f'{regla.stem}: no hay regla {ultima["wazuh"]} en tienda_rules.xml'
+    en_wazuh = set(re.findall(r"&lt;id&gt;(T[\d.]+)&lt;/id&gt;", bloque.group(0)))
+    assert tecnicas == en_wazuh, f"{regla.stem}: Sigma dice {tecnicas} y Wazuh dice {en_wazuh}"</code></pre>
+  </div>
+</details>
+<p>En <code>.github/workflows/seguridad.yml</code>, agrega este job debajo de <code>formato</code>, con la misma indentación. Usa el mismo checkout fijado por SHA que los demás jobs:</p>
+<pre data-lang="yaml"><code>  deteccion:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Las reglas Sigma contra sus casos y contra Wazuh
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r deteccion/requisitos.txt
+          .venv/bin/python -m pytest -q deteccion</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>.venv/bin/python -m pytest -q deteccion</code></pre>
+  <p><code>1 failed, 11 passed</code>. La que falla es <code>test_tiene_par[shell_tienda]</code>, con <code>shell_tienda: no hay regla 100121 en tienda_rules.xml</code>. Las tres de la tienda pasan, porque sus pares son las reglas de SEC00. Sube la rama y abre el pull request: el job <code>deteccion</code> falla igual que en tu máquina. Lo arreglas en el paso 6, antes de unirlo.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una prueba que compara el id y la técnica de cada par.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Generar el XML desde Sigma con un convertidor propio, o no comparar nada.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>La prueba no compara el umbral ni la ventana: la 100102 puede decir 10 y la Sigma 8, y el job pasa. Lo ve la emulación del paso 8, como dice la predicción de las fallas.</dd></div>
+</dl>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Las reglas se prueban solas, sin SIEM.</li>
+    <li>El pipeline vigila que cada Sigma tenga su par en Wazuh.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>.venv/bin/python -m pytest -q deteccion</code></pre>
+  <p>Todas pasan salvo el par de <code>shell_tienda</code>, que falta hasta el paso 6.</p>
+</aside>
+<aside class="hito" id="hito-3" data-toc="skip" aria-labelledby="hito-3-t">
+  <p class="hito-num">Hito 3 de 3, unos 50 min</p>
+  <p class="hito-title" id="hito-3-t">Del laboratorio a la alerta</p>
+  <p>Falco en Wazuh, una alerta por cada fuente que se calla y la emulación de cada técnica.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-falco-siem">Falco en Wazuh</a></li>
+    <li><a href="#paso-silencio">El silencio, como alerta</a></li>
+    <li><a href="#paso-emular">Emular y comprobar</a></li>
+  </ol>
+</aside>
+<h3 id="paso-falco-siem">Paso 6. Falco en Wazuh</h3>
+<div class="step-map" data-where="falco wazuh">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Falco de SEC04 y Wazuh de SEC00, en la misma máquina.</dd></div>
+    <div><dt>Sale</dt><dd>Las alertas de Falco como alertas de Wazuh.</dd></div>
+    <div><dt>Cambia</dt><dd><code>cluster/falco-salida.yaml</code>, <code>wazuh/tienda_rules.xml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m59-deteccion.html#fuentes">59.2</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<p>En SEC04, la alerta de Falco se veía con <code>kubectl logs</code>: hay que saber dónde mirar, y se pierde cuando el pod se reinicia. En el SIEM queda guardada, junto a las de la tienda.</p>
+<div class="file-card" data-where="falco wazuh">
+  <h4 class="file-card-path" id="archivo-cluster-falco-salida-yaml">cluster/falco-salida.yaml<span class="file-card-size">16 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Hace que Falco escriba también en un archivo del nodo, con un latido cada 5 minutos.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Helm, encima de <code>falco-values.yaml</code> de SEC04.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Las alertas de Falco en <code>/var/log/falco/events.json</code>.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Las alertas también van a un archivo.</li>
+    <li>Cada 5 minutos, Falco escribe sus métricas como una alerta más.</li>
+    <li>La carpeta del archivo es una carpeta del nodo.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code># (1)
+falco:
+  file_output:
+    enabled: true
+    keep_alive: false
+    filename: /var/log/falco/events.json
+# (2)
+metrics:
+  enabled: true
+  interval: 5m
+  outputRule: true
+# (3)
+mounts:
+  volumes:
+    - name: salida
+      hostPath: {path: /var/log/falco, type: DirectoryOrCreate}
+  volumeMounts:
+    - name: salida
+      mountPath: /var/log/falco</code></pre>
+<ol class="code-key">
+  <li>Con <code>json_output: true</code> de SEC04, cada línea del archivo es el mismo JSON que ves en <code>kubectl logs</code>.</li>
+  <li>Las métricas salen como una alerta con su propia regla. Sirven de latido: aunque no pase nada en el clúster, el archivo cambia cada 5 minutos, y el silencio del paso 7 no salta en un día tranquilo. El chart maneja la configuración de métricas con estas claves de primer nivel <span class="badge badge--doc">Documentado</span>.</li>
+  <li><code>mounts</code> es la forma que da el chart de sumar volúmenes al pod de Falco. <code>DirectoryOrCreate</code> crea la carpeta si no existe.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver cluster/falco-salida.yaml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file="cluster/falco-salida.yaml"><code>falco:
+  file_output:
+    enabled: true
+    keep_alive: false
+    filename: /var/log/falco/events.json
+metrics:
+  enabled: true
+  interval: 5m
+  outputRule: true
+mounts:
+  volumes:
+    - name: salida
+      hostPath: {path: /var/log/falco, type: DirectoryOrCreate}
+  volumeMounts:
+    - name: salida
+      mountPath: /var/log/falco</code></pre>
+  </div>
+</details>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>helm upgrade falco falcosecurity/falco -n falco --version 9.2.2 \
+  -f cluster/falco-values.yaml -f cluster/falco-salida.yaml --wait
+sudo tail -n 2 /var/log/falco/events.json</code></pre>
+  <p>Helm termina con <code>STATUS: deployed</code> y <code>REVISION: 2</code>. El archivo puede estar vacío al principio; a los 5 minutos aparece la primera línea de métricas. Si corres <code>kubectl -n tienda exec deploy/api -- sh -c id</code>, aparece la alerta de la shell.</p>
+</aside>
+<p>Ahora Wazuh tiene que leer el archivo. En <code>wazuh-docker/single-node/docker-compose.override.yml</code> de SEC00, suma dos líneas a los <code>volumes</code> del manager (la segunda es para el paso 7):</p>
+<pre data-lang="yaml"><code>      - /var/log/falco:/var/log/falco:ro
+      - ../../tienda-norte/wazuh/silencio.sh:/var/ossec/etc/tienda/silencio.sh:ro</code></pre>
+<p>En <code>config/wazuh_cluster/wazuh_manager.conf</code>, junto a los dos <code>localfile</code> de SEC00:</p>
+<pre data-lang="xml"><code>&lt;localfile&gt;
+  &lt;log_format&gt;json&lt;/log_format&gt;
+  &lt;location&gt;/var/log/falco/events.json&lt;/location&gt;
+&lt;/localfile&gt;</code></pre>
+<p>Y al final de <code>wazuh/tienda_rules.xml</code>, las dos reglas de Falco. La 100120 reconoce cualquier línea de Falco (todas tienen <code>output_fields</code>) y no alerta; la 100121 es el par de <code>shell_tienda.yml</code>:</p>
+<pre data-lang="xml"><code>&lt;group name="tienda,falco,"&gt;
+  &lt;rule id="100120" level="0"&gt;
+    &lt;decoded_as&gt;json&lt;/decoded_as&gt;
+    &lt;match&gt;"output_fields"&lt;/match&gt;
+    &lt;description&gt;Falco: evento&lt;/description&gt;
+  &lt;/rule&gt;
+  &lt;rule id="100121" level="10"&gt;
+    &lt;if_sid&gt;100120&lt;/if_sid&gt;
+    &lt;match&gt;"rule":"Shell en un contenedor de la tienda"&lt;/match&gt;
+    &lt;description&gt;Falco: shell en un pod de la tienda&lt;/description&gt;
+    &lt;mitre&gt;&lt;id&gt;T1059&lt;/id&gt;&lt;/mitre&gt;
+  &lt;/rule&gt;
+&lt;/group&gt;</code></pre>
+<p><code>&lt;match&gt;</code> busca el texto en la línea entera. Falco escribe el JSON sin espacios después de los dos puntos, como en el <code>grep</code> de SEC04; si tu línea real tiene espacios, la regla no coincide.</p>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>cd ../wazuh-docker/single-node &amp;&amp; docker compose up -d
+docker compose exec wazuh.manager /var/ossec/bin/wazuh-logtest</code></pre>
+  <p>Pega en <code>wazuh-logtest</code> la línea de <code>shell_tienda/si.jsonl</code>. En la fase 3 tiene que decir <code>id: '100121'</code> y <code>level: '10'</code>. Después, en tu repositorio, <code>.venv/bin/python -m pytest -q deteccion</code> da <code>12 passed</code>: el par de Falco ya existe.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>El manager no arranca: invalid mount config o no such file</code>: La ruta del script todavía no existe. Créalo en el paso 7 antes de <code>docker compose up</code>, o comenta esa línea mientras tanto.</li>
+    <li><code>wazuh-logtest muestra la fase 2 con json pero sin fase 3 de la 100121</code>: La línea no tiene exactamente <code>"rule":"Shell en un contenedor de la tienda"</code>. Copia el texto de la regla desde <code>falco-values.yaml</code>.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Falco escribe a un archivo del nodo que Wazuh lee en solo lectura.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Un agente de Wazuh por nodo, que es lo de producción, o Falcosidekick con un webhook propio.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>El archivo crece sin límite. En producción va con <code>logrotate</code> en el nodo; aquí lo vas a ver crecer unas líneas por hora.</dd></div>
+</dl>
+<h3 id="paso-silencio">Paso 7. El silencio, como alerta</h3>
+<div class="step-map" data-where="wazuh falco tienda">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Wazuh leyendo la tienda y Falco.</dd></div>
+    <div><dt>Sale</dt><dd>Dos alertas: Falco callado y Nginx callado.</dd></div>
+    <div><dt>Cambia</dt><dd><code>wazuh/silencio.sh</code>, <code>wazuh/tienda_rules.xml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m59-deteccion.html#calidad">59.8</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<p>Ninguna regla alerta cuando no llegan eventos: un SIEM no distingue la calma del silencio. El manager de Wazuh puede correr un comando cada cierto tiempo y tratar su salida como un evento más <span class="badge badge--doc">Documentado</span>, y eso alcanza para preguntar "¿esta fuente escribió hace poco?".</p>
+<div class="file-card" data-where="wazuh">
+  <h4 class="file-card-path" id="archivo-wazuh-silencio-sh">wazuh/silencio.sh<span class="file-card-size">9 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Dice si un archivo cambió en los últimos N minutos.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>El logcollector del manager de Wazuh, cada 5 minutos.</dd></div>
+    <div><dt>Qué entra</dt><dd>La ruta del archivo y los minutos.</dd></div>
+    <div><dt>Qué sale</dt><dd><code>viva</code> o <code>callada</code>, una palabra.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Toma el archivo y los minutos.</li>
+    <li>Si find lo encuentra modificado hace menos de N minutos, viva; si no, o si no existe, callada.</li>
+  </ol>
+</div>
+<pre data-lang="bash"><code>#!/bin/sh
+# Imprime "viva" si el archivo cambió en los últimos N minutos y "callada" si no, o si no existe.
+# (1)
+archivo="$1"
+minutos="$2"
+# (2)
+if [ -n "$(find "$archivo" -mmin "-$minutos" 2&gt;/dev/null)" ]; then
+  echo viva
+else
+  echo callada
+fi</code></pre>
+<ol class="code-key">
+  <li>Sin bash: el manager trae <code>sh</code>. Los argumentos van en la línea del <code>localfile</code>.</li>
+  <li><code>find -mmin -12</code> imprime la ruta solo si se modificó hace menos de 12 minutos. Un archivo que no existe también es silencio.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver wazuh/silencio.sh completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="bash" data-file="wazuh/silencio.sh"><code>#!/bin/sh
+# Imprime "viva" si el archivo cambió en los últimos N minutos y "callada" si no, o si no existe.
+archivo="$1"
+minutos="$2"
+if [ -n "$(find "$archivo" -mmin "-$minutos" 2&gt;/dev/null)" ]; then
+  echo viva
+else
+  echo callada
+fi</code></pre>
+  </div>
+</details>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>chmod +x wazuh/silencio.sh
+wazuh/silencio.sh wazuh/tienda_rules.xml 60
+wazuh/silencio.sh /no/existe 60</code></pre>
+  <p>Primero <code>viva</code> (acabas de editar el XML) y después <code>callada</code>.</p>
+</aside>
+<p>En <code>wazuh_manager.conf</code>, un <code>localfile</code> de tipo <code>command</code> por fuente. Falco tiene latido cada 5 minutos, así que 12 de silencio ya es raro. Nginx solo escribe cuando hay tráfico: 30 minutos.</p>
+<pre data-lang="xml"><code>&lt;localfile&gt;
+  &lt;log_format&gt;command&lt;/log_format&gt;
+  &lt;command&gt;/var/ossec/etc/tienda/silencio.sh /var/log/falco/events.json 12&lt;/command&gt;
+  &lt;alias&gt;silencio-falco&lt;/alias&gt;
+  &lt;frequency&gt;300&lt;/frequency&gt;
+&lt;/localfile&gt;
+&lt;localfile&gt;
+  &lt;log_format&gt;command&lt;/log_format&gt;
+  &lt;command&gt;/var/ossec/etc/tienda/silencio.sh /var/log/tienda/nginx/nginx-access.log 30&lt;/command&gt;
+  &lt;alias&gt;silencio-nginx&lt;/alias&gt;
+  &lt;frequency&gt;300&lt;/frequency&gt;
+&lt;/localfile&gt;</code></pre>
+<p>La salida de un comando llega como <code>ossec: output: 'silencio-falco': callada</code>, y la regla 530 del ruleset de Wazuh es la que reconoce ese prefijo <span class="badge badge--doc">Documentado</span>. Al final de <code>tienda_rules.xml</code>:</p>
+<pre data-lang="xml"><code>&lt;group name="tienda,silencio,"&gt;
+  &lt;rule id="100130" level="10"&gt;
+    &lt;if_sid&gt;530&lt;/if_sid&gt;
+    &lt;match&gt;^ossec: output: 'silencio-falco': callada&lt;/match&gt;
+    &lt;description&gt;Falco no escribe hace más de 12 minutos&lt;/description&gt;
+  &lt;/rule&gt;
+  &lt;rule id="100131" level="8"&gt;
+    &lt;if_sid&gt;530&lt;/if_sid&gt;
+    &lt;match&gt;^ossec: output: 'silencio-nginx': callada&lt;/match&gt;
+    &lt;description&gt;Nginx de la tienda no escribe hace más de 30 minutos&lt;/description&gt;
+  &lt;/rule&gt;
+&lt;/group&gt;</code></pre>
+<div data-exercise="sec05-p-silencio"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker compose up -d
+kubectl -n falco patch ds falco -p '{"spec":{"template":{"spec":{"nodeSelector":{"apagado":"si"}}}}}'
+# espera unos 20 minutos
+docker compose exec wazuh.manager grep -c '"id":"100130"' /var/ossec/logs/alerts/alerts.json</code></pre>
+  <p>El <code>patch</code> le pone a Falco un <code>nodeSelector</code> que ningún nodo cumple, y su pod desaparece. Pasados 12 a 17 minutos de la última línea, la cuenta de la 100130 es 1 o más. Devuelve Falco con <code>kubectl -n falco patch ds falco --type json -p '[{"op":"remove","path":"/spec/template/spec/nodeSelector/apagado"}]'</code> y, en la siguiente vuelta, la alerta deja de repetirse.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>sh: /var/ossec/etc/tienda/silencio.sh: Permission denied, en ossec.log</code>: El script no tiene permiso de ejecución en tu máquina; el montaje lo conserva. <code>chmod +x wazuh/silencio.sh</code> y <code>docker compose restart wazuh.manager</code>.</li>
+    <li><code>La 100131 salta en el laboratorio sin que nada esté roto</code>: Es correcto: sin tráfico, Nginx no escribe. Corre <code>python provocar.py escaneo</code> de vez en cuando, o sube el umbral. En producción, el tráfico real o un latido externo la evitan.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una alerta de silencio por fuente, con un umbral que depende de cada cuánto escribe esa fuente.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Una alerta global de "no hubo alertas hoy", o revisar el dashboard a ojo.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Con un umbral más corto que el silencio normal de la fuente, la alerta se vuelve ruido y alguien la apaga: es la <a href="../modules/m59-deteccion.html#calidad">fatiga de alertas</a>.</dd></div>
+</dl>
+<h3 id="paso-emular">Paso 8. Emular y comprobar</h3>
+<div class="step-map" data-where="emular tienda wazuh">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Todo lo anterior.</dd></div>
+    <div><dt>Sale</dt><dd>Una línea VISTA por técnica.</dd></div>
+    <div><dt>Cambia</dt><dd><code>deteccion/emulaciones.yaml</code>, <code>deteccion/emular.py</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="../modules/m59-deteccion.html#hunting">59.9</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<p>Las pruebas del paso 4 dicen que la Sigma ve el ataque en eventos escritos a mano. La emulación cierra el otro lado: provoca la técnica de verdad en el laboratorio y mira si el SIEM, con sus reglas en XML, escribe la alerta. Cada emulación tiene la forma de las pruebas de Atomic Red Team (técnica, comando, limpieza) <span class="badge badge--doc">Documentado</span>, sin instalar su ejecutor.</p>
+<div class="file-card" data-where="emular">
+  <h4 class="file-card-path" id="archivo-deteccion-emulaciones-yaml">deteccion/emulaciones.yaml<span class="file-card-size">22 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>La lista de técnicas, cada una con su comando y su alerta.</dd></div>
+    <div><dt>Quién lo usa</dt><dd><code>emular.py</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Nada.</dd></div>
+    <div><dt>Qué sale</dt><dd>Cuatro emulaciones.</dd></div>
+  </dl>
+</div>
+<pre data-lang="yaml" data-file="deteccion/emulaciones.yaml"><code># Cada emulación, con la forma de Atomic Red Team: técnica, qué se corre, cómo se limpia y qué alerta se espera.
+# Los comandos corren desde la raíz de tienda-norte. Solo contra tu laboratorio.
+- tecnica: T1110.001
+  nombre: Fuerza bruta contra el login
+  ejecutar: [provocar.py, fuerza]
+  limpiar: []
+  espera: 100102
+- tecnica: T1213
+  nombre: Recorrer pedidos ajenos
+  ejecutar: [provocar.py, ajenos]
+  limpiar: []
+  espera: 100104
+- tecnica: T1595.003
+  nombre: Escaneo de rutas que no existen
+  ejecutar: [provocar.py, escaneo]
+  limpiar: []
+  espera: 100112
+- tecnica: T1059
+  nombre: Shell en la API del clúster
+  ejecutar: [kubectl, -n, tienda, exec, deploy/api, --, sh, -c, id]
+  limpiar: []
+  espera: 100121</code></pre>
+<div class="file-card" data-where="emular tienda wazuh">
+  <h4 class="file-card-path" id="archivo-deteccion-emular-py">deteccion/emular.py<span class="file-card-size">49 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Corre cada emulación y comprueba que su alerta llegó a Wazuh.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Tú, después de cambiar una regla de Wazuh.</dd></div>
+    <div><dt>Qué entra</dt><dd><code>emulaciones.yaml</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una línea por técnica, <code>VISTA</code> o <code>NO LLEGÓ</code>, y código de salida 1 si alguna no llegó.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Ubica la tienda y el compose de Wazuh.</li>
+    <li>Cuenta las alertas de una regla en alerts.json.</li>
+    <li>Corre un comando; los .py, con el mismo Python.</li>
+    <li>Lee las emulaciones y filtra las pedidas.</li>
+    <li>Cuenta antes, ejecuta y espera hasta que la cuenta suba o se acabe el tiempo.</li>
+    <li>Imprime el resultado, limpia y sale con 1 si alguna no llegó.</li>
+  </ol>
+</div>
+<pre data-lang="python"><code>"""Corre cada emulación contra TU laboratorio y comprueba que su alerta llegó a Wazuh."""
+import argparse
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import yaml
+# (1)
+RAIZ = Path(__file__).resolve().parent.parent
+WAZUH = Path(os.environ.get("WAZUH_DIR", RAIZ.parent / "wazuh-docker" / "single-node"))
+
+# (2)
+def cuantas(regla):
+    r = subprocess.run(
+        ["docker", "compose", "exec", "-T", "wazuh.manager", "grep", "-c", f'"id":"{regla}"',
+         "/var/ossec/logs/alerts/alerts.json"],
+        cwd=WAZUH, capture_output=True, text=True,
+    )
+    return int(r.stdout.strip() or 0)</code></pre>
+<ol class="code-key">
+  <li>La carpeta de SEC00 tiene <code>tienda-norte/</code> y <code>wazuh-docker/</code> lado a lado. Si la tuya es otra, <code>WAZUH_DIR</code> la cambia.</li>
+  <li>El mismo <code>grep -c</code> de SEC00. Cuando no hay ninguna, <code>grep</code> imprime <code>0</code> y sale con 1; por eso no se usa <code>check=True</code>.</li>
+</ol>
+<pre data-lang="python"><code># (3)
+def correr(comando):
+    if comando and comando[0].endswith(".py"):
+        comando = [sys.executable, *comando]
+    subprocess.run(comando, cwd=RAIZ, check=True)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("tecnicas", nargs="*", help="ids de técnica; sin ninguno, todas")
+    ap.add_argument("--espera", type=int, default=90, help="segundos que se espera cada alerta")
+    a = ap.parse_args()
+# (4)
+    emulaciones = yaml.safe_load((RAIZ / "deteccion" / "emulaciones.yaml").read_text(encoding="utf-8"))
+    pedidas = [e for e in emulaciones if not a.tecnicas or e["tecnica"] in a.tecnicas]
+    fallas = 0</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li><code>provocar.py</code> ya se niega a hablar con algo que no sea 127.0.0.1; <code>emular.py</code> no agrega destinos, solo lo llama. El <code>kubectl</code> usa tu kubeconfig de SEC04.</li>
+  <li>Sin argumentos corre las cuatro; con <code>T1059</code>, solo esa.</li>
+</ol>
+<pre data-lang="python"><code>    for e in pedidas:
+# (5)
+        antes = cuantas(e["espera"])
+        correr(e["ejecutar"])
+        hasta = time.monotonic() + a.espera
+        while cuantas(e["espera"]) &lt;= antes and time.monotonic() &lt; hasta:
+            time.sleep(5)
+# (6)
+        vista = cuantas(e["espera"]) &gt; antes
+        print(f'{e["tecnica"]:&lt;10} {e["nombre"]:&lt;34} regla {e["espera"]}: {"VISTA" if vista else "NO LLEGÓ"}')
+        fallas += not vista
+        for paso in e.get("limpiar", []):
+            correr(paso)
+    sys.exit(1 if fallas else 0)
+
+
+if __name__ == "__main__":
+    main()</code></pre>
+<ol class="code-key" style="counter-reset: ck 4">
+  <li>Lo que se compara es la cuenta antes y después, no si existe alguna: las alertas de corridas anteriores no cuentan.</li>
+  <li><code>limpiar</code> está vacío en las cuatro, porque ninguna deja nada. En Atomic Red Team cada prueba trae su limpieza, y el formato la deja lista para una emulación que sí deje algo.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver deteccion/emular.py completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="python" data-file="deteccion/emular.py"><code>"""Corre cada emulación contra TU laboratorio y comprueba que su alerta llegó a Wazuh."""
+import argparse
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import yaml
+RAIZ = Path(__file__).resolve().parent.parent
+WAZUH = Path(os.environ.get("WAZUH_DIR", RAIZ.parent / "wazuh-docker" / "single-node"))
+
+def cuantas(regla):
+    r = subprocess.run(
+        ["docker", "compose", "exec", "-T", "wazuh.manager", "grep", "-c", f'"id":"{regla}"',
+         "/var/ossec/logs/alerts/alerts.json"],
+        cwd=WAZUH, capture_output=True, text=True,
+    )
+    return int(r.stdout.strip() or 0)
+def correr(comando):
+    if comando and comando[0].endswith(".py"):
+        comando = [sys.executable, *comando]
+    subprocess.run(comando, cwd=RAIZ, check=True)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("tecnicas", nargs="*", help="ids de técnica; sin ninguno, todas")
+    ap.add_argument("--espera", type=int, default=90, help="segundos que se espera cada alerta")
+    a = ap.parse_args()
+    emulaciones = yaml.safe_load((RAIZ / "deteccion" / "emulaciones.yaml").read_text(encoding="utf-8"))
+    pedidas = [e for e in emulaciones if not a.tecnicas or e["tecnica"] in a.tecnicas]
+    fallas = 0
+    for e in pedidas:
+        antes = cuantas(e["espera"])
+        correr(e["ejecutar"])
+        hasta = time.monotonic() + a.espera
+        while cuantas(e["espera"]) &lt;= antes and time.monotonic() &lt; hasta:
+            time.sleep(5)
+        vista = cuantas(e["espera"]) &gt; antes
+        print(f'{e["tecnica"]:&lt;10} {e["nombre"]:&lt;34} regla {e["espera"]}: {"VISTA" if vista else "NO LLEGÓ"}')
+        fallas += not vista
+        for paso in e.get("limpiar", []):
+            correr(paso)
+    sys.exit(1 if fallas else 0)
+
+
+if __name__ == "__main__":
+    main()</code></pre>
+  </div>
+</details>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>.venv/bin/python deteccion/emular.py</code></pre>
+  <p>Cuatro líneas, cada una con <code>VISTA</code>. La de T1213 tarda más: beto tiene que entrar antes de pedir. El código de salida es 0 (<code>echo $?</code>). Si una dice <code>NO LLEGÓ</code>, mira primero <code>wazuh-logtest</code> con una línea del log real de esa técnica.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>no configuration file provided: not found</code>: <code>WAZUH_DIR</code> no apunta a la carpeta <code>single-node</code>. <code>WAZUH_DIR=/ruta/a/single-node .venv/bin/python deteccion/emular.py</code>.</li>
+    <li><code>Este script solo habla con tu laboratorio en 127.0.0.1.</code>: Le pasaste otra <code>--base</code> a <code>provocar.py</code>. Es a propósito: no se emula contra otra cosa.</li>
+  </ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Emular solo contra el laboratorio y comparar la cuenta de alertas antes y después.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Dar por buena una regla porque pasan sus casos: los casos prueban la Sigma, no el XML que corre en Wazuh.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Si corres dos emulaciones de la misma técnica a la vez, la segunda puede ver la alerta de la primera. Córrelas de a una.</dd></div>
+</dl>
+<h2 id="viaje">El viaje de un dato</h2>
+<p>El caso principal: alguien edita la ventana de la fuerza bruta, y la regla viaja del pull request a la alerta del laboratorio.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 512" role="img" aria-labelledby="fs05st fs05sd">
+<title id="fs05st">Un cambio en una regla, del pull request a la emulación</title>
+<desc id="fs05sd">La persona cambia la ventana de la regla Sigma y abre un pull request. El job deteccion convierte la regla con pySigma, la corre sobre los casos y falla porque el negativo alertó. La persona corrige y el job pasa. Después, en el laboratorio, emular.py corre provocar.py, la tienda escribe los login fallidos, Wazuh escribe la alerta 100102 y emular.py ve la cuenta subir.</desc>
+<defs><marker id="fs05s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs05s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs05s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs05s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Persona</text>
+<path class="dg-frame" d="M70.0 40 V502"/>
+<rect class="dg-box" x="165.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="227.5" y="29" text-anchor="middle" style="font-size:13.5px">Job deteccion</text>
+<path class="dg-frame" d="M227.5 40 V502"/>
+<rect class="dg-box" x="323.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="385.0" y="29" text-anchor="middle" style="font-size:13.5px">emular.py</text>
+<path class="dg-frame" d="M385.0 40 V502"/>
+<rect class="dg-box" x="480.5" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="542.5" y="29" text-anchor="middle" style="font-size:13.5px">Tienda</text>
+<path class="dg-frame" d="M542.5 40 V502"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">Wazuh</text>
+<path class="dg-frame" d="M700.0 40 V502"/>
+<path class="dg-edge" d="M73.0 72 L222.5 72" marker-end="url(#fs05s-a)"/>
+<rect x="93.25" y="55" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="66" text-anchor="middle">PR: timespan 4m</text>
+<rect x="237.5" y="92" width="132" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="247.5" y="108">pySigma a SQLite</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M224.5 140 L75.0 140" marker-end="url(#fs05s-f)"/>
+<rect x="93.25" y="123" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="134" text-anchor="middle">no.jsonl alertó</text>
+<path class="dg-edge" d="M73.0 174 L222.5 174" marker-end="url(#fs05s-a)"/>
+<rect x="93.25" y="157" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="168" text-anchor="middle">PR: timespan 2m</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M224.5 208 L75.0 208" marker-end="url(#fs05s-r)"/>
+<rect x="113.05" y="191" width="71.4" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="148.75" y="202" text-anchor="middle">12 passed</text>
+<path class="dg-edge" d="M73.0 242 L380.0 242" marker-end="url(#fs05s-a)"/>
+<rect x="158.8" y="225" width="137.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="236" text-anchor="middle">emular.py T1110.001</text>
+<path class="dg-edge" d="M388.0 276 L695.0 276" marker-end="url(#fs05s-a)"/>
+<rect x="463.9" y="259" width="157.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="270" text-anchor="middle">cuenta de 100102 antes</text>
+<path class="dg-edge" d="M388.0 310 L537.5 310" marker-end="url(#fs05s-a)"/>
+<rect x="398.35" y="293" width="130.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="463.75" y="304" text-anchor="middle">provocar.py fuerza</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M545.5 344 L695.0 344" marker-end="url(#fs05s-q)"/>
+<rect x="526.15" y="327" width="190.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="621.25" y="338" text-anchor="middle">12 login_fallido en api.log</text>
+<path class="dg-edge" d="M388.0 378 L695.0 378" marker-end="url(#fs05s-a)"/>
+<rect x="457.3" y="361" width="170.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="372" text-anchor="middle">cuenta de 100102 después</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M697.0 412 L390.0 412" marker-end="url(#fs05s-r)"/>
+<rect x="520.0" y="395" width="45.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="542.5" y="406" text-anchor="middle">subió</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M382.0 446 L75.0 446" marker-end="url(#fs05s-r)"/>
+<rect x="205.0" y="429" width="45.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="227.5" y="440" text-anchor="middle">VISTA</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC05.5.</b> El viaje completo. El pipeline ve el error de la Sigma; la emulación prueba lo que corre de verdad.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Paso</th><th>De → a</th><th>Qué viaja</th><th>Dónde queda</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Persona → job</td><td>La regla Sigma cambiada</td><td>El pull request</td></tr>
+<tr><td>2</td><td>Job, adentro</td><td>La consulta de SQLite y los casos</td><td>Una base en memoria que se borra</td></tr>
+<tr><td>3</td><td>Job → persona</td><td>Qué caso falló</td><td>El registro del job en Actions</td></tr>
+<tr><td>4</td><td>emular.py → tienda</td><td>12 intentos de login</td><td><code>api.log</code></td></tr>
+<tr><td>5</td><td>Tienda → Wazuh</td><td>Las líneas JSON</td><td><code>alerts.json</code> y el indexer</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="sec05-deteccion"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-verde">El punto de partida</h3>
+<div class="step-map" data-where="reglas pipeline wazuh emular">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Todo lo de los pasos 1 a 8.</dd></div>
+    <div><dt>Sale</dt><dd>Una tabla con lo que viste.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-sigma">Sigma y sus correlaciones</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Lo que el diseño espera</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td><code>pytest -q deteccion</code></td><td><code>12 passed</code></td><td></td></tr>
+<tr><td>El job <code>deteccion</code> en el pull request</td><td>Verde</td><td></td></tr>
+<tr><td><code>emular.py</code></td><td>Cuatro <code>VISTA</code> y salida 0</td><td></td></tr>
+<tr><td>La 100130 con Falco apagado</td><td>Entre 12 y 17 minutos</td><td></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-fallas">Las fallas, a propósito</h3>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 1: una regla que deja de ver el ataque</p>
+<p><b>Provócala.</b> En <code>login_fallido.yml</code>, cambia <code>gte: 8</code> por <code>gte: 9</code> y corre <code>pytest -q deteccion</code>.</p><p><b>Qué tiene que pasar.</b> Falla <code>test_alerta_con_si[login_fallido]</code> con <code>login_fallido: si.jsonl no alertó</code>: el positivo tiene 8 intentos. <b>Por qué importa.</b> Un umbral subido "para bajar el ruido" es la forma más común de que una regla deje de ver lo que vino a ver. Sin el positivo, nadie se entera hasta el incidente. <b>Deshazla</b> volviendo a <code>gte: 8</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 2: una regla que se vuelve ruido</p>
+<p><b>Provócala.</b> En la misma regla, borra las dos líneas de <code>group-by</code> y corre las pruebas.</p><p><b>Qué tiene que pasar.</b> Falla <code>test_calla_con_no[login_fallido]</code>: los 8 intentos de dos IP en un minuto ahora alertan juntos. <b>Por qué importa.</b> Sin agrupar, una oficina con 30 personas que se equivocan de clave el lunes parece un ataque. Es la <a href="../modules/m59-deteccion.html#calidad">fatiga de alertas</a> antes de que exista. <b>Deshazla</b> devolviendo <code>group-by: [ip]</code>.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 3: un par que no existe</p>
+<p><b>Provócala.</b> En <code>escaneo.yml</code>, cambia <code>wazuh: 100112</code> por <code>wazuh: 100113</code>.</p><p><b>Qué tiene que pasar.</b> Falla <code>test_tiene_par[escaneo]</code> con <code>no hay regla 100113 en tienda_rules.xml</code>. <b>Por qué importa.</b> Una Sigma sin par es una regla que nadie corre. La prueba lo dice en el pull request. <b>Deshazla</b> volviendo a 100112.</p>
+</aside>
+<div data-exercise="sec05-p-par"></div>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 4: un umbral que cambia de un solo lado</p>
+<p><b>Provócala.</b> En <code>tienda_rules.xml</code>, cambia <code>frequency="8"</code> por <code>frequency="13"</code> en la 100102, corre <code>docker compose restart wazuh.manager</code> y después <code>pytest -q deteccion</code> y <code>emular.py T1110.001</code>.</p><p><b>Qué tiene que pasar.</b> pytest pasa entero. <code>emular.py</code> dice <code>NO LLEGÓ</code> para T1110.001 y sale con 1: <code>provocar.py fuerza</code> manda 12 intentos, uno menos de los 13 que pide ahora la regla. <b>Por qué importa.</b> La prueba de pares solo compara el id y la técnica. La emulación es la que prueba lo que corre de verdad, y por eso se corre después de cada cambio en el XML. <b>Deshazla</b> volviendo a <code>frequency="8"</code> y reiniciando el manager.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 5: una fuente que se calla</p>
+<p><b>Provócala.</b> Es la del paso 7 con Nginx: <code>docker compose stop nginx</code> en la carpeta de la tienda, y espera 35 minutos.</p><p><b>Qué tiene que pasar.</b> Sale la 100131, <code>Nginx de la tienda no escribe hace más de 30 minutos</code>. La tienda no responde, y ninguna otra regla lo dijo. <b>Por qué importa.</b> Es la falla 4 de SEC00 con alerta: cuando una fuente se calla, el SIEM ahora lo dice. <b>Deshazla</b> con <code>docker compose start nginx</code>.</p>
+</aside>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Qué la ve</th><th>¿Pasó?</th><th>Lo que decía</th></tr></thead>
+<tbody>
+<tr><td>1. Umbral subido</td><td>El caso positivo</td><td></td><td></td></tr>
+<tr><td>2. Sin agrupar</td><td>El caso negativo</td><td></td><td></td></tr>
+<tr><td>3. Par inexistente</td><td>La prueba de pares</td><td></td><td></td></tr>
+<tr><td>4. Umbral solo en Wazuh</td><td>La emulación</td><td></td><td></td></tr>
+<tr><td>5. Nginx callado</td><td>La alerta de silencio</td><td></td><td></td></tr>
+</tbody>
+</table>
+</div>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Cuatro reglas en Sigma, probadas en el pipeline, con su par en Wazuh.</li>
+    <li>Falco en el SIEM y una alerta de silencio por fuente.</li>
+    <li>Una emulación por técnica, solo contra el laboratorio.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>.venv/bin/python -m pytest -q deteccion &amp;&amp; .venv/bin/python deteccion/emular.py</code></pre>
+  <p><code>12 passed</code> y cuatro líneas <code>VISTA</code>.</p>
+</aside>
+<h2 id="limitaciones">Limitaciones</h2>
+<ul>
+<li><b>Dos copias de cada regla.</b> El XML de Wazuh se escribe a mano. La prueba de pares mira el id y la técnica, no el umbral ni la ventana, y la falla 4 lo muestra: lo que se separa lo ve solo la emulación.</li>
+<li><b>Dependencias sin fijar.</b> <code>requisitos.txt</code> fija las cuatro directas, no las de pySigma. Una versión nueva de una de ellas puede romper el job sin que cambie nada tuyo. La salida es un archivo de bloqueo con hashes (<code>pip install --require-hashes</code>), que esta guía no arma.</li>
+<li><b>Los casos los escribes tú.</b> Un caso mal pensado prueba mal. Por eso el positivo de Falco sale de la línea real de SEC04, y conviene hacer lo mismo con cada fuente nueva.</li>
+<li><b>El silencio no ve todo.</b> Mira si el archivo cambió, no si Wazuh lo leyó. Si el logcollector deja de leer (la falla 4 de SEC00 al revés), el archivo sigue cambiando y la alerta no sale.</li>
+<li><b>Emular no es atacar.</b> Las cuatro emulaciones repiten lo que el laboratorio ya sabe provocar. Un atacante real cambia la IP en cada intento o espera entre pedidos, como los negativos del paso 3: esos casos no alertan por diseño.</li>
+</ul>
+<h3 id="limitaciones-costo">Costo y tiempo, con la cuenta a mano</h3>
+<p>Las pruebas corren en un runner de GitHub. Supuesto: si el job tarda 1 minuto (crear el entorno e instalar cuatro paquetes) y el repositorio tiene 10 pull requests por semana con 3 pushes cada uno, son 30 minutos de runner por semana, dentro de los minutos gratuitos de un repositorio público. La emulación tarda lo que tarda cada alerta en aparecer: con <code>--espera 90</code>, el peor caso de las cuatro es 6 minutos.</p>
+<h3 id="limitaciones-produccion">Qué cambia en producción</h3>
+<ul>
+<li>Un agente de Wazuh en cada nodo, en lugar de montar archivos en el manager.</li>
+<li>Las reglas de Wazuh generadas o revisadas desde Sigma por el pipeline, y un despliegue de reglas que no pasa por editar un archivo en el servidor.</li>
+<li>Casos con eventos reales anonimizados de cada fuente, guardados en el repositorio.</li>
+<li>Las emulaciones en un calendario, con su resultado en un tablero: una técnica que deja de verse es un incidente del SOC.</li>
+<li>El triaje de las alertas: qué hace una persona (o un agente, en SEC08) cuando sale la 100121.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="sec05">
+<p class="pj-repo-head">El mismo repositorio de la tienda, con la carpeta <code>deteccion/</code>. Marca cada comprobación cuando la veas.</p>
+<ul class="pj-checks">
+<li data-check="sigma">Las cuatro reglas Sigma pasan sus casos (<code>8 passed</code> en test_reglas).</li>
+<li data-check="pipeline">El job <code>deteccion</code> está verde en un pull request.</li>
+<li data-check="falco">La 100121 salió en Wazuh con una shell real en la API.</li>
+<li data-check="silencio">La 100130 salió con Falco apagado.</li>
+<li data-check="emular"><code>emular.py</code> dio cuatro <code>VISTA</code>.</li>
+<li data-check="falla4">Viste la falla 4: pytest pasa y la emulación no.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con SEC00, SEC01 y SEC04</p>
+<p>Las reglas y <code>provocar.py</code> son de <a href="sec00-laboratorio.html">SEC00</a>; el job se suma al workflow de <a href="sec01-pipeline.html">SEC01</a>, y la alerta de Falco viene de <a href="sec04-cluster.html">SEC04</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con la Parte VII del curso</p>
+<p>Las fuentes en <a href="../modules/m59-deteccion.html#fuentes">59.2</a>, Sigma en <a href="../modules/m59-deteccion.html#sigma">59.6</a>, detection as code en <a href="../modules/m59-deteccion.html#detection-as-code">59.7</a>, la calidad de las alertas en <a href="../modules/m59-deteccion.html#calidad">59.8</a> y ATT&amp;CK en <a href="../modules/m59-deteccion.html#attack">59.5</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con el glosario</p>
+<p><a href="../glosario.html#t-sigma">Sigma</a>, <a href="../glosario.html#t-detection-as-code">detection as code</a>, <a href="../glosario.html#t-siem">SIEM</a>, <a href="../glosario.html#t-fatiga-alertas">fatiga de alertas</a> y <a href="../glosario.html#t-mitre-attack">MITRE ATT&amp;CK</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/sec05.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

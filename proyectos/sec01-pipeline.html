@@ -1,0 +1,1626 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEC01. Un pipeline que falla el build</title>
+<meta name="description" content="GitHub Actions con cinco jobs sobre Tienda Norte: pytest para el formato del log, gitleaks sobre toda la historia, Semgrep con reglas propias, Trivy sobre la imagen y ZAP baseline sobre la tienda levantada, con excepciones que vencen y cinco fallas plantadas.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="sec01" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Un pipeline que falla el build</h1>
+        <p class="lead">El commit con una clave adentro no llega a main, y el gate se puede cumplir el primer día.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>SEC01</dd></div>
+          <div><dt>Plan</dt><dd>Blue Team y DevSecOps</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>2.5 h</dd></div>
+          <div><dt>Módulos</dt><dd>M55, M56</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="sec01">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Armar un workflow de GitHub Actions con cinco jobs de seguridad que corta el pull request cuando encuentra algo.</li>
+<li>Escribir reglas propias de Semgrep y de gitleaks sobre errores que Tienda Norte puede cometer, y probarlas en tu máquina.</li>
+<li>Escanear la imagen de la API con Trivy y la tienda levantada con ZAP baseline, con umbrales que se pueden cumplir.</li>
+<li>Dejar pasar un falso positivo con una excepción que tiene motivo y vence, y un script que lo revisa.</li>
+<li>Plantar cinco fallas, ver qué job corta cada una y arreglarlas.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>En SEC00 dejaste Tienda Norte vigilada mientras corre: si alguien prueba claves, Wazuh avisa. Pero el SIEM ve lo que ya está en producción. Una clave que entró al repositorio, una consulta armada con un f-string o una dependencia con una vulnerabilidad conocida llegan antes de que haya un log que mirar.</p>
+<p>Esta guía corre esa revisión en cada pull request, como en <a href="../modules/m55-appsec.html#pipeline">55.8</a>: pruebas del formato del log (la falla 3 de SEC00), secretos, análisis estático, la imagen y un escaneo de la tienda levantada. Cada job corta el build con un umbral que se puede cumplir, y lo que no se puede arreglar hoy pasa con una excepción que vence.</p>
+<p>Todo corre en los runners de GitHub, contra una copia de la tienda que el propio job levanta y apaga. Nada apunta a otro sistema.</p>
+<figure class="figure" data-arch>
+  <div class="figure-frame">
+<svg viewBox="0 0 770 410" role="img" aria-labelledby="fs01t fs01d">
+<title id="fs01t">La arquitectura del pipeline de SEC01</title>
+<desc id="fs01d">Tu commit llega a GitHub como pull request. GitHub arranca un runner ubuntu-24.04 con cinco jobs: formato con pytest, secretos con gitleaks, sast con Semgrep e imagen con Trivy, que bajan sus herramientas de Docker Hub en versiones exactas. Cuando los cuatro pasan, el job dast levanta Tienda Norte dentro del runner y la mira con ZAP baseline. El estado de cada job vuelve al pull request. Seis flechas numeradas.</desc>
+<defs><marker id="fs01a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="180" y="150" width="580" height="240" rx="10" fill="none" stroke-dasharray="5 4"/>
+<text class="dg-small" x="190" y="168">runner ubuntu-24.04</text>
+<path class="dg-edge" d="M320 88 L380 88" marker-end="url(#fs01a)"/>
+<path class="dg-edge" d="M445 116 L490 190" marker-end="url(#fs01a)"/>
+<path class="dg-edge" d="M675 116 L610 190" marker-end="url(#fs01a)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M610 246 L440 310" marker-end="url(#fs01a)"/>
+<path class="dg-edge" d="M500 338 L580 338" marker-end="url(#fs01a)"/>
+<path class="dg-edge" stroke-dasharray="6 4" d="M250 190 L445 116" marker-end="url(#fs01a)"/>
+<g data-part="commit"><rect class="dg-layer" x="200" y="60" width="120" height="56" rx="8" style="--c: var(--l-client)"/><text class="dg-label" x="260" y="80" text-anchor="middle">Tu commit</text><text class="dg-tiny dg-mono" x="260" y="96" text-anchor="middle">git push</text></g>
+<g data-part="github"><rect class="dg-layer" x="380" y="60" width="130" height="56" rx="8" style="--c: var(--l-external)"/><text class="dg-label" x="445" y="80" text-anchor="middle">GitHub</text><text class="dg-tiny dg-mono" x="445" y="96" text-anchor="middle">pull request</text></g>
+<g data-part="hub"><rect class="dg-layer" x="600" y="60" width="150" height="56" rx="8" style="--c: var(--l-external)"/><text class="dg-label" x="675" y="80" text-anchor="middle">Docker Hub</text><text class="dg-tiny dg-mono" x="675" y="96" text-anchor="middle">imágenes fijadas</text></g>
+<g data-part="formato"><rect class="dg-layer" x="200" y="190" width="100" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="250" y="210" text-anchor="middle">formato</text><text class="dg-tiny dg-mono" x="250" y="226" text-anchor="middle">pytest</text></g>
+<g data-part="secretos"><rect class="dg-layer" x="320" y="190" width="100" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="370" y="210" text-anchor="middle">secretos</text><text class="dg-tiny dg-mono" x="370" y="226" text-anchor="middle">gitleaks</text></g>
+<g data-part="sast"><rect class="dg-layer" x="440" y="190" width="100" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="490" y="210" text-anchor="middle">sast</text><text class="dg-tiny dg-mono" x="490" y="226" text-anchor="middle">Semgrep</text></g>
+<g data-part="imagen"><rect class="dg-layer" x="560" y="190" width="100" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="610" y="210" text-anchor="middle">imagen</text><text class="dg-tiny dg-mono" x="610" y="226" text-anchor="middle">Trivy</text></g>
+<g data-part="dast"><rect class="dg-layer" x="380" y="310" width="120" height="56" rx="8" style="--c: var(--l-service)"/><text class="dg-label" x="440" y="330" text-anchor="middle">dast</text><text class="dg-tiny dg-mono" x="440" y="346" text-anchor="middle">ZAP baseline</text></g>
+<g data-part="tienda"><rect class="dg-layer" x="580" y="310" width="150" height="56" rx="8" style="--c: var(--l-db)"/><text class="dg-label" x="655" y="330" text-anchor="middle">Tienda Norte</text><text class="dg-tiny dg-mono" x="655" y="346" text-anchor="middle">127.0.0.1:8088</text></g>
+<g class="pl-pin"><circle cx="350" cy="88" r="10"/><text x="350" y="92" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="468" cy="153" r="10"/><text x="468" y="157" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="642" cy="153" r="10"/><text x="642" y="157" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="525" cy="278" r="10"/><text x="525" y="282" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="540" cy="338" r="10"/><text x="540" y="342" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="348" cy="153" r="10"/><text x="348" y="157" text-anchor="middle">6</text></g>
+</svg>
+  </div>
+  <figcaption><b>Figura SEC01.1.</b> Un pull request, cinco jobs. Los cuatro de arriba corren a la vez; dast espera a que pasen (flecha 4) y es el único que levanta la tienda. El estado de cada uno vuelve al pull request (flecha 6) y la regla de la rama decide si se puede mezclar.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>#</th><th>De → a</th><th>Protocolo y formato</th><th>Ejemplo</th><th>Con qué permiso</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Tu commit → GitHub</td><td>git sobre HTTPS o SSH</td><td><code>git push origin rama</code></td><td>Tu cuenta, con permiso de escritura en el repositorio</td></tr>
+<tr><td>2</td><td>GitHub → jobs</td><td>El evento <code>pull_request</code></td><td>Cinco jobs en runners <code>ubuntu-24.04</code></td><td><code>GITHUB_TOKEN</code> de solo lectura</td></tr>
+<tr><td>3</td><td>Docker Hub → jobs</td><td>HTTPS, imágenes OCI</td><td><code>semgrep/semgrep:1.184.0</code></td><td>Público; la versión exacta la fija el workflow</td></tr>
+<tr><td>4</td><td>imagen → dast</td><td><code>needs</code> de Actions</td><td>dast arranca si los otros cuatro pasan</td><td>Ninguno: es un orden</td></tr>
+<tr><td>5</td><td>dast → Tienda Norte</td><td>HTTP dentro del runner</td><td><code>GET /api/productos</code> de ZAP</td><td>Ninguno: la tienda vive y muere en el runner</td></tr>
+<tr><td>6</td><td>jobs → GitHub</td><td>El estado de cada job</td><td><code>secretos</code> en rojo</td><td>La regla de la rama exige los cinco en verde</td></tr>
+</tbody>
+</table>
+</div>
+<p><b>Las fronteras.</b> Del runner salen solo las descargas de las herramientas (Docker Hub y la página de releases de gitleaks, con su checksum) y el estado de cada job. El código del pull request corre con un token que solo puede leer el repositorio, y el checkout no deja la credencial en disco. La clave de la base de la tienda del job se genera al azar en cada corrida y muere con ella.</p>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 376" role="img" aria-labelledby="fs01vt fs01vd">
+<title id="fs01vt">Un pull request con una clave adentro</title>
+<desc id="fs01vd">Haces push de una rama con el .env. GitHub arranca los jobs. secretos baja gitleaks, verifica su checksum y recorre la historia: encuentra la regla tienda-db-clave y sale con código 1. El job queda en rojo, dast no arranca y el pull request no se puede mezclar.</desc>
+<defs><marker id="fs01v-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs01v-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs01v-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs01v-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Tú</text>
+<path class="dg-frame" d="M70.0 40 V366"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">GitHub</text>
+<path class="dg-frame" d="M280.0 40 V366"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">job secretos</text>
+<path class="dg-frame" d="M490.0 40 V366"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">gitleaks</text>
+<path class="dg-frame" d="M700.0 40 V366"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#fs01v-a)"/>
+<rect x="126.1" y="55" width="97.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">git push rama</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M283.0 106 L485.0 106" marker-end="url(#fs01v-q)"/>
+<rect x="339.4" y="89" width="91.19999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="100" text-anchor="middle">pull_request</text>
+<rect x="500.0" y="126" width="188" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="510.0" y="142">checkout, fetch-depth: 0</text>
+<path class="dg-edge" d="M493.0 174 L695.0 174" marker-end="url(#fs01v-a)"/>
+<rect x="542.8" y="157" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="168" text-anchor="middle">gitleaks git .</text>
+<rect x="509.0" y="194" width="181" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="519.0" y="210">tienda-db-clave en .env</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M697.0 242 L495.0 242" marker-end="url(#fs01v-f)"/>
+<rect x="562.6" y="225" width="64.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="595.0" y="236" text-anchor="middle">código 1</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M487.0 276 L285.0 276" marker-end="url(#fs01v-f)"/>
+<rect x="332.8" y="259" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="270" text-anchor="middle">secretos: rojo</text>
+<rect x="290.0" y="296" width="223" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="300.0" y="312">dast no arranca; no se mezcla</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC01.2.</b> La versión corta. La completa, con los cinco jobs, está en <a href="#viaje">El viaje de un dato</a>.</figcaption>
+</figure>
+<h2 id="antes">Antes de empezar</h2>
+<h3 id="ae-repaso">Lo que viene de SEC00</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 196" role="img" aria-labelledby="fs01rt fs01rd">
+<title id="fs01rt">Lo que viene de SEC00</title>
+<desc id="fs01rd">La tienda: La API en FastAPI, PostgreSQL y Nginx en un compose, con la clave en .env. El job dast la levanta igual, con una clave al azar. El evento JSON: Una línea por evento con app, ts y evento fijos. Una prueba de pytest lo vuelve un contrato. Las fallas: Un log en texto plano deja ciego al SIEM sin que nadie lo note. El job formato la corta antes de llegar a main.</desc>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="16" width="233" height="164" rx="8"/>
+<text class="dg-group" x="32" y="40">La tienda</text>
+<text class="dg-tiny" x="32" y="62" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="32" y="80">La API en FastAPI, PostgreSQL y</text>
+<text class="dg-tiny" x="32" y="95">Nginx en un compose, con la clave</text>
+<text class="dg-tiny" x="32" y="110">en .env.</text>
+<text class="dg-tiny" x="32" y="132" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="32" y="150">El job dast la levanta igual, con</text>
+<text class="dg-tiny" x="32" y="165">una clave al azar.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="269" y="16" width="233" height="164" rx="8"/>
+<text class="dg-group" x="281" y="40">El evento JSON</text>
+<text class="dg-tiny" x="281" y="62" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="281" y="80">Una línea por evento con app, ts y</text>
+<text class="dg-tiny" x="281" y="95">evento fijos.</text>
+<text class="dg-tiny" x="281" y="132" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="281" y="150">Una prueba de pytest lo vuelve un</text>
+<text class="dg-tiny" x="281" y="165">contrato.</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="517" y="16" width="233" height="164" rx="8"/>
+<text class="dg-group" x="529" y="40">Las fallas</text>
+<text class="dg-tiny" x="529" y="62" style="font-weight:600">Lo que se vio</text>
+<text class="dg-tiny" x="529" y="80">Un log en texto plano deja ciego al</text>
+<text class="dg-tiny" x="529" y="95">SIEM sin que nadie lo note.</text>
+<text class="dg-tiny" x="529" y="132" style="font-weight:600">Cómo vuelve</text>
+<text class="dg-tiny" x="529" y="150">El job formato la corta antes de</text>
+<text class="dg-tiny" x="529" y="165">llegar a main.</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC01.3.</b> Tres cosas de SEC00 que vuelven aquí.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Qué</th><th>Dónde se vio</th></tr></thead>
+<tbody>
+<tr><td>La tienda y su compose</td><td><a href="sec00-laboratorio.html#paso-proxy">SEC00, paso 4</a></td></tr>
+<tr><td>El evento JSON y sus campos fijos</td><td><a href="sec00-laboratorio.html#paso-registro">SEC00, paso 2</a></td></tr>
+<tr><td>La falla del log en texto plano</td><td><a href="sec00-laboratorio.html#comprueba-fallas">SEC00, las fallas</a></td></tr>
+</tbody>
+</table>
+</div>
+<p>Si no hiciste SEC00, esta guía funciona igual con la carpeta <code>tienda-norte/</code> de su hito 1: no necesita Wazuh.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 210" role="img" aria-labelledby="fs01pt fs01pd">
+<title id="fs01pt">Lámina SEC01.A: las piezas de un pipeline que corta</title>
+<desc id="fs01pd">Un workflow con un job, un runner, una herramienta fijada por versión, un umbral que decide el código de salida, una excepción con fecha y la regla de la rama que lee el estado. Seis marcas numeradas.</desc>
+<defs><marker id="fs01pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-frame" x="20" y="24" width="470" height="166" rx="10" fill="none" stroke-dasharray="5 4"/>
+<text class="dg-small" x="48" y="44">workflow seguridad.yml</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="40" y="60" width="430" height="110" rx="8"/>
+<text class="dg-label" x="68" y="84">job en un runner</text>
+<rect class="dg-box" x="56" y="98" width="130" height="56" rx="8"/><text class="dg-label" x="121" y="122" text-anchor="middle">Herramienta</text><text class="dg-tiny dg-mono" x="121" y="140" text-anchor="middle">imagen:versión</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="206" y="98" width="110" height="56" rx="8"/><text class="dg-label" x="261" y="122" text-anchor="middle">Umbral</text><text class="dg-tiny dg-mono" x="261" y="140" text-anchor="middle">--exit-code 1</text>
+<rect class="dg-box" x="336" y="98" width="120" height="56" rx="8"/><text class="dg-label" x="396" y="122" text-anchor="middle">Excepción</text><text class="dg-tiny dg-mono" x="396" y="140" text-anchor="middle">hasta=AAAA-MM-DD</text>
+<path class="dg-edge" d="M188 126 H204" marker-end="url(#fs01pa)"/><path class="dg-feedback" d="M336 126 H318"/>
+<path class="dg-edge" d="M490 107 H560" marker-end="url(#fs01pa)"/>
+<rect class="dg-warnbox" x="562" y="79" width="188" height="56" rx="8"/><text class="dg-label" x="656" y="103" text-anchor="middle">Regla de la rama</text><text class="dg-tiny dg-mono" x="656" y="121" text-anchor="middle">checks obligatorios</text>
+<g class="pl-pin"><circle cx="30" cy="34" r="11"/><text x="30" y="38" text-anchor="middle">1</text></g>
+<g class="pl-pin"><circle cx="50" cy="70" r="11"/><text x="50" y="74" text-anchor="middle">2</text></g>
+<g class="pl-pin"><circle cx="66" cy="106" r="11"/><text x="66" y="110" text-anchor="middle">3</text></g>
+<g class="pl-pin"><circle cx="216" cy="106" r="11"/><text x="216" y="110" text-anchor="middle">4</text></g>
+<g class="pl-pin"><circle cx="346" cy="106" r="11"/><text x="346" y="110" text-anchor="middle">5</text></g>
+<g class="pl-pin"><circle cx="572" cy="87" r="11"/><text x="572" y="91" text-anchor="middle">6</text></g>
+</svg>
+</div>
+<figcaption><b>Lámina SEC01.A.</b> Las piezas de un pipeline que corta. La herramienta encuentra, el umbral decide y la regla de la rama obedece.</figcaption>
+</figure>
+<ol class="plate-key">
+  <li><b>Workflow</b><span>Un archivo YAML en <code>.github/workflows/</code> que dice cuándo corre y qué jobs tiene. <a href="#ae-actions">Actions</a></span></li>
+  <li><b>Job y runner</b><span>Un job es una lista de pasos que corre en una máquina limpia, el runner. Los jobs corren a la vez salvo que uno espere a otro. <a href="#ae-actions">Actions</a></span></li>
+  <li><b>Herramienta fijada</b><span>Una imagen de Docker en una versión exacta, o una acción por SHA: lo que corre es lo que revisaste. <a href="#ae-fijar">Fijar</a></span></li>
+  <li><b>Umbral</b><span>Lo que convierte un hallazgo en un código de salida distinto de 0, y un job en rojo. <a href="#ae-gate">El gate</a></span></li>
+  <li><b>Excepción</b><span>Un hallazgo que se deja pasar a propósito, con motivo y fecha de vencimiento. <a href="#ae-excepciones">Excepciones</a></span></li>
+  <li><b>Regla de la rama</b><span>La configuración de GitHub que exige que los checks pasen antes de mezclar. <a href="#paso-proteger">Paso 8</a></span></li>
+</ol>
+<h3 id="antes-instalar">Qué tienes que tener</h3>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Herramienta</th><th>Para qué</th><th>Cómo compruebas que está</th></tr></thead>
+<tbody>
+<tr><td>La carpeta <code>tienda-norte/</code> de SEC00</td><td>Lo que revisa el pipeline</td><td><code>docker compose up -d --build</code> levanta la tienda</td></tr>
+<tr><td>Una cuenta de GitHub y un repositorio</td><td>Donde corre el workflow</td><td><code>git remote -v</code> muestra tu repositorio</td></tr>
+<tr><td>Docker</td><td>Probar cada herramienta en tu máquina antes de subirla</td><td><code>docker run --rm hello-world</code></td></tr>
+<tr><td>Python 3.13</td><td>Las pruebas y el script de excepciones</td><td><code>python --version</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Los runners de GitHub Actions son gratis para los repositorios públicos, y los privados tienen una cantidad de minutos por mes según el plan <span class="badge badge--doc">Documentado</span>. Esta guía funciona con cualquiera de los dos.</p>
+<h3 id="ae-actions">GitHub Actions: workflow, job y runner</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un workflow es la lista de controles de un aeropuerto. Cada control (un job) tiene su fila y su máquina, y los pasajeros (los commits) no suben al avión hasta pasar todos.</p>
+</aside>
+<p>Un <b>workflow</b> es un YAML en <code>.github/workflows/</code>. <code>on:</code> dice cuándo corre (aquí, en cada pull request y en cada push a <code>main</code>), y <code>jobs:</code> lista los jobs. Cada job corre en un <b>runner</b> nuevo, una máquina virtual que se borra al terminar, y tiene <code>steps</code>: una acción (<code>uses:</code>) o un comando (<code>run:</code>). Si un comando sale con un código distinto de 0, el job queda en rojo. <code>needs:</code> hace que un job espere a otros.</p>
+<h3 id="ae-gate">El gate: hallazgo, umbral y código de salida</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>El detector de metales del aeropuerto no decide nada solo: alguien eligió qué cantidad de metal hace sonar la alarma. Muy sensible, suena con un botón y la gente aprende a ignorarlo; poco, y pasa un cuchillo.</p>
+</aside>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 334" role="img" aria-labelledby="fs01f1t fs01f1d">
+<title id="fs01f1t">Ficha: el gate</title>
+<desc id="fs01f1d">Ficha de Ficha: el gate. Qué entra: Los hallazgos de una herramienta, con su severidad y su regla. Qué hace: Compara cada uno con el umbral y las excepciones vigentes. Qué sale: Un código de salida: 0 deja pasar, 1 corta el job. Ejemplo: trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed tienda-api:ci semgrep scan --config seguridad/semgrep.yml --error Qué falla sin él: La herramienta corre, imprime cien líneas y el job queda verde: nadie las lee y todo pasa igual. Dónde vive: .github/workflows/seguridad.yml, un umbral por job. Pasos 3 a 7.</desc>
+<defs><marker id="fs01f1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="32" y="36">Qué entra</text>
+<text class="dg-tiny" x="32" y="56">Los hallazgos de una</text>
+<text class="dg-tiny" x="32" y="72">herramienta, con su severidad y</text>
+<text class="dg-tiny" x="32" y="88">su regla.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="291" y="36">Qué hace</text>
+<text class="dg-tiny" x="291" y="56">Compara cada uno con el umbral</text>
+<text class="dg-tiny" x="291" y="72">y las excepciones vigentes.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="550" y="36">Qué sale</text>
+<text class="dg-tiny" x="550" y="56">Un código de salida: 0 deja</text>
+<text class="dg-tiny" x="550" y="72">pasar, 1 corta el job.</text>
+<path class="dg-edge" d="M234 67 H275" marker-end="url(#fs01f1a)"/>
+<path class="dg-edge" d="M493 67 H534" marker-end="url(#fs01f1a)"/>
+<rect class="dg-box" x="20" y="132" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="152">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="172" style="white-space:pre">trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed tienda-api:ci</text>
+<text class="dg-tiny dg-mono" x="32" y="188" style="white-space:pre">semgrep scan --config seguridad/semgrep.yml --error</text>
+<rect class="dg-warnbox" x="20" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="252">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="272">La herramienta corre, imprime cien líneas y el job</text>
+<text class="dg-tiny" x="32" y="288">queda verde: nadie las lee y todo pasa igual.</text>
+<rect class="dg-box" x="393" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="252">Dónde vive</text>
+<text class="dg-tiny" x="405" y="272">.github/workflows/seguridad.yml, un umbral por job.</text>
+<text class="dg-tiny" x="405" y="288">Pasos 3 a 7.</text>
+</svg>
+  </div>
+  <figcaption><b>Ficha SEC01.F1.</b> El gate.</figcaption>
+</figure>
+<p>Las herramientas de esta guía son las cuatro familias de <a href="../modules/m55-appsec.html#sast">55.4 a 55.7</a>: SAST mira el código sin correrlo, secret scanning busca claves, SCA mira las dependencias y DAST le pega a la aplicación andando. La pregunta de diseño no es qué herramienta, sino qué umbral: uno que se pueda cumplir el primer día.</p>
+<h3 id="ae-fijar">Fijar lo que corre</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Pedir "el remedio de siempre" en la farmacia funciona hasta que cambian la fórmula. La receta con el nombre, la dosis y el lote es la que no sorprende.</p>
+</aside>
+<p>Una acción referida por etiqueta (<code>@v7</code>) corre lo que su dueño ponga mañana en esa etiqueta; por SHA, corre exactamente ese commit. En 2026, versiones de Trivy y de su acción se publicaron con código malicioso que robaba los secretos de los pipelines que las usaban, y la versión 0.69.4 quedó registrada como CVE-2026-33634 <span class="badge badge--doc">Documentado</span>. Por eso esta guía usa una sola acción, <code>actions/checkout</code> fijada por SHA, y corre cada herramienta desde su imagen en una versión exacta. Fijar la imagen por su digest, que es todavía más estricto, es parte de SEC02; la teoría está en <a href="../modules/m56-supply-chain.html#ci">56.4</a>.</p>
+<h3 id="ae-excepciones">Excepciones que vencen</h3>
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Un permiso de estacionar en doble fila por una mudanza: dice quién, por qué y hasta qué día. Sin fecha, la camioneta se queda un año.</p>
+</aside>
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 334" role="img" aria-labelledby="fs01f2t fs01f2d">
+<title id="fs01f2t">Ficha: la excepción con vencimiento</title>
+<desc id="fs01f2d">Ficha de Ficha: la excepción con vencimiento. Qué entra: Un hallazgo que no se puede o no se debe arreglar hoy. Qué hace: Lo deja pasar con un motivo escrito y una fecha de 90 días como mucho. Qué sale: Un build verde hoy, y uno rojo el día que vence si nadie la revisó. Ejemplo: # excepcion: tienda-sql-armado hasta=2026-12-31 motivo=consulta-fija db.execute(&quot;SELECT 1&quot; + SUFIJO)  # nosemgrep: tienda-sql-armado Qué falla sin él: Los nosemgrep y las líneas de .trivyignore se acumulan, nadie recuerda por qué, y el gate deja de cortar. Dónde vive: seguridad/excepciones.py y su prueba; el job formato. Paso 2.</desc>
+<defs><marker id="fs01f2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<rect class="dg-box" x="20" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="32" y="36">Qué entra</text>
+<text class="dg-tiny" x="32" y="56">Un hallazgo que no se puede o</text>
+<text class="dg-tiny" x="32" y="72">no se debe arreglar hoy.</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="279" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="291" y="36">Qué hace</text>
+<text class="dg-tiny" x="291" y="56">Lo deja pasar con un motivo</text>
+<text class="dg-tiny" x="291" y="72">escrito y una fecha de 90 días</text>
+<text class="dg-tiny" x="291" y="88">como mucho.</text>
+<rect class="dg-box" x="538" y="16" width="212" height="102" rx="8"/>
+<text class="dg-group" x="550" y="36">Qué sale</text>
+<text class="dg-tiny" x="550" y="56">Un build verde hoy, y uno rojo</text>
+<text class="dg-tiny" x="550" y="72">el día que vence si nadie la</text>
+<text class="dg-tiny" x="550" y="88">revisó.</text>
+<path class="dg-edge" d="M234 67 H275" marker-end="url(#fs01f2a)"/>
+<path class="dg-edge" d="M493 67 H534" marker-end="url(#fs01f2a)"/>
+<rect class="dg-box" x="20" y="132" width="730" height="86" rx="8" style="fill: var(--bg-2)"/>
+<text class="dg-group" x="32" y="152">Ejemplo</text>
+<text class="dg-tiny dg-mono" x="32" y="172" style="white-space:pre"># excepcion: tienda-sql-armado hasta=2026-12-31 motivo=consulta-fija</text>
+<text class="dg-tiny dg-mono" x="32" y="188" style="white-space:pre">db.execute(&quot;SELECT 1&quot; + SUFIJO)  # nosemgrep: tienda-sql-armado</text>
+<rect class="dg-warnbox" x="20" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="32" y="252">Qué falla sin él</text>
+<text class="dg-tiny" x="32" y="272">Los nosemgrep y las líneas de .trivyignore se</text>
+<text class="dg-tiny" x="32" y="288">acumulan, nadie recuerda por qué, y el gate deja de</text>
+<text class="dg-tiny" x="32" y="304">cortar.</text>
+<rect class="dg-box" x="393" y="232" width="357" height="86" rx="8"/>
+<text class="dg-group" x="405" y="252">Dónde vive</text>
+<text class="dg-tiny" x="405" y="272">seguridad/excepciones.py y su prueba; el job formato.</text>
+<text class="dg-tiny" x="405" y="288">Paso 2.</text>
+</svg>
+  </div>
+  <figcaption><b>Ficha SEC01.F2.</b> La excepción con vencimiento.</figcaption>
+</figure>
+<p>Hay una que no existe: un secreto no se exceptúa. Si gitleaks encuentra una clave real, la clave se rota, porque ya está en la historia y en cada clon (<a href="../modules/m55-appsec.html#secretos">55.6</a>).</p>
+<h2 id="endpoints">Los endpoints</h2>
+<p>El pipeline no agrega endpoints a la tienda: revisa los de <a href="sec00-laboratorio.html#endpoints">SEC00</a>. ZAP baseline recorre lo que encuentra desde <code>/api/productos</code>, la ruta pública. Para la falla 2 vas a agregar y después arreglar uno:</p>
+<div class="table-wrap">
+<table class="t pj-ep">
+<thead><tr><th>Método y ruta</th><th>Qué hace</th><th>Respuestas</th></tr></thead>
+<tbody>
+<tr><td><span class="ep-method" data-m="GET">GET</span><code>/api/buscar?q=</code></td><td>Busca productos por nombre. Llega con la consulta armada a mano, y el pipeline la corta.</td><td>200 con la lista</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="dependencias">Dependencias</h2>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Herramienta</th><th>Versión</th><th>Cómo corre</th><th>Para qué</th></tr></thead>
+<tbody>
+<tr><td>actions/checkout</td><td>7.0.1, SHA <code>3d3c42e5…</code></td><td>Acción</td><td>Bajar el código al runner</td></tr>
+<tr><td>pytest</td><td>9.1.1</td><td>pip en un venv del runner</td><td>Las pruebas del formato del log y de las excepciones</td></tr>
+<tr><td>gitleaks</td><td>8.30.1</td><td>Binario de la página de releases, con checksum</td><td>Secretos en toda la historia</td></tr>
+<tr><td>Semgrep</td><td>1.184.0</td><td>Imagen <code>semgrep/semgrep</code></td><td>Análisis estático con reglas propias</td></tr>
+<tr><td>Trivy</td><td>0.76.2</td><td>Imagen <code>aquasec/trivy</code></td><td>Vulnerabilidades de la imagen de la API</td></tr>
+<tr><td>ZAP</td><td>2.17.0</td><td>Imagen <code>zaproxy/zap-stable</code></td><td>Escaneo pasivo de la tienda levantada</td></tr>
+</tbody>
+</table>
+</div>
+<p>Las versiones y el SHA de checkout son los de cada página de releases y de Docker Hub al 9 de noviembre de 2026 <span class="badge badge--doc">Documentado</span>. Evita Trivy 0.69.4.</p>
+<h2 id="infraestructura">La infraestructura</h2>
+<p>Todo va dentro del repositorio de la tienda. Los archivos nuevos son estos:</p>
+<pre data-lang="text"><code>tienda-norte/
+├── .github/workflows/seguridad.yml   # los cinco jobs (paso 7)
+├── .trivyignore                      # excepciones de Trivy, con fecha (paso 5)
+├── seguridad/
+│   ├── excepciones.py                # revisa motivo y vencimiento (paso 2)
+│   ├── gitleaks.toml                 # las reglas de siempre + la de la tienda (paso 3)
+│   ├── semgrep.yml                   # tres reglas propias (paso 4)
+│   └── zap.conf                      # qué reglas de ZAP cortan (paso 6)
+├── tests/
+│   ├── test_excepciones.py           # paso 2
+│   └── test_registro.py              # el contrato del log (paso 2)
+└── nginx/nginx.conf                  # una cabecera más (paso 6)</code></pre>
+<p>No hay infraestructura que levantar aparte de la tienda: los runners los pone GitHub. Cada herramienta se prueba primero en tu máquina con el mismo comando que corre el workflow, así un job rojo nunca es la primera vez que la ves.</p>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<aside class="hito" id="hito-1" data-toc="skip" aria-labelledby="hito-1-t">
+  <p class="hito-num">Hito 1 de 3, unos 55 min</p>
+  <p class="hito-title" id="hito-1-t">Las piezas, probadas en tu máquina</p>
+  <p>El repositorio en GitHub, las pruebas del log, las excepciones con fecha, gitleaks y Semgrep, cada uno corrido a mano antes de ir al pipeline.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-repo">El repositorio</a></li>
+    <li><a href="#paso-pruebas">El contrato del log y las excepciones</a></li>
+    <li><a href="#paso-secretos">Secretos en toda la historia</a></li>
+    <li><a href="#paso-sast">Tres reglas de Semgrep</a></li>
+  </ol>
+</aside>
+<h3 id="paso-repo">Paso 1. El repositorio</h3>
+<div class="step-map" data-where="commit github">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La carpeta <code>tienda-norte/</code>.</dd></div>
+    <div><dt>Sale</dt><dd>Un repositorio en GitHub con la tienda, sin el <code>.env</code>.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada en el código.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-actions">GitHub Actions</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<pre data-lang="bash"><code>cd sec-lab/tienda-norte
+git init -b main
+git status --short          # .env no tiene que aparecer: está en .gitignore
+git add .
+git commit -m "Tienda Norte mínima (SEC00)"
+git remote add origin git@github.com:TU-USUARIO/tienda-norte.git
+git push -u origin main</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>git ls-files | grep -c env</code></pre>
+  <p>Tiene que dar 0: ningún archivo con <code>env</code> en el nombre está en el repositorio. Si da 1, sácalo con <code>git rm --cached .env</code> antes del push, o la falla 1 de esta guía ya la tienes en <code>main</code>.</p>
+</aside>
+<h3 id="paso-pruebas">Paso 2. El contrato del log y las excepciones</h3>
+<div class="step-map" data-where="formato">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd><code>registro.py</code> y los comentarios de excepción del código.</dd></div>
+    <div><dt>Sale</dt><dd>Pruebas en verde y un script que sale con 0 o con 1.</dd></div>
+    <div><dt>Cambia</dt><dd><code>tests/</code>, <code>seguridad/excepciones.py</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-excepciones">Excepciones que vencen</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="formato">
+  <h4 class="file-card-path" id="archivo-tests-test-registro-py">tests/test_registro.py<span class="file-card-size">38 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Prueba que cada evento es una línea JSON con <code>app</code>, <code>ts</code> y <code>evento</code>, y que una llamada no los pisa.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>El job <code>formato</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd><code>api/registro.py</code> de SEC00.</dd></div>
+    <div><dt>Qué sale</dt><dd>Verde, o el nombre de la prueba que se rompió.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Prepara un archivo temporal y carga el registro apuntando a él.</li>
+    <li>Escribe un evento y comprueba que es una sola línea JSON con los campos que usan las reglas.</li>
+    <li>Intenta pisar app y evento, y comprueba que no se puede.</li>
+  </ol>
+</div>
+<pre data-lang="python"><code>&quot;&quot;&quot;El formato del log es un contrato con el SIEM: si cambia, las reglas de SEC00 dejan de ver.&quot;&quot;&quot;
+import importlib
+import json
+import logging
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / &quot;api&quot;))
+
+
+@pytest.fixture
+def registro(tmp_path, monkeypatch):
+    # (1)
+    archivo = tmp_path / &quot;api.log&quot;
+    monkeypatch.setenv(&quot;TIENDA_LOG&quot;, str(archivo))
+    logging.getLogger(&quot;tienda&quot;).handlers.clear()
+    if &quot;registro&quot; in sys.modules:
+        modulo = importlib.reload(sys.modules[&quot;registro&quot;])
+    else:
+        modulo = importlib.import_module(&quot;registro&quot;)
+    return modulo, archivo</code></pre>
+<ol class="code-key">
+  <li>El registro lee <code>TIENDA_LOG</code> al importarse, así que la prueba fija la variable y lo vuelve a cargar. Antes limpia los manejadores del logger, para que cada prueba escriba en su archivo y una sola vez.</li>
+</ol>
+<pre data-lang="python"><code>def test_una_linea_json_con_los_campos_fijos(registro):
+    modulo, archivo = registro
+    modulo.evento(&quot;login_fallido&quot;, usuario=&quot;ana&quot;, ip=&quot;172.18.0.1&quot;)
+    # (2)
+    lineas = archivo.read_text(encoding=&quot;utf-8&quot;).splitlines()
+    assert len(lineas) == 1
+    linea = json.loads(lineas[0])
+    assert linea[&quot;app&quot;] == &quot;tienda&quot;
+    assert linea[&quot;evento&quot;] == &quot;login_fallido&quot;
+    assert {&quot;ts&quot;, &quot;usuario&quot;, &quot;ip&quot;} &lt;= linea.keys()
+
+
+def test_una_llamada_no_pisa_los_campos_fijos(registro):
+    modulo, archivo = registro
+    # (3)
+    modulo.evento(&quot;pedido_ajeno&quot;, app=&quot;otra&quot;, evento=&quot;nada&quot;, usuario=&quot;beto&quot;)
+    linea = json.loads(archivo.read_text(encoding=&quot;utf-8&quot;))
+    assert (linea[&quot;app&quot;], linea[&quot;evento&quot;]) == (&quot;tienda&quot;, &quot;pedido_ajeno&quot;)</code></pre>
+<ol class="code-key" style="counter-reset: ck 1">
+  <li>Lo que las reglas de SEC00 necesitan: una línea, JSON válido, <code>app</code> igual a <code>tienda</code> y los campos que usan las reglas.</li>
+  <li>La regla de la marca (3) de <code>registro.py</code>: los campos fijos no se pisan.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver tests/test_registro.py completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="python" data-file="tests/test_registro.py"><code>&quot;&quot;&quot;El formato del log es un contrato con el SIEM: si cambia, las reglas de SEC00 dejan de ver.&quot;&quot;&quot;
+import importlib
+import json
+import logging
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / &quot;api&quot;))
+
+
+@pytest.fixture
+def registro(tmp_path, monkeypatch):
+    archivo = tmp_path / &quot;api.log&quot;
+    monkeypatch.setenv(&quot;TIENDA_LOG&quot;, str(archivo))
+    logging.getLogger(&quot;tienda&quot;).handlers.clear()
+    if &quot;registro&quot; in sys.modules:
+        modulo = importlib.reload(sys.modules[&quot;registro&quot;])
+    else:
+        modulo = importlib.import_module(&quot;registro&quot;)
+    return modulo, archivo
+def test_una_linea_json_con_los_campos_fijos(registro):
+    modulo, archivo = registro
+    modulo.evento(&quot;login_fallido&quot;, usuario=&quot;ana&quot;, ip=&quot;172.18.0.1&quot;)
+    lineas = archivo.read_text(encoding=&quot;utf-8&quot;).splitlines()
+    assert len(lineas) == 1
+    linea = json.loads(lineas[0])
+    assert linea[&quot;app&quot;] == &quot;tienda&quot;
+    assert linea[&quot;evento&quot;] == &quot;login_fallido&quot;
+    assert {&quot;ts&quot;, &quot;usuario&quot;, &quot;ip&quot;} &lt;= linea.keys()
+
+
+def test_una_llamada_no_pisa_los_campos_fijos(registro):
+    modulo, archivo = registro
+    modulo.evento(&quot;pedido_ajeno&quot;, app=&quot;otra&quot;, evento=&quot;nada&quot;, usuario=&quot;beto&quot;)
+    linea = json.loads(archivo.read_text(encoding=&quot;utf-8&quot;))
+    assert (linea[&quot;app&quot;], linea[&quot;evento&quot;]) == (&quot;tienda&quot;, &quot;pedido_ajeno&quot;)</code></pre>
+  </div>
+</details>
+<aside class="callout callout--def">
+<p class="callout-label">Python de por medio</p>
+<p><code>@pytest.fixture</code> marca una función que prepara algo para las pruebas: pytest la llama y le pasa el resultado a cada prueba que la nombra como argumento. <code>tmp_path</code> y <code>monkeypatch</code> son fixtures de pytest: una carpeta temporal y una forma de cambiar variables de entorno que se deshace sola. Los decoradores están en <a href="ia00-laboratorio.html#py-decoradores">IA00</a>.</p>
+</aside>
+<div class="file-card" data-where="formato">
+  <h4 class="file-card-path" id="archivo-seguridad-excepciones-py">seguridad/excepciones.py<span class="file-card-size">67 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Revisa que cada <code>nosemgrep</code> y cada línea de <code>.trivyignore</code> tengan motivo y una fecha vigente de 90 días como mucho.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>El job <code>formato</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Los <code>.py</code> del repositorio, salvo <code>tests/</code>, y <code>.trivyignore</code>.</dd></div>
+    <div><dt>Qué sale</dt><dd>Una línea por problema y el código de salida.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Define el tope de 90 días y los formatos de las excepciones.</li>
+    <li>Revisa que una fecha exista, no haya pasado y no esté lejos.</li>
+    <li>Revisa que cada nosemgrep tenga arriba su excepción con la misma regla.</li>
+    <li>Revisa cada línea de .trivyignore.</li>
+    <li>Recorre los archivos de git, imprime los problemas y sale con 0 o con 1.</li>
+  </ol>
+</div>
+<pre data-lang="python"><code>&quot;&quot;&quot;Falla si una excepción de seguridad no tiene motivo o fecha, o si vence en el pasado o en más de 90 días.&quot;&quot;&quot;
+import datetime as dt
+import re
+import subprocess
+import sys
+
+# (1)
+MAXIMO = dt.timedelta(days=90)
+EXC = re.compile(r&quot;#\s*excepcion:\s*(?P&lt;regla&gt;[\w.-]+)\s+hasta=(?P&lt;fecha&gt;\d{4}-\d{2}-\d{2})\s+motivo=\S&quot;)
+NOSEMGREP = re.compile(r&quot;nosemgrep:\s*(?P&lt;regla&gt;[\w.-]+)&quot;)
+EXP = re.compile(r&quot;\bexp:(?P&lt;fecha&gt;\d{4}-\d{2}-\d{2})\b&quot;)
+
+
+def fecha_valida(texto, hoy):
+    # (2)
+    try:
+        fecha = dt.date.fromisoformat(texto)
+    except ValueError:
+        return &quot;la fecha no existe&quot;
+    if fecha &lt; hoy:
+        return f&quot;venció el {fecha}&quot;
+    if fecha - hoy &gt; MAXIMO:
+        return f&quot;vence el {fecha}, a más de 90 días&quot;
+    return None</code></pre>
+<ol class="code-key">
+  <li>El tope y los tres formatos. Una excepción de Semgrep es un comentario <code># excepcion: regla hasta=AAAA-MM-DD motivo=…</code> en la línea de arriba del <code>nosemgrep</code>; la de Trivy usa el <code>exp:</code> que Trivy ya entiende.</li>
+  <li>Una fecha vale si existe, no pasó y no está a más de 90 días.</li>
+</ol>
+<pre data-lang="python"><code>def revisar_codigo(nombre, lineas, hoy):
+    problemas = []
+    for i, linea in enumerate(lineas):
+        m = NOSEMGREP.search(linea)
+        if not m:
+            continue
+        # (3)
+        previa = EXC.search(lineas[i - 1]) if i &gt; 0 else None
+        if not previa or previa[&quot;regla&quot;] != m[&quot;regla&quot;]:
+            problemas.append(f&quot;{nombre}:{i + 1}: nosemgrep sin &#x27;# excepcion: {m[&#x27;regla&#x27;]} hasta=… motivo=…&#x27; arriba&quot;)
+        elif error := fecha_valida(previa[&quot;fecha&quot;], hoy):
+            problemas.append(f&quot;{nombre}:{i + 1}: la excepción {error}&quot;)
+    return problemas</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li>El comentario de arriba tiene que nombrar la misma regla que el <code>nosemgrep</code>: una excepción no tapa otra regla.</li>
+</ol>
+<pre data-lang="python"><code>def revisar_trivyignore(lineas, hoy):
+    problemas = []
+    for i, linea in enumerate(lineas):
+        if not linea.strip() or linea.lstrip().startswith(&quot;#&quot;):
+            continue
+        # (4)
+        m = EXP.search(linea)
+        if not m:
+            problemas.append(f&quot;.trivyignore:{i + 1}: sin exp:AAAA-MM-DD&quot;)
+        elif error := fecha_valida(m[&quot;fecha&quot;], hoy):
+            problemas.append(f&quot;.trivyignore:{i + 1}: la excepción {error}&quot;)
+        if i == 0 or not lineas[i - 1].lstrip().startswith(&quot;# motivo:&quot;):
+            problemas.append(f&quot;.trivyignore:{i + 1}: sin &#x27;# motivo: …&#x27; en la línea de arriba&quot;)
+    return problemas</code></pre>
+<ol class="code-key" style="counter-reset: ck 3">
+  <li>Cada línea de <code>.trivyignore</code> necesita su <code>exp:</code> y un <code># motivo:</code> arriba.</li>
+</ol>
+<pre data-lang="python"><code>def main(hoy=None):
+    hoy = hoy or dt.date.today()
+    # (5)
+    archivos = subprocess.run([&quot;git&quot;, &quot;ls-files&quot;, &quot;*.py&quot;, &quot;:!tests/&quot;], capture_output=True, text=True, check=True).stdout.split()
+    problemas = []
+    for nombre in archivos:
+        with open(nombre, encoding=&quot;utf-8&quot;) as f:
+            problemas += revisar_codigo(nombre, f.read().splitlines(), hoy)
+    try:
+        with open(&quot;.trivyignore&quot;, encoding=&quot;utf-8&quot;) as f:
+            problemas += revisar_trivyignore(f.read().splitlines(), hoy)
+    except FileNotFoundError:
+        pass
+    # (6)
+    for p in problemas:
+        print(p)
+    print(f&quot;{len(problemas)} problemas en las excepciones&quot;)
+    return 1 if problemas else 0
+
+
+if __name__ == &quot;__main__&quot;:
+    sys.exit(main())</code></pre>
+<ol class="code-key" style="counter-reset: ck 4">
+  <li>Los <code>.py</code> que conoce git, sin <code>tests/</code>: las pruebas tienen excepciones de mentira en sus textos a propósito.</li>
+  <li>Imprime todo y sale con 1 si hubo algún problema: es lo que corta el job.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver seguridad/excepciones.py completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="python" data-file="seguridad/excepciones.py"><code>&quot;&quot;&quot;Falla si una excepción de seguridad no tiene motivo o fecha, o si vence en el pasado o en más de 90 días.&quot;&quot;&quot;
+import datetime as dt
+import re
+import subprocess
+import sys
+
+MAXIMO = dt.timedelta(days=90)
+EXC = re.compile(r&quot;#\s*excepcion:\s*(?P&lt;regla&gt;[\w.-]+)\s+hasta=(?P&lt;fecha&gt;\d{4}-\d{2}-\d{2})\s+motivo=\S&quot;)
+NOSEMGREP = re.compile(r&quot;nosemgrep:\s*(?P&lt;regla&gt;[\w.-]+)&quot;)
+EXP = re.compile(r&quot;\bexp:(?P&lt;fecha&gt;\d{4}-\d{2}-\d{2})\b&quot;)
+
+
+def fecha_valida(texto, hoy):
+    try:
+        fecha = dt.date.fromisoformat(texto)
+    except ValueError:
+        return &quot;la fecha no existe&quot;
+    if fecha &lt; hoy:
+        return f&quot;venció el {fecha}&quot;
+    if fecha - hoy &gt; MAXIMO:
+        return f&quot;vence el {fecha}, a más de 90 días&quot;
+    return None
+def revisar_codigo(nombre, lineas, hoy):
+    problemas = []
+    for i, linea in enumerate(lineas):
+        m = NOSEMGREP.search(linea)
+        if not m:
+            continue
+        previa = EXC.search(lineas[i - 1]) if i &gt; 0 else None
+        if not previa or previa[&quot;regla&quot;] != m[&quot;regla&quot;]:
+            problemas.append(f&quot;{nombre}:{i + 1}: nosemgrep sin &#x27;# excepcion: {m[&#x27;regla&#x27;]} hasta=… motivo=…&#x27; arriba&quot;)
+        elif error := fecha_valida(previa[&quot;fecha&quot;], hoy):
+            problemas.append(f&quot;{nombre}:{i + 1}: la excepción {error}&quot;)
+    return problemas
+def revisar_trivyignore(lineas, hoy):
+    problemas = []
+    for i, linea in enumerate(lineas):
+        if not linea.strip() or linea.lstrip().startswith(&quot;#&quot;):
+            continue
+        m = EXP.search(linea)
+        if not m:
+            problemas.append(f&quot;.trivyignore:{i + 1}: sin exp:AAAA-MM-DD&quot;)
+        elif error := fecha_valida(m[&quot;fecha&quot;], hoy):
+            problemas.append(f&quot;.trivyignore:{i + 1}: la excepción {error}&quot;)
+        if i == 0 or not lineas[i - 1].lstrip().startswith(&quot;# motivo:&quot;):
+            problemas.append(f&quot;.trivyignore:{i + 1}: sin &#x27;# motivo: …&#x27; en la línea de arriba&quot;)
+    return problemas
+def main(hoy=None):
+    hoy = hoy or dt.date.today()
+    archivos = subprocess.run([&quot;git&quot;, &quot;ls-files&quot;, &quot;*.py&quot;, &quot;:!tests/&quot;], capture_output=True, text=True, check=True).stdout.split()
+    problemas = []
+    for nombre in archivos:
+        with open(nombre, encoding=&quot;utf-8&quot;) as f:
+            problemas += revisar_codigo(nombre, f.read().splitlines(), hoy)
+    try:
+        with open(&quot;.trivyignore&quot;, encoding=&quot;utf-8&quot;) as f:
+            problemas += revisar_trivyignore(f.read().splitlines(), hoy)
+    except FileNotFoundError:
+        pass
+    for p in problemas:
+        print(p)
+    print(f&quot;{len(problemas)} problemas en las excepciones&quot;)
+    return 1 if problemas else 0
+
+
+if __name__ == &quot;__main__&quot;:
+    sys.exit(main())</code></pre>
+  </div>
+</details>
+<aside class="callout callout--def">
+<p class="callout-label">Python de por medio</p>
+<p><code>elif error := fecha_valida(…)</code> asigna y compara en la misma línea: si la función devuelve un texto, entra al bloque con <code>error</code> ya guardado. Se llama operador morsa.</p>
+</aside>
+<div data-exercise="sec01-p-excepcion"></div>
+<div class="file-card" data-where="formato">
+  <h4 class="file-card-path" id="archivo-tests-test-excepciones-py">tests/test_excepciones.py<span class="file-card-size">32 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Prueba el script con fechas fijas, para que no dependa del día en que corre.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>El job <code>formato</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Líneas de ejemplo.</dd></div>
+    <div><dt>Qué sale</dt><dd>Verde o rojo.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Fija la fecha de hoy.</li>
+    <li>Prueba una excepción bien puesta y una sin nada.</li>
+    <li>Prueba los bordes de la fecha y el formato de .trivyignore.</li>
+  </ol>
+</div>
+<pre data-lang="python"><code>&quot;&quot;&quot;Las reglas de las excepciones, con fechas fijas para que la prueba no dependa del día.&quot;&quot;&quot;
+import datetime as dt
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / &quot;seguridad&quot;))
+import excepciones as ex  # noqa: E402
+
+# (1)
+HOY = dt.date(2026, 11, 9)
+
+
+def test_una_excepcion_bien_puesta_pasa():
+    codigo = [&#x27;# excepcion: tienda-sql-armado hasta=2026-12-31 motivo=consulta-fija&#x27;,
+              &#x27;db.execute(&quot;SELECT 1&quot; + SUFIJO)  # nosemgrep: tienda-sql-armado&#x27;]
+    assert ex.revisar_codigo(&quot;a.py&quot;, codigo, HOY) == []</code></pre>
+<ol class="code-key">
+  <li>Hoy fijo en el 9 de noviembre de 2026. Las funciones reciben <code>hoy</code> por argumento justo para esto.</li>
+</ol>
+<pre data-lang="python"><code>def test_sin_motivo_ni_fecha_falla():
+    codigo = [&#x27;db.execute(f&quot;SELECT {x}&quot;)  # nosemgrep: tienda-sql-armado&#x27;]
+    assert len(ex.revisar_codigo(&quot;a.py&quot;, codigo, HOY)) == 1
+
+
+def test_vencida_o_demasiado_lejos_falla():
+    # (2)
+    assert ex.fecha_valida(&quot;2026-11-08&quot;, HOY) == &quot;venció el 2026-11-08&quot;
+    assert ex.fecha_valida(&quot;2027-02-08&quot;, HOY) == &quot;vence el 2027-02-08, a más de 90 días&quot;
+    assert ex.fecha_valida(&quot;2027-02-07&quot;, HOY) is None
+
+
+def test_trivyignore_pide_exp_y_motivo():
+    lineas = [&quot;# motivo: sin arreglo en la base&quot;, &quot;CVE-2026-0001 exp:2026-12-01&quot;, &quot;CVE-2026-0002&quot;]
+    # (3)
+    assert ex.revisar_trivyignore(lineas, HOY) == [
+        &quot;.trivyignore:3: sin exp:AAAA-MM-DD&quot;,
+        &quot;.trivyignore:3: sin &#x27;# motivo: …&#x27; en la línea de arriba&quot;,
+    ]</code></pre>
+<ol class="code-key" style="counter-reset: ck 1">
+  <li>Los bordes, con la cuenta a mano: del 9 de noviembre al 7 de febrero son 90 días y pasa; al 8, 91 y no.</li>
+  <li>Una línea sin <code>exp:</code> y sin motivo deja dos problemas, en el orden en que se revisan.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver tests/test_excepciones.py completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="python" data-file="tests/test_excepciones.py"><code>&quot;&quot;&quot;Las reglas de las excepciones, con fechas fijas para que la prueba no dependa del día.&quot;&quot;&quot;
+import datetime as dt
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / &quot;seguridad&quot;))
+import excepciones as ex  # noqa: E402
+
+HOY = dt.date(2026, 11, 9)
+
+
+def test_una_excepcion_bien_puesta_pasa():
+    codigo = [&#x27;# excepcion: tienda-sql-armado hasta=2026-12-31 motivo=consulta-fija&#x27;,
+              &#x27;db.execute(&quot;SELECT 1&quot; + SUFIJO)  # nosemgrep: tienda-sql-armado&#x27;]
+    assert ex.revisar_codigo(&quot;a.py&quot;, codigo, HOY) == []
+def test_sin_motivo_ni_fecha_falla():
+    codigo = [&#x27;db.execute(f&quot;SELECT {x}&quot;)  # nosemgrep: tienda-sql-armado&#x27;]
+    assert len(ex.revisar_codigo(&quot;a.py&quot;, codigo, HOY)) == 1
+
+
+def test_vencida_o_demasiado_lejos_falla():
+    assert ex.fecha_valida(&quot;2026-11-08&quot;, HOY) == &quot;venció el 2026-11-08&quot;
+    assert ex.fecha_valida(&quot;2027-02-08&quot;, HOY) == &quot;vence el 2027-02-08, a más de 90 días&quot;
+    assert ex.fecha_valida(&quot;2027-02-07&quot;, HOY) is None
+
+
+def test_trivyignore_pide_exp_y_motivo():
+    lineas = [&quot;# motivo: sin arreglo en la base&quot;, &quot;CVE-2026-0001 exp:2026-12-01&quot;, &quot;CVE-2026-0002&quot;]
+    assert ex.revisar_trivyignore(lineas, HOY) == [
+        &quot;.trivyignore:3: sin exp:AAAA-MM-DD&quot;,
+        &quot;.trivyignore:3: sin &#x27;# motivo: …&#x27; en la línea de arriba&quot;,
+    ]</code></pre>
+  </div>
+</details>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>python -m venv .venv &amp;&amp; .venv/bin/pip install pytest==9.1.1     # en Windows: .venv\Scripts\pip
+.venv/bin/python -m pytest -q tests
+python seguridad/excepciones.py</code></pre>
+  <p>pytest termina con <code>6 passed</code>: dos pruebas de <code>test_registro.py</code> y cuatro de <code>test_excepciones.py</code>. El script imprime <code>0 problemas en las excepciones</code> y sale con 0.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>ModuleNotFoundError: No module named &#x27;registro&#x27;</code>: La prueba agrega <code>api/</code> al camino relativo a su archivo: tiene que estar en <code>tests/</code>, al lado de <code>api/</code>.</li>
+    <li><code>PermissionError en /var/log/tienda</code>: El registro se importó sin <code>TIENDA_LOG</code>. No importes <code>registro</code> arriba del archivo de prueba: lo hace la fixture.</li>
+    <li><code>fatal: not a git repository</code>: <code>excepciones.py</code> usa <code>git ls-files</code>: córrelo desde la raíz del repositorio.</li>
+  </ul>
+</aside>
+<h3 id="paso-secretos">Paso 3. Secretos en toda la historia</h3>
+<div class="step-map" data-where="secretos">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Toda la historia de git.</dd></div>
+    <div><dt>Sale</dt><dd>Los hallazgos, con el secreto tapado, y el código de salida.</dd></div>
+    <div><dt>Cambia</dt><dd><code>seguridad/gitleaks.toml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-gate">El gate</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="secretos">
+  <h4 class="file-card-path" id="archivo-seguridad-gitleaks-toml">seguridad/gitleaks.toml<span class="file-card-size">11 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Suma a las reglas de gitleaks una para la clave de la base de la tienda.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>gitleaks, en el job <code>secretos</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Cada línea de cada commit.</dd></div>
+    <div><dt>Qué sale</dt><dd>Hallazgos con el archivo, el commit y la regla.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Conserva las reglas de gitleaks.</li>
+    <li>Suma una regla para la clave de la base de Tienda Norte.</li>
+  </ol>
+</div>
+<pre data-lang="toml"><code>title = &quot;Tienda Norte&quot;
+
+# (1)
+[extend]
+useDefault = true
+
+# (2)
+[[rules]]
+id = &quot;tienda-db-clave&quot;
+description = &quot;La clave de la base de Tienda Norte escrita en un archivo&quot;
+regex = &#x27;&#x27;&#x27;TIENDA_DB_CLAVE\s*=\s*[&#x27;&quot;]?([^\s&#x27;&quot;$]{8,})&#x27;&#x27;&#x27;
+secretGroup = 1
+keywords = [&quot;tienda_db_clave&quot;]</code></pre>
+<ol class="code-key">
+  <li><code>useDefault = true</code> conserva las reglas que trae gitleaks (claves de nubes, tokens de servicios conocidos, llaves privadas) y suma las tuyas.</li>
+  <li>La regla propia: <code>TIENDA_DB_CLAVE=</code> seguido de ocho o más caracteres que no sean espacio, comilla ni <code>$</code>. El <code>$</code> excluye <code>${TIENDA_DB_CLAVE}</code> del compose y el <code>$(openssl …)</code> del workflow. <code>keywords</code> deja que gitleaks salte las líneas que no la mencionan, que es lo que lo hace rápido.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver seguridad/gitleaks.toml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="toml" data-file="seguridad/gitleaks.toml"><code>title = &quot;Tienda Norte&quot;
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = &quot;tienda-db-clave&quot;
+description = &quot;La clave de la base de Tienda Norte escrita en un archivo&quot;
+regex = &#x27;&#x27;&#x27;TIENDA_DB_CLAVE\s*=\s*[&#x27;&quot;]?([^\s&#x27;&quot;$]{8,})&#x27;&#x27;&#x27;
+secretGroup = 1
+keywords = [&quot;tienda_db_clave&quot;]</code></pre>
+  </div>
+</details>
+<div data-exercise="sec01-p-gitleaks"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker run --rm -v &quot;$PWD:/repo&quot; zricethezav/gitleaks:v8.30.1 git --config /repo/seguridad/gitleaks.toml --redact --verbose /repo</code></pre>
+  <p>En tu máquina, con la imagen oficial: <code>no leaks found</code> y código 0. Si git se queja de <code>dubious ownership</code>, es el dueño de la carpeta montada; en el pipeline no pasa, porque usa el binario. El workflow baja ese binario y verifica su checksum antes de correrlo.</p>
+</aside>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>WRN leaks found: 1 en un archivo de SEC00</code>: Lee el hallazgo: si es un falso positivo de una regla de gitleaks, agrega su <code>Fingerprint</code> a un archivo <code>.gitleaksignore</code> en la raíz. Si es una clave real, rótala.</li>
+    <li><code>Failed to load config</code>: El TOML está mal: <code>python -c "import tomllib;tomllib.load(open('seguridad/gitleaks.toml','rb'))"</code> dice la línea.</li>
+  </ul>
+</aside>
+<h3 id="paso-sast">Paso 4. Tres reglas de Semgrep</h3>
+<div class="step-map" data-where="sast">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>El código Python de la tienda.</dd></div>
+    <div><dt>Sale</dt><dd>Los hallazgos con la línea y el mensaje, y el código de salida.</dd></div>
+    <div><dt>Cambia</dt><dd><code>seguridad/semgrep.yml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-gate">El gate</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="sast">
+  <h4 class="file-card-path" id="archivo-seguridad-semgrep-yml">seguridad/semgrep.yml<span class="file-card-size">26 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Tres reglas sobre errores que Tienda Norte puede cometer: SQL armado, hashes débiles y claves en el log.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>Semgrep, en el job <code>sast</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Los <code>.py</code> del repositorio.</dd></div>
+    <div><dt>Qué sale</dt><dd>Hallazgos de severidad ERROR, que con <code>--error</code> cortan.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Marca el SQL armado con texto en lugar de parámetros.</li>
+    <li>Marca MD5 y SHA-1.</li>
+    <li>Marca un evento que lleva la clave.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code>rules:
+  # (1)
+  - id: tienda-sql-armado
+    languages: [python]
+    severity: ERROR
+    message: &gt;
+      SQL armado con texto del programa. Usa parámetros (%s) y pasa los valores aparte,
+      para que el driver los mande separados de la consulta.
+    pattern-either:
+      - pattern: $DB.execute(f&quot;...&quot;, ...)
+      - pattern: $DB.execute(&quot;...&quot; + $X, ...)
+      - pattern: $DB.execute(&quot;...&quot; % $X, ...)
+      - pattern: $DB.execute(&quot;...&quot;.format(...), ...)</code></pre>
+<ol class="code-key">
+  <li>SQL armado con texto del programa: un f-string, un <code>+</code>, un <code>%</code> o un <code>.format</code> en el primer argumento de <code>execute</code>. <code>$DB</code> es una metavariable: vale para cualquier nombre de conexión. Es la inyección de <a href="../modules/m79-inyecciones.html">M79</a>.</li>
+</ol>
+<pre data-lang="yaml"><code>  # (2)
+  - id: tienda-hash-debil
+    languages: [python]
+    severity: ERROR
+    message: MD5 y SHA-1 no sirven para claves ni para firmas. Para claves, scrypt como en app.py.
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+  # (3)
+  - id: tienda-clave-en-log
+    languages: [python]
+    severity: ERROR
+    message: Un evento con la clave adentro convierte el log en una lista de claves casi correctas.
+    pattern-either:
+      - pattern: evento(..., clave=$X, ...)
+      - pattern: evento(..., password=$X, ...)</code></pre>
+<ol class="code-key" style="counter-reset: ck 1">
+  <li>MD5 y SHA-1, que no sirven para claves (<a href="../modules/m36-criptografia.html">M36</a>). La tienda usa scrypt; la regla evita que alguien lo cambie por algo "más simple".</li>
+  <li>Una clave dentro de un evento del registro de SEC00, el error del paso 1 de <a href="sec00-laboratorio.html#viaje">su viaje</a>.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver seguridad/semgrep.yml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file="seguridad/semgrep.yml"><code>rules:
+  - id: tienda-sql-armado
+    languages: [python]
+    severity: ERROR
+    message: &gt;
+      SQL armado con texto del programa. Usa parámetros (%s) y pasa los valores aparte,
+      para que el driver los mande separados de la consulta.
+    pattern-either:
+      - pattern: $DB.execute(f&quot;...&quot;, ...)
+      - pattern: $DB.execute(&quot;...&quot; + $X, ...)
+      - pattern: $DB.execute(&quot;...&quot; % $X, ...)
+      - pattern: $DB.execute(&quot;...&quot;.format(...), ...)
+  - id: tienda-hash-debil
+    languages: [python]
+    severity: ERROR
+    message: MD5 y SHA-1 no sirven para claves ni para firmas. Para claves, scrypt como en app.py.
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+  - id: tienda-clave-en-log
+    languages: [python]
+    severity: ERROR
+    message: Un evento con la clave adentro convierte el log en una lista de claves casi correctas.
+    pattern-either:
+      - pattern: evento(..., clave=$X, ...)
+      - pattern: evento(..., password=$X, ...)</code></pre>
+  </div>
+</details>
+<div data-exercise="sec01-p-semgrep"></div>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker run --rm -v &quot;$PWD:/src&quot; semgrep/semgrep:1.184.0 semgrep scan --config /src/seguridad/semgrep.yml --error --metrics=off /src</code></pre>
+  <p>Sobre el código de SEC00: ningún hallazgo y código 0, porque <code>app.py</code> pasa los valores como parámetros. Ese es el punto de partida que el gate tiene que poder cumplir.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Tres reglas propias que cortan, sobre errores que la tienda puede cometer.</dd></div>
+<div><dt>Lo que descartas</dt><dd>El paquete <code>p/python</code> del registro de Semgrep cortando desde el primer día: muchas reglas, algunas sobre cosas que la tienda no usa, y el equipo aprende a saltear el job.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Tres reglas no ven todo. Suma el paquete del registro en un job aparte sin <code>--error</code>, lee lo que marca durante unas semanas y pasa al gate las reglas que acierten.</dd></div>
+</dl>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>El repositorio en GitHub sin el <code>.env</code>.</li>
+    <li>Seis pruebas y el script de excepciones en verde.</li>
+    <li>gitleaks y Semgrep corridos en tu máquina, sin hallazgos.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>.venv/bin/python -m pytest -q tests &amp;&amp; python seguridad/excepciones.py &amp;&amp; echo listo</code></pre>
+  <p>Tiene que terminar con <code>listo</code>. Si alguno falla, el <code>&&</code> corta antes y dice cuál.</p>
+</aside>
+<aside class="hito" id="hito-2" data-toc="skip" aria-labelledby="hito-2-t">
+  <p class="hito-num">Hito 2 de 3, unos 45 min</p>
+  <p class="hito-title" id="hito-2-t">Lo que corre la tienda</p>
+  <p>La imagen de la API revisada con Trivy y la tienda levantada revisada con ZAP, con sus umbrales y una cabecera que faltaba.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-imagen">La imagen, con Trivy</a></li>
+    <li><a href="#paso-dast">La tienda andando, con ZAP</a></li>
+  </ol>
+</aside>
+<h3 id="paso-imagen">Paso 5. La imagen, con Trivy</h3>
+<div class="step-map" data-where="imagen hub">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La imagen <code>tienda-api:ci</code>.</dd></div>
+    <div><dt>Sale</dt><dd>Las vulnerabilidades HIGH y CRITICAL con arreglo, y el código de salida.</dd></div>
+    <div><dt>Cambia</dt><dd><code>.trivyignore</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-excepciones">Excepciones que vencen</a></dd></div>
+    <div><dt>Tiempo</dt><dd>15 min</dd></div>
+  </dl>
+</div>
+<p>Trivy mira los paquetes del sistema de la imagen base y los de Python instalados con pip, y los compara con su base de vulnerabilidades, que baja en cada corrida.</p>
+<pre data-lang="shell" data-file=".trivyignore"><code># Cada excepción lleva un motivo en la línea de arriba y vence en 90 días como mucho.
+# Formato: el id, un espacio y exp:AAAA-MM-DD. seguridad/excepciones.py lo revisa.</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker build -t tienda-api:ci api
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v &quot;$PWD:/repo&quot; aquasec/trivy:0.76.2 image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /repo/.trivyignore tienda-api:ci</code></pre>
+  <p>Una tabla por cada parte de la imagen (el sistema de Debian y los paquetes de Python) con las vulnerabilidades que encontró. Si las tablas están vacías, sale con 0. Si no, lee cada fila: casi siempre es un paquete de la base que se arregla reconstruyendo con una <code>python:3.13.x-slim</code> más nueva.</p>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>HIGH y CRITICAL, solo las que tienen arreglo, y excepciones con fecha.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Cortar por cualquier severidad, que llena el job de MEDIUM y LOW de la base que nadie va a arreglar; o no cortar, y leer un informe que nadie lee.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>La base de Trivy cambia todos los días: un build que ayer pasó hoy puede cortar sin que nadie haya tocado nada. Es el trade-off buscado, porque esa vulnerabilidad nueva sí está en tu imagen; prioriza con lo de <a href="../modules/m58-vulnerabilidades.html">M58</a>.</dd></div>
+</dl>
+<p>Si tienes que dejar pasar una, escríbela así en <code>.trivyignore</code>, con su motivo arriba:</p>
+<pre data-lang="shell"><code># motivo: libfoo en la base de Debian; el arreglo no llegó a la imagen slim
+CVE-2026-12345 exp:2026-12-31</code></pre>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Cannot connect to the Docker daemon</code>: Trivy necesita el socket de Docker para leer la imagen local: falta el <code>-v /var/run/docker.sock:…</code>. En Windows con Docker Desktop el mismo comando funciona desde Git Bash o WSL.</li>
+    <li><code>FATAL ... failed to download vulnerability DB</code>: Trivy no pudo bajar su base: es la red o un límite de descargas. Reintenta; en el pipeline, el job se vuelve a correr desde la pestaña Actions.</li>
+  </ul>
+</aside>
+<h3 id="paso-dast">Paso 6. La tienda andando, con ZAP</h3>
+<div class="step-map" data-where="dast tienda">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>La tienda levantada en 127.0.0.1:8088.</dd></div>
+    <div><dt>Sale</dt><dd>Los avisos de ZAP, con las reglas que cortan.</dd></div>
+    <div><dt>Cambia</dt><dd><code>seguridad/zap.conf</code>, <code>nginx/nginx.conf</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-gate">El gate</a></dd></div>
+    <div><dt>Tiempo</dt><dd>25 min</dd></div>
+  </dl>
+</div>
+<p>ZAP baseline recorre la aplicación desde una URL y corre sus reglas pasivas: mira las respuestas, no manda ataques. Es lo que se puede correr en cada pull request sin riesgo para nada (<a href="../modules/m55-appsec.html#dast">55.7</a>).</p>
+<div class="file-card" data-where="dast">
+  <h4 class="file-card-path" id="archivo-seguridad-zap-conf">seguridad/zap.conf<span class="file-card-size">3 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Dice qué reglas de ZAP cortan el build y cuáles solo avisan.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>zap-baseline.py, en el job <code>dast</code>.</dd></div>
+    <div><dt>Qué entra</dt><dd>Los hallazgos de ZAP.</dd></div>
+    <div><dt>Qué sale</dt><dd>FAIL, WARN o IGNORE por regla.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Sube a FAIL las dos cabeceras que la tienda puede cumplir y deja la CSP como aviso.</li>
+  </ol>
+</div>
+<pre data-lang="shell"><code># (1)
+10021	FAIL	(X-Content-Type-Options Header Missing)
+10038	WARN	(Content Security Policy (CSP) Header Not Set)
+10036	FAIL	(Server Leaks Version Information via &quot;Server&quot; HTTP Response Header Field)</code></pre>
+<ol class="code-key">
+  <li>Una línea por regla, con el id, la acción y el nombre, separados por tabuladores (no espacios). 10021 y 10036 cortan: son cabeceras que la tienda puede poner hoy. 10038, la CSP, avisa: una API JSON necesita una política distinta de la de una página, y se ve en <a href="../modules/m78-csp-cabeceras.html">M78</a>.</li>
+</ol>
+<p>La cabecera que falta va en Nginx, en el <code>location /api/</code> de SEC00. <code>always</code> la pone también en las respuestas de error:</p>
+<pre data-lang="nginx"><code>        location /api/ {
+            proxy_pass http://api:8000;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Host $host;
+            add_header X-Content-Type-Options nosniff always;
+        }</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>docker compose up -d --build
+mkdir -p zap &amp;&amp; chmod 777 zap &amp;&amp; cp seguridad/zap.conf zap/
+docker run --rm --network host -v &quot;$PWD/zap:/zap/wrk:rw&quot; zaproxy/zap-stable:2.17.0 zap-baseline.py -t http://127.0.0.1:8088/api/productos -c zap.conf -r informe.html -I</code></pre>
+  <p>Al final, ZAP imprime cuántas reglas dieron <code>PASS</code>, <code>WARN</code> y <code>FAIL</code>, y deja <code>zap/informe.html</code>. Con la cabecera puesta, el diseño espera <code>FAIL-NEW: 0</code>. <code>--network host</code> funciona en Linux; con Docker Desktop, cambia la URL por <code>http://host.docker.internal:8088/api/productos</code> y quita <code>--network host</code>.</p>
+</aside>
+<div data-exercise="sec01-p-zap"></div>
+<aside class="callout callout--fail">
+  <p class="callout-label">Errores típicos</p>
+  <ul class="pj-errs">
+    <li><code>Permission denied: &#x27;/zap/wrk/zap.conf&#x27;</code>: La carpeta no deja escribir al usuario de ZAP: es el <code>chmod 777 zap</code>.</li>
+    <li><code>Failed to access summary file / connection refused</code>: La tienda no estaba lista o la URL no llega desde el contenedor. Prueba primero <code>curl http://127.0.0.1:8088/api/salud</code>.</li>
+  </ul>
+</aside>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>La imagen revisada por Trivy con un umbral que se puede cumplir.</li>
+    <li>La tienda revisada por ZAP, con la cabecera que faltaba puesta.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>docker compose exec nginx nginx -t &amp;&amp; curl -sI http://127.0.0.1:8088/api/productos | grep -i x-content-type</code></pre>
+  <p><code>nginx -t</code> dice <code>syntax is ok</code> y el <code>curl</code> muestra <code>X-Content-Type-Options: nosniff</code>. Si se ve, el hito está cerrado. Antes de seguir, recarga Nginx con <code>docker compose restart nginx</code> si cambiaste la configuración con la tienda andando.</p>
+</aside>
+<aside class="hito" id="hito-3" data-toc="skip" aria-labelledby="hito-3-t">
+  <p class="hito-num">Hito 3 de 3, unos 40 min</p>
+  <p class="hito-title" id="hito-3-t">El pipeline que corta</p>
+  <p>El workflow que junta las cinco piezas, la regla de la rama que lo hace obligatorio y cinco fallas plantadas.</p>
+  <ol class="hito-steps">
+    <li><a href="#paso-workflow">El workflow</a></li>
+    <li><a href="#paso-proteger">La regla de la rama</a></li>
+    <li><a href="#comprueba-fallas">Las fallas, a propósito</a></li>
+  </ol>
+</aside>
+<h3 id="paso-workflow">Paso 7. El workflow</h3>
+<div class="step-map" data-where="commit github formato secretos sast imagen dast tienda">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Un pull request.</dd></div>
+    <div><dt>Sale</dt><dd>Cinco checks con su estado.</dd></div>
+    <div><dt>Cambia</dt><dd><code>.github/workflows/seguridad.yml</code></dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-actions">GitHub Actions</a></dd></div>
+    <div><dt>Tiempo</dt><dd>20 min</dd></div>
+  </dl>
+</div>
+<div class="file-card" data-where="formato secretos sast imagen dast">
+  <h4 class="file-card-path" id="archivo-github-workflows-seguridad-yml">.github/workflows/seguridad.yml<span class="file-card-size">86 líneas</span></h4>
+  <dl class="file-card-rows">
+    <div><dt>Qué hace</dt><dd>Corre las cinco revisiones en cada pull request y en cada push a <code>main</code>.</dd></div>
+    <div><dt>Quién lo usa</dt><dd>GitHub Actions.</dd></div>
+    <div><dt>Qué entra</dt><dd>El código del pull request.</dd></div>
+    <div><dt>Qué sale</dt><dd>Cinco checks, verdes o rojos.</dd></div>
+  </dl>
+</div>
+<div class="pseudo">
+  <p class="pseudo-label">En palabras, antes del código</p>
+  <ol>
+    <li>Corre en cada pull request y en cada push a main, con un token de solo lectura.</li>
+    <li>formato: corre las pruebas y el script de excepciones.</li>
+    <li>secretos: baja gitleaks, verifica su checksum y recorre toda la historia.</li>
+    <li>sast: corre Semgrep con las reglas propias.</li>
+    <li>imagen: construye la imagen de la API y la revisa con Trivy.</li>
+    <li>dast: cuando los otros pasan, levanta la tienda, la mira con ZAP y la apaga.</li>
+  </ol>
+</div>
+<pre data-lang="yaml"><code>name: seguridad
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# (1)
+permissions:
+  contents: read
+
+jobs:
+  formato:
+    runs-on: ubuntu-24.04
+    steps:
+      # (2)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pruebas del formato del log y de las excepciones
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install pytest==9.1.1
+          .venv/bin/python -m pytest -q tests
+          python3 seguridad/excepciones.py</code></pre>
+<ol class="code-key">
+  <li>El token del workflow solo lee el contenido. Ninguna herramienta puede escribir en el repositorio, comentar ni crear releases aunque se vea comprometida.</li>
+  <li>La única acción, fijada por el SHA del commit de la versión 7.0.1; el comentario dice qué versión es para quien lo lea. <code>persist-credentials: false</code> evita que el token quede en <code>.git/config</code>.</li>
+</ol>
+<pre data-lang="yaml"><code>  secretos:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # (3)
+          fetch-depth: 0
+      - name: gitleaks sobre toda la historia
+        # (4)
+        run: |
+          V=8.30.1
+          curl -sSfLO &quot;https://github.com/gitleaks/gitleaks/releases/download/v$V/gitleaks_${V}_linux_x64.tar.gz&quot;
+          curl -sSfLO &quot;https://github.com/gitleaks/gitleaks/releases/download/v$V/gitleaks_${V}_checksums.txt&quot;
+          sha256sum --check --ignore-missing &quot;gitleaks_${V}_checksums.txt&quot;
+          tar -xzf &quot;gitleaks_${V}_linux_x64.tar.gz&quot; gitleaks
+          ./gitleaks git --config seguridad/gitleaks.toml --redact --verbose .</code></pre>
+<ol class="code-key" style="counter-reset: ck 2">
+  <li><code>fetch-depth: 0</code> baja toda la historia; sin eso, el checkout trae un solo commit y gitleaks no ve lo que se borró antes.</li>
+  <li>El binario de gitleaks desde su página de releases, con su checksum verificado antes de correrlo: si alguien cambia el archivo, <code>sha256sum --check</code> falla y el job corta.</li>
+</ol>
+<pre data-lang="yaml"><code>  sast:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Semgrep con las reglas de la tienda
+        # (5)
+        run: &gt;
+          docker run --rm -v &quot;$PWD:/src&quot; semgrep/semgrep:1.184.0
+          semgrep scan --config /src/seguridad/semgrep.yml --error --metrics=off /src</code></pre>
+<ol class="code-key" style="counter-reset: ck 4">
+  <li>Semgrep desde su imagen, con las reglas del repositorio y sin mandar métricas.</li>
+</ol>
+<pre data-lang="yaml"><code>  imagen:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Construir la imagen de la API
+        run: docker build -t tienda-api:ci api
+      - name: Trivy sobre la imagen
+        # (6)
+        run: &gt;
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v &quot;$PWD:/repo&quot;
+          aquasec/trivy:0.76.2 image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed
+          --ignorefile /repo/.trivyignore tienda-api:ci</code></pre>
+<ol class="code-key" style="counter-reset: ck 5">
+  <li>La imagen se construye en el runner y Trivy la lee por el socket de Docker. El <code>--ignorefile</code> apunta al repositorio montado.</li>
+</ol>
+<pre data-lang="yaml"><code>  dast:
+    runs-on: ubuntu-24.04
+    # (7)
+    needs: [formato, secretos, sast, imagen]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Levantar la tienda
+        # (8)
+        run: |
+          echo &quot;TIENDA_DB_CLAVE=$(openssl rand -hex 16)&quot; &gt; .env
+          docker compose up -d --build
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8088/api/salud &amp;&amp; break; sleep 2; done
+          curl -sSf http://127.0.0.1:8088/api/salud
+      - name: ZAP baseline
+        # (9)
+        run: |
+          mkdir -p zap &amp;&amp; chmod 777 zap
+          cp seguridad/zap.conf zap/
+          docker run --rm --network host -v &quot;$PWD/zap:/zap/wrk:rw&quot; zaproxy/zap-stable:2.17.0 \
+            zap-baseline.py -t http://127.0.0.1:8088/api/productos -c zap.conf -r informe.html -I
+      - name: Guardar el informe de ZAP
+        if: always()
+        run: ls -l zap
+      - name: Apagar la tienda
+        if: always()
+        run: docker compose down -v</code></pre>
+<ol class="code-key" style="counter-reset: ck 6">
+  <li>dast espera a los otros cuatro: no tiene sentido levantar una tienda que ya tiene una clave adentro.</li>
+  <li>Una clave al azar para la base de esta corrida, y una espera de hasta un minuto a que la API responda.</li>
+  <li>ZAP contra la tienda del runner. <code>-I</code> hace que los avisos no corten; lo que corta es lo que <code>zap.conf</code> marca como FAIL.</li>
+</ol>
+<details class="solution file-full" data-toc="skip">
+  <summary>Ver .github/workflows/seguridad.yml completo, sin marcas, para copiar</summary>
+  <div class="solution-body">
+<pre data-lang="yaml" data-file=".github/workflows/seguridad.yml"><code>name: seguridad
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  formato:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pruebas del formato del log y de las excepciones
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install pytest==9.1.1
+          .venv/bin/python -m pytest -q tests
+          python3 seguridad/excepciones.py
+  secretos:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: gitleaks sobre toda la historia
+        run: |
+          V=8.30.1
+          curl -sSfLO &quot;https://github.com/gitleaks/gitleaks/releases/download/v$V/gitleaks_${V}_linux_x64.tar.gz&quot;
+          curl -sSfLO &quot;https://github.com/gitleaks/gitleaks/releases/download/v$V/gitleaks_${V}_checksums.txt&quot;
+          sha256sum --check --ignore-missing &quot;gitleaks_${V}_checksums.txt&quot;
+          tar -xzf &quot;gitleaks_${V}_linux_x64.tar.gz&quot; gitleaks
+          ./gitleaks git --config seguridad/gitleaks.toml --redact --verbose .
+  sast:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Semgrep con las reglas de la tienda
+        run: &gt;
+          docker run --rm -v &quot;$PWD:/src&quot; semgrep/semgrep:1.184.0
+          semgrep scan --config /src/seguridad/semgrep.yml --error --metrics=off /src
+  imagen:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Construir la imagen de la API
+        run: docker build -t tienda-api:ci api
+      - name: Trivy sobre la imagen
+        run: &gt;
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v &quot;$PWD:/repo&quot;
+          aquasec/trivy:0.76.2 image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed
+          --ignorefile /repo/.trivyignore tienda-api:ci
+  dast:
+    runs-on: ubuntu-24.04
+    needs: [formato, secretos, sast, imagen]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Levantar la tienda
+        run: |
+          echo &quot;TIENDA_DB_CLAVE=$(openssl rand -hex 16)&quot; &gt; .env
+          docker compose up -d --build
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8088/api/salud &amp;&amp; break; sleep 2; done
+          curl -sSf http://127.0.0.1:8088/api/salud
+      - name: ZAP baseline
+        run: |
+          mkdir -p zap &amp;&amp; chmod 777 zap
+          cp seguridad/zap.conf zap/
+          docker run --rm --network host -v &quot;$PWD/zap:/zap/wrk:rw&quot; zaproxy/zap-stable:2.17.0 \
+            zap-baseline.py -t http://127.0.0.1:8088/api/productos -c zap.conf -r informe.html -I
+      - name: Guardar el informe de ZAP
+        if: always()
+        run: ls -l zap
+      - name: Apagar la tienda
+        if: always()
+        run: docker compose down -v</code></pre>
+  </div>
+</details>
+<pre data-lang="bash"><code>git checkout -b pipeline
+git add .github seguridad tests .trivyignore nginx/nginx.conf
+git commit -m "Pipeline de seguridad (SEC01)"
+git push -u origin pipeline          # y abre el pull request en GitHub</code></pre>
+<aside class="callout callout--try">
+  <p class="callout-label">Pruébalo ahora</p>
+<pre data-lang="bash"><code>gh pr checks</code></pre>
+  <p>Con la CLI de GitHub, o en la pestaña Checks del pull request: cinco checks, <code>formato</code>, <code>secretos</code>, <code>sast</code>, <code>imagen</code> y <code>dast</code>, con su estado. El diseño espera los cinco en verde; si <code>imagen</code> sale en rojo, es la base de Python (mira el paso 5).</p>
+</aside>
+<h3 id="paso-proteger">Paso 8. La regla de la rama</h3>
+<div class="step-map" data-where="github">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>Los cinco checks.</dd></div>
+    <div><dt>Sale</dt><dd>Un botón de merge que solo se habilita con los cinco en verde.</dd></div>
+    <div><dt>Cambia</dt><dd>La configuración del repositorio, no el código.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-gate">El gate</a></dd></div>
+    <div><dt>Tiempo</dt><dd>5 min</dd></div>
+  </dl>
+</div>
+<p>Un check rojo no impide nada por sí solo: avisa. Lo que impide mezclar es una regla sobre <code>main</code>. En GitHub, en Settings, Rules, Rulesets, crea una para la rama por defecto con "Require a pull request before merging" y "Require status checks to pass", y agrega los cinco checks por nombre <span class="badge badge--doc">Documentado</span>. Marca también "Block force pushes": un push forzado a <code>main</code> se saltaría todo.</p>
+<aside class="callout callout--tradeoff">
+<p class="callout-label">Trade-off</p>
+<p>Si tú eres la única persona del repositorio, la regla también te frena a ti. Es lo que quieres: el día que estés apurado es el día que entra la clave.</p>
+</aside>
+<h2 id="viaje">El viaje de un dato</h2>
+<p>El caso principal: un pull request que agrega <code>/api/buscar</code> con la consulta armada a mano.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 444" role="img" aria-labelledby="fs01st fs01sd">
+<title id="fs01st">Un pull request con SQL armado, por los cinco jobs</title>
+<desc id="fs01sd">Haces push. GitHub arranca formato, secretos, sast e imagen a la vez. formato, secretos e imagen pasan. sast corre Semgrep, que encuentra tienda-sql-armado en app.py y sale con 1. dast no arranca porque uno de los que espera falló. El pull request muestra sast en rojo y la regla de la rama no deja mezclar.</desc>
+<defs><marker id="fs01s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fs01s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fs01s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fs01s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="11.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Tú</text>
+<path class="dg-frame" d="M70.0 40 V434"/>
+<rect class="dg-box" x="137.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="196.0" y="29" text-anchor="middle" style="font-size:13.5px">GitHub</text>
+<path class="dg-frame" d="M196.0 40 V434"/>
+<rect class="dg-box" x="263.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="322.0" y="29" text-anchor="middle" style="font-size:13.5px">formato</text>
+<path class="dg-frame" d="M322.0 40 V434"/>
+<rect class="dg-box" x="389.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="448.0" y="29" text-anchor="middle" style="font-size:13.5px">sast</text>
+<path class="dg-frame" d="M448.0 40 V434"/>
+<rect class="dg-box" x="515.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="574.0" y="29" text-anchor="middle" style="font-size:13.5px">imagen</text>
+<path class="dg-frame" d="M574.0 40 V434"/>
+<rect class="dg-box" x="641.0" y="8" width="118.0" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">dast</text>
+<path class="dg-frame" d="M700.0 40 V434"/>
+<path class="dg-edge" d="M73.0 72 L191.0 72" marker-end="url(#fs01s-a)"/>
+<rect x="100.6" y="55" width="64.8" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="133.0" y="66" text-anchor="middle">git push</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M199.0 106 L317.0 106" marker-end="url(#fs01s-q)"/>
+<rect x="229.9" y="89" width="58.199999999999996" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="259.0" y="100" text-anchor="middle">arranca</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M199.0 140 L443.0 140" marker-end="url(#fs01s-q)"/>
+<rect x="292.9" y="123" width="58.199999999999996" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="322.0" y="134" text-anchor="middle">arranca</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M199.0 174 L569.0 174" marker-end="url(#fs01s-q)"/>
+<rect x="355.9" y="157" width="58.199999999999996" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="168" text-anchor="middle">arranca</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M319.0 208 L201.0 208" marker-end="url(#fs01s-r)"/>
+<rect x="236.5" y="191" width="45.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="259.0" y="202" text-anchor="middle">verde</text>
+<rect x="458.0" y="228" width="195" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="468.0" y="244">tienda-sql-armado, app.py</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M445.0 276 L201.0 276" marker-end="url(#fs01s-f)"/>
+<rect x="269.8" y="259" width="104.39999999999999" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="322.0" y="270" text-anchor="middle">rojo, código 1</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M571.0 310 L201.0 310" marker-end="url(#fs01s-r)"/>
+<rect x="362.5" y="293" width="45.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="304" text-anchor="middle">verde</text>
+<rect x="509.0" y="330" width="181" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="519.0" y="346">needs falló: no arranca</text>
+<path class="dg-edge" style="stroke:var(--fail)" d="M193.0 378 L75.0 378" marker-end="url(#fs01s-f)"/>
+<rect x="64.30000000000001" y="361" width="137.39999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="133.0" y="372" text-anchor="middle">no se puede mezclar</text>
+</svg>
+</div>
+<figcaption><b>Figura SEC01.4.</b> El viaje completo. <code>secretos</code> corre igual que <code>formato</code>; se omite para que la figura entre.</figcaption>
+</figure>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Paso</th><th>De → a</th><th>Qué viaja</th><th>Dónde queda</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Tú → GitHub</td><td>Los commits de la rama</td><td>El repositorio, para siempre (por eso los secretos se rotan)</td></tr>
+<tr><td>2</td><td>GitHub → runners</td><td>El código del pull request y un token de solo lectura</td><td>Cada runner, hasta que termina el job</td></tr>
+<tr><td>3</td><td>Docker Hub → runners</td><td>Las imágenes de las herramientas</td><td>La caché del runner, que se borra</td></tr>
+<tr><td>4</td><td>Semgrep → GitHub</td><td>El hallazgo con archivo, línea y mensaje</td><td>El log del job</td></tr>
+<tr><td>5</td><td>GitHub → tú</td><td>El estado de cada check</td><td>El pull request</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<p>Seis decisiones del pipeline, con lo que se descartó.</p>
+<div data-exercise="sec01-pipeline"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<p>Primero, que todo pase con la tienda como está. Después, cinco fallas plantadas, cada una en su rama, para ver qué job corta. Ninguna cifra viene de una corrida: lo que tiene que aparecer sale del código y de las reglas.</p>
+<h3 id="comprueba-verde">El punto de partida, en verde</h3>
+<div class="step-map" data-where="formato secretos sast imagen dast">
+  <dl class="step-map-rows">
+    <div><dt>Entra</dt><dd>El pull request del paso 7.</dd></div>
+    <div><dt>Sale</dt><dd>Cinco checks en verde.</dd></div>
+    <div><dt>Cambia</dt><dd>Nada.</dd></div>
+    <div><dt>Concepto nuevo</dt><dd><a href="#ae-gate">El gate</a></dd></div>
+    <div><dt>Tiempo</dt><dd>10 min</dd></div>
+  </dl>
+</div>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Check</th><th>Lo que el diseño espera</th><th>Lo que viste</th><th>Minutos que tardó</th></tr></thead>
+<tbody>
+<tr><td>formato</td><td>6 pruebas y <code>0 problemas en las excepciones</code></td><td></td><td></td></tr>
+<tr><td>secretos</td><td><code>no leaks found</code></td><td></td><td></td></tr>
+<tr><td>sast</td><td>Ningún hallazgo</td><td></td><td></td></tr>
+<tr><td>imagen</td><td>Sin HIGH ni CRITICAL con arreglo, o los de la base</td><td></td><td></td></tr>
+<tr><td>dast</td><td><code>FAIL-NEW: 0</code></td><td></td><td></td></tr>
+</tbody>
+</table>
+</div>
+<p>Los minutos los anotas tú: dependen de la cola de runners y de las descargas.</p>
+<h3 id="comprueba-fallas">Las fallas, a propósito</h3>
+<p>Cada falla va en una rama nueva desde <code>main</code>, con su pull request. Cuando la ves cortar, cierras el pull request sin mezclar y borras la rama.</p>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 1: la clave de la base en el repositorio</p>
+<p><b>Provócala.</b> <code>git checkout -b falla-1 main</code>, <code>git add -f .env</code>, commit y push.</p><p><b>Qué tiene que pasar.</b> <code>secretos</code> en rojo con la regla <code>tienda-db-clave</code> y el secreto tapado por <code>--redact</code>; <code>dast</code> no arranca. <b>Por qué importa.</b> Si borras el <code>.env</code> en un commit siguiente, el job sigue en rojo: la clave está en la historia de la rama. Cerrar el pull request sin mezclar la deja fuera de <code>main</code>, pero estuvo en GitHub: en la tienda real, la clave se cambia igual. <b>Deshazla</b> cerrando el pull request, borrando la rama y cambiando la clave del <code>.env</code> con <code>docker compose down -v</code> y un arranque nuevo.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 2: una búsqueda con SQL armado</p>
+<p><b>Provócala.</b> En una rama <code>falla-2</code>, agrega a <code>app.py</code> este endpoint:</p><pre data-lang="python"><code>@app.get("/api/buscar")
+def buscar(q: str):
+    with conectar() as db:
+        filas = db.execute(f"SELECT id, nombre FROM productos WHERE nombre ILIKE '%{q}%'").fetchall()
+    return [{"id": i, "nombre": n} for i, n in filas]</code></pre>
+<p><b>Qué tiene que pasar.</b> <code>sast</code> en rojo con <code>tienda-sql-armado</code> en la línea del <code>execute</code>. <b>Por qué importa.</b> <code>q</code> llega del usuario: con <code>q=x%' OR '1'='1</code> la consulta cambia de forma (<a href="../modules/m79-inyecciones.html">M79</a>). <b>Arréglala</b> en la misma rama con el valor como parámetro, y el job pasa a verde:</p><pre data-lang="python"><code>@app.get("/api/buscar")
+def buscar(q: str):
+    with conectar() as db:
+        filas = db.execute("SELECT id, nombre FROM productos WHERE nombre ILIKE %s", (f"%{q}%",)).fetchall()
+    return [{"id": i, "nombre": n} for i, n in filas]</code></pre>
+
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 3: una dependencia con una vulnerabilidad conocida</p>
+<p><b>Provócala.</b> En una rama <code>falla-3</code>, agrega <code>jinja2==2.10</code> a <code>api/requirements.txt</code>.</p><p><b>Qué tiene que pasar.</b> <code>imagen</code> en rojo con CVE-2019-10906, de severidad alta, arreglada en Jinja2 2.10.1 <span class="badge badge--doc">Documentado</span>. Puede aparecer junto a otras de la misma versión. <b>Por qué importa.</b> Nadie escribió una línea de código vulnerable: vino con la dependencia (<a href="../modules/m55-appsec.html#sca">55.5</a>). <b>Deshazla</b> quitando la línea; si la necesitaras, sube a una versión arreglada.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 4: una cabecera que se pierde</p>
+<p><b>Provócala.</b> En una rama <code>falla-4</code>, borra la línea <code>add_header X-Content-Type-Options nosniff always;</code> de <code>nginx.conf</code>.</p><p><b>Qué tiene que pasar.</b> <code>dast</code> en rojo con la regla 10021 como FAIL, si ZAP la marca en las respuestas JSON de la tienda; lee el informe del job para ver qué marcó. <b>Por qué importa.</b> Las cabeceras se pierden en un cambio de configuración que nadie revisa como código de seguridad. <b>Deshazla</b> volviendo la línea.</p>
+</aside>
+<aside class="callout callout--fail">
+<p class="callout-label">Falla 5: una excepción que venció</p>
+<p><b>Provócala.</b> En una rama <code>falla-5</code>, agrega a <code>.trivyignore</code> una línea <code>CVE-2026-0001 exp:2026-01-31</code> con su <code># motivo:</code> arriba.</p><p><b>Qué tiene que pasar.</b> <code>formato</code> en rojo con <code>.trivyignore:4: la excepción venció el 2026-01-31</code> (el número de línea depende de tu archivo). <b>Por qué importa.</b> La excepción se escribió para un tiempo; sin el script, se queda para siempre. <b>Deshazla</b> borrando la línea.</p>
+</aside>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Job que corta</th><th>¿Cortó?</th><th>Lo que decía el log</th></tr></thead>
+<tbody>
+<tr><td>1. Clave en el repositorio</td><td>secretos</td><td></td><td></td></tr>
+<tr><td>2. SQL armado</td><td>sast</td><td></td><td></td></tr>
+<tr><td>3. Dependencia vulnerable</td><td>imagen</td><td></td><td></td></tr>
+<tr><td>4. Cabecera perdida</td><td>dast</td><td></td><td></td></tr>
+<tr><td>5. Excepción vencida</td><td>formato</td><td></td><td></td></tr>
+</tbody>
+</table>
+</div>
+<aside class="callout callout--done">
+  <p class="callout-label">Qué ya funciona</p>
+  <ul>
+    <li>Cinco revisiones en cada pull request, cada una con un umbral que se puede cumplir.</li>
+    <li>La regla de la rama que las hace obligatorias.</li>
+    <li>Cinco fallas plantadas, cada una cortada por su job.</li>
+  </ul>
+  <p>Compruébalo de una vez:</p>
+<pre data-lang="bash"><code>gh pr list --state closed --limit 5</code></pre>
+  <p>Los cinco pull requests de las fallas, cerrados sin mezclar, y el del pipeline mezclado en <code>main</code>.</p>
+</aside>
+<h2 id="limitaciones">Limitaciones</h2>
+<ul>
+<li><b>Lo que no ve.</b> Tres reglas de Semgrep no ven un control de acceso roto como el de <a href="../modules/m80-control-acceso.html">M80</a>, ni una carrera. ZAP baseline es pasivo: no prueba inyecciones ni sesiones. Nada de esto reemplaza la revisión de una persona ni el threat model.</li>
+<li><b>Dónde se rompe.</b> Un pull request desde un fork corre con permisos aún menores y sin secretos, y está bien; no cambies a <code>pull_request_target</code> para "arreglarlo", porque correría código ajeno con permisos del repositorio.</li>
+<li><b>Riesgos que quedan.</b> Las imágenes van fijadas por etiqueta, no por digest: si alguien publica otra imagen con la misma etiqueta, el pipeline la usa. SEC02 lo cierra con digests y firmas.</li>
+<li><b>El ruido cambia solo.</b> La base de Trivy y las reglas de gitleaks se actualizan: un build puede cortar sin un cambio tuyo. Es la razón de las excepciones con fecha.</li>
+</ul>
+<h3 id="limitaciones-costo">Costo y tiempo, con la cuenta a mano</h3>
+<p>Los cinco jobs corren en paralelo salvo <code>dast</code>, así que el tiempo de un pull request es el del job más lento de los cuatro más el de <code>dast</code>. Con supuestos dichos como supuestos: si <code>imagen</code> tarda 3 minutos (construir y bajar la base de Trivy) y <code>dast</code> 4 (levantar la tienda y escanear), un pull request espera unos 7 minutos y consume unos 3 + 1 + 1 + 1 + 4 = 10 minutos de runner, contando un minuto para cada uno de los otros tres. Con 20 pull requests al mes son 200 minutos. En un repositorio público no cuestan; en uno privado se descuentan de los minutos del plan. Reemplaza los supuestos con los minutos de tu tabla.</p>
+<h3 id="limitaciones-produccion">Qué cambia en producción</h3>
+<ul>
+<li>Los resultados en formato SARIF subidos a la pestaña de seguridad de GitHub, para verlos por archivo y con historia, en lugar de leer logs.</li>
+<li>El paquete de reglas del registro de Semgrep en un job que avisa, y una revisión mensual para pasar reglas al gate.</li>
+<li>ZAP con un escaneo activo, autenticado, contra un entorno de staging y fuera del camino de cada pull request.</li>
+<li>Las imágenes por digest, el SBOM y la firma, que es <a href="#conectar">SEC02</a>, y las reglas de detección con sus propias pruebas en el mismo pipeline, que es SEC05.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="sec01">
+<p class="pj-repo-head">El mismo repositorio de la tienda. Marca cada comprobación cuando la veas.</p>
+<ul class="pj-checks">
+<li data-check="tests"><code>pytest</code> y <code>excepciones.py</code> pasan en tu máquina.</li>
+<li data-check="local">gitleaks, Semgrep, Trivy y ZAP corrieron en tu máquina con el comando del workflow.</li>
+<li data-check="verde">El pull request del pipeline tiene los cinco checks en verde.</li>
+<li data-check="regla">La regla de la rama exige los cinco checks en <code>main</code>.</li>
+<li data-check="fallas">Las cinco fallas cortaron con su job y se deshicieron.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con SEC00, el laboratorio</p>
+<p>El job <code>formato</code> es la prueba que prometía <a href="sec00-laboratorio.html#comprueba-fallas">la falla 3 de SEC00</a>: si el log deja de ser JSON, el SIEM se queda ciego, y ahora el cambio no llega a <code>main</code>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con la Parte VII del curso</p>
+<p>El ciclo de vida y las cuatro familias de herramientas están en <a href="../modules/m55-appsec.html#sdlc">M55</a>; fijar acciones y la cadena del pipeline, en <a href="../modules/m56-supply-chain.html#ci">56.4</a>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB07 y WEB09 (opcional)</p>
+<p><a href="web07-inyecciones.html">WEB07</a> cierra inyecciones a mano en PHP y <a href="web09-cabeceras.html">WEB09</a> pone las cabeceras; aquí las dos cosas quedan como reglas que corren solas.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con el glosario</p>
+<p><a href="../glosario.html#t-sast">SAST</a>, <a href="../glosario.html#t-dast">DAST</a>, <a href="../glosario.html#t-sca">SCA</a> y <a href="../glosario.html#t-secret-scanning">secret scanning</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/sec01.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

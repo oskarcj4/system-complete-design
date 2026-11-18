@@ -1,0 +1,834 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WEB09. Cabeceras</title>
+<meta name="description" content="El frontend compilado, servido por Apache en el mismo origen que la API, con una CSP que sale de lo que la aplicación carga, desplegada primero en report-only. La API dice "nada" desde aplicarCors.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/tokens.css">
+<link rel="stylesheet" href="../assets/css/layout.css">
+<link rel="stylesheet" href="../assets/css/components.css">
+<link rel="stylesheet" href="../assets/css/projects.css">
+</head>
+<body data-root="../" data-project="web09" class="page-guide">
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+<header class="topbar">
+  <button class="menu-btn" type="button" aria-expanded="false" aria-controls="ruta" aria-label="Abrir la lista de proyectos"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.8"/></svg>Ruta</button>
+  <button class="side-toggle" type="button" aria-controls="ruta" aria-pressed="false" aria-label="Ocultar la barra lateral" title="Ocultar o mostrar la barra lateral"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1.5" y="2.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v13" stroke="currentColor" stroke-width="1.5"/></svg></button>
+  <a class="brand" href="../index.html">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path class="bm-line" d="M5 20 L13 12 L21 6" fill="none" stroke-width="2.5" stroke-linecap="round"/><circle class="bm-a" cx="5" cy="20" r="3.5"/><circle class="bm-b" cx="13" cy="12" r="3.2" stroke-width="2.4"/><circle class="bm-c" cx="21" cy="6" r="3.2" stroke-width="2.4"/></svg>
+    <span class="brand-label">Diseño de sistemas reales</span>
+  </a>
+  <nav class="topnav" aria-label="Principal">
+    <a href="../index.html">Curso</a>
+    <a href="../proyectos.html" aria-current="page">Proyectos</a>
+    <a href="../glosario.html">Glosario</a>
+    <span class="top-progress" data-top-progress></span>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="ruta" aria-label="Proyectos">
+    <nav data-project-route></nav>
+  </aside>
+
+  <main class="main" id="contenido">
+    <article class="content">
+
+      <header class="title-block">
+        <h1>Cabeceras</h1>
+        <p class="lead">Una CSP que no se probó contra el build es una suposición, y una cabecera que no revisa un script se pierde en el próximo cambio.</p>
+        <dl class="tb-grid">
+          <div><dt>Proyecto</dt><dd>WEB09</dd></div>
+          <div><dt>Plan</dt><dd>Seguridad web</dd></div>
+          <div><dt>Tiempo estimado</dt><dd>2.5 h</dd></div>
+          <div><dt>Módulos</dt><dd>M78, M83</dd></div>
+          <div><dt>Estado</dt><dd data-project-status="web09">Sin empezar</dd></div>
+        </dl>
+      </header>
+<section class="objectives" data-toc="skip" aria-labelledby="obj">
+<h2 class="plain" id="obj">Al terminar podrás</h2>
+<ul>
+<li>Servir el frontend compilado desde Apache, en el mismo origen que la API, para probar las cabeceras contra lo que se despliega y no contra el servidor de desarrollo.</li>
+<li>Escribir la CSP del frontend a partir de lo que la aplicación carga de verdad, desplegarla primero en report-only con un endpoint de reportes y después pasarla a bloqueo.</li>
+<li>Darle a cada respuesta de la API la política "nada" de <a href="../modules/m78-csp-cabeceras.html#php">78.8</a> desde un solo lugar, y dejar que los documentos de WEB08 se enmarquen solo en el frontend.</li>
+<li>Comprobarlo con un script que falla si una respuesta sale sin una cabecera, y con cuatro fallas provocadas: clickjacking, un script inyectado, <code>'unsafe-inline'</code> y un origen mal escrito en el <code>.env</code>.</li>
+</ul>
+</section>
+<h2 id="excusa">La excusa</h2>
+<p>Después de ocho guías, la API ya manda dos cabeceras de seguridad: <code>Response::json</code> pone <code>X-Content-Type-Options: nosniff</code> y <code>Cache-Control: no-store</code> desde <a href="web01-lo-que-no-debe-verse.html">WEB01</a>, y <code>archivos.php</code> pone las suyas desde <a href="web08-subir-cv-ssrf.html">WEB08</a>. Del frontend no hay nada que revisar, porque nadie lo sirve: el laboratorio corre <code>pnpm dev</code> en <code>localhost:5173</code>, y el <code>frontend/dist</code> que hay en el repositorio es un build viejo que ningún Apache entrega. Las cabeceras de una página son de quien la sirve, así que el primer trabajo es servirla.</p>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 300" role="img" aria-labelledby="fw9at fw9ad">
+<title id="fw9at">La re-auditoría de cabeceras</title>
+<desc id="fw9ad">Una rejilla con seis filas. nosniff y no-store en la API: ya bien desde WEB01. Una CSP en la API: no hay, paso 1. Quién sirve el frontend compilado: nadie, solo el servidor de desarrollo, paso 2. Una CSP en el frontend: no hay, pasos 3 y 4. Quién puede enmarcar la aplicación: cualquiera, paso 4. HSTS: no aplica en http, paso 5.</desc>
+<g class="dg-small"><text x="20" y="28">Qué se revisó</text><text x="300" y="28">Qué hay hoy</text><text x="600" y="28">Estado</text></g>
+<path class="dg-frame" d="M14 40 H756"/>
+<text class="dg-label" x="20" y="66">nosniff y no-store en la API</text><text class="dg-tiny" x="300" y="66">Response::json, desde WEB01</text>
+<rect x="596" y="50" width="150" height="26" rx="6" class="dg-ok"/><text class="dg-tiny" x="671" y="67" text-anchor="middle">ya bien</text>
+<text class="dg-label" x="20" y="108">Una CSP en la API</text><text class="dg-tiny" x="300" y="108">ninguna</text>
+<rect x="596" y="92" width="150" height="26" rx="6" class="dg-bad"/><text class="dg-tiny" x="671" y="109" text-anchor="middle">falta, paso 1</text>
+<text class="dg-label" x="20" y="150">Quién sirve el build</text><text class="dg-tiny" x="300" y="150">nadie: solo pnpm dev en :5173</text>
+<rect x="596" y="134" width="150" height="26" rx="6" class="dg-warnbox"/><text class="dg-tiny" x="671" y="151" text-anchor="middle">falta, paso 2</text>
+<text class="dg-label" x="20" y="192">Una CSP en el frontend</text><text class="dg-tiny" x="300" y="192">ninguna</text>
+<rect x="596" y="176" width="150" height="26" rx="6" class="dg-bad"/><text class="dg-tiny" x="671" y="193" text-anchor="middle">falta, pasos 3 y 4</text>
+<text class="dg-label" x="20" y="234">Quién enmarca la app</text><text class="dg-tiny" x="300" y="234">cualquier sitio, en un iframe</text>
+<rect x="596" y="218" width="150" height="26" rx="6" class="dg-bad"/><text class="dg-tiny" x="671" y="235" text-anchor="middle">falta, paso 4</text>
+<text class="dg-label" x="20" y="276">HSTS</text><text class="dg-tiny" x="300" y="276">no aplica: el laboratorio es http</text>
+<rect x="596" y="260" width="150" height="26" rx="6" class="dg-box"/><text class="dg-tiny" x="671" y="277" text-anchor="middle">solo con https, paso 5</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB09.1.</b> La re-auditoría. La fila amarilla no es una cabecera, pero sin ella no hay dónde ponerlas: una CSP estricta rompe el servidor de desarrollo de Vite (el trade-off de <a href="../modules/m78-csp-cabeceras.html#php">78.8</a>), así que se prueba contra el build.</figcaption>
+</figure>
+<ul>
+<li><b>H1. Cualquiera puede enmarcar la aplicación.</b> Una página de <code>atacante.test</code> carga el sistema de prácticas en un <code>&lt;iframe&gt;</code> semitransparente y pone su propio botón debajo: es el clickjacking de <a href="../modules/m83-otros-ataques.html#clickjacking">M83</a>. Hoy la cookie de sesión es <code>SameSite=Strict</code> (<a href="web00-laboratorio.html">WEB00</a>), así que el iframe de otro sitio muestra la pantalla de login y no la sesión; eso ayuda, pero es un atributo de una cookie que mañana alguien cambia a <code>Lax</code> por un flujo de login, y no impide enmarcar.</li>
+<li><b>H2. Si un XSS se cuela, corre.</b> <a href="web05-xss.html">WEB05</a> cerró los XSS que encontró, pero no hay una segunda capa para el que no encontró: el navegador ejecuta cualquier <code>&lt;script&gt;</code> que aparezca en la página.</li>
+<li><b>H3. La API no dice "nada".</b> Una respuesta JSON abierta directo en el navegador no debería cargar nada ni dejarse enmarcar. <code>nosniff</code> ya impide que se lea como HTML; la CSP de <a href="../modules/m78-csp-cabeceras.html#php">78.8</a> lo dice explícito, y desde un solo lugar.</li>
+</ul>
+<h3 id="excusa-viaje">El viaje, por adelantado</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 342" role="img" aria-labelledby="fw9st fw9sd">
+<title id="fw9st">Una página de otro sitio intenta enmarcar la aplicación</title>
+<desc id="fw9sd">El navegador abre la página de atacante.test, que tiene un iframe con la aplicación. Pide la aplicación a localhost:8080 y la respuesta trae frame-ancestors &#x27;none&#x27;. El navegador no la dibuja dentro del iframe y lo anota en la consola. En la etapa report-only, la dibuja y solo manda un reporte.</desc>
+<defs><marker id="fw9s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw9s-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--link)"/></marker><marker id="fw9s-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker><marker id="fw9s-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--l-queue)"/></marker></defs>
+<rect class="dg-box" x="8.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="70.0" y="29" text-anchor="middle" style="font-size:13.5px">Navegador</text>
+<path class="dg-frame" d="M70.0 40 V332"/>
+<rect class="dg-box" x="218.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="280.0" y="29" text-anchor="middle" style="font-size:13.5px">atacante.test</text>
+<path class="dg-frame" d="M280.0 40 V332"/>
+<rect class="dg-box" x="428.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="490.0" y="29" text-anchor="middle" style="font-size:13.5px">localhost:8080</text>
+<path class="dg-frame" d="M490.0 40 V332"/>
+<rect class="dg-box" x="638.0" y="8" width="124" height="32" rx="4"/>
+<text class="dg-label" x="700.0" y="29" text-anchor="middle" style="font-size:13.5px">csp-report.php</text>
+<path class="dg-frame" d="M700.0 40 V332"/>
+<path class="dg-edge" d="M73.0 72 L275.0 72" marker-end="url(#fw9s-a)"/>
+<rect x="119.5" y="55" width="111.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="66" text-anchor="middle">GET /web09.html</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M277.0 106 L75.0 106" marker-end="url(#fw9s-r)"/>
+<rect x="60.10000000000001" y="89" width="229.79999999999998" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="175.0" y="100" text-anchor="middle">200, un iframe con localhost:8080</text>
+<path class="dg-edge" d="M73.0 140 L485.0 140" marker-end="url(#fw9s-a)"/>
+<rect x="191.5" y="123" width="177.0" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="134" text-anchor="middle">GET / (dentro del iframe)</text>
+<path class="dg-edge dg-res" style="stroke-dasharray:5 3" d="M487.0 174 L75.0 174" marker-end="url(#fw9s-r)"/>
+<rect x="168.4" y="157" width="223.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="280.0" y="168" text-anchor="middle">200, CSP: frame-ancestors &#x27;none&#x27;</text>
+<rect x="80.0" y="194" width="314" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="90.0" y="210">no la dibuja: el ancestro es atacante.test</text>
+<path class="dg-edge" style="stroke:var(--l-queue);stroke-dasharray:6 4" d="M73.0 242 L695.0 242" marker-end="url(#fw9s-q)"/>
+<rect x="289.9" y="225" width="190.2" height="15" fill="var(--paper)" opacity="0.85"/>
+<text class="dg-tiny" x="385.0" y="236" text-anchor="middle">un reporte: frame-ancestors</text>
+<rect x="173.0" y="262" width="307" height="24" rx="3" fill="var(--paper-3)" stroke="var(--rule-strong)"/>
+<text class="dg-tiny" x="183.0" y="278">en report-only: la dibuja, y solo reporta</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB09.2.</b> Lo que se ve en la falla 1. La decisión la toma el navegador con una cabecera de la respuesta enmarcada, no la página que enmarca: por eso <code>frame-ancestors</code> tiene que ser una cabecera HTTP y no una etiqueta <code>&lt;meta&gt;</code> (la tabla de <a href="../modules/m78-csp-cabeceras.html#fallas">78.9</a>).</figcaption>
+</figure>
+<h2 id="endpoints">Los endpoints</h2>
+<div class="table-wrap">
+<table class="t pj-ep">
+<thead><tr><th>Método y ruta</th><th>Qué hace</th><th>Respuestas</th></tr></thead>
+<tbody>
+<tr><td><span class="ep-method" data-m="POST">POST</span><code>csp-report.php</code></td><td>Recibe los reportes de la CSP del frontend, en los dos formatos (<code>application/csp-report</code> y <code>application/reports+json</code>). Sin sesión ni token: los manda el navegador por su cuenta.</td><td>204 · 405 · 415 otro tipo de contenido</td></tr>
+</tbody>
+</table>
+</div>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Respuesta</th><th>Hoy (leído del código)</th><th>Después</th></tr></thead>
+<tbody>
+<tr><td><code>GET http://localhost:8080/</code></td><td>no existe: nadie escucha en 8080</td><td>200, el <code>index.html</code> del build con su CSP, <code>nosniff</code>, <code>Referrer-Policy</code>, <code>Permissions-Policy</code>, COOP y <code>X-Frame-Options</code></td></tr>
+<tr><td>Cualquier respuesta de la API</td><td><code>nosniff</code> y <code>no-store</code>, si sale por <code>Response::json</code></td><td>Además <code>default-src 'none'; frame-ancestors 'none'</code>, <code>no-referrer</code> y CORP, también en el preflight</td></tr>
+<tr><td><code>archivos.php</code> con un CV</td><td>las cabeceras de WEB08</td><td>Además <code>frame-ancestors 'self'</code> y los orígenes del <code>.env</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="dependencias">Qué necesitas</h2>
+<p>El laboratorio de <a href="web00-laboratorio.html">WEB00</a> con <a href="web01-lo-que-no-debe-verse.html">WEB01</a>, <a href="web03-csrf.html">WEB03</a> (el host <code>atacante.test</code> y <code>ORIGENES_PERMITIDOS</code>), <a href="web04-cors.html">WEB04</a> (<code>aplicarCors</code>) y <a href="web08-subir-cv-ssrf.html">WEB08</a> (<code>archivos.php</code> y una postulación con CV) aplicadas. Nada que instalar.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Pieza</th><th>Para qué</th><th>Cómo comprobarla</th></tr></thead>
+<tbody>
+<tr><td><code>mod_headers</code> de Apache</td><td>Las directivas <code>Header</code> del frontend</td><td><code>findstr /b "LoadModule headers_module" C:\xampp\apache\conf\httpd.conf</code> muestra la línea sin <code>#</code></td></tr>
+<tr><td><code>httpd.exe -t</code></td><td>Revisar la configuración antes de reiniciar Apache</td><td><code>C:\xampp\apache\bin\httpd.exe -t</code> dice <code>Syntax OK</code></td></tr>
+<tr><td>El puerto 8080 libre</td><td>El frontend compilado</td><td><code>netstat -ano | findstr :8080</code> no muestra ninguna línea <code>LISTENING</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="infraestructura">La infraestructura</h2>
+<h3 id="infra-atacante">La página que enmarca</h3>
+<p>En la carpeta de <code>atacante.test</code> de <a href="web03-csrf.html">WEB03</a>, una página que carga la aplicación en un iframe a media opacidad encima de un botón suyo. No hace nada más: lo que se mide es si el navegador dibuja la aplicación adentro.</p>
+<pre data-lang="html" data-file="C:/xampp/htdocs/atacante/web09.html"><code>&lt;!doctype html&gt;
+&lt;html lang="es"&gt;
+&lt;head&gt;
+  &lt;meta charset="utf-8"&gt;
+  &lt;title&gt;Laboratorio WEB09: clickjacking&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;h1&gt;Reclama tu beca&lt;/h1&gt;
+  &lt;p&gt;Laboratorio de WEB09. La aplicación se carga en un iframe a media opacidad, encima de un botón de esta página.
+     Si ves la aplicación, se deja enmarcar.&lt;/p&gt;
+  &lt;div style="position: relative; width: 900px; height: 600px;"&gt;
+    &lt;button style="position: absolute; top: 260px; left: 380px; padding: 12px 24px;"&gt;Reclamar&lt;/button&gt;
+    &lt;iframe src="http://localhost:8080/" title="la aplicación, enmarcada"
+            style="position: absolute; inset: 0; width: 900px; height: 600px; opacity: 0.5; border: 1px solid;"&gt;&lt;/iframe&gt;
+  &lt;/div&gt;
+&lt;/body&gt;
+&lt;/html&gt;</code></pre>
+<p>Todavía no hay nada en <code>localhost:8080</code>: la página muestra un iframe con un error de conexión. El paso 2 lo levanta.</p>
+<h2 id="paso-a-paso">Paso a paso</h2>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 320" role="img" aria-labelledby="fw9bt fw9bd">
+<title id="fw9bt">Dónde nace cada cabecera</title>
+<desc id="fw9bd">Tres lugares. El VirtualHost del puerto 8080, en el bloque Directory de frontend/dist, pone la CSP del frontend y las demás cabeceras al index.html y a los archivos de assets. aplicarCors, la primera línea de cada endpoint, pone la política nada a toda respuesta de la API. archivos.php la reemplaza por una que deja enmarcar el documento en el frontend.</desc>
+<defs><marker id="fw9ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker><marker id="fw9bf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--fail)"/></marker></defs>
+<path class="dg-edge" d="M250 67 L470 67" marker-end="url(#fw9ba)"/>
+<rect x="320" y="49" width="80" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="360" y="61" text-anchor="middle">pasos 2 a 5</text>
+<path class="dg-edge" d="M250 167 L470 167" marker-end="url(#fw9ba)"/>
+<rect x="335" y="149" width="49" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="360" y="161" text-anchor="middle">paso 1</text>
+<path class="dg-edge" d="M250 267 L470 267" marker-end="url(#fw9ba)"/>
+<rect x="301" y="249" width="117" height="16" rx="3" fill="var(--paper)" opacity="0.92"/>
+<text class="dg-tiny" x="360" y="261" text-anchor="middle">paso 1, reemplaza</text>
+<rect class="dg-layer" style="--c: var(--l-edge)" x="20" y="40" width="230" height="54" rx="8"/>
+<text class="dg-label" x="135.0" y="65.0" text-anchor="middle">Apache, :8080</text>
+<text class="dg-tiny" x="135.0" y="80.0" text-anchor="middle">&lt;Directory frontend/dist&gt;</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="140" width="230" height="54" rx="8"/>
+<text class="dg-label" x="135.0" y="165.0" text-anchor="middle">aplicarCors()</text>
+<text class="dg-tiny" x="135.0" y="180.0" text-anchor="middle">cabecerasApi()</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="20" y="240" width="230" height="54" rx="8"/>
+<text class="dg-label" x="135.0" y="265.0" text-anchor="middle">archivos.php</text>
+<text class="dg-tiny" x="135.0" y="280.0" text-anchor="middle">cabecerasDocumento()</text>
+<rect class="dg-layer" style="--c: var(--l-client)" x="470" y="40" width="280" height="54" rx="8"/>
+<text class="dg-label" x="610.0" y="65.0" text-anchor="middle">index.html y /assets/…</text>
+<text class="dg-tiny" x="610.0" y="80.0" text-anchor="middle">CSP &#x27;self&#x27;, nosniff, COOP, XFO</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="470" y="140" width="280" height="54" rx="8"/>
+<text class="dg-label" x="610.0" y="165.0" text-anchor="middle">toda respuesta de la API</text>
+<text class="dg-tiny" x="610.0" y="180.0" text-anchor="middle">default-src &#x27;none&#x27;, no-referrer</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="470" y="240" width="280" height="54" rx="8"/>
+<text class="dg-label" x="610.0" y="265.0" text-anchor="middle">un CV en el iframe del panel</text>
+<text class="dg-tiny" x="610.0" y="280.0" text-anchor="middle">frame-ancestors &#x27;self&#x27; y el .env</text>
+</svg>
+</div>
+<figcaption><b>Figura WEB09.3.</b> Cada cabecera tiene un solo dueño. Las del frontend van dentro del <code>Directory</code> de <code>dist</code>, no en el <code>VirtualHost</code>: si fueran del <code>VirtualHost</code>, también le llegarían a la API, y la CSP del frontend con <code>frame-ancestors 'none'</code> dejaría en blanco el iframe del CV.</figcaption>
+</figure>
+<h3 id="paso-api">Paso 1. La API dice "nada", desde un solo lugar</h3>
+<p>La API tiene treinta y tantos endpoints, y todos empiezan con <code>aplicarCors(...)</code> desde <a href="web04-cors.html">WEB04</a>. Esa es la puerta: una línea ahí, y toda respuesta lleva las cabeceras, también el preflight (que termina antes de llegar a <code>Response</code>) y los errores. Las cabeceras se arman en funciones puras, para probarlas sin servidor:</p>
+<div class="pseudo"><ol>
+<li><code>politicaCsp</code>: escribe una política a partir de sus directivas, en orden.</li>
+<li><code>cabecerasApi</code>: la política de <a href="../modules/m78-csp-cabeceras.html#php">78.8</a>. La API no sirve HTML: <code>default-src 'none'</code> y <code>frame-ancestors 'none'</code>, más <code>nosniff</code>, <code>no-referrer</code>, CORP y <code>no-store</code>.</li>
+<li><code>cabecerasDocumento</code>: lo mismo, salvo quién enmarca: <code>'self'</code> y los orígenes de <code>ORIGENES_PERMITIDOS</code>, solo los que tienen forma de origen.</li>
+<li><code>enviarCabeceras</code>: las manda. <code>header()</code> reemplaza la cabecera del mismo nombre, así que la última gana.</li>
+</ol></div>
+<pre data-lang="php" data-file="api/core/cabeceras.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/origen.php';
+
+/** Una política de CSP a partir de sus directivas, en el orden en que se escriben. */
+function politicaCsp(array $directivas): string
+{
+    $partes = [];
+    foreach ($directivas as $nombre =&gt; $fuentes) {
+        $partes[] = trim($nombre . ' ' . implode(' ', (array)$fuentes));
+    }
+    return implode('; ', $partes);
+}
+
+/**
+ * Las cabeceras de seguridad de toda respuesta de la API (WEB09).
+ * La API no sirve HTML: nada se carga y nada se enmarca.
+ */
+function cabecerasApi(): array
+{
+    return [
+        'Content-Security-Policy'      =&gt; politicaCsp(['default-src' =&gt; "'none'", 'frame-ancestors' =&gt; "'none'"]),
+        'X-Content-Type-Options'       =&gt; 'nosniff',
+        'Referrer-Policy'              =&gt; 'no-referrer',
+        'Cross-Origin-Resource-Policy' =&gt; 'same-site',
+        'Cache-Control'                =&gt; 'no-store',
+    ];
+}
+
+/**
+ * Un documento de WEB08 se muestra en un iframe del frontend: lo pueden enmarcar
+ * el mismo origen y los orígenes del .env. Solo se escribe lo que tiene forma de origen:
+ * un valor con ";" o un "*" en la configuración no llega a la cabecera.
+ */
+function cabecerasDocumento(?array $origenes = null): array
+{
+    $validos = array_filter(
+        $origenes ?? origenesPermitidos(),
+        fn(string $o): bool =&gt; preg_match('#^https?://[a-z0-9.-]+(:[0-9]{1,5})?$#', $o) === 1
+    );
+    $marcos = array_merge(["'self'"], array_values($validos));
+    return ['Content-Security-Policy' =&gt; politicaCsp(['frame-ancestors' =&gt; $marcos])] + cabecerasApi();
+}
+
+/** header() reemplaza una cabecera con el mismo nombre: la última que se manda es la que vale. */
+function enviarCabeceras(array $cabeceras): void
+{
+    if (headers_sent()) {
+        return;
+    }
+    foreach ($cabeceras as $nombre =&gt; $valor) {
+        header("$nombre: $valor");
+    }
+}</code></pre>
+<p>El filtro de <code>cabecerasDocumento</code> parece de más, porque <code>ORIGENES_PERMITIDOS</code> lo escribes tú. Pero el valor termina dentro de una cabecera, y en una CSP un <code>;</code> empieza una directiva nueva: <code>http://localhost:5173; script-src *</code> en el <code>.env</code> sería una política distinta de la que crees. La falla 4 lo muestra.</p>
+<p>Ahora <code>cors.php</code>, con dos líneas nuevas: el <code>require_once</code> y la primera línea de <code>aplicarCors</code>. El archivo entero:</p>
+<pre data-lang="php" data-file="api/core/cors.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/origen.php';
+require_once __DIR__ . '/cabeceras.php';
+
+/**
+ * Las cabeceras CORS de una respuesta, sin enviarlas (así se prueban sin servidor).
+ * $lista existe para la prueba; en el servidor sale del .env.
+ */
+function cabecerasCors(?string $origen, string $metodo, array $metodos, ?array $lista = null): array
+{
+    $h = ['Vary' =&gt; 'Origin'];
+    if ($origen === null || !esOrigenPermitido($origen, $lista)) {
+        return $h;
+    }
+    $h['Access-Control-Allow-Origin'] = $origen;   # ya comparado con la lista: no es texto ajeno
+    $h['Access-Control-Allow-Credentials'] = 'true';
+
+    if ($metodo === 'OPTIONS') {
+        $h['Access-Control-Allow-Methods'] = implode(', ', $metodos);
+        $h['Access-Control-Allow-Headers'] = 'Content-Type, X-CSRF-Token';
+        $h['Access-Control-Max-Age'] = '600';
+    } else {
+        $h['Access-Control-Expose-Headers'] = 'Retry-After';   # el 429 del login (WEB02)
+    }
+    return $h;
+}
+
+/**
+ * Primera línea de cada endpoint. Manda las cabeceras de seguridad (WEB09) y las de CORS.
+ * El preflight termina aquí: no trae cookie y no llega a requireAuth.
+ */
+function aplicarCors(array $metodos): void
+{
+    enviarCabeceras(cabecerasApi());   # WEB09: toda respuesta de la API, también el preflight y los errores
+
+    $metodo = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+    $origen = isset($_SERVER['HTTP_ORIGIN']) ? (string)$_SERVER['HTTP_ORIGIN'] : null;
+
+    foreach (cabecerasCors($origen, $metodo, $metodos) as $nombre =&gt; $valor) {
+        header("$nombre: $valor", $nombre !== 'Vary');   # Vary se suma a otro Vary, no lo pisa
+    }
+    if ($metodo === 'OPTIONS') {
+        http_response_code(204);
+        exit;
+    }
+}</code></pre>
+<p>Y en <code>archivos.php</code>, una línea justo antes del <code>foreach</code> de <code>cabecerasArchivo</code>, para que el CV se pueda ver en el iframe del panel:</p>
+<pre data-lang="php" data-file="api/endpoints/archivos.php (antes del foreach de cabecerasArchivo)"><code>enviarCabeceras(cabecerasDocumento());   // WEB09: lo enmarca el frontend, no cualquiera</code></pre>
+<p>La política del documento no lleva <code>default-src 'none'</code>. El documento es un PDF o una imagen que pasó la firma binaria y sale con <code>nosniff</code> (<a href="web08-subir-cv-ssrf.html#paso-reglas">WEB08</a>): no hay HTML donde correr un script. Y un PDF lo dibuja el visor del navegador dentro del documento, con la política del documento: no conviene depender de cómo trata cada navegador un <code>default-src 'none'</code> ahí. Solo cambia lo que hace falta, quién enmarca.</p>
+<pre data-lang="php" data-file="tests/cabeceras_test.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../api/core/cabeceras.php';
+require __DIR__ . '/../api/core/reportes-csp.php';
+
+$fallos = 0;
+function caso(string $nombre, bool $bien): void
+{
+    global $fallos;
+    if (!$bien) {
+        $fallos++;
+    }
+    printf("%s %s\n", $bien ? 'ok    ' : 'FALLA ', $nombre);
+}
+
+$api = cabecerasApi();
+caso('la API manda nosniff',                       ($api['X-Content-Type-Options'] ?? '') === 'nosniff');
+caso('la API no deja cargar nada',                 str_contains($api['Content-Security-Policy'] ?? '', "default-src 'none'"));
+caso('la API no se deja enmarcar',                 str_contains($api['Content-Security-Policy'] ?? '', "frame-ancestors 'none'"));
+caso('la API no manda Referer',                    ($api['Referrer-Policy'] ?? '') === 'no-referrer');
+caso('la API no deja copias en cachés',            ($api['Cache-Control'] ?? '') === 'no-store');
+caso('ninguna política dice unsafe',               !str_contains(implode(' ', $api), 'unsafe'));
+
+$doc = cabecerasDocumento(['http://localhost:5173', 'http://localhost:8080']);
+caso('un documento lo enmarca el frontend',        $doc['Content-Security-Policy'] === "frame-ancestors 'self' http://localhost:5173 http://localhost:8080");
+caso('un documento sigue con nosniff',             ($doc['X-Content-Type-Options'] ?? '') === 'nosniff');
+caso('un documento no hereda default-src none',    !str_contains($doc['Content-Security-Policy'], 'default-src'));
+
+$raro = cabecerasDocumento(['*', "http://localhost:5173; script-src *", 'http://ok.test']);
+caso('un * en el .env no llega a la cabecera',     !str_contains($raro['Content-Security-Policy'], '*'));
+caso('un ; en el .env no agrega una directiva',    !str_contains($raro['Content-Security-Policy'], 'script-src'));
+caso('lo que tiene forma de origen, sí',           str_ends_with($raro['Content-Security-Policy'], 'http://ok.test'));
+
+caso('report-uri es un tipo de reporte',           esTipoDeReporteCsp('application/csp-report'));
+caso('report-to también, con charset',             esTipoDeReporteCsp('application/reports+json; charset=utf-8'));
+caso('application/json no',                        !esTipoDeReporteCsp('application/json'));
+
+$viejo = '{"csp-report":{"document-uri":"http://localhost:8080/","effective-directive":"script-src-elem","blocked-uri":"inline","disposition":"enforce"}}';
+$r = resumenReportesCsp($viejo);
+caso('report-uri: una violación, con su directiva', count($r) === 1 &amp;&amp; $r[0]['directiva'] === 'script-src-elem' &amp;&amp; $r[0]['bloqueado'] === 'inline');
+
+$nuevo = '[{"type":"csp-violation","body":{"documentURL":"http://localhost:8080/","effectiveDirective":"frame-ancestors","blockedURL":"http://localhost:8080/","disposition":"report"}},{"type":"deprecation","body":{}}]';
+$r = resumenReportesCsp($nuevo);
+caso('report-to: solo las de CSP',                 count($r) === 1 &amp;&amp; $r[0]['directiva'] === 'frame-ancestors' &amp;&amp; $r[0]['modo'] === 'report');
+
+caso('un cuerpo que no es JSON, nada',             resumenReportesCsp('no es json') === []);
+$mucho = json_encode(array_fill(0, 500, ['type' =&gt; 'csp-violation', 'body' =&gt; ['effectiveDirective' =&gt; 'img-src']]));
+caso('a lo sumo 20 por envío',                     count(resumenReportesCsp($mucho)) === 20);
+$largo = resumenReportesCsp('{"csp-report":{"blocked-uri":"' . str_repeat('a', 5000) . '"}}');
+caso('cada campo, recortado a 200',                mb_strlen($largo[0]['bloqueado']) === 200);
+
+echo $fallos === 0 ? "Todo bien\n" : "$fallos casos fallaron\n";
+exit($fallos === 0 ? 0 : 1);</code></pre>
+<p>La prueba usa <code>reportes-csp.php</code>, que es del paso 3: escríbelo ahora (está en <a href="#paso-reporte">el paso 3</a>) o corre la prueba al terminar ese paso.</p>
+<pre data-lang="shell"><code>C:\xampp\php\php.exe tests\cabeceras_test.php</code></pre>
+<p>Veinte líneas <code>ok</code> y <code>Todo bien</code>.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Las cabeceras de la API en <code>aplicarCors</code>, que ya es la primera línea de cada endpoint.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Ponerlas en <code>Response::json</code>: no cubre el preflight, que termina con <code>exit</code> en <code>aplicarCors</code>, ni la salida de <code>archivos.php</code>. O ponerlas con <code>Header always set</code> en un <code>.htaccess</code> de <code>api/</code>: Apache y PHP escriben en tablas distintas de cabeceras, y <code>archivos.php</code> no podría cambiar <code>frame-ancestors</code> sin terminar con dos políticas, que el navegador aplica las dos.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Un endpoint nuevo que alguien escribe sin <code>aplicarCors</code>. La matriz solo revisa los que nombra; para ver todos, <code>Get-ChildItem api\endpoints\*.php | Where-Object { -not (Select-String -Path $_ -Pattern 'aplicarCors' -Quiet) }</code> lista los archivos que no la tienen, y el diseño espera ninguno.</dd></div>
+</dl>
+<h3 id="paso-build">Paso 2. El build, servido como en producción</h3>
+<p>El frontend compilado y la API van en el mismo origen, <code>http://localhost:8080</code>: Apache sirve <code>frontend/dist</code> en la raíz y la carpeta <code>api</code> en <code>/SistemaControlPracticas/api</code>, la misma ruta que usa <code>BASE_API</code> sin <code>VITE_API_BASE</code>. Es lo que hace el proxy de Vite en desarrollo (<a href="web04-cors.html">WEB04</a>), y lo que haría un servidor de producción. Con un solo origen, la CSP dice <code>'self'</code> y no necesita nombrar otro.</p>
+<p>Primero, el origen nuevo en la lista de <a href="web03-csrf.html">WEB03</a>: un <code>fetch</code> con <code>POST</code> manda <code>Origin</code> aunque sea del mismo origen, y <code>requireOrigenConfiable</code> lo compara con la lista. En el archivo de secretos:</p>
+<pre data-lang="shell" data-file="C:/xampp/secretos/practicas.env (la línea de ORIGENES_PERMITIDOS)"><code>ORIGENES_PERMITIDOS=http://localhost:5173,http://localhost,http://localhost:8080</code></pre>
+<p>Después, el build. <code>VITE_API_BASE</code> no tiene que estar definida, para que las llamadas sean relativas:</p>
+<pre data-lang="shell"><code>cd frontend
+Remove-Item Env:VITE_API_BASE -ErrorAction SilentlyContinue
+pnpm build
+Get-ChildItem dist, dist\assets
+cd ..</code></pre>
+<p>El diseño espera un <code>dist\index.html</code> nuevo y, en <code>dist\assets</code>, un <code>index-….js</code> y un <code>index-….css</code> con nombres que cambian en cada build. Mira el <code>index.html</code>: los dos archivos se cargan con <code>&lt;script src&gt;</code> y <code>&lt;link&gt;</code>, y no hay ningún script inline. Eso decide la política del paso 3.</p>
+<p>El archivo de cabeceras empieza vacío: el <code>VirtualHost</code> lo incluye y los pasos 3 y 4 lo llenan.</p>
+<pre data-lang="shell" data-file="C:/xampp/apache/conf/extra/practicas-cabeceras.conf"><code># Cabeceras del frontend compilado (WEB09). Las llenan los pasos 3 y 4.</code></pre>
+<pre data-lang="shell" data-file="C:/xampp/apache/conf/extra/httpd-vhosts.conf (al final)"><code># El frontend compilado, servido como en producción (WEB09): frontend/dist y la API en el mismo
+# origen, http://localhost:8080. La CSP se prueba contra el build, no contra el servidor de Vite.
+Listen 8080
+
+&lt;VirtualHost *:8080&gt;
+    ServerName localhost
+    DocumentRoot "C:/xampp/htdocs/SistemaControlPracticas/frontend/dist"
+    Alias /SistemaControlPracticas/api "C:/xampp/htdocs/SistemaControlPracticas/api"
+
+    &lt;Directory "C:/xampp/htdocs/SistemaControlPracticas/frontend/dist"&gt;
+        Require local
+        Options -Indexes
+        AllowOverride None
+        # Solo lo que sale de dist: la API tiene sus propias cabeceras (paso 1)
+        Include "conf/extra/practicas-cabeceras.conf"
+    &lt;/Directory&gt;
+&lt;/VirtualHost&gt;</code></pre>
+<pre data-lang="shell"><code>C:\xampp\apache\bin\httpd.exe -t</code></pre>
+<p><code>Syntax OK</code>, y reinicia Apache desde el panel de XAMPP. Abre <code>http://localhost:8080/</code>, entra como <code>estudiante</code> y abre "Mis postulaciones".</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Lo que espera el diseño</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>La aplicación carga y el login funciona; en Network, las llamadas van a <code>localhost:8080/SistemaControlPracticas/api/…</code></td><td>&nbsp;</td></tr>
+<tr><td>"Ver CV" abre el PDF por <code>archivos.php</code> (WEB08)</td><td>&nbsp;</td></tr>
+<tr><td><code>http://atacante.test/web09.html</code> muestra la aplicación dentro del iframe, en la pantalla de login</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<aside class="callout callout--fail">
+<p class="callout-label">Errores típicos</p>
+<ul class="pj-errs">
+<li>Apache no arranca y el registro de errores dice <code>(OS 10048)</code>: otro programa usa el puerto 8080. Elige otro (8090) en <code>Listen</code>, en <code>VirtualHost</code> y en el resto de la guía.</li>
+<li>El login responde 403 <code>Origen no permitido</code>: falta <code>http://localhost:8080</code> en <code>ORIGENES_PERMITIDOS</code>, o Apache no se reinició después de cambiarlo.</li>
+<li>La página queda en blanco y la consola dice que no encuentra <code>/src/main.jsx</code>: <code>DocumentRoot</code> apunta a <code>frontend</code> y no a <code>frontend/dist</code>.</li>
+<li>Las llamadas van a <code>http://localhost/…</code> y no a <code>:8080</code>: <code>VITE_API_BASE</code> seguía definida al compilar. Bórrala y vuelve a compilar.</li>
+</ul>
+</aside>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Probar las cabeceras contra el build servido por Apache, con la API en el mismo origen.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Ponerlas en <code>server.headers</code> de <code>vite.config.js</code>: Vite en desarrollo inyecta scripts y estilos inline para el recargado en caliente, y una CSP estricta lo rompe. O usar <code>vite preview</code>, que sí sirve el build: sirve, pero las cabeceras quedarían en la configuración de Vite y no en el servidor que las va a mandar en producción.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Que el build quede viejo: Apache sirve lo que hay en <code>dist</code>, y un cambio en <code>src</code> no aparece hasta el próximo <code>pnpm build</code>. Para desarrollar sigue usando <code>pnpm dev</code> en 5173, sin CSP.</dd></div>
+</dl>
+<h3 id="paso-reporte">Paso 3. La CSP, primero en report-only</h3>
+<figure class="figure">
+<div class="figure-frame">
+<svg viewBox="0 0 770 380" role="img" aria-labelledby="fw9ct fw9cd">
+<title id="fw9ct">La política del frontend, directiva por directiva</title>
+<desc id="fw9cd">Una tabla dibujada con nueve directivas, lo que la aplicación necesita de cada una y el valor. script-src: el index de assets, self. style-src: el css de assets, self. img-src: el ícono y las imágenes de constancias, self. connect-src: los fetch a la API, self. frame-src: el iframe del CV con archivos.php, self. object-src: nada, none. base-uri: nada, none. form-action: nada, porque los formularios usan fetch, self. frame-ancestors: nadie, none.</desc>
+<g class="dg-small"><text x="20" y="28">Directiva</text><text x="200" y="28">Qué carga la aplicación ahí</text><text x="610" y="28">Valor</text></g>
+<path class="dg-frame" d="M14 40 H756"/>
+<g class="dg-mono">
+<text class="dg-label dg-mono" x="20" y="66">script-src</text><text class="dg-label dg-mono" x="20" y="102">style-src</text><text class="dg-label dg-mono" x="20" y="138">img-src</text>
+<text class="dg-label dg-mono" x="20" y="174">connect-src</text><text class="dg-label dg-mono" x="20" y="210">frame-src</text><text class="dg-label dg-mono" x="20" y="246">object-src</text>
+<text class="dg-label dg-mono" x="20" y="282">base-uri</text><text class="dg-label dg-mono" x="20" y="318">form-action</text><text class="dg-label dg-mono" x="20" y="354">frame-ancestors</text>
+</g>
+<text class="dg-tiny" x="200" y="66">/assets/index-….js, con &lt;script src&gt;; ningún script inline</text>
+<text class="dg-tiny" x="200" y="102">/assets/index-….css; los style={{…}} de React no cuentan</text>
+<text class="dg-tiny" x="200" y="138">el ícono y la vista previa de una constancia en imagen</text>
+<text class="dg-tiny" x="200" y="174">los fetch de apiFetch a /SistemaControlPracticas/api/…</text>
+<text class="dg-tiny" x="200" y="210">el iframe del CV en el panel: archivos.php</text>
+<text class="dg-tiny" x="200" y="246">nada: ni &lt;object&gt; ni &lt;embed&gt;</text>
+<text class="dg-tiny" x="200" y="282">nada: ningún &lt;base&gt;</text>
+<text class="dg-tiny" x="200" y="318">ningún &lt;form&gt; se envía solo: todos pasan por fetch</text>
+<text class="dg-tiny" x="200" y="354">nadie (H1)</text>
+<g class="dg-tiny">
+<rect x="606" y="51" width="140" height="22" rx="5" class="dg-ok"/><text x="676" y="66" text-anchor="middle">'self'</text>
+<rect x="606" y="87" width="140" height="22" rx="5" class="dg-ok"/><text x="676" y="102" text-anchor="middle">'self'</text>
+<rect x="606" y="123" width="140" height="22" rx="5" class="dg-ok"/><text x="676" y="138" text-anchor="middle">'self'</text>
+<rect x="606" y="159" width="140" height="22" rx="5" class="dg-ok"/><text x="676" y="174" text-anchor="middle">'self'</text>
+<rect x="606" y="195" width="140" height="22" rx="5" class="dg-ok"/><text x="676" y="210" text-anchor="middle">'self'</text>
+<rect x="606" y="231" width="140" height="22" rx="5" class="dg-bad"/><text x="676" y="246" text-anchor="middle">'none'</text>
+<rect x="606" y="267" width="140" height="22" rx="5" class="dg-bad"/><text x="676" y="282" text-anchor="middle">'none'</text>
+<rect x="606" y="303" width="140" height="22" rx="5" class="dg-ok"/><text x="676" y="318" text-anchor="middle">'self'</text>
+<rect x="606" y="339" width="140" height="22" rx="5" class="dg-bad"/><text x="676" y="354" text-anchor="middle">'none'</text>
+</g>
+</svg>
+</div>
+<figcaption><b>Figura WEB09.4.</b> La política sale de mirar qué carga la aplicación, no de copiar una de internet. Cada fila se puede comprobar en el <code>index.html</code> del build o con <code>Select-String</code> sobre <code>src</code>. Las tres rojas cierran cosas que la aplicación no usa y un atacante sí: un <code>&lt;object&gt;</code>, un <code>&lt;base&gt;</code> que cambia adónde apuntan las rutas relativas, y el iframe.</figcaption>
+</figure>
+<p>El frontend es una SPA estática: el <code>index.html</code> no lo genera PHP, así que no hay quién ponga un <span class="no-autolink">nonce</span> distinto en cada respuesta. Y no tiene scripts inline, así que tampoco hacen falta hashes. Es el caso del final de <a href="../modules/m78-csp-cabeceras.html#spa">78.4</a>: <code>script-src 'self'</code>, sin <code>'strict-dynamic'</code> (que ignora <code>'self'</code>), con la condición de que en tu origen nadie pueda subir un <code>.js</code>. Desde <a href="web08-subir-cv-ssrf.html">WEB08</a> lo subido no vive en el origen, y <code>archivos.php</code> nunca sirve un tipo de script.</p>
+<p>La política va primero en <code>Content-Security-Policy-Report-Only</code> (<a href="../modules/m78-csp-cabeceras.html#despliegue">78.5</a>): el navegador la evalúa, no bloquea nada y manda un reporte por cada cosa que habría bloqueado. Los reportes van a un endpoint de la API. Lo que entra lo escribe cualquiera, así que la lectura es una función pura con topes:</p>
+<pre data-lang="php" data-file="api/core/reportes-csp.php"><code>&lt;?php
+
+declare(strict_types=1);
+
+const REPORTES_CSP_MAX_BYTES = 64 * 1024;
+const REPORTES_CSP_MAX_POR_ENVIO = 20;
+
+/** Los dos formatos que manda un navegador: report-uri (viejo) y report-to (Reporting API). */
+function esTipoDeReporteCsp(string $contentType): bool
+{
+    $tipo = strtolower(trim(explode(';', $contentType)[0]));
+    return in_array($tipo, ['application/csp-report', 'application/reports+json'], true);
+}
+
+/**
+ * Cada violación, con los mismos cinco campos sea cual sea el formato.
+ * El cuerpo lo escribe cualquiera: se lee como datos, se recorta y nunca se confía.
+ */
+function resumenReportesCsp(string $cuerpo): array
+{
+    $json = json_decode($cuerpo, true);
+    if (!is_array($json)) {
+        return [];
+    }
+    $crudos = isset($json['csp-report']) ? [$json['csp-report']] : $json;   // report-uri trae uno; report-to, una lista
+
+    $corto = fn(mixed $v): string =&gt; mb_substr(is_scalar($v) ? (string)$v : '', 0, 200);
+    $salida = [];
+    foreach (array_slice($crudos, 0, REPORTES_CSP_MAX_POR_ENVIO) as $r) {
+        if (!is_array($r)) {
+            continue;
+        }
+        if (isset($r['type'])) {                                            // report-to
+            if ($r['type'] !== 'csp-violation' || !is_array($r['body'] ?? null)) {
+                continue;
+            }
+            $b = $r['body'];
+            $salida[] = [
+                'directiva' =&gt; $corto($b['effectiveDirective'] ?? ''),
+                'bloqueado' =&gt; $corto($b['blockedURL'] ?? ''),
+                'pagina'    =&gt; $corto($b['documentURL'] ?? ''),
+                'archivo'   =&gt; $corto($b['sourceFile'] ?? ''),
+                'modo'      =&gt; $corto($b['disposition'] ?? ''),
+            ];
+        } else {                                                            // report-uri
+            $salida[] = [
+                'directiva' =&gt; $corto($r['effective-directive'] ?? $r['violated-directive'] ?? ''),
+                'bloqueado' =&gt; $corto($r['blocked-uri'] ?? ''),
+                'pagina'    =&gt; $corto($r['document-uri'] ?? ''),
+                'archivo'   =&gt; $corto($r['source-file'] ?? ''),
+                'modo'      =&gt; $corto($r['disposition'] ?? ''),
+            ];
+        }
+    }
+    return $salida;
+}</code></pre>
+<pre data-lang="php" data-file="api/endpoints/csp-report.php"><code>&lt;?php
+
+require_once __DIR__ . "/../core/cors.php";
+aplicarCors(['POST']);
+
+require_once __DIR__ . "/../core/response.php";
+require_once __DIR__ . "/../core/reportes-csp.php";
+
+/**
+ * POST csp-report.php: los reportes de la CSP del frontend (WEB09).
+ * No pide sesión ni token: los manda el navegador por su cuenta, sin cookies que importen.
+ * Por eso no confía en nada: tope de tamaño, tipo exacto y a lo sumo 20 líneas por envío.
+ */
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    Response::invalidMethod();
+}
+if (!esTipoDeReporteCsp((string)($_SERVER['CONTENT_TYPE'] ?? ''))) {
+    Response::error("Tipo de contenido no soportado", -1, 415);
+}
+
+$cuerpo = (string)file_get_contents('php://input', false, null, 0, REPORTES_CSP_MAX_BYTES);
+foreach (resumenReportesCsp($cuerpo) as $violacion) {
+    error_log('[csp] ' . json_encode($violacion, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+}
+http_response_code(204);</code></pre>
+<p>El endpoint no llama a <code>requireAuth</code>: un reporte lo manda el navegador por su cuenta, en segundo plano. Por la misma razón no exige el token CSRF; lo que escribe es una línea de registro, y nada más. Ahora, la primera versión del archivo de cabeceras:</p>
+<pre data-lang="shell" data-file="C:/xampp/apache/conf/extra/practicas-cabeceras.conf (etapa 1)"><code># Cabeceras del frontend compilado (WEB09). Etapa 1: la CSP solo reporta.
+Header always set Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; report-uri /SistemaControlPracticas/api/endpoints/csp-report.php; report-to csp"
+Header always set Reporting-Endpoints 'csp="http://localhost:8080/SistemaControlPracticas/api/endpoints/csp-report.php"'</code></pre>
+<p>Las dos formas de reportar van juntas. <code>report-to</code> nombra el endpoint de <code>Reporting-Endpoints</code> y es la forma nueva; <code>report-uri</code> está obsoleta pero la siguen leyendo los navegadores que todavía no conocen <code>report-to</code> <span class="badge badge--doc">Documentado</span>. Un navegador que entiende las dos usa <code>report-to</code>, junta los reportes y puede tardar un rato en mandarlos. El endpoint acepta los dos formatos.</p>
+<pre data-lang="shell"><code>C:\xampp\apache\bin\httpd.exe -t</code></pre>
+<p>Reinicia Apache. Recorre la aplicación unos minutos con las cuatro sesiones: login, ofertas, postularte, el panel de postulantes con el CV en el iframe, el panel de administración. Después, mira el registro:</p>
+<pre data-lang="shell"><code>Select-String -Path C:\xampp\php\logs\php_error_log -Pattern '\[csp\]' | Select-Object -Last 20
+powershell -ExecutionPolicy Bypass -File lab\web09.ps1 -Etapa reporte</code></pre>
+<p>Leyendo el <code>index.html</code> del build y el código de <code>src</code>, el diseño espera ninguna línea <code>[csp]</code> de tus páginas (la de <code>web09-ps1</code> la escribe el script, a propósito). Si aparece una, la directiva y el campo <code>bloqueado</code> dicen qué fue, y la tabla de <a href="../modules/m78-csp-cabeceras.html#fallas">78.9</a> dice cómo se arregla. Las que traen <code>chrome-extension://</code> o <code>moz-extension://</code> son de extensiones de tu navegador: no son de tu aplicación. Abre también <code>http://atacante.test/web09.html</code>: la aplicación se sigue viendo dentro del iframe, porque report-only no bloquea, y llega un reporte de <code>frame-ancestors</code>.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Lo que espera el diseño</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>Ninguna línea <code>[csp]</code> de tus páginas después de recorrer la aplicación</td><td>&nbsp;</td></tr>
+<tr><td><code>atacante.test/web09.html</code>: la aplicación en el iframe, y una línea <code>[csp]</code> con <code>"directiva":"frame-ancestors"</code></td><td>&nbsp;</td></tr>
+<tr><td><code>web09.ps1 -Etapa reporte</code> termina con <code>Todo bien.</code></td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Report-only primero, con un endpoint propio, aunque leyendo el código no se espere ningún reporte.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Ir directo a bloqueo porque el build "no tiene nada inline": tu lectura del código es una hipótesis, y los reportes de usuarios reales la ponen a prueba sin romperle la aplicación a nadie. Mandar los reportes a un servicio externo: sirve en producción, pero en el laboratorio los quieres en el mismo registro que todo lo demás.</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Un flujo que nadie recorrió en esos minutos (un modal raro, una pantalla de error) y que carga algo que la política no permite. En report-only eso es un reporte; en bloqueo, una pantalla rota. Por eso la etapa dura lo que tarden en pasar por la aplicación todos los roles, no cinco minutos, fuera del laboratorio.</dd></div>
+</dl>
+<h3 id="paso-bloqueo">Paso 4. Bloquear, y las demás cabeceras</h3>
+<p>Sin reportes de tus páginas, la política pasa a <code>Content-Security-Policy</code>, y se suman las cabeceras de <a href="../modules/m78-csp-cabeceras.html#cabeceras">78.6</a>. El archivo entero queda así:</p>
+<pre data-lang="shell" data-file="C:/xampp/apache/conf/extra/practicas-cabeceras.conf (etapa 2)"><code># Cabeceras del frontend compilado (WEB09). Etapa 2: la CSP bloquea.
+Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; report-uri /SistemaControlPracticas/api/endpoints/csp-report.php; report-to csp"
+Header always set Reporting-Endpoints 'csp="http://localhost:8080/SistemaControlPracticas/api/endpoints/csp-report.php"'
+Header always set X-Content-Type-Options "nosniff"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+Header always set Cross-Origin-Opener-Policy "same-origin"
+# Para navegadores que no conocen frame-ancestors; los que lo conocen ignoran esta
+Header always set X-Frame-Options "DENY"
+# Solo por https: por http el navegador la ignora, y en este laboratorio no se manda (paso 5)
+Header always set Strict-Transport-Security "max-age=31536000" "expr=%{HTTPS} == 'on'"</code></pre>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Cabecera</th><th>Qué corta en esta aplicación</th></tr></thead>
+<tbody>
+<tr><td><code>X-Content-Type-Options: nosniff</code></td><td>Que el navegador adivine el tipo de un archivo de <code>dist</code>: un <code>.js</code> solo corre si llega como script.</td></tr>
+<tr><td><code>Referrer-Policy: strict-origin-when-cross-origin</code></td><td>Que un link al sitio web de una institución le cuente la ruta y la consulta de donde venías. Es el valor por defecto de los navegadores actuales <span class="badge badge--doc">Documentado</span>; escribirlo lo fija aunque el valor por defecto cambie.</td></tr>
+<tr><td><code>Permissions-Policy</code></td><td>Que un script inyectado pida la cámara, el micrófono, la ubicación o un pago. La aplicación no usa ninguno.</td></tr>
+<tr><td><code>Cross-Origin-Opener-Policy: same-origin</code></td><td>Que una ventana de otro sitio abierta desde la aplicación (o que abrió la aplicación) conserve una referencia a ella en <code>window.opener</code>.</td></tr>
+<tr><td><code>X-Frame-Options: DENY</code></td><td>Lo mismo que <code>frame-ancestors 'none'</code>, para navegadores viejos. Con las dos, el navegador moderno usa <code>frame-ancestors</code> <span class="badge badge--doc">Documentado</span>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>No hay <code>&lt;IfModule headers_module&gt;</code> alrededor: si algún día falta el módulo, Apache no arranca con un error que nombra <code>Header</code>, en lugar de arrancar sin ninguna cabecera y sin avisar. <code>httpd.exe -t</code>, reinicia Apache y corre la matriz:</p>
+<pre data-lang="shell"><code>C:\xampp\apache\bin\httpd.exe -t
+powershell -ExecutionPolicy Bypass -File lab\web09.ps1</code></pre>
+<p>El diseño espera <code>Todo bien.</code> al final. Vuelve a recorrer la aplicación: tiene que funcionar igual que en la etapa 1, y <code>atacante.test/web09.html</code> ya no muestra la aplicación.</p>
+<dl class="pj-why">
+<div><dt>La decisión</dt><dd>Una sola política para todas las páginas, escrita en el servidor.</dd></div>
+<div><dt>Lo que descartas</dt><dd>Una etiqueta <code>&lt;meta http-equiv="Content-Security-Policy"&gt;</code> en el <code>index.html</code>: no admite <code>frame-ancestors</code> ni <code>report-uri</code>, que son justo dos de las cosas que esta guía necesita (<a href="../modules/m78-csp-cabeceras.html#fallas">78.9</a>).</dd></div>
+<div><dt>Qué puede salir mal</dt><dd>Una dependencia nueva que inyecta un <code>&lt;style&gt;</code> o carga un script de un CDN: con la política en bloqueo, la consola muestra <code>Refused to …</code> y llega un reporte. El arreglo es servir el archivo desde el build, no agregar el dominio a la lista (<a href="../modules/m78-csp-cabeceras.html#listas">78.3</a>).</dd></div>
+</dl>
+<h3 id="paso-hsts">Paso 5. HSTS, solo con https</h3>
+<p><code>Strict-Transport-Security</code> le dice al navegador que, durante <code>max-age</code> segundos, a este host solo se entra por https, aunque alguien escriba <code>http://</code> o un atacante en la red intente bajarlo a http (<a href="../modules/m01-viaje-request.html#hsts">M01</a>). Un navegador solo la toma si llega por https: por http la ignora, porque un atacante en el medio podría haberla inventado <span class="badge badge--doc">Documentado</span>. Por eso la línea del paso 4 lleva la condición <code>expr=%{HTTPS} == 'on'</code>: en tu laboratorio, que es http, no sale, y la matriz lo comprueba ("sin HSTS: esto es http").</p>
+<aside class="callout callout--fail">
+<p class="callout-label">Antes de poner HSTS en un servidor de verdad</p>
+<p>HSTS no se deshace desde el servidor: un navegador que la recibió con un año de <code>max-age</code> va a negarse a entrar por http durante un año, aunque quites la cabecera. Empieza con <code>max-age=300</code>, súbelo cuando todo funcione por https, y agrega <code>includeSubDomains</code> solo cuando ningún subdominio (un panel interno, una impresora) siga en http. La lista de precarga de los navegadores (<code>preload</code>) es todavía más difícil de deshacer: no la pidas para un dominio de pruebas.</p>
+</aside>
+<h2 id="decisiones">Decisiones guiadas</h2>
+<div data-exercise="web09-cabeceras"></div>
+<h2 id="comprueba">Cómo comprobar que funciona</h2>
+<h3 id="comprueba-matriz">La matriz</h3>
+<p>Un script que falla si una respuesta sale sin una cabecera: el frontend, el script compilado, un error de la API, un preflight, un documento y el endpoint de reportes. Es la prueba que pide <a href="../modules/m78-csp-cabeceras.html#fallas">78.9</a>: si alguien borra la línea de <code>aplicarCors</code> o una del archivo de Apache, lo ves aquí y no en un incidente.</p>
+<pre data-lang="shell" data-file="lab/web09.ps1"><code># Revisa las cabeceras de seguridad del frontend compilado y de la API (WEB09).
+# Uso: .\lab\web09.ps1                 (la CSP tiene que estar bloqueando)
+#      .\lab\web09.ps1 -Etapa reporte  (paso 3: la CSP solo reporta)
+param([ValidateSet('bloqueo', 'reporte')][string]$Etapa = 'bloqueo', [string]$Front = "http://localhost:8080")
+
+$api = "$Front/SistemaControlPracticas/api/endpoints"
+$script:mal = 0
+
+function Cabeceras([string]$Url, [string[]]$Extra = @()) {
+    $h = @{}
+    foreach ($l in (&amp; curl.exe -s -o NUL -D - @Extra $Url)) {
+        if ($l -match '^([A-Za-z-]+):\s*(.*)$') { $h[$matches[1].ToLower()] = $matches[2].Trim() }
+        elseif ($l -match '^HTTP/\S+\s+(\d+)') { $h['(estado)'] = $matches[1] }
+    }
+    $h
+}
+
+# Contiene: el valor tiene que incluir el texto. Sin texto: la cabecera no tiene que estar.
+function Exige($h, [string]$Nombre, [string]$Contiene, [string]$Que) {
+    $v = $h[$Nombre.ToLower()]
+    $bien = if ($Contiene) { $v -and $v.Contains($Contiene) } else { -not $v }
+    if (-not $bien) { $script:mal++ }
+    $visto = if ($v) { $v } else { '(no está)' }
+    if ($visto.Length -gt 70) { $visto = $visto.Substring(0, 67) + '...' }
+    "{0}  {1,-44} {2}" -f $(if ($bien) { 'ok ' } else { 'MAL' }), $Que, $visto
+}
+
+"--- El frontend: $Front/"
+$h = Cabeceras "$Front/"
+$csp = if ($Etapa -eq 'reporte') { 'Content-Security-Policy-Report-Only' } else { 'Content-Security-Policy' }
+Exige $h $csp "script-src 'self'"            "$csp, scripts solo del origen"
+Exige $h $csp "frame-ancestors 'none'"       "nadie la enmarca"
+Exige $h $csp "report-uri"                   "manda reportes"
+if (($h[$csp.ToLower()] + '') -match 'unsafe') { $script:mal++; "MAL  la política tiene 'unsafe-…'" }
+if ($Etapa -eq 'bloqueo') {
+    Exige $h 'X-Content-Type-Options' 'nosniff'                        'nosniff'
+    Exige $h 'Referrer-Policy' 'strict-origin-when-cross-origin'       'Referrer-Policy'
+    Exige $h 'Permissions-Policy' 'camera=()'                          'sin cámara ni micrófono'
+    Exige $h 'Cross-Origin-Opener-Policy' 'same-origin'                'COOP'
+    Exige $h 'X-Frame-Options' 'DENY'                                  'X-Frame-Options, para navegadores viejos'
+    Exige $h 'Strict-Transport-Security' ''                            'sin HSTS: esto es http'
+}
+
+$js = ([regex]::Match((&amp; curl.exe -s "$Front/"), '/assets/index-[^"]+\.js')).Value
+"--- El script compilado: $js"
+$h = Cabeceras "$Front$js"
+Exige $h '(estado)' '200' 'se sirve'
+Exige $h 'Content-Type' 'javascript' 'con tipo de script'
+if ($Etapa -eq 'bloqueo') { Exige $h 'X-Content-Type-Options' 'nosniff' 'nosniff' }
+
+"--- La API: una respuesta de error (sin sesión)"
+$h = Cabeceras "$api/archivos.php?postulacion=1&amp;doc=cv"
+Exige $h '(estado)' '401' 'responde 401'
+Exige $h 'Content-Security-Policy' "default-src 'none'" 'no carga nada'
+Exige $h 'Content-Security-Policy' "frame-ancestors 'none'" 'nadie la enmarca'
+Exige $h 'X-Content-Type-Options' 'nosniff' 'nosniff'
+Exige $h 'Referrer-Policy' 'no-referrer' 'no-referrer'
+Exige $h 'Cross-Origin-Resource-Policy' 'same-site' 'CORP'
+Exige $h 'Cache-Control' 'no-store' 'no-store'
+
+"--- La API: un preflight"
+$h = Cabeceras "$api/archivos.php" @('-X', 'OPTIONS', '-H', 'Origin: http://localhost:5173', '-H', 'Access-Control-Request-Method: GET')
+Exige $h '(estado)' '204' 'responde 204'
+Exige $h 'X-Content-Type-Options' 'nosniff' 'también con nosniff'
+
+"--- La API: un documento (WEB08), como estudiante"
+&amp; curl.exe -s -o NUL -c lab\jar-web09.txt -H "Content-Type: application/json" --data-binary "@lab\login.json" "$api/login.php"
+$p = @((&amp; curl.exe -s -b lab\jar-web09.txt "$api/postulaciones.php?estudiante_id=3" | ConvertFrom-Json).data)[0]
+if ($p) {
+    $h = Cabeceras "$api/archivos.php?postulacion=$($p.id)&amp;doc=cv" @('-b', 'lab\jar-web09.txt')
+    Exige $h '(estado)' '200' 'responde 200'
+    Exige $h 'Content-Security-Policy' "frame-ancestors 'self'" 'lo enmarca el frontend'
+    Exige $h 'Content-Security-Policy' 'http://localhost:5173' 'y Vite, mientras desarrollas'
+    Exige $h 'X-Content-Type-Options' 'nosniff' 'nosniff'
+} else { $script:mal++; "MAL  estudiante no tiene postulaciones: haz la infraestructura de WEB08." }
+
+"--- Los reportes"
+[IO.File]::WriteAllText((Join-Path $PWD 'lab\reporte.json'), '{"csp-report":{"document-uri":"http://localhost:8080/web09-ps1","effective-directive":"script-src-elem","blocked-uri":"inline"}}')
+foreach ($t in @(@('application/json', '415'), @('application/csp-report', '204'))) {
+    $h = Cabeceras "$api/csp-report.php" @('-H', "Content-Type: $($t[0])", '--data-binary', '@lab\reporte.json')
+    Exige $h '(estado)' $t[1] "POST con $($t[0])"
+}
+
+""
+if ($script:mal -eq 0) { "Todo bien." } else { "$script:mal comprobaciones fallaron." }</code></pre>
+<pre data-lang="shell"><code>powershell -ExecutionPolicy Bypass -File lab\web09.ps1</code></pre>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Lo que espera el diseño</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>Las nueve líneas del frontend en <code>ok</code>, con <code>Strict-Transport-Security</code> en <code>(no está)</code></td><td>&nbsp;</td></tr>
+<tr><td>El script compilado: 200, tipo de script y <code>nosniff</code></td><td>&nbsp;</td></tr>
+<tr><td>La API: el 401, el preflight 204 y el documento 200, cada uno con sus cabeceras</td><td>&nbsp;</td></tr>
+<tr><td>Los reportes: 415 con <code>application/json</code>, 204 con <code>application/csp-report</code></td><td>&nbsp;</td></tr>
+<tr><td>Al final, <code>Todo bien.</code></td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="comprueba-fallas">Fallas provocadas</h3>
+<p><b>Falla 1. Clickjacking en report-only.</b> En <code>practicas-cabeceras.conf</code>, cambia <code>Content-Security-Policy</code> por <code>Content-Security-Policy-Report-Only</code> en la primera línea y comenta la de <code>X-Frame-Options</code> con un <code>#</code>. Reinicia Apache y abre <code>http://atacante.test/web09.html</code>: la aplicación aparece dentro del iframe, a media opacidad, encima del botón "Reclamar". Report-only evalúa <code>frame-ancestors</code> y manda el reporte, pero no lo hace cumplir. Vuelve el archivo a la etapa 2, reinicia y recarga: el iframe queda vacío, y la consola de la página atacante muestra un mensaje que nombra <code>frame-ancestors</code>.</p>
+<p><b>Falla 2. Un script inyectado.</b> En <code>frontend\dist\index.html</code>, agrega antes de <code>&lt;/head&gt;</code> lo que dejaría un XSS almacenado que se escapó de <a href="web05-xss.html">WEB05</a>:</p>
+<pre data-lang="html" data-file="frontend/dist/index.html (solo para la falla 2)"><code>    &lt;script&gt;document.title = 'script inyectado'&lt;/script&gt;</code></pre>
+<p>Recarga <code>http://localhost:8080/</code>. El título de la pestaña sigue siendo "Practicas Inteligentes", la consola dice que se negó a ejecutar un script inline por <code>script-src</code>, y en el registro aparece una línea <code>[csp]</code> con <code>"bloqueado":"inline"</code>. La aplicación funciona igual: la CSP no arregla el XSS, lo vuelve inofensivo mientras lo arreglas.</p>
+<p><b>Falla 3. <code>'unsafe-inline'</code>.</b> Con el script de la falla 2 todavía ahí, agrega <code>'unsafe-inline'</code> a <code>script-src</code> en el archivo de Apache, reinicia y recarga. El título cambia a "script inyectado": la política sigue ahí, y no protege de nada de lo que protegía. Corre <code>lab\web09.ps1</code>: la línea de <code>unsafe</code> dice <code>MAL</code>. Vuelve el archivo, reinicia y deja <code>dist</code> como estaba con <code>pnpm build</code>.</p>
+<p><b>Falla 4. Un origen mal escrito.</b> En <code>cabecerasDocumento</code>, cambia el <code>array_filter</code> entero por la versión que no revisa nada:</p>
+<pre data-lang="php" data-file="api/core/cabeceras.php (solo para la falla 4)"><code>    $validos = $origenes ?? origenesPermitidos();      // FALLA 4: sin filtrar</code></pre>
+<p>Corre <code>tests\cabeceras_test.php</code>. El diseño espera dos <code>FALLA</code>: "un * en el .env no llega a la cabecera" y "un ; en el .env no agrega una directiva". Con <code>*</code> en <code>ORIGENES_PERMITIDOS</code>, cualquier sitio podría enmarcar un CV; con un <code>;</code>, el <code>.env</code> escribiría directivas. Vuelve el filtro.</p>
+<div class="table-wrap">
+<table class="t">
+<thead><tr><th>Falla</th><th>Lo que viste</th></tr></thead>
+<tbody>
+<tr><td>1. Report-only: ¿se ve la aplicación en el iframe? ¿Y en bloqueo?</td><td>&nbsp;</td></tr>
+<tr><td>2. El script inyectado: el título y la línea <code>[csp]</code></td><td>&nbsp;</td></tr>
+<tr><td>3. Con <code>'unsafe-inline'</code>: el título y la matriz</td><td>&nbsp;</td></tr>
+<tr><td>4. Sin filtro: los casos que fallan</td><td>&nbsp;</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="limites">Limitaciones</h2>
+<ul>
+<li><b>No hay <span class="no-autolink">nonce</span>, porque no hace falta todavía.</b> Si algún día el HTML lo genera el servidor (una página en PHP, o el renderizado de <a href="../modules/m84-renderizado-nextjs.html">M84</a>), la política pasa a la estricta de <a href="../modules/m78-csp-cabeceras.html#<span class="no-autolink">nonce</span>">78.4</a>: un <span class="no-autolink">nonce</span> de <code>random_bytes</code> por respuesta y <code>'strict-dynamic'</code>.</li>
+<li><b>La CSP es la segunda capa.</b> Un XSS que solo usa lo que la página ya carga (cambiar un <code>href</code>, abusar de una función de la propia aplicación) no lo frena ninguna política. Escapar la salida (<a href="web05-xss.html">WEB05</a>) sigue siendo el arreglo.</li>
+<li><b>El endpoint de reportes está abierto.</b> Cualquiera puede mandarle reportes falsos: el tope de 64&#8239;KB y de 20 líneas por envío limita cada request, no cuántas llegan. Fuera del laboratorio necesita un límite por IP, o los reportes van a un servicio aparte.</li>
+<li><b>HSTS no se prueba aquí.</b> El laboratorio es http; la condición <code>expr</code> se comprueba solo en que la cabecera no sale.</li>
+<li><b>Lo que la guía no cubre.</b> Trusted Types (<code>require-trusted-types-for 'script'</code>) y el aislamiento con COEP de <a href="../modules/m78-csp-cabeceras.html#aislamiento">78.7</a>: la aplicación no usa nada que los necesite, y COEP rompería el iframe del CV si algún día se sirviera de otro sitio.</li>
+<li><b>Costo.</b> Unos cientos de bytes de cabeceras por respuesta, y una línea de registro por violación.</li>
+<li><b>Nada se ejecutó contra tu sistema al escribir esta guía.</b> La prueba pura se corrió sobre copias y la configuración de Apache se revisó con <code>httpd.exe -t</code> sobre un archivo aparte; lo que muestra el navegador y la matriz sale de leer el código, y las tablas son tuyas.</li>
+</ul>
+<h2 id="repositorio">Tu repositorio</h2>
+<div class="pj-repo" data-repo="web09">
+<p class="pj-repo-head">Lo que tiene que quedar</p>
+<ul class="pj-checks">
+<li data-check="api"><code>cabeceras.php</code> existe, <code>aplicarCors</code> lo usa y <code>cabeceras_test.php</code> dice <code>Todo bien</code>.</li>
+<li data-check="build"><code>http://localhost:8080/</code> sirve el build y la aplicación funciona entera, con el CV en el iframe.</li>
+<li data-check="reportes">Pasaste por report-only, leíste el registro y no quedó ninguna violación de tus páginas.</li>
+<li data-check="matriz"><code>web09.ps1</code> termina con <code>Todo bien.</code></li>
+<li data-check="fallas">Provocaste las cuatro fallas y llenaste las tablas.</li>
+</ul>
+</div>
+<h2 id="conectar">Cómo conectar</h2>
+<p>Esta guía funciona sola. Si quieres juntarla con otras:</p>
+<ul class="pj-connect">
+<li>
+<p class="pj-connect-title">Con WEB01, lo que no debe verse</p>
+<p><code>nosniff</code> y <code>no-store</code> ya salían de <code>Response::json</code>; ahora salen también de las respuestas que no pasan por ahí.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB04, CORS</p>
+<p><code>aplicarCors</code> era la primera línea de cada endpoint para CORS, y por eso sirve de puerta para todas las demás cabeceras. <code>ORIGENES_PERMITIDOS</code> decide ahora también quién enmarca un documento.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB05, XSS</p>
+<p>La falla 2 es el XSS de WEB05 que no se encontró: la CSP lo deja escrito pero no lo deja correr.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con WEB08, subir el CV y SSRF</p>
+<p>El CV se muestra en un iframe del panel: <code>cabecerasDocumento</code> es la razón por la que esa vista previa sigue funcionando con la API en <code>frame-ancestors 'none'</code>.</p>
+</li>
+<li>
+<p class="pj-connect-title">Con M78 y M83</p>
+<p>La teoría de cada directiva y del despliegue está en <a href="../modules/m78-csp-cabeceras.html">M78</a>, y el clickjacking de la falla 1, en <a href="../modules/m83-otros-ataques.html#clickjacking">M83</a>.</p>
+</li>
+</ul>
+
+    </article>
+
+    <nav class="pager content" data-project-pager aria-label="Proyecto anterior y siguiente"></nav>
+  </main>
+
+  <aside class="toc" data-toc-host aria-label="En esta página"></aside>
+</div>
+
+<script src="../assets/js/core/sd.js"></script>
+<script src="../assets/js/data/course.data.js"></script>
+<script src="../assets/js/data/glossary.data.js"></script>
+<script src="../assets/js/data/projects.data.js"></script>
+<script src="../assets/js/data/projects/web09.data.js"></script>
+<script src="../assets/js/core/progress.js"></script>
+<script src="../assets/js/core/nav.js"></script>
+<script src="../assets/js/core/glossary.js"></script>
+<script src="../assets/js/core/quiz.js"></script>
+<script src="../assets/js/core/exercise.js"></script>
+<script src="../assets/js/pages/project-state.js"></script>
+<script src="../assets/js/pages/project-guide.js"></script>
+</body>
+</html>

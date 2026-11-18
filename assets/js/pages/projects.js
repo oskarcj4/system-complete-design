@@ -125,6 +125,8 @@
     var series = [
       { label: 'Python', title: 'Tutoriales de AI Engineering', tracks: data.aiTracks, line: '--line-p2', anchor: '#ia-engineering', more: 'Ver la serie de AI Engineering' },
       { label: 'Python', title: 'Guías de ML System Design', tracks: data.mlTracks, line: '--line-p6', anchor: '#ml-system-design', more: 'Ver la serie de ML System Design' },
+      { label: 'Docker y Wazuh', title: 'Guías de Blue Team y DevSecOps', tracks: data.secTracks, line: '--line-p7', anchor: '#devsecops', more: 'Ver la serie de Blue Team y DevSecOps' },
+      { label: 'PHP', title: 'Guías de seguridad web', tracks: data.webTracks, line: '--line-p9', anchor: '#seguridad-web', more: 'Ver la serie de seguridad web' },
       { label: 'Java y Spring Boot', title: 'Guías de implementación', tracks: data.tracks, line: '--line-p1', anchor: '#indice', more: 'Ver el índice completo', wide: true }
     ];
     series.forEach(function (s, i) {
@@ -168,6 +170,10 @@
     if (aiTracks && data.aiTracks) renderTracks(aiTracks, data.aiTracks);
     var mlTracks = document.querySelector('[data-ml-tracks]');
     if (mlTracks && data.mlTracks) renderTracks(mlTracks, data.mlTracks);
+    var secTracks = document.querySelector('[data-sec-tracks]');
+    if (secTracks && data.secTracks) renderTracks(secTracks, data.secTracks);
+    var webTracks = document.querySelector('[data-web-tracks]');
+    if (webTracks && data.webTracks) renderTracks(webTracks, data.webTracks);
     if (caps) renderCapstones(caps, data);
     if (count) renderCount(count, data);
     if (blocks) renderBlocks(blocks, data);

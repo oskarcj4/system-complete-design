@@ -377,6 +377,16 @@ def forward(ids, modelo, cache):
         </table>
       </div>
 
+      <p><b>Cómo leer esta tabla.</b> Cada fila es la misma matriz W_q con más o menos tokens entrando a la vez. La segunda y la tercera columna dicen cuántas cuentas hace la GPU por cada byte que trae de memoria. La última compara ese número con el quiebre de la H100 (590 en FP8): por debajo, la GPU termina las cuentas antes de que lleguen los datos y espera; por encima, los datos sobran y lo que espera son las cuentas.</p>
+
+      <p>Paso a paso, la fila de 64 tokens con pesos en FP8 (1 byte por peso):</p>
+      <ol class="steps">
+        <li><span class="step-title">Contar las cuentas</span>FLOPs = 2 × 64 × 8192 × 8192 = 8 590 millones.</li>
+        <li><span class="step-title">Contar los pesos</span>8192 × 8192 pesos × 1 byte = 67.1 millones de bytes.</li>
+        <li><span class="step-title">Contar las activaciones</span>64 filas × (8192 que entran + 8192 que salen) × 2 bytes = 2.1 millones de bytes.</li>
+        <li><span class="step-title">Dividir</span>8 590 millones ÷ (67.1 + 2.1) millones de bytes ≈ 124 FLOP por byte, lejos de 590: la GPU sigue esperando a la memoria.</li>
+      </ol>
+
       <p>La regla que sale de la tabla: <b>desde unos 300 tokens por pasada, una proyección deja de esperar a la memoria</b>, en FP8 o en BF16. El prefill de un prompt mediano pasa ese umbral de sobra. El decode llega a él solo si junta cientos de usuarios en el mismo paso, porque en el decode T es la cantidad de usuarios del batch: cada uno aporta una fila. Es la misma cuenta de <a href="m12-llm-por-dentro.html#memoria">M12.5</a>, ahora vista desde una sola matriz.</p>
 
       <aside class="callout callout--def">
@@ -427,6 +437,14 @@ def forward(ids, modelo, cache):
       </ol>
 
       <p>¿Por qué dividir por √128? El producto escalar de dos vectores de 128 números al azar tiene una dispersión que crece con √128. Sin la división, los puntajes serían tan grandes que softmax daría casi todo el peso a una sola clave, y en el entrenamiento los gradientes se apagarían. Es la escala que propuso el paper original del transformer. <span class="badge badge--doc">Documentado</span></p>
+
+      <p>Con números de juguete, para que se vea qué hace cada paso. Tres tokens; miramos la consulta del tercero, que puede ver a los tres (a sí mismo incluido). Supón que sus puntajes ya divididos por √128 son 1, 3 y 4, y que cada valor V es un solo número: 10, 0 y 2.</p>
+      <ol class="steps">
+        <li><span class="step-title">Exponenciales</span>e¹ ≈ 2.72, e³ ≈ 20.09 y e⁴ ≈ 54.60. Suman 77.41.</li>
+        <li><span class="step-title">Pesos</span>Cada exponencial dividida por la suma: 0.035, 0.259 y 0.705. Suman 1, y el puntaje más alto se queda con casi tres cuartos.</li>
+        <li><span class="step-title">Mezcla</span>0.035 × 10 + 0.259 × 0 + 0.705 × 2 ≈ 1.76. La salida se parece al valor del token con más peso, con un poco de los demás.</li>
+        <li><span class="step-title">La máscara</span>La consulta del segundo token haría lo mismo solo con los dos primeros: el puntaje contra el tercero vale −∞, e elevado a −∞ es 0, y ese token no aporta nada.</li>
+      </ol>
 
       <p>Las formas, para el prefill de 2000 tokens y para el paso de decode del token 2001:</p>
 
@@ -636,6 +654,14 @@ print(np.allclose(fila, completo[-1]))                 # True: el mismo resultad
 
       <div class="formula">FLOPs de la atención en un prefill ≈ 2 × T² × 8192 × 80 = 1.31 millones × T²</div>
 
+      <p>De dónde sale cada factor de esa fórmula, en una capa:</p>
+      <ol class="steps">
+        <li><span class="step-title">Un par consulta-clave</span>Comparar una consulta con una clave en las 64 cabezas son 64 × 128 = 8192 multiplicaciones y otras tantas sumas: 2 × 8192 FLOPs. Mezclar el valor de ese token cuesta lo mismo. Total por par: 4 × 8192.</li>
+        <li><span class="step-title">Cuántos pares</span>Con T tokens hay T × T pares, pero la máscara tapa la mitad: quedan unos T² ÷ 2.</li>
+        <li><span class="step-title">Juntar</span>4 × 8192 × T² ÷ 2 = 2 × T² × 8192 por capa, y por las 80 capas, 1.31 millones × T².</li>
+        <li><span class="step-title">Un ejemplo</span>Con T = 2000: 1.31 millones × 4 millones ≈ 5.2 billones de FLOPs, contra 2 × 70 600 millones × 2000 ≈ 282 billones del resto del modelo.</li>
+      </ol>
+
       <p>Las proyecciones y el MLP cuestan unas 2 × 70 600 millones × T, en línea recta con T. Las dos cuentas se igualan cuando T ≈ 70 600 millones ÷ (8192 × 80), unos <b>108 000 tokens</b>. Por debajo, la atención es una parte chica del prefill: el 1.8&#8239;% con 2000 tokens. Por encima, domina. Es la curva que dibuja <a href="m16-context-windows.html#limites">M16.1</a>.</p>
 
       <h3 id="flash">La matriz que no cabe: FlashAttention</h3>
@@ -715,6 +741,48 @@ print(np.allclose(fila, completo[-1]))                 # True: el mismo resultad
 
         </div>
         <figcaption><b>Figura 12.1.3.</b> La atención ingenua lleva la matriz de T × T de ida y vuelta por la HBM; FlashAttention la calcula por bloques dentro de la SRAM y solo escribe la salida.</figcaption>
+      </figure>
+
+      <aside class="callout callout--analogy">
+        <p class="callout-label">Analogía</p>
+        <p>El softmax en línea es como sumar los gastos de un viaje con tickets que llegan por tandas. No guardas los tickets, solo el total parcial. Si a mitad de viaje cambias la moneda en la que llevas la cuenta, conviertes el total una sola vez y sigues sumando. El "máximo" de FlashAttention es esa moneda de referencia: cuando aparece un puntaje más alto, el total acumulado se convierte multiplicándolo por e elevado a la diferencia.</p>
+      </aside>
+
+      <p>Con los mismos puntajes de juguete de antes, 1, 3 y 4, partidos en dos bloques: el primero trae los puntajes 1 y 3; el segundo, el 4. La figura sigue lo que guarda el kernel en cada momento: solo el máximo visto y la suma de exponenciales.</p>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 268" role="img" aria-labelledby="fjr121bt fjr121bd">
+<title id="fjr121bt">El softmax en línea con tres puntajes en dos bloques</title>
+<desc id="fjr121bd">Primer bloque: puntajes 1 y 3; el máximo es 3 y la suma de exponenciales, e a la menos 2 más e a la 0, da 1.135. Llega el segundo bloque con el puntaje 4, un máximo nuevo: la suma vieja se reescala por e a la menos 1 y queda en 0.418, y al sumarle e a la 0 da 1.418. El peso de la clave 3 es 1 dividido 1.418, 0.705. Abajo, la cuenta con la fila entera de una vez da la misma suma, 1.418.</desc>
+<defs><marker id="fjr121ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="10" y="24" text-anchor="start">Lo único que guarda el kernel por consulta: el máximo m y la suma</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="20" y="44" width="220" height="128" rx="10"/>
+<text class="dg-label" x="130" y="70" text-anchor="middle">Bloque 1: puntajes 1 y 3</text>
+<text class="dg-small" x="130" y="94" text-anchor="middle">máximo m = 3</text>
+<text class="dg-small" x="130" y="116" text-anchor="middle">suma = e^(1−3) + e^(3−3)</text>
+<text class="dg-small" x="130" y="138" text-anchor="middle">= 0.135 + 1</text>
+<text class="dg-small" x="130" y="160" text-anchor="middle">= 1.135</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="275" y="44" width="220" height="128" rx="10"/>
+<text class="dg-label" x="385" y="70" text-anchor="middle">Bloque 2: puntaje 4</text>
+<text class="dg-small" x="385" y="94" text-anchor="middle">nuevo máximo: m = 4</text>
+<text class="dg-small" x="385" y="116" text-anchor="middle">reescalar: 1.135 × e^(3−4)</text>
+<text class="dg-small" x="385" y="138" text-anchor="middle">= 0.418</text>
+<text class="dg-small" x="385" y="160" text-anchor="middle">suma = 0.418 + 1 = 1.418</text>
+<rect class="dg-box dg-box--em" x="530" y="44" width="220" height="128" rx="10"/>
+<text class="dg-label" x="640" y="70" text-anchor="middle">Al final</text>
+<text class="dg-small" x="640" y="94" text-anchor="middle">peso de la clave 3:</text>
+<text class="dg-small" x="640" y="116" text-anchor="middle">e^(4−4) ÷ 1.418 = 0.705</text>
+<text class="dg-small" x="640" y="138" text-anchor="middle">guardó 2 números,</text>
+<text class="dg-small" x="640" y="160" text-anchor="middle">no la fila entera</text>
+<path class="dg-edge" d="M242 108 H271" marker-end="url(#fjr121ba)"/>
+<path class="dg-edge" d="M497 108 H526" marker-end="url(#fjr121ba)"/>
+<rect class="dg-box" x="20" y="194" width="730" height="58" rx="8"/>
+<text class="dg-small" x="385" y="218" text-anchor="middle">Con la fila entera de una vez: e^(1−4) + e^(3−4) + e^(4−4) = 0.050 + 0.368 + 1 = 1.418.</text>
+<text class="dg-small" x="385" y="240" text-anchor="middle">La misma suma y el mismo 0.705: el resultado es exacto, no una aproximación.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 12.1.3.a.</b> El softmax en línea con tres puntajes. Cuando llega un máximo nuevo, lo acumulado se multiplica por e elevado a la diferencia de máximos; la salida parcial (la suma de pesos por V) se reescala con el mismo factor.</figcaption>
       </figure>
 
       <p>La primera versión es de 2022; FlashAttention-2 (2023) reparte mejor el trabajo entre los SMs y FlashAttention-3 (2024) usa las instrucciones de la H100 y FP8. <span class="badge badge--doc">Documentado</span> En el decode el problema cambia: hay una sola consulta por usuario, así que no hay bloques de consultas que repartir entre los SMs. Flash-Decoding (2023) reparte entonces el largo del cache: cada SM procesa un tramo de claves y valores, y los resultados se combinan con el mismo softmax en línea. <span class="badge badge--doc">Documentado</span></p>
@@ -1481,6 +1549,56 @@ print(np.allclose(fila, completo[-1]))                 # True: el mismo resultad
       </figure>
 
       <p>La atención del decode tiene una propiedad incómoda. Por cada token del contexto, una consulta hace 2 × 64 × 128 operaciones contra su clave y otras tantas con su valor: 32 768 por capa. Para eso lee K y V de las 8 cabezas de KV: 2 × 8 × 128 × 2 bytes = 4096 bytes. <b>La intensidad es 8 FLOP por byte, sin importar cuántos usuarios haya en el batch</b>, porque cada usuario lee su propio cache. Juntar usuarios ayuda a las proyecciones y al MLP, que comparten los pesos, pero no a la atención. Sin GQA, con 64 cabezas de KV, sería 1; con el KV en FP8, 16. MLA, la atención de DeepSeek (<a href="m12-llm-por-dentro.html#kv-cache">M12.4</a>), reconstruye K y V desde un vector comprimido y hace más cuentas por byte leído. Esa es la razón de fondo por la que la arquitectura de la atención pesa tanto en el costo de servir un modelo.</p>
+
+      <p>La cuenta de esos 8 FLOP por byte, paso a paso, para un token del contexto en una capa:</p>
+      <ol class="steps">
+        <li><span class="step-title">Cuentas</span>Comparar la consulta con su clave en 64 cabezas de 128: 2 × 64 × 128 = 16 384. Mezclar su valor, otras 16 384. Total: 32 768 FLOPs.</li>
+        <li><span class="step-title">Bytes</span>Ese token guardó K y V en 8 cabezas de 128 números, a 2 bytes cada uno: 2 × 8 × 128 × 2 = 4096 bytes.</li>
+        <li><span class="step-title">Dividir</span>32 768 ÷ 4096 = 8. Con 64 usuarios la cuenta se repite 64 veces, pero cada vez con bytes distintos (el cache de cada uno), así que el cociente sigue en 8.</li>
+      </ol>
+
+      <figure class="figure">
+        <div class="figure-frame">
+<svg viewBox="0 0 770 272" role="img" aria-labelledby="fjr121at fjr121ad">
+<title id="fjr121at">En el decode, los pesos se comparten y los caches no</title>
+<desc id="fjr121ad">Arriba a la izquierda, los pesos de la capa, que se leen una vez por paso y sirven a los tres usuarios del batch, A, B y C. Debajo de cada usuario, su propio KV cache, que se lee solo para él. A la derecha, dos conclusiones: los pesos dan unas 2 FLOP por byte por cada usuario del batch, así que más usuarios suben la cuenta; el cache da 8 FLOP por byte con uno o con 64 usuarios.</desc>
+<defs><marker id="fjr121aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<text class="dg-group" x="10" y="24" text-anchor="start">Un paso de decode con tres usuarios</text>
+<rect class="dg-layer" style="--c: var(--l-gpu)" x="20" y="40" width="340" height="56" rx="10"/>
+<text class="dg-label" x="190" y="64" text-anchor="middle">Pesos de la capa</text>
+<text class="dg-tiny" x="190" y="84" text-anchor="middle">se leen una vez y sirven a todo el batch</text>
+<rect class="dg-box" x="20" y="136" width="100" height="40" rx="8"/>
+<text class="dg-label" x="70" y="161" text-anchor="middle">Usuario A</text>
+<rect class="dg-box" x="140" y="136" width="100" height="40" rx="8"/>
+<text class="dg-label" x="190" y="161" text-anchor="middle">Usuario B</text>
+<rect class="dg-box" x="260" y="136" width="100" height="40" rx="8"/>
+<text class="dg-label" x="310" y="161" text-anchor="middle">Usuario C</text>
+<path class="dg-edge" d="M70 97 V132" marker-end="url(#fjr121aa)"/>
+<path class="dg-edge" d="M190 97 V132" marker-end="url(#fjr121aa)"/>
+<path class="dg-edge" d="M310 97 V132" marker-end="url(#fjr121aa)"/>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="20" y="212" width="100" height="40" rx="8"/>
+<text class="dg-small" x="70" y="237" text-anchor="middle">KV de A</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="140" y="212" width="100" height="40" rx="8"/>
+<text class="dg-small" x="190" y="237" text-anchor="middle">KV de B</text>
+<rect class="dg-layer" style="--c: var(--l-cache)" x="260" y="212" width="100" height="40" rx="8"/>
+<text class="dg-small" x="310" y="237" text-anchor="middle">KV de C</text>
+<path class="dg-edge" d="M70 211 V180" marker-end="url(#fjr121aa)"/>
+<path class="dg-edge" d="M190 211 V180" marker-end="url(#fjr121aa)"/>
+<path class="dg-edge" d="M310 211 V180" marker-end="url(#fjr121aa)"/>
+<rect class="dg-box" x="400" y="40" width="350" height="96" rx="10"/>
+<text class="dg-label" x="416" y="64" text-anchor="start">Pesos: una lectura, N usuarios</text>
+<text class="dg-small" x="416" y="88" text-anchor="start">En FP8, unas 2 FLOP por byte por usuario.</text>
+<text class="dg-small" x="416" y="108" text-anchor="start">Con 64 usuarios, unas 124: más usuarios,</text>
+<text class="dg-small" x="416" y="126" text-anchor="start">más trabajo por cada viaje a memoria.</text>
+<rect class="dg-box" x="400" y="156" width="350" height="96" rx="10"/>
+<text class="dg-label" x="416" y="180" text-anchor="start">KV cache: cada uno lee el suyo</text>
+<text class="dg-small" x="416" y="204" text-anchor="start">8 FLOP por byte con 1 usuario o con 64.</text>
+<text class="dg-small" x="416" y="224" text-anchor="start">Juntar usuarios no lo mejora: solo GQA,</text>
+<text class="dg-small" x="416" y="242" text-anchor="start">KV en FP8 o MLA cambian el cociente.</text>
+</svg>
+        </div>
+        <figcaption><b>Figura 12.1.7.a.</b> Por qué el batch ayuda a las proyecciones y al MLP pero no a la atención del decode: los pesos se leen una vez para todos, y cada cache se lee solo para su dueño.</figcaption>
+      </figure>
 
       <h3 id="decode-extra">Lo que no es cómputo ni memoria</h3>
 

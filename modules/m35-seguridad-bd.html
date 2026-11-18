@@ -62,6 +62,13 @@
 
 <h2 id="modelo"><span class="sec-num">35.1</span>El modelo de amenaza de una base</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Antes de poner candados, haces la lista de quién entra a la base y qué hay ahí que no quieres perder. Son varios: la app, las migraciones, un analista, los backups y, si algo sale mal, un atacante. La regla que sale de esa lista es darle a cada uno solo lo que su trabajo necesita.</p>
+  <p class="jr-like"><b>Es como</b> un edificio de oficinas: la persona de limpieza, el contador y el técnico de ascensores tienen tarjetas distintas. Si alguien roba la tarjeta de limpieza, no abre la caja fuerte.</p>
+  <dl class="jr-words"><dt>Modelo de amenaza</dt><dd>la lista de quién podría tocar el sistema y qué hay que proteger de cada uno.</dd><dt>Superusuario</dt><dd>la cuenta que puede hacerlo todo en la base y se salta cualquier permiso (en PostgreSQL, <code>postgres</code>).</dd><dt>Credencial</dt><dd>lo que prueba quién eres al conectarte: usuario y contraseña, o un token.</dd><dt>Mínimo privilegio</dt><dd>cada identidad recibe solo los permisos que su tarea exige.</dd></dl>
+</aside>
+
 <p>Antes de repartir permisos, hay que saber <b>quién toca la base</b> y <b>qué se protege</b>. No es una sola aplicación: a la misma base llegan la app en producción, las migraciones que cambian el esquema, un analista que corre consultas, el proceso que hace los backups y —si algo sale mal— alguien con una credencial robada o una <dfn data-term="sql-injection">inyección SQL</dfn>. Cada uno necesita cosas distintas, y darle a todos la misma cuenta de superusuario es el error más común.</p>
 
 <figure class="figure">
@@ -113,6 +120,13 @@
 
 <h2 id="rbac"><span class="sec-num">35.2</span>RBAC: el permiso cuelga del rol</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>En lugar de dar permisos persona por persona, creas puestos (roles) y le das los permisos al puesto. Quien ocupa el puesto hereda sus permisos; quien se va, pierde el puesto y con él los permisos. La app tiene su propio rol, distinto del de las personas.</p>
+  <p class="jr-like"><b>Es como</b> las tarjetas de un hotel: la de "camarera del piso 3" abre las habitaciones de ese piso. Cuando entra otra camarera, le das la misma tarjeta; no reprogramas cada puerta.</p>
+  <dl class="jr-words"><dt>Rol</dt><dd>en PostgreSQL, un usuario o un grupo; puede contener a otros roles y pasarles sus permisos.</dd><dt><code>GRANT</code></dt><dd>la orden que le da un permiso (por ejemplo <code>SELECT</code>) a un rol sobre una tabla.</dd><dt><code>LOGIN</code> / <code>NOLOGIN</code></dt><dd>si el rol puede abrir una sesión propia (una persona, la app) o solo sirve de grupo.</dd><dt><code>BYPASSRLS</code></dt><dd>un privilegio que deja al rol ver todas las filas, ignorando las políticas de fila.</dd></dl>
+</aside>
+
 <p><dfn data-term="rbac">RBAC</dfn> (control de acceso basado en roles) es el modelo que ya usaste sin nombrarlo cuando creaste roles y diste <a href="m05-bases-de-datos.html#roles-grant"><code>GRANT</code> en M05</a>. La idea: no le das permisos a cada persona, se los das a un <b>rol</b>, y las personas o los servicios reciben el rol. Si mañana entra otro analista, le das el rol <code>analistas</code> y hereda todo de una vez; si alguien se va, le quitas el rol. El permiso vive en el rol, no desperdigado por cada cuenta.</p>
 
 <p>En PostgreSQL un usuario y un grupo son la misma cosa —un <code>ROLE</code>—, y un rol puede contener a otros. Eso da <b>jerarquías de roles</b>: <code>ana</code> es miembro de <code>analistas</code>, que a su vez puede heredar de <code>solo_lectura</code>.</p>
@@ -127,6 +141,15 @@ GRANT SELECT                     ON facturas TO analistas;
 GRANT SELECT, INSERT, UPDATE     ON facturas TO app_rw;
 
 -- Lo que NO se hace: la app conectándose como el dueño o como postgres</code></pre>
+
+<p><b>Paso a paso: cómo decide PostgreSQL si <code>ana</code> puede leer.</b> Con los roles de arriba, sigue la cadena:</p>
+<ol class="steps">
+  <li><span class="step-title">Se conecta</span><code>ana</code> abre una sesión: puede porque su rol tiene <code>LOGIN</code>. El rol <code>analistas</code> no podría, porque es <code>NOLOGIN</code>.</li>
+  <li><span class="step-title">Pide un dato</span>Corre <code>SELECT * FROM facturas</code>. La base busca si <code>ana</code>, o algún rol del que es miembro, tiene <code>SELECT</code> sobre <code>facturas</code>.</li>
+  <li><span class="step-title">Hereda</span><code>ana</code> no tiene ningún <code>GRANT</code> propio, pero es miembro de <code>analistas</code> (eso hizo <code>IN ROLE analistas</code>), y <code>analistas</code> sí tiene <code>SELECT</code>. Como los roles heredan por defecto, la lectura pasa.</li>
+  <li><span class="step-title">Intenta escribir</span>Si <code>ana</code> corre un <code>UPDATE</code>, nadie en su cadena tiene ese permiso y la base responde <code>ERROR: permission denied for table facturas</code>.</li>
+  <li><span class="step-title">Se va del equipo</span>Un <code>REVOKE analistas FROM ana</code> (o borrar su rol) le quita todo de una vez. La tabla y el rol de la app no se tocan.</li>
+</ol>
 
 <p>Conviene separar <b>roles de aplicación</b> de <b>roles de persona</b>. La app se conecta siempre con <code>app_rw</code> (un rol de servicio, con contraseña rotada y sin privilegios de esquema); las personas usan su propio rol, que hereda de un grupo. Así la bitácora distingue "lo hizo la app" de "lo hizo ana", y puedes quitarle acceso a una persona sin tocar a la aplicación.</p>
 
@@ -170,6 +193,13 @@ GRANT SELECT, INSERT, UPDATE     ON facturas TO app_rw;
 
 <h2 id="abac"><span class="sec-num">35.3</span>ABAC: la política evalúa atributos</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>A veces el puesto no alcanza: la regla depende de datos, como "solo las facturas de tu región" o "solo de tu empresa". ABAC decide mirando características (atributos) de quién pide, de qué pide y del momento. La RLS de PostgreSQL es justo eso: una regla que la base revisa fila por fila.</p>
+  <p class="jr-like"><b>Es como</b> un guardia que no solo mira tu credencial de empleado, sino también a qué piso vas y qué hora es: "empleados de finanzas, solo al piso 4, de 8 a 18".</p>
+  <dl class="jr-words"><dt>Atributo</dt><dd>una característica que se puede comparar: el departamento de la persona, el tenant de la fila, la hora.</dd><dt>Política</dt><dd>la regla que combina atributos y responde permitir o denegar.</dd><dt>RLS</dt><dd>row-level security: la base filtra las filas de una tabla según una política, sin que la app escriba el <code>WHERE</code>.</dd><dt><code>current_setting</code></dt><dd>la función que lee un valor que la sesión fijó antes, como <code>app.tenant_id</code>.</dd></dl>
+</aside>
+
 <p>RBAC decide por <b>quién eres</b> (tu rol). <dfn data-term="abac">ABAC</dfn> (control de acceso basado en atributos) decide por <b>atributos</b>: del sujeto (su departamento, su nivel), del recurso (a qué tenant pertenece la fila, qué etiqueta tiene) y del entorno (la hora, la IP de origen). Una <b>política</b> combina esos atributos en una regla: "un usuario de finanzas puede leer facturas de su propia región en horario laboral". RBAC necesitaría un rol por cada combinación; ABAC lo expresa en una regla.</p>
 
 <aside class="callout callout--def">
@@ -190,9 +220,60 @@ CREATE POLICY por_tenant ON facturas
   USING (tenant_id = current_setting('app.tenant_id')::uuid);
 -- atributo del recurso (tenant_id de la fila)  contra  atributo de la sesión</code></pre>
 
+<aside class="callout callout--analogy">
+  <p class="callout-label">Analogía</p>
+  <p>Piensa en un portero que tiene anotado en la sesión "esta persona viene de parte de <b>acme</b>". Cada vez que la app pide filas, el portero revisa una por una la etiqueta de empresa de cada factura y solo deja pasar las que dicen <b>acme</b>. La app nunca ve las otras, aunque haya escrito un <code>SELECT</code> sin <code>WHERE</code>.</p>
+</aside>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 262" role="img" aria-labelledby="fjr35at fjr35ad">
+<title id="fjr35at">La política de fila revisa cada fila contra la sesión</title>
+<desc id="fjr35ad">La sesión de la app fijó app.tenant_id igual a acme. La tabla facturas tiene cuatro filas: 201 de acme, 202 de globex, 203 de acme y 204 de initech. La política por_tenant compara el tenant de cada fila con el de la sesión: las filas 201 y 203 pasan, las otras dos se filtran. El SELECT sin WHERE devuelve solo dos filas.</desc>
+<defs><marker id="fjr35aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="dg-arrow"/></marker></defs>
+<path class="dg-feedback" d="M111 96 V20 H650 V26" marker-end="url(#fjr35aa)"/>
+<rect class="dg-layer" style="--c: var(--l-service)" x="16" y="96" width="190" height="64" rx="8"/>
+<text class="dg-small" x="111" y="120" text-anchor="middle">Sesión (app_rw)</text>
+<text class="dg-tiny dg-mono" x="111" y="140" text-anchor="middle">app.tenant_id = acme</text>
+<text class="dg-group" x="385" y="40" text-anchor="middle">facturas (4 filas)</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="250" y="52" width="270" height="30" rx="6"/>
+<text class="dg-tiny dg-mono" x="266" y="71">id 201 · tenant acme</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="250" y="94" width="270" height="30" rx="6"/>
+<text class="dg-tiny dg-mono" x="266" y="113">id 202 · tenant globex</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="250" y="136" width="270" height="30" rx="6"/>
+<text class="dg-tiny dg-mono" x="266" y="155">id 203 · tenant acme</text>
+<rect class="dg-layer" style="--c: var(--l-db)" x="250" y="178" width="270" height="30" rx="6"/>
+<text class="dg-tiny dg-mono" x="266" y="197">id 204 · tenant initech</text>
+<text class="dg-group" x="650" y="40" text-anchor="middle">política por_tenant</text>
+<path class="dg-edge" d="M520 67 L556 67" marker-end="url(#fjr35aa)"/>
+<rect class="dg-ok" x="560" y="52" width="190" height="30" rx="6"/>
+<text class="dg-tiny" x="655" y="71" text-anchor="middle">acme = acme: pasa</text>
+<path class="dg-edge" d="M520 109 L556 109" marker-end="url(#fjr35aa)"/>
+<rect class="dg-bad" x="560" y="94" width="190" height="30" rx="6"/>
+<text class="dg-tiny" x="655" y="113" text-anchor="middle">globex ≠ acme: se filtra</text>
+<path class="dg-edge" d="M520 151 L556 151" marker-end="url(#fjr35aa)"/>
+<rect class="dg-ok" x="560" y="136" width="190" height="30" rx="6"/>
+<text class="dg-tiny" x="655" y="155" text-anchor="middle">acme = acme: pasa</text>
+<path class="dg-edge" d="M520 193 L556 193" marker-end="url(#fjr35aa)"/>
+<rect class="dg-bad" x="560" y="178" width="190" height="30" rx="6"/>
+<text class="dg-tiny" x="655" y="197" text-anchor="middle">initech ≠ acme: se filtra</text>
+<rect class="dg-box" x="16" y="222" width="734" height="32" rx="8"/>
+<text class="dg-tiny" x="383" y="242" text-anchor="middle">SELECT * FROM facturas, sin WHERE, devuelve 2 filas (201 y 203): el filtro lo puso la base, no la app.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 35.3.a.</b> La RLS vista como ABAC. El atributo del entorno (el tenant que fijó la sesión) se compara con el atributo del recurso (el <code>tenant_id</code> de cada fila). Las filas que no cumplen la política no se devuelven: para la app, es como si no existieran.</figcaption>
+</figure>
+
 <p>No es que ABAC reemplace a RBAC: casi siempre se combinan. El rol te deja <i>entrar</i> a la tabla (RBAC: "los analistas pueden hacer <code>SELECT</code>") y la política ABAC decide <i>qué filas</i> ves (RLS: "solo las de tu región"). <span class="badge badge--doc">Documentado</span> NIST define los dos modelos: RBAC en INCITS 359 y ABAC en SP 800-162.</p>
 
 <h2 id="acl"><span class="sec-num">35.4</span>ACL: cada objeto lleva su lista</h2>
+
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>El tercer modelo pega la lista de permisos al objeto mismo: "esta factura la puede leer ana, la app la puede escribir, luis nada". Sirve cuando compartes cosas una por una. En la práctica, una base multi-tenant combina roles para entrar y RLS para filtrar, y usa listas por objeto solo para lo que se comparte de a uno.</p>
+  <p class="jr-like"><b>Es como</b> un documento compartido en la nube: el botón "Compartir" guarda, en ese documento, quién puede verlo y quién editarlo.</p>
+  <dl class="jr-words"><dt>ACL</dt><dd>access control list: la lista, guardada junto al objeto, de quién puede hacer qué sobre él.</dd><dt>Objeto</dt><dd>la cosa que se protege: un archivo, un documento, una fila concreta.</dd></dl>
+</aside>
 
 <p>El tercer modelo es la <dfn data-term="acl">ACL</dfn> (lista de control de acceso): cada <b>objeto</b> guarda su propia lista de quién puede hacer qué sobre él. Es lo que ves en los permisos de un archivo de Unix (<a href="m34-sysadmin.html#usuarios"><code>rwx</code> por dueño, grupo y otros, de M34</a>) o cuando compartes un documento con tres personas, cada una con su permiso. La decisión no cuelga de un rol global ni de una política: vive pegada al objeto.</p>
 
@@ -269,6 +350,13 @@ CREATE POLICY por_tenant ON facturas
 <p class="more-link">La RLS que filtra las filas la practicaste en M05: <a href="m05-bases-de-datos.html#rls-practica">vuelve al simulador de row-level security</a> para ver qué devuelve la base según el rol y el tenant de la sesión.</p>
 
 <h2 id="bitacora"><span class="sec-num">35.5</span>La bitácora dentro de la base</h2>
+
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>La app ya anota lo que hace, pero no ve lo que otros hacen directo en la base, como un analista con <code>psql</code> o un script. Aquí haces que la propia base anote cada cambio, en una tabla donde se puede agregar pero nunca borrar ni corregir.</p>
+  <p class="jr-like"><b>Es como</b> el libro de visitas que llena el portero, no el visitante: aunque alguien entre por la puerta de atrás de la app, el portero de la base igual lo anota.</p>
+  <dl class="jr-words"><dt>Trigger</dt><dd>una función que la base corre sola cuando pasa algo en una tabla, como un <code>UPDATE</code>.</dd><dt>Append-only</dt><dd>una tabla en la que solo se agregan filas; nadie las cambia ni las borra.</dd><dt>pgAudit</dt><dd>una extensión de PostgreSQL que anota en el log las sentencias que se corren, incluidas las lecturas.</dd><dt>CDC</dt><dd>change data capture: leer los cambios del log interno de la base (el WAL) y mandarlos a otro sistema.</dd></dl>
+</aside>
 
 <p>En <a href="m10-seguridad.html#audit-log">M10</a> guardaste un audit log <b>en la aplicación</b>: cada acción relevante de negocio quedaba registrada por tu código. Eso deja un hueco: lo que toca la base <b>sin pasar por tu aplicación</b> —un analista con <code>psql</code>, una migración, un script— no queda anotado. La bitácora dentro de la base cierra ese hueco, porque la escribe el motor, no la app.</p>
 
@@ -351,6 +439,15 @@ CREATE TRIGGER audit_facturas
   AFTER INSERT OR UPDATE OR DELETE ON facturas
   FOR EACH ROW EXECUTE FUNCTION auditar();</code></pre>
 
+<p><b>Cómo leer este código, de arriba abajo.</b> Si nunca escribiste un trigger, estas son las piezas:</p>
+<ol class="steps">
+  <li><span class="step-title">Cerrar la tabla</span><code>REVOKE UPDATE, DELETE … FROM PUBLIC</code> quita a todos los roles el permiso de corregir o borrar filas de <code>audit_log</code>. Solo queda agregar. (El dueño de la tabla y el superusuario siguen pudiendo; por eso la bitácora no debe ser del rol de la app.)</li>
+  <li><span class="step-title">La función</span><code>auditar()</code> está escrita en PL/pgSQL, el lenguaje de funciones de PostgreSQL. <code>$$ … $$</code> solo delimita su cuerpo, como unas comillas.</li>
+  <li><span class="step-title">Variables que llegan solas</span>Dentro de un trigger, la base entrega <code>TG_TABLE_NAME</code> (qué tabla), <code>TG_OP</code> (<code>'INSERT'</code>, <code>'UPDATE'</code> o <code>'DELETE'</code>), <code>OLD</code> (la fila antes) y <code>NEW</code> (la fila después). En un <code>INSERT</code> no hay <code>OLD</code> y en un <code>DELETE</code> no hay <code>NEW</code>: esos valores llegan como <code>NULL</code>.</li>
+  <li><span class="step-title">Guardar la fila entera</span><code>to_jsonb(OLD)</code> convierte la fila completa en un objeto JSON, así <code>audit_log</code> no necesita una columna por cada campo de <code>facturas</code>. Las columnas <code>usuario</code> y <code>ts</code> se llenan solas con sus <code>DEFAULT</code>.</li>
+  <li><span class="step-title">Engancharla</span><code>CREATE TRIGGER … AFTER … FOR EACH ROW</code> dice: después de cada cambio, una vez por cada fila afectada, corre <code>auditar()</code>. Un <code>UPDATE</code> que toca 3 filas escribe 3 filas en la bitácora.</li>
+</ol>
+
 <p>Un trigger registra el <b>dato</b> que cambió. Cuando lo que importa es la <b>acción</b> —quién corrió qué consulta, incluido un <code>SELECT</code> sobre una tabla sensible— se usa <dfn data-term="pgaudit">pgAudit</dfn>, una extensión que anota las sentencias en el log del servidor con el detalle que un auditor espera. <span class="badge badge--doc">Documentado</span> pgAudit puede registrar por clase de sentencia (lecturas, escrituras, DDL, roles) y, afinado por objeto, solo las tablas que marcas.</p>
 
 <p>Una tercera fuente, cuando quieres la bitácora <b>fuera</b> de la base sin triggers, es <a href="m07-mensajeria.html#outbox">CDC</a> (change data capture): leer el <a href="m05-bases-de-datos.html#wal">WAL</a> por replicación lógica y publicar cada cambio a un consumidor que lo archiva. No frena las escrituras (el trigger sí añade trabajo a cada una) y sirve además para alimentar otros sistemas, como viste en M07.</p>
@@ -367,7 +464,16 @@ CREATE TRIGGER audit_facturas
   </table>
 </div>
 
+<p><b>Cómo leer esta tabla.</b> Las cuatro fuentes no compiten: se suman. Pregúntate qué te preguntaría un auditor. "¿Quién cambió el monto de la factura 201 y cuánto era antes?" lo responde el trigger (columnas <code>antes</code> y <code>despues</code>). "¿Quién miró los emails de los clientes ayer?" no lo ve el trigger, porque un <code>SELECT</code> no cambia ninguna fila: lo responde pgAudit. "¿Qué compró este cliente en el sistema?" es una acción de negocio, y la responde el audit log de la app. CDC sirve cuando la bitácora tiene que vivir fuera de la base o alimentar a otros sistemas.</p>
+
 <h2 id="cifrado-datos"><span class="sec-num">35.6</span>Cifrado en la base, y qué no protege</h2>
+
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Cifrar no protege de todo: cada técnica cuida una parte del camino del dato. Cifrar el disco sirve si se roban el disco; cifrar una columna sirve si alguien lee la tabla sin la clave. Ninguna te protege de la propia app, porque ella necesita ver el dato para trabajar.</p>
+  <p class="jr-like"><b>Es como</b> la diferencia entre la caja fuerte de una casa y un sobre cerrado dentro de ella: la caja fuerte protege si se llevan el mueble, pero quien la abre ve todo; el sobre sigue cerrado para quien no tiene su llave.</p>
+  <dl class="jr-words"><dt>Cifrado en reposo (TDE)</dt><dd>los archivos de la base se guardan cifrados en el disco; el motor los descifra al leer.</dd><dt>Cifrado por columna</dt><dd>solo ciertos campos (un email, un documento) se guardan cifrados, con una clave que no vive en la base.</dd><dt><code>pgcrypto</code></dt><dd>la extensión de PostgreSQL con funciones para cifrar y descifrar dentro de una consulta.</dd><dt>Seudonimizar</dt><dd>cambiar un dato que identifica a alguien por un código, y guardar la tabla que los une aparte.</dd></dl>
+</aside>
 
 <p>Cifrar datos en la base suena a bala de plata, pero cada técnica protege contra una amenaza distinta y deja otras intactas. La pregunta clave no es "¿está cifrado?", sino "¿contra quién?". Para responderla hay que mirar por qué capas pasa el dato y dónde se ve en claro.</p>
 
@@ -406,6 +512,22 @@ CREATE TRIGGER audit_facturas
   <figcaption><b>Figura 35.6.</b> El dato de la app al disco. El cifrado en reposo (TDE) protege el disco o el backup robado; el cifrado de columna (pgcrypto) protege de quien lee la tabla sin la clave. Ninguno protege del propio servicio de la app, que necesita el texto en claro para trabajar.</figcaption>
 </figure>
 
+<p><b>Cómo leer la figura.</b> Recórrela de arriba abajo como lo hace el dato al guardarse. En las cajas de aviso (Aplicación y Motor PostgreSQL) el dato está en claro; en las marcadas como correctas (Conexión, Archivos en disco y Backup) viaja o descansa cifrado. A la derecha está la técnica que actúa en cada capa. Lo importante es que el claro aparece arriba (en la app y en el motor) aunque abajo todo esté cifrado.</p>
+
+<div class="table-wrap">
+  <table class="t">
+    <thead><tr><th>Quién intenta leer</th><th>Cifrado en reposo (TDE)</th><th>Cifrado por columna (pgcrypto)</th></tr></thead>
+    <tbody>
+      <tr><td>Alguien que se lleva el disco o una copia del volumen</td><td>protege</td><td>protege</td></tr>
+      <tr><td>Un archivo de <code>pg_dump</code> filtrado (el dump lo genera el motor, ya descifrado)</td><td>no protege</td><td>protege la columna, si la clave no estaba en el dump</td></tr>
+      <tr><td>Un analista con <code>SELECT</code> sobre la tabla</td><td>no protege</td><td>protege, porque no tiene la clave</td></tr>
+      <tr><td>La propia app, o quien la controla</td><td>no protege</td><td>no protege: la app tiene la clave</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>La tabla se lee por filas: elige la amenaza que te preocupa y mira qué columna la cubre. Si ninguna dice "protege", la defensa está en otro lado (el rol mínimo de 35.2, la RLS de 35.3, la bitácora de 35.5).</p>
+
 <p>El <dfn data-term="tde">cifrado en reposo</dfn> (TDE, transparent data encryption) cifra los archivos de datos en el disco. Protege contra un disco robado, un backup perdido o un ladrón que se lleva el volumen. No protege nada una vez que la base está montada y en marcha: cualquier conexión autorizada ve los datos en claro, porque el motor descifra al leer. <span class="badge badge--doc">Documentado</span> PostgreSQL de base no trae TDE; se obtiene cifrando el volumen (LUKS, cifrado del disco en la nube) o con una variante comercial. El resultado es el mismo: protege el disco, no la sesión.</p>
 
 <p>El <b>cifrado por columna</b> con <code>pgcrypto</code> cifra campos concretos —un email, un número de documento— con una clave que <b>no vive en la base</b>. Protege contra quien lee la tabla sin la clave: un analista con <code>SELECT</code>, un dump filtrado. Pero la app que necesita el dato tiene la clave, así que para ella el cifrado es transparente.</p>
@@ -426,6 +548,13 @@ FROM clientes WHERE id = 42;   -- solo quien tiene la clave ve el claro</code></
 
 <h2 id="credenciales"><span class="sec-num">35.7</span>Credenciales de la base</h2>
 
+<aside class="callout callout--simple">
+  <p class="callout-label">En simple</p>
+  <p>Todos los roles del módulo valen lo que vale su contraseña. Esa contraseña no va en el código ni en un archivo del repositorio: llega desde afuera al arrancar la app, y se cambia cada cierto tiempo sin cortar el servicio.</p>
+  <p class="jr-like"><b>Es como</b> cambiar la cerradura de una tienda abierta: primero entregas la llave nueva a todo el personal, y recién cuando todos la tienen dejas de aceptar la vieja.</p>
+  <dl class="jr-words"><dt>Secreto</dt><dd>un dato que da acceso (contraseña, clave, token) y que nadie más debe ver.</dd><dt>Rotar</dt><dd>cambiar un secreto por uno nuevo cada cierto tiempo o cuando se sospecha que se filtró.</dd><dt>Pool de conexiones</dt><dd>el grupo de conexiones abiertas que la app reutiliza; se abren con la credencial que tenía al crearlas.</dd><dt>Gestor de secretos</dt><dd>un servicio que guarda los secretos y se los entrega a la app al arrancar.</dd></dl>
+</aside>
+
 <p>Todo lo anterior se cae si la contraseña del rol <code>app_rw</code> está en un archivo del repositorio. Las credenciales de la base son un secreto de producción y se manejan como tal.</p>
 
 <ul>
@@ -434,6 +563,40 @@ FROM clientes WHERE id = 42;   -- solo quien tiene la clave ve el claro</code></
   <li><b>El rol de la app, mínimo.</b> <code>app_rw</code> puede leer y escribir sus tablas; no es dueño del esquema, no crea tablas, no tiene <code>BYPASSRLS</code>. Las migraciones corren con otro rol, en otro momento.</li>
   <li><b>Mejor que una contraseña, una identidad.</b> En la nube, en vez de una contraseña larga, la app se autentica con la identidad de su máquina o su rol (IAM): credenciales de corta vida que rotan solas. Eso lo arma el módulo que sigue, <a href="m37-nube.html#iam">M37</a>.</li>
 </ul>
+
+<p><b>Rotar sin cortar, en el tiempo.</b> En PostgreSQL cada rol tiene una sola contraseña. Para que dos credenciales sirvan a la vez, lo habitual es tener dos roles de login (aquí <code>app_rw_v1</code> y <code>app_rw_v2</code>) que son miembros del mismo grupo con los permisos, así los dos pueden lo mismo. La figura muestra el orden.</p>
+
+<figure class="figure">
+  <div class="figure-frame">
+<svg viewBox="0 0 770 262" role="img" aria-labelledby="fjr35bt fjr35bd">
+<title id="fjr35bt">Rotar la credencial de la app sin cortar el servicio</title>
+<desc id="fjr35bd">Una línea de tiempo con tres momentos: crear la credencial nueva, recargar el pool de la app para que use la nueva, y recién entonces revocar la vieja. Entre el primero y el tercero las dos credenciales son válidas, así que las conexiones abiertas con la vieja siguen funcionando mientras la app cambia a la nueva.</desc>
+<path class="dg-feedback" d="M300 44 V200"/>
+<path class="dg-feedback" d="M420 44 V200"/>
+<path class="dg-feedback" d="M540 44 V200"/>
+<text class="dg-tiny" x="300" y="34" text-anchor="middle">1. crear v2</text>
+<text class="dg-tiny" x="420" y="34" text-anchor="middle">2. recargar el pool</text>
+<text class="dg-tiny" x="540" y="34" text-anchor="middle">3. revocar v1</text>
+<text class="dg-small" x="16" y="75">Credencial vieja</text>
+<rect class="dg-ok" x="150" y="56" width="390" height="30" rx="6"/>
+<text class="dg-tiny dg-mono" x="225" y="75" text-anchor="middle">app_rw_v1 válida</text>
+<rect class="dg-bad" x="540" y="56" width="214" height="30" rx="6"/>
+<text class="dg-tiny" x="647" y="75" text-anchor="middle">revocada: ya no entra</text>
+<text class="dg-small" x="16" y="123">Credencial nueva</text>
+<rect class="dg-ok" x="300" y="104" width="454" height="30" rx="6"/>
+<text class="dg-tiny dg-mono" x="647" y="123" text-anchor="middle">app_rw_v2 válida</text>
+<text class="dg-small" x="16" y="171">La app usa</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="150" y="152" width="270" height="30" rx="6"/>
+<text class="dg-tiny" x="225" y="171" text-anchor="middle">conexiones con v1</text>
+<rect class="dg-layer" style="--c: var(--l-service)" x="420" y="152" width="334" height="30" rx="6"/>
+<text class="dg-tiny" x="647" y="171" text-anchor="middle">conexiones con v2</text>
+<rect class="dg-box" x="16" y="210" width="738" height="46" rx="8"/>
+<text class="dg-tiny" x="385" y="229" text-anchor="middle">Entre 1 y 3 las dos credenciales sirven: ninguna conexión abierta se cae.</text>
+<text class="dg-tiny" x="385" y="246" text-anchor="middle">Si inviertes 2 y 3, el pool queda con una contraseña que ya no existe.</text>
+</svg>
+  </div>
+  <figcaption><b>Figura 35.7.a.</b> La rotación en tres momentos. La credencial vieja recién se revoca cuando la app ya trabaja con la nueva; el solapamiento entre las dos es lo que evita el corte.</figcaption>
+</figure>
 
 <p>Dónde se guarda ese secreto, cómo se inyecta y cómo se rota de verdad es el tema del <b>secrets manager</b> en <a href="m37-nube.html#kms">M37</a> (arquitecturas seguras en la nube). Aquí basta con la regla: la base confía en un rol con la contraseña correcta, así que esa contraseña vale tanto como los datos que protege.</p>
 
