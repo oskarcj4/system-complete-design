@@ -214,18 +214,18 @@ SD.data.projects = {
           excuse: 'Preguntas sobre las páginas de este curso, con citas que se comprueban.',
           learn: 'Troceado por sección y fijo, embeddings locales en pgvector con HNSW, búsqueda por palabras en español, fusión con RRF, re-ranking opcional, respuestas con citas verificadas sin modelo, y evals en dos capas: la búsqueda sin tokens y la respuesta con un juez calibrado con el kappa de Cohen.',
           stack: ['Python 3.13', 'PostgreSQL + pgvector', 'Ollama', 'Claude', 'FastAPI', 'pytest'] },
-        { id: 'ia06', num: 'IA06', title: 'Un agente de voz', tier: 'extra', status: 'proposed', repo: '', mods: ['m24', 'm25'], front: false,
+        { id: 'ia06', num: 'IA06', title: 'Un agente de voz', tier: 'extra', status: 'ready', href: 'proyectos/ia06-voz.html', repo: '', repoName: 'ia06-voz', mods: ['m24', 'm25'], front: false,
           excuse: 'Una línea que agenda citas por teléfono.',
           learn: 'STT, modelo y TTS en streaming, fin de turno, interrupciones con truncado, herramientas con aprobación y el presupuesto de latencia medido de punta a punta.',
-          stack: ['WebRTC', 'STT y TTS', 'LangGraph'] },
-        { id: 'ia07', num: 'IA07', title: 'Tu propio harness', tier: 'core', status: 'proposed', repo: '', mods: ['m62', 'm25'], front: false,
+          stack: ['Python 3.13', 'Pipecat', 'WebRTC', 'Whisper y Kokoro', 'PostgreSQL', 'FastAPI', 'pytest'] },
+        { id: 'ia07', num: 'IA07', title: 'Tu propio harness', tier: 'core', status: 'ready', href: 'proyectos/ia07-harness.html', repo: '', repoName: 'ia07-harness', mods: ['m62', 'm25'], front: false,
           excuse: 'Las 40 líneas de M62, convertidas en un harness de verdad.',
           learn: 'Herramientas para leer y editar por reemplazo exacto, permisos allow, ask y deny, recorte y compactación del contexto, los dos dialectos de API y todo dentro de un contenedor; probado con un modelo falso y medido con Claude y con un modelo de Ollama.',
           stack: ['Python 3.13', 'uv', 'Claude', 'Ollama', 'Docker', 'pytest'] },
-        { id: 'ia08', num: 'IA08', title: 'Un mini-DeepSec', tier: 'core', status: 'proposed', repo: '', mods: ['m62', 'm25', 'm55'], front: false,
-          excuse: 'Un orquestador que lanza un agente por cada línea sospechosa de tu código.',
-          learn: 'Candidatos con regex, una cola en SQLite, un harness headless por candidato dentro de Docker con la credencial fuera, presupuesto por corrida, reanudación, revalidación y exportación a Markdown, sobre una víctima con vulnerabilidades sembradas.',
-          stack: ['Python 3.13', 'Claude Code headless', 'Docker', 'SQLite'] }
+        { id: 'ia08', num: 'IA08', title: 'Un mini-DeepSec', tier: 'core', status: 'ready', href: 'proyectos/ia08-mini-deepsec.html', repo: '', repoName: 'ia08-deepsec', mods: ['m69', 'm72', 'm62', 'm55', 'm25'], front: false,
+          excuse: 'Un orquestador que reparte las líneas sospechosas de tu código entre llamadas a un modelo, sin pasarse de requests ni de dólares.',
+          learn: 'Un escaneo con doce expresiones regulares, una cola en SQLite con una clave por tarea, lotes analizados a la vez con un semáforo y un límite de requests por minuto, un tope de gasto con reserva, reintentos clasificados con retry-after, reanudación sin pagar dos veces, deduplicación y un segundo revisor, sobre una víctima con once fallas plantadas; probado con un modelo falso y medido con Claude y con un modelo local por recall y pass^k.',
+          stack: ['Python 3.13', 'uv', 'SQLite', 'asyncio', 'Claude', 'Ollama', 'pytest'] }
       ]
     }
   ],

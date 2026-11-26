@@ -3516,4 +3516,41 @@ SD.defineGlossary([
     deep: 'm22#juez', aliases: [],
     short: 'El acuerdo entre dos evaluadores descontado el que saldría por azar con sus mismas proporciones: (acuerdo − azar) / (1 − azar). 1 es acuerdo perfecto y 0, nada mejor que el azar; un juez que siempre aprueba tiene kappa 0.',
     related: ['llm-juez'] }
+  ,
+  /* ---------- IA07: Tu propio harness ---------- */
+  { id: 'ia-modelo-falso', term: 'Modelo falso', en: 'Fake model', cat: 'ia', mods: ['m62'],
+    deep: 'm72', aliases: [],
+    short: 'Un objeto con la misma interfaz que el modelo real que responde con un guion escrito de antemano. Permite probar el bucle sin red ni tokens.',
+    related: ['harness'] },
+  { id: 'ia-tope-bucle', term: 'Tope del bucle', en: 'Loop cap', cat: 'ia', mods: ['m62'],
+    deep: 'm25', aliases: [],
+    short: 'Un límite de turnos o de tokens que corta el bucle de un agente aunque el modelo siga pidiendo herramientas.',
+    related: ['harness'] },
+  { id: 'ia-prueba-oculta', term: 'Prueba oculta', en: 'Hidden test', cat: 'ia', mods: ['m72'],
+    deep: 'm72', aliases: [],
+    short: 'Una prueba que decide si una tarea salió bien y que el agente no ve ni puede editar, para que no pueda hacerla pasar a la fuerza.',
+    related: ['ia-pass-k'] },
+
+  /* ---------- IA08: un mini-DeepSec ---------- */
+  { id: 'ia-semaforo', term: 'Semáforo (asyncio)', en: 'Semaphore', cat: 'ia', mods: ['m69'],
+    deep: 'm69#concurrencia', aliases: [], noauto: true,
+    short: 'Un contador que deja pasar como mucho N tareas a la vez; las demás esperan su turno. Limita las llamadas abiertas, no las que empiezan por minuto.',
+    related: ['rate-limiting'] },
+  { id: 'ia-retry-after', term: 'retry-after', en: 'Retry-After header', cat: 'ia', mods: ['m69'],
+    deep: 'm69#concurrencia', aliases: ['retry-after'],
+    short: 'El encabezado con el que un servidor que contesta 429 dice cuántos segundos esperar antes de repetir; el orquestador lo usa como pausa para todas sus tareas.',
+    related: ['rate-limiting', 'backoff'] },
+  { id: 'ia-reserva-presupuesto', term: 'Reserva de presupuesto', en: 'Budget reservation', cat: 'ia', mods: ['m69'],
+    deep: 'm69#presupuesto', aliases: [], noauto: true,
+    short: 'Apartar el costo estimado antes de llamar al modelo y liquidarlo con los tokens reales al volver, para que lo gastado más lo reservado nunca pase del tope.',
+    related: ['ia-tope-bucle'] },
+  { id: 'ia-recall-plantadas', term: 'Recall contra fallas plantadas', en: 'Recall on seeded flaws', cat: 'ia', mods: ['m72'],
+    deep: 'm72', aliases: [], noauto: true,
+    short: 'La fracción de las fallas que pusiste a propósito en un repositorio que el orquestador encuentra; tiene un techo si alguna falla no llega nunca al modelo.',
+    related: ['ia-pass-k', 'ia-prueba-oculta'] },
+  /* ---------- IA06: un agente de voz ---------- */
+  { id: 'tstzrange', term: 'tstzrange', en: 'Timestamp range with time zone', cat: 'datos', mods: ['m39'],
+    deep: 'm39#rangos', aliases: [], noauto: true,
+    short: 'Tipo de PostgreSQL que guarda un intervalo de tiempo con zona horaria, con inicio incluido y fin excluido; con el operador && y una restricción EXCLUDE evita citas que se solapan.',
+    related: ['exclusion-constraint'] }
 ]);
