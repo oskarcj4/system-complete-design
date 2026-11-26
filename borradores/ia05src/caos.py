@@ -1,7 +1,7 @@
 """Rompe el índice a propósito, para ver qué capa de los evals lo nota.
 
     uv run python caos.py contradiccion   # un trozo viejo que define pass^k al revés
-    uv run python caos.py olvidar m85     # borra una página del índice, como si nunca se hubiera indexado
+    uv run python caos.py olvidar m27     # borra una página del índice, como si nunca se hubiera indexado
     uv run python caos.py deshacer        # borra el trozo viejo; lo olvidado vuelve con docs indexar
 """
 import sys
@@ -47,6 +47,6 @@ if __name__ == "__main__":
         if sys.argv[1] == "contradiccion":
             contradiccion(conexion)
         elif sys.argv[1] == "olvidar":
-            olvidar(conexion, sys.argv[2] if len(sys.argv) > 2 else "m85")
+            olvidar(conexion, sys.argv[2] if len(sys.argv) > 2 else "m27")
         else:
             deshacer(conexion)

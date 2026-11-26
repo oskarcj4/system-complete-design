@@ -24,6 +24,7 @@ def test_cada_encabezado_con_id_es_una_seccion():
 def test_el_titulo_lleva_la_pagina_y_no_el_numero():
     s = secciones(PAGINA, "m25-agentes.html")
     assert s[0].titulo == "Agentes y herramientas · Ejecución durable"
+    assert s[1].titulo == "Agentes y herramientas · Retomar sin repetir"
 
 
 def test_salta_figuras_widgets_y_avisos_pero_no_los_epigrafes():

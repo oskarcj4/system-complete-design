@@ -25,11 +25,12 @@ class Encontrado:
 
 COLUMNAS = "id, pagina, ancla, titulo, texto"
 
-# plainto_tsquery une las palabras con & (todas tienen que estar). Una pregunta casi nunca usa todas las palabras
-# del trozo que la contesta, así que se cambian por | (alcanza con alguna) y el puntaje premia las que tienen más.
+# plainto_tsquery reduce cada palabra a su raíz y las une con & (todas tienen que estar). Una pregunta casi nunca
+# usa todas las palabras del trozo que la contesta, así que se cambian por | (alcanza con alguna) y el puntaje
+# premia los trozos que tienen más. El segundo to_tsquery usa 'simple' para no volver a recortar las raíces.
 LEXICA = f"""
 SELECT {COLUMNAS} FROM trozos,
-       to_tsquery('spanish', replace(plainto_tsquery('spanish', %(q)s)::text, ' & ', ' | ')) AS consulta
+       to_tsquery('simple', replace(plainto_tsquery('spanish', %(q)s)::text, ' & ', ' | ')) AS consulta
 WHERE estrategia = %(estrategia)s AND prefijo = %(prefijo)s AND tsv @@ consulta
 ORDER BY ts_rank_cd(tsv, consulta) DESC, id
 LIMIT %(n)s

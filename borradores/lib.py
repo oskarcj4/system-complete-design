@@ -94,7 +94,7 @@ def cards(fid, title, desc, items, layer='service'):
     return svg(fid, 770, h, title, desc, '\n'.join(body))
 
 def ficha(fid, name, entra, hace, sale, ejemplo, falla, donde):
-    desc = (f'Ficha de {name}. Qué entra: {entra} Qué hace: {hace} Qué sale: {sale} Ejemplo: {" ".join(ejemplo)} '
+    desc = (f'Ficha {"del " + name[3:] if name.startswith("el ") else "de " + name}. Qué entra: {entra} Qué hace: {hace} Qué sale: {sale} Ejemplo: {" ".join(ejemplo)} '
             f'Qué falla sin él: {falla} Dónde vive: {donde}')
     b = []
     cols = [('Qué entra', entra, None), ('Qué hace', hace, 'gpu'), ('Qué sale', sale, None)]
@@ -400,9 +400,10 @@ def build(meta, body, name):
     return r.returncode
 
 def check_ids(body):
-    ids = re.findall(r'\sid="([^"]+)"', body)
+    sin_pre = re.sub(r'<pre[\s\S]*?</pre>', '', body)
+    ids = re.findall(r'\sid="([^"]+)"', sin_pre)
     dup = {i for i in ids if ids.count(i) > 1}
     assert not dup, dup
-    hrefs = set(re.findall(r'href="#([^"]+)"', body))
+    hrefs = set(re.findall(r'href="#([^"]+)"', sin_pre))
     missing = hrefs - set(ids) - {'contenido'}
     assert not missing, missing

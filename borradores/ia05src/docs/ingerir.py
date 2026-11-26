@@ -52,6 +52,8 @@ class _Lector(HTMLParser):
                 self.en_articulo = 1
             return
         if tag in VACIAS:
+            if tag == "br" and not self.saltando:
+                self.handle_data(" ")          # "Retomar<br>sin repetir" no se pega
             return
         self.en_articulo += 1
         if self.saltando:
@@ -92,6 +94,7 @@ class _Lector(HTMLParser):
     def handle_data(self, data):
         if self.terminado or not self.en_articulo or self.saltando:
             return
+        data = data.replace("\n", " ")            # los saltos de línea los ponen los bloques, no el código fuente
         if self.en_h1:
             self.titulo_pagina.append(data)
         elif self.encabezado is not None:
