@@ -3502,5 +3502,18 @@ SD.defineGlossary([
   { id: 'recomendacion-sesion', term: 'Recomendación por sesión', en: 'Session-based recommendation', cat: 'reco', mods: ['m53'],
     deep: 'm53#sesion', aliases: ['recomendador de sesión'],
     short: 'Recomendar con lo que la persona hizo en la visita actual, sin cuenta ni historia. Sirve para los visitantes anónimos y para captar una intención que cambia rápido.',
-    related: ['arranque-frio'] }
+    related: ['arranque-frio'] },
+  /* ---------- IA05: preguntas a la documentación ---------- */
+  { id: 'busqueda-hibrida', term: 'Búsqueda híbrida', en: 'Hybrid search', cat: 'ia', mods: ['m16'],
+    deep: 'm16#rag', aliases: [],
+    short: 'Correr a la vez una búsqueda por palabras (como el tsvector de PostgreSQL o BM25) y otra por significado con embeddings, y juntar las dos listas. La primera encuentra nombres exactos; la segunda, textos que dicen lo mismo con otras palabras.',
+    related: ['embedding', 'rrf', 'rag'] },
+  { id: 'rrf', term: 'RRF', en: 'Reciprocal Rank Fusion', cat: 'ia', mods: ['m16'],
+    deep: 'm16#rag', aliases: ['Reciprocal Rank Fusion'],
+    short: 'Una forma de juntar varias listas ordenadas usando solo los puestos: cada lista le da 1 / (k + puesto) a cada resultado, con k = 60 en general, y gana la suma más alta. Sirve cuando los puntajes de las listas no se pueden comparar.',
+    related: ['busqueda-hibrida'] },
+  { id: 'kappa-cohen', term: 'Kappa de Cohen', en: "Cohen's kappa", cat: 'metodo', mods: ['m22'],
+    deep: 'm22#juez', aliases: [],
+    short: 'El acuerdo entre dos evaluadores descontado el que saldría por azar con sus mismas proporciones: (acuerdo − azar) / (1 − azar). 1 es acuerdo perfecto y 0, nada mejor que el azar; un juez que siempre aprueba tiene kappa 0.',
+    related: ['llm-juez'] }
 ]);
