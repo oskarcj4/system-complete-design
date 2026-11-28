@@ -206,8 +206,8 @@ add('<p>Todo lo anterior se junta aquí. Pipecat arma una tubería de procesador
 def _tuberia():
     f = 'fi06u'
     xs = [20, 120, 220, 320, 420, 520, 620]
-    labs = [('entrada', 'transport.input'), ('oír', 'Whisper'), ('usuario', 'agregador'), ('pensar', 'el modelo'),
-            ('hablar', 'Piper'), ('salida', 'transport.output'), ('agente', 'agregador')]
+    labs = [('entrada', 'input'), ('oír', 'Whisper'), ('usuario', 'agregador'), ('pensar', 'el modelo'),
+            ('hablar', 'Piper'), ('salida', 'output'), ('agente', 'agregador')]
     layers = ['client', 'gpu', 'service', 'gpu', 'gpu', 'client', 'service']
     b = []
     for x, (l, s), ly in zip(xs, labs, layers):
@@ -219,7 +219,7 @@ def _tuberia():
     b.append(edge(f, 'M264 94 V148'))
     b.append(edge(f, 'M664 94 V148'))
     b.append(edge(f, 'M364 148 V96', dashed=True))
-    b.append(text(272, 124, 'agrega lo que dijo la persona', 'dg-tiny'))
+    b.append(text(256, 124, 'agrega lo que dijo la persona', 'dg-tiny', 'end'))
     b.append(text(560, 124, 'agrega lo que sonó', 'dg-tiny', 'end'))
     b.append(text(372, 140, 'lo lee', 'dg-tiny'))
     b.append(text(20, 226, 'El VAD vive en el agregador del usuario: decide cuándo cierra el turno y cuándo la persona interrumpe.', 'dg-small'))

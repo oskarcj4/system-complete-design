@@ -306,7 +306,7 @@ def _presu():
 
 
 add(figure(_presu(), '<b>Figura IA06.8.</b> La barra es la de M24 ' + REF + '. Lo que no ve bot.py: la captura y la red de ida pasan antes de que llegue el audio, y la red de vuelta y la reproducción, después de que sale. En localhost la red es casi nada; por teléfono, no. Las claves de abajo son las de <code>LatencyBreakdown</code> en Pipecat 1.16.0 ' + DOC + '.'))
-add('<p>La diferencia que vas a ver es la herramienta. Un turno en el que el modelo llama a <code>ver_disponibilidad</code> son dos llamadas al modelo, una antes y otra después de la herramienta, más lo que tarde la base: el reparto de M24 no tiene lugar para eso. Por eso la tabla del paso 7 separa los turnos con herramienta de los turnos sin.</p>\n')
+add('<p>La diferencia que vas a ver es la herramienta. Un turno en el que el modelo llama a <code>ver_disponibilidad</code> son dos llamadas al modelo, una antes y otra después de la herramienta, más lo que tarde la base: el reparto de M24 no tiene lugar para eso. Por eso la tabla del paso 7 suma las dos llamadas de un turno: para la persona fue una sola espera.</p>\n')
 
 # ---------------- ae-interrupcion
 add('<h3 id="ae-interrupcion">Interrumpir y truncar</h3>\n')
@@ -357,7 +357,7 @@ add(figure(ficha('fi06f', 'la confirmación',
 add('<h3 id="ae-exclusion">Dos citas no se pisan</h3>\n')
 add(analogy('Un estacionamiento con cajones pintados. El cartel "no estacione encima de otro auto" depende de que todos lo lean; los cajones pintados con un poste en cada uno no dejan meter dos autos aunque el conductor no lea nada.'))
 add('<p>Dos personas llaman a la vez y piden el martes a las 12:00. Las dos consultan, las dos ven la hora libre, las dos dicen que sí. Si el código hace "si está libre, inserto", las dos insertan: entre que una mira y escribe, la otra también miró. Es la carrera de leer y escribir de <a href="' + M05 + '#transacciones">5.6</a>, y la cierra la base, no el código.</p>\n')
-add('<p>Una <dfn data-term="restriccion-exclusion">restricción de exclusión</dfn> es la generalización de <code>UNIQUE</code>: en lugar de rechazar dos filas con el mismo valor, rechaza dos filas para las que una lista de comparaciones da verdadero a la vez. Aquí: el mismo profesional (<code>=</code>) y franjas que se pisan (<code>&amp;&amp;</code>, el operador de solapamiento de rangos). Las franjas son <code>tstzrange</code>, un rango de dos instantes con zona horaria, cerrado al inicio y abierto al final: <code>[10:00, 10:30)</code> no se pisa con <code>[10:30, 11:00)</code>. La restricción necesita un índice GiST, y GiST no sabe comparar texto con <code>=</code> hasta que se instala la extensión <code>btree_gist</code>, que viene con PostgreSQL ' + DOC + '.</p>\n')
+add('<p>Una <dfn data-term="exclusion-constraint">restricción de exclusión</dfn> es la generalización de <code>UNIQUE</code>: en lugar de rechazar dos filas con el mismo valor, rechaza dos filas para las que una lista de comparaciones da verdadero a la vez. Aquí: el mismo profesional (<code>=</code>) y franjas que se pisan (<code>&amp;&amp;</code>, el operador de solapamiento de rangos). Las franjas son <code>tstzrange</code>, un rango de dos instantes con zona horaria, cerrado al inicio y abierto al final: <code>[10:00, 10:30)</code> no se pisa con <code>[10:30, 11:00)</code>. La restricción necesita un índice GiST, y GiST no sabe comparar texto con <code>=</code> hasta que se instala la extensión <code>btree_gist</code>, que viene con PostgreSQL ' + DOC + '.</p>\n')
 
 
 def _excl():

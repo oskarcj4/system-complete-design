@@ -217,7 +217,7 @@ SD.data.projects = {
         { id: 'ia06', num: 'IA06', title: 'Un agente de voz', tier: 'extra', status: 'ready', href: 'proyectos/ia06-voz.html', repo: '', repoName: 'ia06-voz', mods: ['m24', 'm25'], front: false,
           excuse: 'Una línea que agenda citas por teléfono.',
           learn: 'STT, modelo y TTS en streaming, fin de turno, interrupciones con truncado, herramientas con aprobación y el presupuesto de latencia medido de punta a punta.',
-          stack: ['Python 3.13', 'Pipecat', 'WebRTC', 'Whisper y Kokoro', 'PostgreSQL', 'FastAPI', 'pytest'] },
+          stack: ['Python 3.13', 'Pipecat', 'WebRTC', 'Whisper', 'Piper', 'Claude', 'Ollama', 'PostgreSQL', 'pytest'] },
         { id: 'ia07', num: 'IA07', title: 'Tu propio harness', tier: 'core', status: 'ready', href: 'proyectos/ia07-harness.html', repo: '', repoName: 'ia07-harness', mods: ['m62', 'm25'], front: false,
           excuse: 'Las 40 líneas de M62, convertidas en un harness de verdad.',
           learn: 'Herramientas para leer y editar por reemplazo exacto, permisos allow, ask y deny, recorte y compactación del contexto, los dos dialectos de API y todo dentro de un contenedor; probado con un modelo falso y medido con Claude y con un modelo de Ollama.',
