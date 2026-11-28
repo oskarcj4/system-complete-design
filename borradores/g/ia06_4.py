@@ -16,11 +16,11 @@ add(Walk('python', 'tests/falsos.py', 'Una agenda en memoria con las mismas func
         ('class ModeloFalso:', [('class ModeloFalso:', 'Un guion por prueba. Si el código llama al modelo más veces de las previstas, la prueba falla con un mensaje claro.'),
                            ('llamadas = [{"name": n', 'Una lista de pares (nombre, argumentos) se vuelve un mensaje con <code>tool_calls</code>, como los que devuelve LangChain.')]),
     ]).html())
-add(whole('python', 'tests/test_fechas.py', 'Las franjas, la hora en palabras y la lectura de fechas.', 'pytest.', 'Nada.', 'Seis pruebas.', 'regla', rd('tests/test_fechas.py')))
-add(whole('python', 'tests/test_confirmar.py', 'Qué es un sí y cuándo se puede confirmar, con historias escritas a mano.', 'pytest.', 'Nada.', 'Las pruebas de la regla.', 'regla', rd('tests/test_confirmar.py')))
-add(whole('python', 'tests/test_herramientas.py', 'Las herramientas con la agenda falsa y el modelo falso: proponer no reserva, el sí reserva una vez, la interrupción no reserva.', 'pytest.', 'Nada.', 'Siete pruebas.', 'herramientas regla', rd('tests/test_herramientas.py')))
-add(whole('python', 'tests/test_agenda.py', 'La agenda contra la base de verdad: la clave, la carrera, cancelar y los permisos del rol.', 'pytest, con la base arriba.', 'Nada.', 'Seis pruebas, o <code>skipped</code> sin la base.', 'base', rd('tests/test_agenda.py')))
-add(whole('python', 'tests/test_latencia.py', 'El percentil, la suma de partes repetidas y que el saludo no se anote.', 'pytest.', 'Nada.', 'Cuatro pruebas.', 'latencia', rd('tests/test_latencia.py')))
+add(whole('python', 'tests/test_fechas.py', rd('tests/test_fechas.py'), 'Las franjas, la hora en palabras y la lectura de fechas.', 'pytest.', 'Nada.', 'Seis pruebas.', 'regla'))
+add(whole('python', 'tests/test_confirmar.py', rd('tests/test_confirmar.py'), 'Qué es un sí y cuándo se puede confirmar, con historias escritas a mano.', 'pytest.', 'Nada.', 'Las pruebas de la regla.', 'regla'))
+add(whole('python', 'tests/test_herramientas.py', rd('tests/test_herramientas.py'), 'Las herramientas con la agenda falsa y el modelo falso: proponer no reserva, el sí reserva una vez, la interrupción no reserva.', 'pytest.', 'Nada.', 'Siete pruebas.', 'herramientas regla'))
+add(whole('python', 'tests/test_agenda.py', rd('tests/test_agenda.py'), 'La agenda contra la base de verdad: la clave, la carrera, cancelar y los permisos del rol.', 'pytest, con la base arriba.', 'Nada.', 'Seis pruebas, o <code>skipped</code> sin la base.', 'base'))
+add(whole('python', 'tests/test_latencia.py', rd('tests/test_latencia.py'), 'El percentil, la suma de partes repetidas y que el saludo no se anote.', 'pytest.', 'Nada.', 'Cuatro pruebas.', 'latencia'))
 add(try_('uv run pytest -q', 'Todas pasan. Con la base apagada, las seis de <code>test_agenda.py</code> salen como <code>skipped</code> con el motivo <code>PostgreSQL no está arriba</code>. Ninguna gasta tokens.'))
 add(errs([('ModuleNotFoundError: No module named \'falsos\'', 'Corre pytest desde <code>ia06-voz/</code> y sin <code>tests/__init__.py</code>: pytest agrega la carpeta de cada prueba al camino de importación.')]))
 
